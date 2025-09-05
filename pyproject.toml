@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edi"
+version = "0.0.1"
+dependencies = [
+  "numpy",
+  "scipy",
+  "pandas",
+  "matplotlib",
+  "pint",
+  "mpi4py",
+]
+requires-python = ">=3.8"
+authors = [
+  {name = "Cody Karcher",    email = "cody.karcher@csulb.edu"},
+]
+maintainers = [
+  {name = "Cody Karcher",    email = "cody.karcher@csulb.edu"},
+]
+description = """
+A Pyomo based framework for Engineering Design Optimization
+"""
+readme = "README.md"
+license = "MIT"
+license-files = ["LICEN[CS]E.*"]
+keywords = ["open-source","optimization","geometric programming","linear programming","quadratic programming","signomial programming","engineering design"]
+classifiers = [
+  "Programming Language :: Python"
+]
+
+[project.urls]
+Homepage = "https://github.com/fvd-lab/edi-solvers"
+Repository = "https://github.com/fvd-lab/edi-solvers.git"
