@@ -1,0 +1,12 @@
+*__pycache__*
+*.pyc
+*.egg-info
+*.DS_Store*
+*.ipynb_checkpoints
+*.coverage
+*.DEM
+*.gtopo30
+*.grb*
+*_runDirectory*
+*sandbox*
+*ESP/*
