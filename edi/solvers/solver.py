@@ -13,6 +13,7 @@ from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
 # from pyomo.contrib.edi.tools.structureDetector import structure_detector
 from edi.structure.structureDetector import structure_detector
+from edi.units.unitCorrector import unit_corrector
 
 
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )
@@ -25,8 +26,10 @@ def cvxopt_solve(m):
     cvxopt.solvers.options['feastol'] = 1e-6
     cvxopt.printing.options['width'] = -1
 
-    # m_corrected_units = unit_corrector(m)
-    structures = structure_detector(m)
+    m_corrected_units = unit_corrector(m)
+    structures = structure_detector(m_corrected_units)
+    
+    # structures = structure_detector(m)
     # print(structures)
     if structures['Linear_Program'][0]:
         # from pyomo.contrib.edi.solvers.cvxopt import solve_LP

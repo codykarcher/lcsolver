@@ -108,7 +108,7 @@ if numpy_available:
 #     # processMonomial,
 # )
 from edi.structure.walkerSupportFunctions import (
-    unarySignomial,
+    # unarySignomial,
     no_structure_dict,
     monomial_multiplication,
     signomial_multiplication,
@@ -117,14 +117,12 @@ from edi.structure.walkerSupportFunctions import (
     # processMonomial,
 )
 
-def handle_sumExpression_node(visitor,node, arg1, arg2):
-    arg1 = as_quantity(arg1).to_base_units()
-    arg2 = as_quantity(arg2).to_base_units()
-    if arg1.units == arg2.units:
-        handled_sum = arg1.to_base_units() + arg2.to_base_units()
-        #print(arg1)
-        #print(arg2)
-        #print(handled_sum)
+def handle_sumExpression_node(visitor,node, *args):#arg1, arg2):
+    arg_checker = []
+    for arg in args:
+        arg_checker.append(as_quantity(arg).to_base_units())
+    if all(arg.units == arg_checker[0].units for arg in arg_checker):
+        handled_sum = sum(arg for arg in args)
     else: raise ValueError('Function cannot handle mismatching units in SumNode')
     return handled_sum
 
@@ -340,6 +338,7 @@ class _UnitVisitor(StreamBasedExpressionVisitor):
 
     def exitNode(self, node, data):
         # try:
+        # print(type(node))
         # print(self._operator_handles[node.__class__](self, node, *data))
         return self._operator_handles[node.__class__](self, node, *data)
         # except:

@@ -51,7 +51,7 @@ def unit_corrector(pyomo_component):
         raise ValueError( "Invalid type %s passed into the convexity detector"%(str(type(pyomo_component))))
     
     corrected_model = pyomo_component.clone()
-    corrected_model.pprint()
+    # corrected_model.pprint()
     # get all the variables ### WTF AM I DOING#######################################################
     #variableList = [ vr for vr in  corrected_model.component_objects(pyo.Var, descend_into=True, active=True) ]
     #print(str(variableList[0]))
@@ -89,6 +89,9 @@ def unit_corrector(pyomo_component):
         # print(structures)
         # Iterate over the constraints
         for i, con in enumerate(constraints):
+            # print('============')
+            # print(con.expr)
+            # print()
             # Need to extract from pyomo model
             for c in con.values():
                 # Extract the expression, which includes the operator
@@ -96,24 +99,25 @@ def unit_corrector(pyomo_component):
                 # Walk the expression
                 #print(str(cexpr))
                 rv = visitor.walk_expression(cexpr)
+                # print(rv)
 
 ######################## Delete Old and Add Corrected Constraint ########################
 
                 # need to put rv into new pyomo model
-                #print(dir(corrected_model.ConstraintList))
+                # print(dir(corrected_model.ConstraintList))
                 corrected_model.__delattr__(con.name)  # remove existing constraint
                 corrected_model.__setattr__(con.name, pyo.Constraint(expr=rv))  # define a new one
-                #print(rv)
+                # print(rv)
                 #corrected_model.del_component(con.name)
                 #corrected_model.add_component(con.name, pyo.Constraint(expr=rv))
                 
                 
 ###################################################################################
 
-    #corrected_model._constructed = False
-    #corrected_model.construct()
+    # corrected_model._constructed = False
+    # corrected_model.construct()
 
-    print('\n\n\nUnit Corrected Pyomo Objective:\n\n\n')
-    corrected_model.pprint()
+    # print('\n\n\nUnit Corrected Pyomo Objective:\n\n\n')
+    # corrected_model.pprint()
     
     return corrected_model
