@@ -74,7 +74,7 @@ def unit_corrector(pyomo_component):
 
     for obj in objectives:
         # Walk the expression, returns the full breakdown of the constraint in dictionary form
-        rv = visitor.walk_expression(obj.sense * obj)
+        rv = visitor.walk_expression(obj.sense * obj).expr
 
 ########################## Delete Old and Add Corrected Objective ##########################
 

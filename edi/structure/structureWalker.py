@@ -68,7 +68,7 @@ from pyomo.core.expr.numeric_expr import (
     NPV_PowExpression,
     NPV_NegationExpression,
     PowExpression as NE_PowExpression,
-    # DivisionExpression as NE_DivisionExpression,
+    DivisionExpression as NE_DivisionExpression,
 ) 
 
 from pyomo.core.base.block import IndexedBlock
@@ -465,7 +465,7 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
             NPV_ProductExpression: handle_product_node,
             NPV_PowExpression: handle_pow_node,
             NPV_NegationExpression: handle_negation_node,
-            # NE_DivisionExpression: handle_division_node,
+            NE_DivisionExpression: handle_division_node,
             NE_PowExpression: handle_pow_node,
             VarData: handle_var_node,
             _PyomoUnit: handle_unit_node,
