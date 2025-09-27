@@ -30,7 +30,7 @@ def cvxopt_solve(m):
     m_corrected_units = unit_corrector(m)
     # print('walking structure')
     structures = structure_detector(m_corrected_units)
-    print('Detected problem structure')
+    # print('Detected problem structure')
     
     # structures = structure_detector(m)
     # print(structures)
