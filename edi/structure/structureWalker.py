@@ -507,7 +507,7 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
 
             return opt
         except:
-            raise DeveloperError(
-                'Structure walker encountered an error when processing type %s, contact the developers'
+            raise RuntimeError(
+                'Structure walker encountered an error when processing type %s, contact the EDI developers'
                 % (node.__class__)
             )

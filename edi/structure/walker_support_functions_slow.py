@@ -123,8 +123,7 @@ class SubStructureDictionary(object):
         self.parent_copy[self.type][key] = value
 
     def propagate(self):
-        if self.parent_copy['_changed']:  # Only propagate if actually changed
-            propagate(self.parent_copy)
+        propagate(self.parent_copy)
 
 
 class StructureDictionary(object):
@@ -169,8 +168,7 @@ class StructureDictionary(object):
         self.__dict__[key] = value
 
     def propagate(self):
-        if self._parent_dictionary['_changed']:  # Only propagate if actually changed
-            propagate(self._parent_dictionary)
+        propagate(self._parent_dictionary)
 
 def no_structure_dict():
     return StructureDictionary()
@@ -180,36 +178,31 @@ def monomial_multiplication(lhm,rhm):
 
     mon['monomial']['status'] = 'yes'
     mon['monomial']['leadingConstant'] = lhm['monomial']["leadingConstant"] * rhm['monomial']["leadingConstant"]
-    
     lbases = lhm['monomial']['bases']
     lexps  = lhm['monomial']['exponents']
     rbases = rhm['monomial']['bases']
     rexps  = rhm['monomial']['exponents']
-    
-    # Use dictionary for O(1) lookup instead of nested loops
-    base_to_exp = {}
-    
-    # Add left side bases and exponents
-    for i, base in enumerate(lbases):
-        base_to_exp[id(base)] = (base, lexps[i])
-    
-    # Process right side bases, combining with left if they match
-    for i, base in enumerate(rbases):
-        base_id = id(base)
-        if base_id in base_to_exp:
-            # Combine exponents for matching base
-            existing_base, existing_exp = base_to_exp[base_id]
-            base_to_exp[base_id] = (existing_base, existing_exp + rexps[i])
-        else:
-            # Add new base
-            base_to_exp[base_id] = (base, rexps[i])
-    
-    # Extract results
+    matches = {}
+    rskips  = []
     newBases = []
-    newExps = []
-    for base, exp in base_to_exp.values():
-        newBases.append(base)
-        newExps.append(exp)
+    newExps  = []
+    for iii in range(0,len(lbases)):
+        for jjj in range(0,len(rbases)):
+            if lbases[iii] is rbases[jjj]:
+                matches[iii] = jjj
+                rskips.append(jjj)
+    lkeys = list(matches.keys())
+    for iii in range(0,len(lbases)):
+        if iii in lkeys:
+            newBases.append(lbases[iii])
+            newExps.append(lexps[iii] + rexps[matches[iii]])
+        else:
+            newBases.append(lbases[iii])
+            newExps.append(lexps[iii])
+    for jjj in range(0,len(rbases)):
+        if jjj not in rskips:
+            newBases.append(rbases[jjj])
+            newExps.append(rexps[jjj])
 
     mon['monomial']['bases'] = newBases
     mon['monomial']['exponents'] = newExps
@@ -217,69 +210,36 @@ def monomial_multiplication(lhm,rhm):
     return mon
 
 def signomial_multiplication(lhe,rhe):
-    lhe_coeffs = lhe['signomial']['leadingCoefficients']
-    lhe_bases = lhe['signomial']['bases']
-    lhe_exps = lhe['signomial']['exponents']
-    
-    rhe_coeffs = rhe['signomial']['leadingCoefficients']
-    rhe_bases = rhe['signomial']['bases']
-    rhe_exps = rhe['signomial']['exponents']
-    
-    # Pre-allocate result lists with known size
-    num_terms = len(lhe_coeffs) * len(rhe_coeffs)
-    result_coeffs = []
-    result_bases = []
-    result_exps = []
-    
-    for i in range(len(lhe_coeffs)):
-        lh_coeff = lhe_coeffs[i]
-        lh_bases = lhe_bases[i]
-        lh_exps = lhe_exps[i]
-        
-        for j in range(len(rhe_coeffs)):
-            rh_coeff = rhe_coeffs[j]
-            rh_bases = rhe_bases[j]
-            rh_exps = rhe_exps[j]
+    rhe_new = StructureDictionary()
+    rhe_new['signomial']['status'] = 'yes'
+    rhe_new['signomial']['leadingCoefficients'] = []
+    rhe_new['signomial']['bases'] = []
+    rhe_new['signomial']['exponents'] = []
+
+    for i in range(0,len(lhe['signomial']['leadingCoefficients'])):
+        for j in range(0,len(rhe['signomial']['leadingCoefficients'])):
+            # Create proper monomial dictionaries
+            lhm = {'monomial': {'leadingConstant': lhe['signomial']['leadingCoefficients'][i], 
+                               'bases': lhe['signomial']['bases'][i], 
+                               'exponents': lhe['signomial']['exponents'][i]}}
+            rhm = {'monomial': {'leadingConstant': rhe['signomial']['leadingCoefficients'][j], 
+                               'bases': rhe['signomial']['bases'][j], 
+                               'exponents': rhe['signomial']['exponents'][j]}}
             
-            # Multiply coefficients
-            new_coeff = lh_coeff * rh_coeff
-            
-            # Combine bases and exponents using the optimized approach
-            base_to_exp = {}
-            
-            # Add left bases
-            for k, base in enumerate(lh_bases):
-                base_to_exp[id(base)] = (base, lh_exps[k])
-            
-            # Add/combine right bases
-            for k, base in enumerate(rh_bases):
-                base_id = id(base)
-                if base_id in base_to_exp:
-                    existing_base, existing_exp = base_to_exp[base_id]
-                    base_to_exp[base_id] = (existing_base, existing_exp + rh_exps[k])
-                else:
-                    base_to_exp[base_id] = (base, rh_exps[k])
-            
-            # Extract combined results
-            new_bases = []
-            new_exps = []
-            for base, exp in base_to_exp.values():
-                new_bases.append(base)
-                new_exps.append(exp)
-            
-            result_coeffs.append(new_coeff)
-            result_bases.append(new_bases)
-            result_exps.append(new_exps)
+            mon = monomial_multiplication(lhm, rhm)
+
+            rhe_new['signomial']['leadingCoefficients'].append(mon['monomial']["leadingConstant"])
+            rhe_new['signomial']['bases'].append(mon['monomial']['bases'])
+            rhe_new['signomial']['exponents'].append(mon['monomial']['exponents'])
 
     elementDict = StructureDictionary()
     elementDict['signomial']['status'] = 'yes'
-    elementDict['signomial']['leadingCoefficients'] = result_coeffs
-    elementDict['signomial']['bases'] = result_bases
-    elementDict['signomial']['exponents'] = result_exps
+    elementDict['signomial']['leadingCoefficients'] = rhe_new['signomial']['leadingCoefficients']
+    elementDict['signomial']['bases'] = rhe_new['signomial']['bases']
+    elementDict['signomial']['exponents'] = rhe_new['signomial']['exponents']
     elementDict.propagate()
 
     return elementDict
-
 
 def signomial_fraction_multiplication(lhf,rhf):
     # print(lhf)
@@ -334,15 +294,10 @@ def signomial_fraction_multiplication(lhf,rhf):
     # print(elementDict)
     return elementDict
 
-def signomial_power_evaluation(sig, expVal):
+def signomial_power_evaluation(sig,expVal):
     if sig['signomial']['status'] != 'yes':
         raise ValueError("Signomial data is not flagged as 'yes'")
-    
-    sig_coeffs = sig['signomial']['leadingCoefficients']
-    sig_bases = sig['signomial']['bases']
-    sig_exps = sig['signomial']['exponents']
-    
-    if len(sig_coeffs) != len(sig_bases) or len(sig_coeffs) != len(sig_exps):
+    if len(sig['signomial']['leadingCoefficients']) != len(sig['signomial']['bases']) or len(sig['signomial']['leadingCoefficients']) != len(sig['signomial']['exponents']) :
         raise ValueError("Signomial data has inconsistent lengths")
 
     if expVal == 0:
@@ -356,61 +311,46 @@ def signomial_power_evaluation(sig, expVal):
         sd = StructureDictionary()
         return sd
 
-    if expVal == 1:
-        # No need to multiply, just copy the signomial
-        result = StructureDictionary()
-        result['signomial']['status'] = 'yes'
-        result['signomial']['leadingCoefficients'] = sig_coeffs[:]  # shallow copy
-        result['signomial']['bases'] = [base[:] for base in sig_bases]  # copy lists
-        result['signomial']['exponents'] = [exp[:] for exp in sig_exps]  # copy lists
-        result.propagate()
-        return result
-
-    # Use exponentiation by squaring for better performance
-    exp_int = int(expVal)
-    result = StructureDictionary()
-    result['signomial']['status'] = 'yes'
-    result['signomial']['leadingCoefficients'] = sig_coeffs[:]
-    result['signomial']['bases'] = [base[:] for base in sig_bases]
-    result['signomial']['exponents'] = [exp[:] for exp in sig_exps]
-    result.propagate()
+    # Manual copy instead of deepcopy
+    sig_lhe = StructureDictionary()
+    sig_lhe['signomial']['status'] = 'yes'
+    sig_lhe['signomial']['leadingCoefficients'] = sig['signomial']['leadingCoefficients'].copy()
+    sig_lhe['signomial']['bases'] = [base.copy() for base in sig['signomial']['bases']]
+    sig_lhe['signomial']['exponents'] = [exp.copy() for exp in sig['signomial']['exponents']]
+    sig_lhe.propagate()
     
-    # Use the base signomial for multiplication
-    base_sig = StructureDictionary()
-    base_sig['signomial']['status'] = 'yes'
-    base_sig['signomial']['leadingCoefficients'] = sig_coeffs[:]
-    base_sig['signomial']['bases'] = [base[:] for base in sig_bases]
-    base_sig['signomial']['exponents'] = [exp[:] for exp in sig_exps]
-    base_sig.propagate()
-    
-    # Iterative multiplication (can be further optimized with binary exponentiation)
-    for ii in range(exp_int - 1):
-        result = signomial_multiplication(result, base_sig)
-        result.propagate()
+    sig_rhe = StructureDictionary()
+    sig_rhe['signomial']['status'] = 'yes'
+    sig_rhe['signomial']['leadingCoefficients'] = sig['signomial']['leadingCoefficients'].copy()
+    sig_rhe['signomial']['bases'] = [base.copy() for base in sig['signomial']['bases']]
+    sig_rhe['signomial']['exponents'] = [exp.copy() for exp in sig['signomial']['exponents']]
+    sig_rhe.propagate()
 
-    return result
+    for ii in range(0,int(expVal)-1):
+        sig_rhe_new = signomial_multiplication(sig_lhe,sig_rhe)
+        sig_rhe = sig_rhe_new  ##TODO:  need to make this consistent for powers greater than 2 where the new RHE will be a full object ## I dont remember what this means
+        sig_rhe.propagate()
 
-def processMonomial(ix, coeff, bases, exponents, N_vars_unwrapped, variableMap):
-    gpRow = [0.0] * (N_vars_unwrapped + 2)
+    return sig_rhe
+
+def processMonomial(ix,coeff,bases,exponents,N_vars_unwrapped,variableMap):
+    gpRow = [0.0]*(N_vars_unwrapped+2)
     gpRow[0] = ix
     gpRow[1] = coeff
-    
-    # Pre-compute type checks to avoid repeated isinstance calls
-    for i in range(len(bases)):
+    for i in range(0,len(bases)):
         bs = bases[i]
-        expt = exponents[i]
-        
-        if isinstance(bs, VarData):
+        if isinstance(bs,VarData):
             vr_ix = variableMap[bs]
-            gpRow[2 + vr_ix] = expt
-        elif isinstance(bs, ParamData):
+            gpRow[2+vr_ix] = exponents[i]
+        elif isinstance(bs,ParamData):
             vl = bs.value
-            gpRow[1] *= vl ** expt
+            expt = exponents[i]
+            gpRow[1] *= vl**expt
         elif isinstance(bs, (int, float)):
             # Handle numeric values directly
             vl = float(bs)
-            gpRow[1] *= vl ** expt
+            expt = exponents[i]
+            gpRow[1] *= vl**expt
         else:
             raise ValueError(f'Unexpected type in the base: {type(bs)}')
-    
     return gpRow
