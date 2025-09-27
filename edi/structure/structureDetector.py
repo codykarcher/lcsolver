@@ -176,9 +176,9 @@ def structure_detector(pyomo_component):
     # obj_con_vars = []
     # for i, obj in enumerate(objectives):
     #     objvrs = list(identify_variables(obj))
-    #     print(objvrs)
+    #     # print(objvrs)
     #     for v in objvrs:
-    #         if v not in obj_con_vars:
+    #         if v.name not in [vv.name for vv in obj_con_vars]:
     #             obj_con_vars.append(v)
     # if len(constraints) > 0:
     #     # print(structures)
@@ -186,11 +186,13 @@ def structure_detector(pyomo_component):
     #     # operatorList = []
     #     # Iterate over the constraints
     #     for i, con in enumerate(constraints):
-    #         convrs = [ vr for vr in con.component_objects(pyo.Var, descend_into=True, active=True) ]
+    #         convrs = list(identify_variables(con)) #[ vr for vr in con.component_objects(pyo.Var, descend_into=True, active=True) ]
     #         for v in convrs:
-    #             if v not in obj_con_vars:
+    #             if v.name not in [vv.name for vv in obj_con_vars]:
     #                 obj_con_vars.append(v)
-    # print(obj_con_vars)
+    # # print(obj_con_vars)
+
+    # variableList = obj_con_vars
 
 
     # Need to create a mapping between the variable and the index as stored in the optimization problem
@@ -310,9 +312,13 @@ def structure_detector(pyomo_component):
                 N_cons += 1
                 # Extract the expression, which includes the operator
                 cexpr = c.expr
+                # print('========================================================================')
+                # print(cexpr)
+                # print('------------------------------------------------------------------------')
                 # Walk the expression
                 rv = visitor.walk_expression(cexpr)
                 # print(rv)
+                # print('========================================================================')
                 # Rv includes all constant, monomial, signomial, etc...  Walk through each of these
                 for rvv in rv:
                     # Extract all of the GP style matricies

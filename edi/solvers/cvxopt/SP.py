@@ -355,6 +355,7 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1e-2, max_iter = 20, use_p
             prevObj = res['primal objective']
 
         # print(pack)
+        # print('solving GP approximation')
         res = solve_GP(pack)
 
         # new_x_star = x_star + 0.5*(np.array(res['x']).reshape(len(x_star))-x_star)

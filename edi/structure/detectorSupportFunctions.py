@@ -91,44 +91,82 @@ def gpRow_divide(gr1, gr2):
 
 
 def collapseGProws(gpRows):
-    similarTerms = []
-    skipList = []
-    for i in range(0,len(gpRows)):
-        if i not in skipList:
-            for j in range(0,len(gpRows)):
-                if j>i and j not in skipList:
-                    if gpRows[i][2:] == gpRows[j][2:] and gpRows[i][0] == gpRows[j][0]:
-                        skipList.append(i)
-                        skipList.append(j)
-                        doAppend = True
-                        for ii in range(0,len(similarTerms)):
-                            if i in similarTerms[ii]:
-                                similarTerms[ii].append(j)
-                                dontAppend = False
-                                break
-                        if doAppend:
-                            similarTerms.append([i,j])
+    # this function was improved by AI for speed
+    if not gpRows:
+        return []
     
+    # Group terms by (constraint_index, exponents) tuple for efficient lookup
+    # Key: (constraint_index, tuple(exponents)), Value: list of indices with same key
+    term_groups = {}
+    
+    for i, row in enumerate(gpRows):
+        if row[1] == 0:  # Skip zero coefficient terms early
+            continue
+            
+        # Create key from constraint index and exponents
+        key = (row[0], tuple(row[2:]))
+        
+        if key not in term_groups:
+            term_groups[key] = []
+        term_groups[key].append(i)
+    
+    # Build result by combining coefficients for each group
     gpRows_new = []
-    skipList = []
-    for i in range(0,len(gpRows)):
-        doAppend = True
-        if i in skipList:
-            doAppend = False
-        for ii in range(0,len(similarTerms)):
-            if i in similarTerms[ii] and i not in skipList:
-                gpRow_new = gpRows[i]
-                gpRow_new[1] = sum([gpRows[c][1] for c in similarTerms[ii]])
-                if gpRow_new[1] != 0:
-                    gpRows_new.append(gpRow_new)
-                skipList += similarTerms[ii]
-                doAppend = False
-                break
-        if doAppend:
-            if gpRows[i][1] != 0:
-                gpRows_new.append(gpRows[i])
-
+    for key, indices in term_groups.items():
+        if len(indices) == 1:
+            # Single term, just copy it
+            gpRows_new.append(gpRows[indices[0]][:])  # Make a copy to avoid modifying original
+        else:
+            # Multiple terms, sum coefficients
+            total_coeff = sum(gpRows[idx][1] for idx in indices)
+            if total_coeff != 0:  # Only add if non-zero
+                # Use first row as template and update coefficient
+                new_row = gpRows[indices[0]][:]  # Make a copy
+                new_row[1] = total_coeff
+                gpRows_new.append(new_row)
+    
     return gpRows_new
+
+
+# def collapseGProws(gpRows):
+#     similarTerms = []
+#     skipList = []
+#     for i in range(0,len(gpRows)):
+#         if i not in skipList:
+#             for j in range(0,len(gpRows)):
+#                 if j>i and j not in skipList:
+#                     if gpRows[i][2:] == gpRows[j][2:] and gpRows[i][0] == gpRows[j][0]:
+#                         skipList.append(i)
+#                         skipList.append(j)
+#                         doAppend = True
+#                         for ii in range(0,len(similarTerms)):
+#                             if i in similarTerms[ii]:
+#                                 similarTerms[ii].append(j)
+#                                 dontAppend = False
+#                                 break
+#                         if doAppend:
+#                             similarTerms.append([i,j])
+    
+#     gpRows_new = []
+#     skipList = []
+#     for i in range(0,len(gpRows)):
+#         doAppend = True
+#         if i in skipList:
+#             doAppend = False
+#         for ii in range(0,len(similarTerms)):
+#             if i in similarTerms[ii] and i not in skipList:
+#                 gpRow_new = gpRows[i]
+#                 gpRow_new[1] = sum([gpRows[c][1] for c in similarTerms[ii]])
+#                 if gpRow_new[1] != 0:
+#                     gpRows_new.append(gpRow_new)
+#                 skipList += similarTerms[ii]
+#                 doAppend = False
+#                 break
+#         if doAppend:
+#             if gpRows[i][1] != 0:
+#                 gpRows_new.append(gpRows[i])
+
+#     return gpRows_new
 
 
 def parseDict_GP(ix,rv,N_vars_unwrapped,variableMap):

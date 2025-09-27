@@ -242,12 +242,15 @@ def signomial_multiplication(lhe,rhe):
     return elementDict
 
 def signomial_fraction_multiplication(lhf,rhf):
+    # print(lhf)
+    # print(rhf)
     left_numerator   = StructureDictionary()
     left_numerator['signomial']['status']              = 'yes'
     left_numerator['signomial']['leadingCoefficients'] = lhf['signomial_fraction']['numerator']['leadingCoefficients']
     left_numerator['signomial']['bases']               = lhf['signomial_fraction']['numerator']['bases']
     left_numerator['signomial']['exponents']           = lhf['signomial_fraction']['numerator']['exponents']
     left_numerator.propagate()
+    # print('left_numerator')
 
     left_denominator = StructureDictionary()
     left_denominator['signomial']['status']              = 'yes'
@@ -255,6 +258,7 @@ def signomial_fraction_multiplication(lhf,rhf):
     left_denominator['signomial']['bases']               = lhf['signomial_fraction']['denominator']['bases']
     left_denominator['signomial']['exponents']           = lhf['signomial_fraction']['denominator']['exponents']
     left_denominator.propagate()
+    # print('left_denominator')
 
     right_numerator   = StructureDictionary()
     right_numerator['signomial']['status']              = 'yes'
@@ -262,6 +266,7 @@ def signomial_fraction_multiplication(lhf,rhf):
     right_numerator['signomial']['bases']               = rhf['signomial_fraction']['numerator']['bases']
     right_numerator['signomial']['exponents']           = rhf['signomial_fraction']['numerator']['exponents']
     right_numerator.propagate()
+    # print('right_numerator')
 
     right_denominator = StructureDictionary()
     right_denominator['signomial']['status']              = 'yes'
@@ -269,21 +274,24 @@ def signomial_fraction_multiplication(lhf,rhf):
     right_denominator['signomial']['bases']               = rhf['signomial_fraction']['denominator']['bases']
     right_denominator['signomial']['exponents']           = rhf['signomial_fraction']['denominator']['exponents']
     right_denominator.propagate()
+    # print('right_denominator')
 
     new_num = signomial_multiplication(left_numerator,right_numerator)
     new_dem = signomial_multiplication(left_denominator,right_denominator)
 
     new_num.propagate()
     new_dem.propagate()
+    # print('new')
 
     elementDict = StructureDictionary()
     elementDict['signomial_fraction']['status']                             = 'yes'
-    elementDict['signomial_fraction']['numerator']['leadingCoefficients']   = new_num['leadingCoefficients']
-    elementDict['signomial_fraction']['numerator']['bases']                 = new_num['bases']
-    elementDict['signomial_fraction']['numerator']['exponents']             = new_num['exponents']
-    elementDict['signomial_fraction']['denominator']['leadingCoefficients'] = new_dem['leadingCoefficients']
-    elementDict['signomial_fraction']['denominator']['bases']               = new_dem['bases']
-    elementDict['signomial_fraction']['denominator']['exponents']           = new_dem['exponents']
+    elementDict['signomial_fraction']['numerator']['leadingCoefficients']   = new_num['signomial']['leadingCoefficients']
+    elementDict['signomial_fraction']['numerator']['bases']                 = new_num['signomial']['bases']
+    elementDict['signomial_fraction']['numerator']['exponents']             = new_num['signomial']['exponents']
+    elementDict['signomial_fraction']['denominator']['leadingCoefficients'] = new_dem['signomial']['leadingCoefficients']
+    elementDict['signomial_fraction']['denominator']['bases']               = new_dem['signomial']['bases']
+    elementDict['signomial_fraction']['denominator']['exponents']           = new_dem['signomial']['exponents']
+    # print(elementDict)
     return elementDict
 
 def signomial_power_evaluation(sig,expVal):

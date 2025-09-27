@@ -26,7 +26,9 @@ def cvxopt_solve(m):
     cvxopt.solvers.options['feastol'] = 1e-6
     cvxopt.printing.options['width'] = -1
 
+    # print('walking units')
     m_corrected_units = unit_corrector(m)
+    # print('walking structure')
     structures = structure_detector(m_corrected_units)
     
     # structures = structure_detector(m)

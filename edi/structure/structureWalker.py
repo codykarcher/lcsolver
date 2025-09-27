@@ -113,6 +113,7 @@ from edi.structure.walkerSupportFunctions import (
 
 
 def handle_sumExpression_node(visitor, node, *args):
+    # print('handling node handle_sumExpression_node(visitor, node, *args):')
     if any([ a['signomial_fraction']['status']!='yes' for a in args]):
         return no_structure_dict()
 
@@ -125,7 +126,7 @@ def handle_sumExpression_node(visitor, node, *args):
             a_denom['signomial']['status'] = 'yes'
             a_denom['signomial']['leadingCoefficients'] = a['signomial_fraction']['denominator']['leadingCoefficients']
             a_denom['signomial']['bases']               = a['signomial_fraction']['denominator']['bases']
-            a_denom['signomial']['exponents'] = a['signomial_fraction']['denominator']['exponents']
+            a_denom['signomial']['exponents']           = a['signomial_fraction']['denominator']['exponents']
             a_denom.propagate()
             signomial_denominator = signomial_multiplication(signomial_denominator, a_denom)
 
@@ -165,12 +166,12 @@ def handle_sumExpression_node(visitor, node, *args):
 
         nsd = StructureDictionary()
         nsd['signomial_fraction']['status'] = 'yes'
-        nsd['signomial_fraction']['numerator']['leadingCoefficients']   = signomial_numerator['leadingCoefficients']
-        nsd['signomial_fraction']['numerator']['bases']                 = signomial_numerator['bases']
-        nsd['signomial_fraction']['numerator']['exponents']             = signomial_numerator['exponents']
-        nsd['signomial_fraction']['denominator']['leadingCoefficients'] = signomial_denominator['leadingCoefficients']
-        nsd['signomial_fraction']['denominator']['bases']               = signomial_denominator['bases']
-        nsd['signomial_fraction']['denominator']['exponents']           = signomial_denominator['exponents']
+        nsd['signomial_fraction']['numerator']['leadingCoefficients']   = signomial_numerator['signomial']['leadingCoefficients']
+        nsd['signomial_fraction']['numerator']['bases']                 = signomial_numerator['signomial']['bases']
+        nsd['signomial_fraction']['numerator']['exponents']             = signomial_numerator['signomial']['exponents']
+        nsd['signomial_fraction']['denominator']['leadingCoefficients'] = signomial_denominator['signomial']['leadingCoefficients']
+        nsd['signomial_fraction']['denominator']['bases']               = signomial_denominator['signomial']['bases']
+        nsd['signomial_fraction']['denominator']['exponents']           = signomial_denominator['signomial']['exponents']
         nsd.propagate()
 
         return nsd
@@ -208,6 +209,7 @@ def handle_sumExpression_node(visitor, node, *args):
     return handle_num_node(visitor,float(vl))
 
 def handle_product_node(visitor, node, arg1, arg2):
+    # print('handling node handle_product_node(visitor, node, arg1, arg2):')
     if arg1["constant"]["status"] == "yes" and arg2["constant"]["status"] == "yes":
         vl = float(arg1['constant']['value']*arg2['constant']['value'])
         return handle_num_node(visitor,vl)
@@ -221,6 +223,7 @@ def handle_product_node(visitor, node, arg1, arg2):
     if ( (arg1["constant"]["status"] == "yes" and arg2["monomial"]["status"] == "yes") or 
          (arg1["monomial"]["status"] == "yes" and arg2["monomial"]["status"] == "yes") ):
 
+        # print('mon')
         return monomial_multiplication(arg1,arg2)
 
     if ( (arg1["signomial"]["status"] == "yes" and arg2["constant"]["status"] == "yes") or
@@ -234,6 +237,7 @@ def handle_product_node(visitor, node, arg1, arg2):
          (arg1["monomial"]["status"]  == "yes" and arg2["signomial"]["status"] == "yes") or 
          (arg1["signomial"]["status"] == "yes" and arg2["signomial"]["status"] == "yes") ):
 
+        # print('sig')
         return signomial_multiplication(arg1, arg2)
 
     if ( (arg1["signomial_fraction"]["status"] == "yes" and arg2["constant"]["status"] == "yes") or 
@@ -249,11 +253,13 @@ def handle_product_node(visitor, node, arg1, arg2):
          (arg1["signomial"]["status"]          == "yes" and arg2["signomial_fraction"]["status"] == "yes") or 
          (arg1["signomial_fraction"]["status"] == "yes" and arg2["signomial_fraction"]["status"] == "yes") ):
 
+        # print('sigfrac')
         return signomial_fraction_multiplication(arg1, arg2)
 
     return no_structure_dict()
 
 def handle_division_node(visitor, node, arg1, arg2):
+    # print('handling node handle_division_node(visitor, node, arg1, arg2):')
     if arg2["constant"]["status"] == "yes":
         arg2['constant']['value'] = 1/arg2['constant']['value']
         arg2.propagate()
@@ -264,20 +270,21 @@ def handle_division_node(visitor, node, arg1, arg2):
         arg2.propagate()
         return handle_product_node(visitor, node, arg1, arg2)
     if arg2["signomial"]["status"] == "yes":
-        arg2['signomial']['status'] = 'no'
-        arg2['signomial_fraction']['status'] = 'yes'  
-        arg2['signomial_fraction']['numerator']['leadingCoefficients'] = [1.0]
-        arg2['signomial_fraction']['numerator']['bases'] = [[]]
-        arg2['signomial_fraction']['numerator']['exponents'] = [[]]
-        arg2['signomial_fraction']['denominator']['leadingCoefficients'] = arg2["signomial"]['leadingCoefficients']
-        arg2['signomial_fraction']['denominator']['bases'] = arg2["signomial"]['bases']
-        arg2['signomial_fraction']['denominator']['exponents'] = arg2["signomial"]['exponents']
-        arg2.propagate()
-        return handle_product_node(visitor, node, arg1, arg2)
+        a2 = no_structure_dict()
+        a2['signomial_fraction']['status'] = 'yes'  
+        a2['signomial_fraction']['numerator']['leadingCoefficients'] = [1.0]
+        a2['signomial_fraction']['numerator']['bases'] = [[]]
+        a2['signomial_fraction']['numerator']['exponents'] = [[]]
+        a2['signomial_fraction']['denominator']['leadingCoefficients'] = arg2["signomial"]['leadingCoefficients']
+        a2['signomial_fraction']['denominator']['bases'] = arg2["signomial"]['bases']
+        a2['signomial_fraction']['denominator']['exponents'] = arg2["signomial"]['exponents']
+        a2.propagate()
+        return handle_product_node(visitor, node, arg1, a2)
 
     return no_structure_dict()
 
 def handle_pow_node(visitor, node, arg1, arg2):
+    # print('handling node handle_pow_node(visitor, node, arg1, arg2):')
     if arg2["constant"]["value"] is None:
         return no_structure_dict()
     elif arg2["constant"]["status"]=='no' and arg2["constant"]["value"] is not None:
@@ -340,10 +347,12 @@ def handle_pow_node(visitor, node, arg1, arg2):
     return no_structure_dict()      
 
 def handle_negation_node(visitor, node, arg1):
+    # print('handling node handle_negation_node(visitor, node, arg1):')
     arg2 = handle_num_node(visitor, -1.0)
     return handle_product_node(visitor,node,arg2,arg1)
 
 def handle_var_node(visitor, node):
+    # print('handling node handle_var_node(visitor, node):')
     # TODO: should exempt the case of a fixed variable
     elementDict = StructureDictionary()
     elementDict['monomial']['status'] = 'yes'
@@ -354,6 +363,7 @@ def handle_var_node(visitor, node):
     return elementDict
 
 def handle_param_node(visitor, node):
+    # print('handling node handle_param_node(visitor, node):')
     elementDict = StructureDictionary()
     elementDict['constant']['value'] = node
     elementDict['monomial']['status'] = 'yes'
@@ -364,6 +374,7 @@ def handle_param_node(visitor, node):
     return elementDict
 
 def handle_unary_node(visitor, node, arg1):
+    # print('handling node handle_unary_node(visitor, node, arg1):')
     fcn_handle = node.getname()
     if fcn_handle == 'sqrt':
         arg2 = handle_num_node(visitor, 0.5)
@@ -373,6 +384,7 @@ def handle_unary_node(visitor, node, arg1):
         return no_structure_dict()
 
 def handle_abs_node(visitor, node, arg1):
+    # print('handling node handle_abs_node(visitor, node, arg1):')
     if arg1['constant']['status']=='yes':
         vl = abs(arg1['constant']['value'])
         return handle_num_node(visitor,float(vl))
@@ -381,6 +393,7 @@ def handle_abs_node(visitor, node, arg1):
         return no_structure_dict()  
 
 def handle_num_node(visitor, node):
+    # print('handling node handle_num_node(visitor, node):')
     elementDict = StructureDictionary()
     elementDict['constant']['status'] = 'yes'
     elementDict['constant']['value'] = float(node)
@@ -388,37 +401,46 @@ def handle_num_node(visitor, node):
     return elementDict
 
 def handle_monomialTermExpression_node(visitor, node, arg1, arg2):
+    # print('handling node handle_monomialTermExpression_node(visitor, node, arg1, arg2):')
     return handle_product_node(visitor,node,arg1,arg2)
 
 def handle_named_expression_node(visitor, node, arg1):
+    # print('handling node handle_named_expression_node(visitor, node, arg1):')
     # needed to preserve consistency with the exitNode function call
     # prevents the need to type check in the exitNode function
     return arg1
 
 def handle_exprif_node(visitor, node, arg1, arg2, arg3):
+    # print('handling node handle_exprif_node(visitor, node, arg1, arg2, arg3):')
     # has no structure
     return no_structure_dict()
 
 def handle_external_function_node(visitor, node, *args):
+    # print('handling node handle_external_function_node(visitor, node, *args):')
     # has no structure
     return no_structure_dict()
 
 def handle_functionID_node(visitor, node, *args):
+    # print('handling node handle_functionID_node(visitor, node, *args):')
     # seems to just be a placeholder empty wrapper object
     return handle_external_function_node(visitor, node, *args)
 
 def handle_equality_node(visitor, node, arg1, arg2):
+    # print('handling node handle_equality_node(visitor, node, arg1, arg2):')
     return [ {'lhs':arg1, 'operator':'==', 'rhs':arg2} ]
 
 def handle_inequality_node(visitor, node, arg1, arg2):
+    # print('handling node handle_inequality_node(visitor, node, arg1, arg2):')
     return [ {'lhs':arg1, 'operator':'<=', 'rhs':arg2} ]
 
 def handle_ranged_inequality_node(visitor, node, arg1, arg2, arg3):
+    # print('handling node handle_ranged_inequality_node(visitor, node, arg1, arg2, arg3):')
     return [ {'lhs':arg1, 'operator':'<=', 'rhs':arg2},
              {'lhs':arg2, 'operator':'<=', 'rhs':arg3}  ]
 
 # TODO: fix this
 def handle_unit_node(visitor, node):
+    # print('handling node handle_unit_node(visitor, node):')
     elementDict = StructureDictionary()
     elementDict['constant']['status'] = 'yes'
     elementDict['constant']['value'] = 1.0
@@ -476,7 +498,14 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
 
     def exitNode(self, node, data):
         try:
-            return self._operator_handles[node.__class__](self, node, *data)
+            # print('++++++++++++')
+            # print(node)
+            # print(type(node))
+
+            opt = self._operator_handles[node.__class__](self, node, *data)
+            # print('done')
+
+            return opt
         except:
             raise DeveloperError(
                 'Structure walker encountered an error when processing type %s, contact the developers'
