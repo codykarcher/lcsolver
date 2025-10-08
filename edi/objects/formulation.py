@@ -230,10 +230,10 @@ class Formulation(ConcreteModel):
                         raise ValueError(
                             'Invalid size.  Must be an integer or list/tuple of integers'
                         )
-                    if size[i] == 1:
-                        raise ValueError(
-                            'A value of 1 is not valid for defining size.  Use fewer dimensions.'
-                        )
+                    # if size[i] == 1:
+                    #     raise ValueError(
+                    #         'A value of 1 is not valid for defining size.  Use fewer dimensions.'
+                    #     )
                     if i == 0:
                         st = pyo.Set(initialize=list(range(0, size[i])))
                     else:
