@@ -22,7 +22,7 @@ from pyomo.core.expr.visitor import identify_variables
 from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
-# from pyomo.contrib.edi.tools.structureWalker import _StructureVisitor
+# from edi.structure.structureWalker import _StructureVisitor
 from edi.structure.structureWalker import _StructureVisitor
 
 from pyomo.common.dependencies import numpy, numpy_available
@@ -32,7 +32,7 @@ if numpy_available:
 else:
     raise ImportError('The stucture detector requires numpy')
 
-# from pyomo.contrib.edi.tools.detectorSupportFunctions import (
+# from edi.structure.detectorSupportFunctions import (
 #      gpRow_add,
 #      gpRow_subtract,
 #      # gpRow_multiply,
@@ -457,6 +457,10 @@ def structure_detector(pyomo_component):
     structures['info']['N_cons_total']    = N_cons
     structures['info']['N_cons_noBounds'] = N_cons - N_bound_cons
     structures['info']['N_cons_bounds']   = N_bound_cons
+    # Publish the variable ordering used for the exponent/coefficient columns.
+    # The solution vector returned by the cvxopt backends is indexed in exactly
+    # this order, so downstream code (notably solution write-back) needs it.
+    structures['variables'] = list(unwrappedVariables)
     # print(structures)
     return structures
 

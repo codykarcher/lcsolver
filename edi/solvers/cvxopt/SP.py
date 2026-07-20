@@ -25,7 +25,7 @@ cvxopt, cvxopt_available = attempt_import( "cvxopt" )
 if not cvxopt_available:
     raise ImportError('The Signomial Programming solver currently requires cvxopt')
 
-# from pyomo.contrib.edi.tools.detectorSupportFunctions import (
+# from edi.structure.detectorSupportFunctions import (
 #      # gpRow_add,
 #      # gpRow_subtract,
 #      gpRow_multiply,
@@ -41,7 +41,7 @@ from edi.structure.detectorSupportFunctions import (
      gpRow_divide,
 )
 
-# from pyomo.contrib.edi.solvers.cvxopt.GP import solve_GP
+# from edi.solvers.cvxopt.GP import solve_GP
 from edi.solvers.cvxopt.GP import solve_GP
 
 def evaluate_posynomial(gpRows,x_star):
@@ -158,7 +158,7 @@ def pccp_modification(constraintList,penalty_exponent=5.0):
     return constraintList, spCounter
 
 
-def solve_SP(structures, m, reltol=1e-4, var_reltol = 1e-2, max_iter = 20, use_pccp = True, penalty_exponent=5.0):
+def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0):
     variableList = [ vr for vr in m.component_objects( pyo.Var, descend_into=True, active=True ) ]
 
     unwrappedVariables = []
@@ -367,12 +367,13 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1e-2, max_iter = 20, use_p
         # print('=========')
         # print(itr)
         # print(res['primal objective'])
+        # print(res)
         # print(abs(prevObj - res['primal objective'])/res['primal objective'])
-        # print(reltol_check)
+        # # print(reltol_check)
         # for i in range(0,len(x_star)):
-        #     print('new_x: ',new_x_star[i])
-        #     # print(abs(new_x_star[i]-x_star[i])/new_x_star[i])
-        # print(var_reltol_check)
+        #     # print('new_x: ',new_x_star[i])
+        #     print(abs(new_x_star[i]-x_star[i])/new_x_star[i])
+        # # print(var_reltol_check)
 
         reltol_check = abs(prevObj - res['primal objective'])/res['primal objective'] <= reltol
 

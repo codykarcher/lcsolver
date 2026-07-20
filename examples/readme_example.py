@@ -3,8 +3,8 @@
 # =================
 import pyomo.environ as pyo
 from pyomo.environ import units
-from pyomo.contrib.edi import Formulation
-from pyomo.contrib.edi import BlackBoxFunctionModel
+from edi import Formulation
+from edi import BlackBoxFunctionModel
 
 # ===================
 # Declare Formulation

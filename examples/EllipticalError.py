@@ -3,7 +3,7 @@
 # =================
 import numpy as np
 import pyomo
-from pyomo.contrib.edi import Formulation
+from edi import Formulation
 from pyomo.environ import units
 
 
@@ -121,7 +121,7 @@ f.ConstraintList(Constraints)
 var_list = f.get_variables()
     
 f.pprint()
-from solver import cvxopt_solve
+from edi.solvers.solver import cvxopt_solve
 res = cvxopt_solve(f)
 print(res)
 

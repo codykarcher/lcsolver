@@ -20,7 +20,7 @@ from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
 
 
-# from pyomo.contrib.edi.tools.walkerSupportFunctions import (
+# from edi.structure.walkerSupportFunctions import (
 #     processMonomial,
 # )
 from edi.structure.walkerSupportFunctions import processMonomial

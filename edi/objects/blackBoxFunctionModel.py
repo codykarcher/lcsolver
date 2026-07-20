@@ -18,6 +18,7 @@
 import copy
 import pyomo
 import pyomo.environ as pyo
+import pyomo.core.expr.ndarray
 from pyomo.environ import units as pyomo_units
 from pyomo.common.dependencies import attempt_import
 
@@ -34,14 +35,14 @@ if numpy_available:
     import numpy as np
 else:
     raise ImportError(
-        "pyomo.contrib.edi requires numpy to enable black box capability, fix with 'pip install numpy' "
+        "edi requires numpy to enable black box capability, fix with 'pip install numpy' "
     )
 
 if scipy_available:
     import scipy.sparse as sps
 else:
     raise ImportError(
-        "pyomo.contrib.edi requires scipy to enable black box capability, fix with 'pip install scipy' "
+        "edi requires scipy to enable black box capability, fix with 'pip install scipy' "
     )
 
 if egb_available:
@@ -51,7 +52,7 @@ if egb_available:
     )
 else:
     raise ImportError(
-        "pyomo.contrib.edi requires pyomo.contrib.pynumero to be installed to enable black box capability, this should have installed with base pyomo"
+        "edi requires pyomo.contrib.pynumero to be installed to enable black box capability, this should have installed with base pyomo"
     )
 
 
@@ -426,7 +427,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                 modelOutputUnits = opt.units
                 outputOptimizationUnits = optimizationOutput.get_units()
                 vl = valueList[i]
-                if isinstance(vl, pyomo.core.expr.numeric_expr.NumericNDArray):
+                if isinstance(vl, pyomo.core.expr.ndarray.NumericNDArray):
                     validIndexList = optimizationOutput.index_set().data()
                     for j in range(0, len(validIndexList)):
                         vi = validIndexList[j]
@@ -495,7 +496,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                         ptr_row_step = 1
 
                     elif isinstance(
-                        jacobianValue_raw, pyomo.core.expr.numeric_expr.NumericNDArray
+                        jacobianValue_raw, pyomo.core.expr.ndarray.NumericNDArray
                     ):
                         jshape = jacobianValue_raw.shape
 
@@ -591,7 +592,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             ),
         ):
             return pyomo_units.convert(val, unts)
-        elif isinstance(val, pyomo.core.expr.numeric_expr.NumericNDArray):
+        elif isinstance(val, pyomo.core.expr.ndarray.NumericNDArray):
             shp = val.shape
             ix = np.ndindex(*shp)
             opt = np.zeros(shp)
@@ -606,7 +607,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         try:
             return pyo.value(val)
         except:
-            if isinstance(val, pyomo.core.expr.numeric_expr.NumericNDArray):
+            if isinstance(val, pyomo.core.expr.ndarray.NumericNDArray):
                 shp = val.shape
                 ix = np.ndindex(*shp)
                 opt = np.zeros(shp)
@@ -823,7 +824,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                         'Size did not match the expected size %s (ie: Scalar)'
                         % (str(size))
                     )
-            elif isinstance(szVal, pyomo.core.expr.numeric_expr.NumericNDArray):
+            elif isinstance(szVal, pyomo.core.expr.ndarray.NumericNDArray):
                 shp = szVal.shape
                 if isinstance(size, (int, float)):
                     size = [size]
@@ -879,7 +880,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             ipval = inputDict[name]
 
-            if isinstance(ipval, pyomo.core.expr.numeric_expr.NumericNDArray):
+            if isinstance(ipval, pyomo.core.expr.ndarray.NumericNDArray):
                 for ii in range(0, len(ipval)):
                     try:
                         ipval[ii] = self.convert(ipval[ii], unts)  # ipval.to(unts)
@@ -900,7 +901,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             # superseded by the custom convert function
             # if not isinstance(ipval_correctUnits, (pyomo.core.expr.numeric_expr.NPV_ProductExpression,
-            #                                        pyomo.core.expr.numeric_expr.NumericNDArray,
+            #                                        pyomo.core.expr.ndarray.NumericNDArray,
             #                                        pyomo.core.base.units_container._PyomoUnit)):
             #     ipval_correctUnits = ipval_correctUnits * pyomo_units.dimensionless
 
@@ -954,7 +955,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         #         ipval_correctUnits = ipval
 
         #     if not isinstance(ipval_correctUnits, (pyomo.core.expr.numeric_expr.NPV_ProductExpression,
-        #                                            pyomo.core.expr.numeric_expr.NumericNDArray,
+        #                                            pyomo.core.expr.ndarray.NumericNDArray,
         #                                            pyomo.core.base.units_container._PyomoUnit)):
         #         ipval_correctUnits = ipval_correctUnits * pyomo_units.dimensionless
 

@@ -3,7 +3,7 @@
 # ====================
 import numpy as np
 import pyomo 
-from formulation import Formulation
+from edi.objects.formulation import Formulation
 from pyomo.environ import units
 
 # ====================
@@ -1041,7 +1041,7 @@ constant_description = []
 
 ctr = 0
 
-from solver import cvxopt_solve
+from edi.solvers.solver import cvxopt_solve
 res = cvxopt_solve(f)
 # print(res)
 

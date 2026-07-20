@@ -14,11 +14,43 @@ EDI also requires the pint dependency that is optional in base Pyomo:
 pip install pint
 ```
 
+## Solving
+
+EDI detects the structure of a formulation and routes it to an appropriate solver.
+
+```python
+from edi.solvers.solver import solve
+
+res = solve(f)                    # auto: cvxopt for LP/QP/GP/SP, IPOPT otherwise
+res = solve(f, solver='ipopt')    # force IPOPT (general NLP, and black-box models)
+res = solve(f, solver='cvxopt')   # force the structured backends
+```
+
+After any successful solve the solution is written back onto the model, so
+
+```python
+import pyomo.environ as pyo
+pyo.value(f.x)                    # the optimum, not the initial guess
+```
+
+### IPOPT
+
+Two routes are supported. `method='pyomo'` uses `SolverFactory('ipopt')`, Pyomo's
+AMPL-based interface, and needs the `ipopt` executable on PATH. `method='cyipopt'`
+uses `pyomo.contrib.pynumero` and needs `pip install cyipopt`. The default,
+`method='auto'`, prefers the Pyomo route but switches to cyipopt when the model
+contains black-box (grey-box) constraints, which the AMPL route cannot evaluate.
+
+```python
+from edi.solvers.ipopt import ipopt_solve
+res = ipopt_solve(f, options={'tol': 1e-8, 'max_iter': 500}, tee=True)
+```
+
 ## Usage
 
 The core object in EDI is the `Formulation`  object, which inherits from the `pyomo.environ.ConcreteModel`.  Essentially, a `Formulation` is a Pyomo `Model` with some extra stuff, but can be treated exactly as if it were a Pyomo `Model`.  However, an EDI `Formulation` has some additional features that can help simplify model construction.
 
-Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/Pyomo/pyomo/tree/main/pyomo/contrib/edi/examples) folder or in the EDI [documentation](https://pyomo.readthedocs.io/en/stable/contributed_packages/edi/index.html)
+Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/fvd-lab/edi/tree/main/examples) folder or in the EDI [documentation](https://github.com/fvd-lab/edi/tree/main/docs)
 
 ```python
 # =================

@@ -10,3 +10,5 @@
 *_runDirectory*
 *sandbox*
 *ESP/*
+docs/_build/
+.pytest_cache/

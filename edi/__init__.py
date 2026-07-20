@@ -1,8 +1,10 @@
 #  ___________________________________________________________________________
 #
-#  Pyomo: Python Optimization Modeling Objects
-#  Copyright (c) 2008-2023
-#  National Technology and Engineering Solutions of Sandia, LLC
+#  EDI: The Engineering Design Interface
+#  A Pyomo-based framework for engineering design optimization.
+#
+#  Originally developed as pyomo.contrib.edi (Pyomo PR #2937) at
+#  National Technology and Engineering Solutions of Sandia, LLC.
 #  Under the terms of Contract DE-NA0003525 with National Technology and
 #  Engineering Solutions of Sandia, LLC, the U.S. Government retains certain
 #  rights in this software.
@@ -10,34 +12,51 @@
 #  Development of this module was conducted as part of the Institute for
 #  the Design of Advanced Energy Systems (IDAES) with support through the
 #  Simulation-Based Engineering, Crosscutting Research Program within the
-#  U.S. Department of Energy’s Office of Fossil Energy and Carbon Management.
+#  U.S. Department of Energy's Office of Fossil Energy and Carbon Management.
 #
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-# Recommended just to build all of the appropriate things
-import pyomo.environ
+"""EDI --- the Engineering Design Interface.
 
-# Import the relevant classes from Formulation
-try:
-    from pyomo.contrib.edi.formulation import Formulation
-except:
-    pass
-    # in this case, the dependencies are not installed, nothing will work
+A lightweight wrapper on Pyomo targeted at composing engineering design
+optimization problems, with first-class support for units, black-box analysis
+codes, and structure detection (LP/QP/GP/SP).
 
+Note on history: this package began life as ``pyomo.contrib.edi``. When it was
+split into a standalone distribution the modules were reorganised into
+``edi.objects`` / ``edi.solvers`` / ``edi.structure`` / ``edi.units``, but the
+package ``__init__`` continued to import from ``pyomo.contrib.edi`` inside a
+bare ``try/except: pass``. Because that module no longer ships with Pyomo, every
+import failed silently and ``import edi`` exposed none of its own API. The
+imports below are local and are deliberately NOT wrapped in a bare except, so
+that a broken install fails loudly instead of producing an empty namespace.
+"""
 
-# Import the black box modeling tools
-try:
-    from pyomo.contrib.edi.blackBoxFunctionModel import BlackBoxFunctionModel
-    from pyomo.contrib.edi.blackBoxFunctionModel import (
-        BlackBoxFunctionModel_Variable as BlackBoxVariable,
-    )
-    from pyomo.contrib.edi.blackBoxFunctionModel import (
-        BlackBoxFunctionModel_Variable as BBVariable,
-    )
-    from pyomo.contrib.edi.blackBoxFunctionModel import (
-        BlackBoxFunctionModel_Variable as BBV,
-    )
-except:
-    pass
-    # in this case, the dependencies are not installed, nothing will work
+# Build all of the appropriate Pyomo machinery.
+import pyomo.environ  # noqa: F401
+
+from edi.objects.formulation import Formulation
+
+from edi.objects.blackBoxFunctionModel import (
+    BlackBoxFunctionModel,
+    BlackBoxFunctionModel_Variable,
+    BlackBoxFunctionModel_Variable as BlackBoxVariable,
+    BlackBoxFunctionModel_Variable as BBVariable,
+    BlackBoxFunctionModel_Variable as BBV,
+    BBList,
+    TypeCheckedList,
+)
+
+__all__ = [
+    "Formulation",
+    "BlackBoxFunctionModel",
+    "BlackBoxFunctionModel_Variable",
+    "BlackBoxVariable",
+    "BBVariable",
+    "BBV",
+    "BBList",
+    "TypeCheckedList",
+]
+
+__version__ = "0.0.1"

@@ -24,7 +24,7 @@ from pyomo.core.expr.visitor import identify_variables
 from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
-# from pyomo.contrib.edi.tools.structureWalker import _StructureVisitor
+# from edi.structure.structureWalker import _StructureVisitor
 from edi.units.unitWalker import _UnitVisitor
 
 from pyomo.common.dependencies import numpy, numpy_available
@@ -34,7 +34,7 @@ if numpy_available:
 else:
     raise ImportError('The stucture detector requires numpy')
 
-# from pyomo.contrib.edi.tools.detectorSupportFunctions import (
+# from edi.structure.detectorSupportFunctions import (
 #      gpRow_add,
 #      gpRow_subtract,
 #      # gpRow_multiply,
@@ -98,8 +98,11 @@ def unit_corrector(pyomo_component):
                 cexpr = c.expr
                 # Walk the expression
                 #print(str(cexpr))
-                rv = visitor.walk_expression(cexpr)
-                # print(rv)
+                try:
+                    rv = visitor.walk_expression(cexpr)
+                except:
+                    print(cexpr)
+                    raise RuntimeError('Error with constraint: %s'%(str(cexpr)))
 
 ######################## Delete Old and Add Corrected Constraint ########################
 

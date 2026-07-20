@@ -103,7 +103,7 @@ if numpy_available:
 #     ureg = pint.UnitRegistry(system='mks')
 
 
-# from pyomo.contrib.edi.tools.walkerSupportFunctions import (
+# from edi.structure.walkerSupportFunctions import (
 #     unarySignomial,
 #     no_structure_dict,
 #     monomial_multiplication,

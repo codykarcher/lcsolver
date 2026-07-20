@@ -1,0 +1,48 @@
+# Sphinx configuration for the EDI documentation.
+#
+# Build with:
+#     python -m pip install -e ".[docs]"
+#     cd docs && python -m sphinx . _build/html
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(".."))
+
+project = "EDI"
+copyright = "2023-2026, NTESS and Cody J. Karcher"
+author = "Cody J. Karcher"
+
+try:
+    from edi import __version__ as release
+except Exception:
+    release = "0.1.0"
+version = release
+
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.mathjax",
+]
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "pyomo": ("https://pyomo.readthedocs.io/en/stable", None),
+}
+
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# The .rst files were written for the Pyomo documentation tree, where they sat
+# under contributed_packages/edi/. They are reused verbatim here.
+master_doc = "index"
+
+html_theme = "sphinx_rtd_theme"
+html_static_path = []
+
+autodoc_default_options = {
+    "members": True,
+    "undoc-members": False,
+    "show-inheritance": True,
+}

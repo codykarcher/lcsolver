@@ -29,10 +29,10 @@ from pyomo.core.base.var import ScalarVar, _GeneralVarData, IndexedVar
 from pyomo.common.log import LogStream
 from pyomo.common.tee import capture_output, TeeStream
 
-# from pyomo.contrib.edi.tools.structureDetector import structure_detector
-# from pyomo.contrib.edi.solvers.cvxopt.LP import solve_LP
-# from pyomo.contrib.edi.solvers.cvxopt.QP import solve_QP
-# from pyomo.contrib.edi.solvers.cvxopt.GP import solve_GP
+# from edi.structure.structureDetector import structure_detector
+# from edi.solvers.cvxopt.LP import solve_LP
+# from edi.solvers.cvxopt.QP import solve_QP
+# from edi.solvers.cvxopt.GP import solve_GP
 
 from edi.structure.structureDetector import structure_detector
 from edi.solvers.cvxopt.LP import solve_LP
