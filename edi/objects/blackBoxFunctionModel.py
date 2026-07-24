@@ -356,7 +356,12 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         return jac
 
     def post_init_setup(self, defaultVal=1.0):
-        self._input_values = np.ones(self._NunwrappedInputs) * defaultVal
+        # _NunwrappedInputs is assigned when the black box is attached to a
+        # Formulation (see formulation.py); at construction time it is still
+        # None. numpy >= 2.0 rejects None as a shape, so fall back to a scalar
+        # placeholder (the numpy 1.x behaviour) until the real size is known.
+        n = self._NunwrappedInputs
+        self._input_values = np.ones(() if n is None else n) * defaultVal
 
     def fillCache(self):
         if self._cache is None:

@@ -7,20 +7,24 @@ The Pyomo Engineering Design Interface (EDI) is a lightweight wrapper on the Pyo
 Installation
 ------------
 
-EDI is distributed as a standalone package:
+EDI is distributed as a standalone package and is installed directly from
+GitHub:
 
 ::
 
-    pip install edi
+    pip install git+https://github.com/codykarcher/edi.git
 
 
 Optional extras provide the solver backends and plotting support:
 
 ::
 
-    pip install edi[solvers]     # cvxopt, cyipopt
-    pip install edi[plotting]    # matplotlib
-    pip install edi[parallel]    # mpi4py
+    pip install "edi[solvers] @ git+https://github.com/codykarcher/edi.git"     # cvxopt
+    pip install "edi[plotting] @ git+https://github.com/codykarcher/edi.git"    # matplotlib, pandas
+    pip install "edi[parallel] @ git+https://github.com/codykarcher/edi.git"    # mpi4py
+
+The IPOPT backend additionally requires either the ``ipopt`` executable on your
+``PATH`` or ``pip install cyipopt``.
 
 EDI began as a contribution to Pyomo itself and is distributed separately so it
 can evolve independently of the Pyomo release cycle.

@@ -26,17 +26,9 @@ bibliography: paper.bib
 
 <!--
 NOTE TO AUTHORS (delete before submission)
-  * Michael Bynum's ORCID is still a placeholder and must be filled;
-    JOSS checks them. Karcher's is set.
-  * JOSS papers are SHORT: roughly 250-1000 words. This draft is near the top of
-    that range. Resist expanding it; JOSS reviews the SOFTWARE, and the paper is
-    only a pointer.
-  * Repository requirements are now satisfied: BSD-3-Clause LICENSE, Sphinx docs,
-    110 automated tests, CI, and CONTRIBUTING.md.
-  * REMAINING BLOCKERS: (1) push the repo -- LICENSE, docs/, tests/, .github/,
-    paper.md and the whole solvers/ipopt tree are still untracked locally, so the
-    public repo does not yet contain the things JOSS checks; (2) Bynum's ORCID;
-    (3) a Zenodo DOI, which requires a tagged GitHub release; (4) a SAND number.
+  REMAINING BLOCKERS: (1) Bynum's ORCID is still a placeholder -- JOSS checks
+  them; (2) a Zenodo DOI, which requires a tagged GitHub release (needed at
+  acceptance, not submission); (3) a SAND number before public release.
 -->
 
 # Summary
@@ -110,7 +102,8 @@ standalone package so that it can evolve independently of the Pyomo release cycl
 <!-- Keep this short; JOSS wants a taste, not a tutorial. -->
 
 ```python
-from edi import Formulation, BlackBoxFunctionModel
+from pyomo.environ import units
+from edi import Formulation
 
 f = Formulation()
 x = f.Variable(name='x', guess=1.0, units='m',   description='x variable')
@@ -119,7 +112,16 @@ z = f.Variable(name='z', guess=1.0, units='m^2', description='unit circle output
 c = f.Constant(name='c', value=1.0, units='', description='a constant', size=2)
 
 f.Objective(c[0] * x + c[1] * y)
+f.ConstraintList([
+    z == x**2 + y**2,
+    z <= 1.0 * units.m**2,
+])
 ```
+
+A constraint evaluated by an external code is declared in the same list by
+replacing `z == x**2 + y**2` with `[z, '==', [x, y], UnitCircle()]`, where
+`UnitCircle` is a `BlackBoxFunctionModel` subclass wrapping the analysis code
+and its derivatives; the repository `README` shows the complete version.
 
 # Acknowledgements
 

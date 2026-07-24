@@ -24,7 +24,7 @@ much easier to advise on concrete code.
 2. Add or update tests. The suite lives in `tests/` and runs with
    `python -m pytest tests/`. Pull requests that change behaviour should include a
    test that fails before the change and passes after it.
-3. Keep the existing code style. The codebase is formatted with `black`.
+3. Keep the existing code style.
 4. Make sure the full suite passes locally before opening the pull request; CI runs
    the same suite on Linux, macOS, and Windows across several Python versions.
 5. Open a pull request describing what the change does and why.

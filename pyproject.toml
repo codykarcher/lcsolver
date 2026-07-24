@@ -53,5 +53,6 @@ docs     = ["sphinx", "sphinx-rtd-theme"]
 test     = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/fvd-lab/edi-solvers"
-Repository = "https://github.com/fvd-lab/edi-solvers.git"
+Homepage = "https://github.com/codykarcher/edi"
+Repository = "https://github.com/codykarcher/edi.git"
+Issues = "https://github.com/codykarcher/edi/issues"

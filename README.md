@@ -2,16 +2,32 @@
 
 The Pyomo Engineering Design Interface (EDI) is a lightweight wrapper on the Pyomo language that is targeted at composing engineering design optimization problems.  The language and interface have been designed to mimic many of the features found in [GPkit](https://github.com/convexengineering/gpkit) and [CVXPY](https://github.com/cvxpy/cvxpy) while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
 
+## Statement of Need
+
+Design optimization in aerospace, energy, and mechanical engineering is characterized by models that mix closed-form physics with legacy analysis codes, and by quantities that carry units whose mismatch is a common and expensive source of error.  Disciplined convex modeling packages such as CVXPY and geometric-programming packages such as GPkit give excellent ergonomics and strong guarantees, but only within their problem class, and neither accommodates an arbitrary external solver in the constraint set.  General algebraic modeling languages such as Pyomo impose no such restriction, but leave the engineer to manage units manually and to hand-roll the interface to any external analysis code.
+
+EDI targets the gap: an engineer writes a single unit-annotated model in which some constraints are algebraic and others are evaluated by external codes; EDI checks unit consistency, detects the mathematical structure of the algebraic portion, and routes the problem to a solver appropriate to that structure.
+
 ## Installation
 
-EDI is a part of the standard installation process for Pyomo:
+EDI began as a contribution to Pyomo itself (`pyomo.contrib.edi`) and is now distributed as a standalone package.  Install it directly from GitHub:
+
 ```
-pip install pyomo
+pip install git+https://github.com/codykarcher/edi.git
 ```
 
-EDI also requires the pint dependency that is optional in base Pyomo:
+or from a local clone:
+
 ```
-pip install pint
+git clone https://github.com/codykarcher/edi.git
+cd edi
+pip install -e .
+```
+
+The structured solver backends require `cvxopt`, which is an optional extra:
+
+```
+pip install "edi[solvers] @ git+https://github.com/codykarcher/edi.git"
 ```
 
 ## Solving
@@ -50,7 +66,7 @@ res = ipopt_solve(f, options={'tol': 1e-8, 'max_iter': 500}, tee=True)
 
 The core object in EDI is the `Formulation`  object, which inherits from the `pyomo.environ.ConcreteModel`.  Essentially, a `Formulation` is a Pyomo `Model` with some extra stuff, but can be treated exactly as if it were a Pyomo `Model`.  However, an EDI `Formulation` has some additional features that can help simplify model construction.
 
-Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/fvd-lab/edi/tree/main/examples) folder or in the EDI [documentation](https://github.com/fvd-lab/edi/tree/main/docs)
+Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/codykarcher/edi/tree/main/examples) folder or in the EDI [documentation](https://github.com/codykarcher/edi/tree/main/docs)
 
 ```python
 # =================
@@ -58,7 +74,7 @@ Below is a simple example to get started, but additional resources can be found 
 # =================
 import pyomo.environ as pyo
 from pyomo.environ import units
-from pyomo.contrib.edi import Formulation, BlackBoxFunctionModel
+from edi import Formulation, BlackBoxFunctionModel
 
 # ===================
 # Declare Formulation
