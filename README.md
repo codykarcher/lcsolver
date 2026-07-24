@@ -152,6 +152,8 @@ f.ConstraintList(
 
 ## Acknowledgement
 
+This package is spun out of Pyomo, acknowledged below.
+
 Pyomo: Python Optimization Modeling Objects  
 Copyright (c) 2008-2023  
 National Technology and Engineering Solutions of Sandia, LLC  
