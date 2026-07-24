@@ -32,6 +32,12 @@ jobs:
           python -m pip install -e ".[test]"
           python -m pip install cvxopt
 
+      - name: Install cyipopt (best effort)
+        # Enables the IPOPT-route solver tests on platforms with cyipopt
+        # wheels; those tests skip cleanly where this install fails.
+        continue-on-error: true
+        run: python -m pip install cyipopt
+
       - name: Show environment
         run: python -c "import edi, pyomo; print('edi', edi.__version__); print('pyomo', pyomo.version.version)"
 

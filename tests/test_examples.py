@@ -52,6 +52,13 @@ except:
 if numpy_available:
     import numpy as np
 
+# Some examples solve with SolverFactory('ipopt'), which needs the ipopt
+# executable on PATH (not installed in CI or on most reviewer machines).
+try:
+    ipopt_available = pyo.SolverFactory('ipopt').available(exception_flag=False)
+except:
+    ipopt_available = False
+
 
 @unittest.skipIf(
     not egb_available, 'Testing edi requires pynumero external grey boxes'
@@ -82,18 +89,23 @@ def create_new(filename):
             if _ex not in sys.path:
                 sys.path.insert(0, _ex)
             importlib.import_module(importName)
-        except:
-            self.fail("This example is failing: %s" % (filename))
+        except Exception as e:
+            self.fail("This example is failing: %s (%s: %s)" % (filename, type(e).__name__, e))
 
     return t_function
 
 
-pythonFileList = ["readme_example.py", "aircraft_gp.py"]
+# filename -> whether the example needs the ipopt executable
+pythonFileList = {"readme_example.py": False, "aircraft_gp.py": True}
 
-for filename in pythonFileList:
+for filename, needs_ipopt in pythonFileList.items():
     testName = 'test_DocumentationExample_%d' % (testIndex)
     testIndex += 1
     t_Function = create_new(filename)
+    if needs_ipopt:
+        t_Function = unittest.skipIf(
+            not ipopt_available, 'ipopt executable is not available'
+        )(t_Function)
     if pint_available:
         setattr(EDIExamples, testName, t_Function)
 
