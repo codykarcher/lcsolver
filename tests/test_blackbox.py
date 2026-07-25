@@ -345,6 +345,212 @@ class TestEDIBlackBox(unittest.TestCase):
             ValueError, f.__dict__['constraint_2'].get_external_model().fillCache, *()
         )
 
+    def test_edi_blackbox_dimensionless(self):
+        "Tests a black box that is dimensionless in and out"
+        import numpy as np
+        from pyomo.environ import units
+        import pyomo.environ as pyo
+        from edi import Formulation
+        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        # pyomo collapses 'value * units.dimensionless' back to a plain float in
+        # several cases, so a dimensionless black box cannot be relied on to hand
+        # back united values.  Plain numbers must be accepted and interpreted as
+        # already being in the declared units.
+        class Dimensionless(BlackBoxFunctionModel):
+            def __init__(self, united):
+                super().__init__()
+                self.description = 'This model evaluates the function: z = x**2 + y**2'
+                self.inputs.append(name='x', units='', description='The x variable')
+                self.inputs.append(name='y', units='', description='The y variable')
+                self.outputs.append(name='z', units='', description='Output variable')
+                self.availableDerivative = 1
+                self.united = united
+                self.post_init_setup(len(self.inputs))
+
+            def BlackBox(self, x, y):
+                x = pyo.value(units.convert(x, self.inputs[0].units))
+                y = pyo.value(units.convert(y, self.inputs[1].units))
+                z = x**2 + y**2
+                dzdx = 2 * x
+                dzdy = 2 * y
+                if self.united:
+                    z = z * units.dimensionless
+                    dzdx = dzdx * units.dimensionless
+                    dzdy = dzdy * units.dimensionless
+                return z, [dzdx, dzdy]
+
+        for united in [True, False]:
+            f = Formulation()
+            x = f.Variable(name='x', guess=1.0, units='', description='x variable')
+            y = f.Variable(name='y', guess=1.0, units='', description='y variable')
+            z = f.Variable(name='z', guess=1.0, units='', description='Output var')
+            f.Objective(x + y)
+            f.ConstraintList([[z, '==', [x, y], Dimensionless(united)]])
+
+            em = f.__dict__['constraint_1'].get_external_model()
+            em.set_input_values(np.array([2.0, 3.0]))
+            opt = em.evaluate_outputs()
+            jac = em.evaluate_jacobian_outputs().todense()
+
+            self.assertAlmostEqual(opt[0], 13.0)
+            self.assertAlmostEqual(jac[0, 0], 4.0)
+            self.assertAlmostEqual(jac[0, 1], 6.0)
+
+    def test_edi_blackbox_dimensionless_vector(self):
+        "Tests a dimensionless black box with a vector input"
+        import numpy as np
+        from pyomo.environ import units
+        import pyomo.environ as pyo
+        from edi import Formulation
+        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='', description='x variable', size=3)
+        y = f.Variable(name='y', guess=1.0, units='', description='y variable')
+        f.Objective(y)
+
+        class Norm_2(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'This model evaluates the two norm'
+                self.inputs.append(
+                    name='x', units='', description='The x variable', size=3
+                )
+                self.outputs.append(name='y', units='', description='The y variable')
+                self.availableDerivative = 1
+                self.post_init_setup(len(self.inputs))
+
+            def BlackBox(self, x):
+                x = np.array([pyo.value(xval) for xval in x], dtype=np.float64)
+                # A plain float and a plain (non-pyomo) numpy array, as a
+                # dimensionless model naturally produces
+                return float(np.sum(x**2)), [2 * x]
+
+        f.ConstraintList([[y, '==', [x], Norm_2()]])
+
+        em = f.__dict__['constraint_1'].get_external_model()
+        em.set_input_values(np.array([2.0, 3.0, 4.0]))
+        opt = em.evaluate_outputs()
+        jac = em.evaluate_jacobian_outputs().todense()
+
+        self.assertAlmostEqual(opt[0], 29.0)
+        self.assertAlmostEqual(jac[0, 0], 4.0)
+        self.assertAlmostEqual(jac[0, 1], 6.0)
+        self.assertAlmostEqual(jac[0, 2], 8.0)
+
+    def test_edi_blackbox_cache_not_poisoned_by_failure(self):
+        "Tests that a failed fillCache does not leave a partial cache behind"
+        import numpy as np
+        from pyomo.environ import units
+        import pyomo.environ as pyo
+        from edi import Formulation
+        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x variable')
+        z = f.Variable(name='z', guess=1.0, units='m**2', description='Output var')
+        f.Objective(x)
+
+        class BadJacobian(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'This model returns an invalid jacobian'
+                self.inputs.append(name='x', units='ft', description='The x variable')
+                self.outputs.append(
+                    name='z', units='ft**2', description='Output variable'
+                )
+                self.availableDerivative = 1
+                self.post_init_setup(len(self.inputs))
+
+            def BlackBox(self, x):
+                x = pyo.value(units.convert(x, self.inputs[0].units))
+                return x**2 * units.ft**2, ['not a jacobian']
+
+        f.ConstraintList([[z, '==', [x], BadJacobian()]])
+
+        em = f.__dict__['constraint_1'].get_external_model()
+        em.set_input_values(np.array([2.0]))
+
+        # The outputs are computed before the jacobian fails.  If the partial
+        # results were kept, the second call would silently succeed here and
+        # then fail with a KeyError on the jacobian, hiding the real error.
+        self.assertRaises(ValueError, em.evaluate_outputs, *())
+        self.assertIsNone(em._cache)
+        self.assertRaises(ValueError, em.evaluate_outputs, *())
+        self.assertRaises(ValueError, em.evaluate_jacobian_outputs, *())
+
+    def test_edi_blackbox_error_messages(self):
+        "Tests that the fillCache errors identify the offending variable"
+        import numpy as np
+        from pyomo.environ import units
+        import pyomo.environ as pyo
+        from edi import Formulation
+        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        class UnitCircle(BlackBoxFunctionModel):
+            def __init__(self, badValue=False, badJacobian=False):
+                super().__init__()
+                self.description = 'This model evaluates the function: z = x**2 + y**2'
+                self.inputs.append(name='x', units='ft', description='The x variable')
+                self.inputs.append(name='y', units='ft', description='The y variable')
+                self.outputs.append(
+                    name='z', units='ft**2', description='Output variable'
+                )
+                self.availableDerivative = 1
+                self.badValue = badValue
+                self.badJacobian = badJacobian
+                self.post_init_setup(len(self.inputs))
+
+            def BlackBox(self, x, y):
+                x = pyo.value(units.convert(x, self.inputs[0].units))
+                y = pyo.value(units.convert(y, self.inputs[1].units))
+                z = (x**2 + y**2) * units.ft**2
+                dzdx = 2 * x * units.ft
+                dzdy = 2 * y * units.ft
+                if self.badValue:
+                    z = 'not a value'
+                if self.badJacobian:
+                    dzdy = 'not a derivative'
+                return z, [dzdx, dzdy]
+
+        def buildModel(**kwargs):
+            f = Formulation()
+            x = f.Variable(name='x', guess=1.0, units='m', description='x variable')
+            y = f.Variable(name='y', guess=1.0, units='m', description='y variable')
+            z = f.Variable(name='z', guess=1.0, units='m^2', description='Output var')
+            f.Objective(x + y)
+            f.ConstraintList([[z, '==', [x, y], UnitCircle(**kwargs)]])
+            em = f.__dict__['constraint_1'].get_external_model()
+            em.set_input_values(np.array([2.0, 2.0]))
+            return em
+
+        em = buildModel(badValue=True)
+        with self.assertRaises(ValueError) as ctx:
+            em.evaluate_outputs()
+        self.assertIn("output 0 ('z')", str(ctx.exception))
+        self.assertIn('str', str(ctx.exception))
+
+        em = buildModel(badJacobian=True)
+        with self.assertRaises(ValueError) as ctx:
+            em.evaluate_outputs()
+        self.assertIn("d(output 0, 'z')/d(input 1, 'y')", str(ctx.exception))
+        self.assertIn('str', str(ctx.exception))
+
+        em = buildModel()
+        em.inputVariables_optimization = [1, 2]
+        with self.assertRaises(ValueError) as ctx:
+            em.evaluate_outputs()
+        self.assertIn("input 0 ('x')", str(ctx.exception))
+        self.assertIn('int', str(ctx.exception))
+
+        em = buildModel()
+        em.outputVariables_optimization = [1]
+        with self.assertRaises(ValueError) as ctx:
+            em.evaluate_outputs()
+        self.assertIn("output 0 ('z')", str(ctx.exception))
+        self.assertIn('int', str(ctx.exception))
+
     def test_edi_blackbox_example_1(self):
         "Tests a black box example construction"
         from pyomo.environ import units

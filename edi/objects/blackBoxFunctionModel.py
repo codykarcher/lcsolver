@@ -19,6 +19,7 @@ import copy
 import pyomo
 import pyomo.environ as pyo
 import pyomo.core.expr.ndarray
+from pyomo.core.expr.numvalue import NumericValue
 from pyomo.environ import units as pyomo_units
 from pyomo.common.dependencies import attempt_import
 
@@ -363,9 +364,31 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         n = self._NunwrappedInputs
         self._input_values = np.ones(() if n is None else n) * defaultVal
 
+    def attachUnits(self, val, unts):
+        # A black box that works in dimensionless quantities naturally returns
+        # plain numbers: pyomo collapses expressions such as
+        # 'float * dimensionless' back to a float, and numpy operations on
+        # dimensionless arrays return plain ndarrays.  Such a value is taken to
+        # already be in the units declared for that input/output, so the units
+        # are attached here and the normal conversion path is used from there.
+        if isinstance(val, np.ndarray):
+            if isinstance(val, pyomo.core.expr.ndarray.NumericNDArray):
+                return val
+            return val * unts
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            return val * unts
+        return val
+
     def fillCache(self):
         if self._cache is None:
-            self._cache = {}
+            # Build into a local dict and only publish it once every step has
+            # succeeded.  Populating self._cache in place leaves a partially
+            # filled (but non-None) cache behind if anything below raises, and
+            # the next call then skips the rebuild and fails with a spurious
+            # KeyError that hides the original error.
+            cache = {}
 
             raw_inputs = self._input_values
             bb_inputs = []
@@ -378,7 +401,11 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     optimizationInput,
                     (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar),
                 ):
-                    raise ValueError("Invalid input variable type")
+                    raise ValueError(
+                        "Invalid input variable type for input %d ('%s'): expected a "
+                        "pyomo ScalarVar or IndexedVar, received %s"
+                        % (i, self.inputs[i].name, type(optimizationInput).__name__)
+                    )
 
                 ipt = self.inputs[i]
 
@@ -409,9 +436,9 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             bbo = self.BlackBox(*bb_inputs)
 
-            self._cache['raw'] = bbo
-            self._cache['raw_value'] = bbo[0]
-            self._cache['raw_jacobian'] = bbo[1]
+            cache['raw'] = bbo
+            cache['raw_value'] = bbo[0]
+            cache['raw_jacobian'] = bbo[1]
 
             outputVector = []
             if not isinstance(bbo[0], (list, tuple)):
@@ -426,12 +453,16 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     optimizationOutput,
                     (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar),
                 ):
-                    raise ValueError("Invalid output variable type")
+                    raise ValueError(
+                        "Invalid output variable type for output %d ('%s'): expected a "
+                        "pyomo ScalarVar or IndexedVar, received %s"
+                        % (i, self.outputs[i].name, type(optimizationOutput).__name__)
+                    )
                 opt = self.outputs[i]
 
                 modelOutputUnits = opt.units
                 outputOptimizationUnits = optimizationOutput.get_units()
-                vl = valueList[i]
+                vl = self.attachUnits(valueList[i], modelOutputUnits)
                 if isinstance(vl, pyomo.core.expr.ndarray.NumericNDArray):
                     validIndexList = optimizationOutput.index_set().data()
                     for j in range(0, len(validIndexList)):
@@ -441,22 +472,30 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                         )  # now unitless in correct units
                         outputVector.append(corrected_value)
 
-                elif isinstance(
-                    vl,
-                    (
-                        pyomo.core.expr.numeric_expr.NPV_ProductExpression,
-                        pyomo.core.base.units_container._PyomoUnit,
-                    ),
-                ):
+                elif isinstance(vl, NumericValue):
+                    # Any united scalar: _PyomoUnit, or one of the NPV_*
+                    # expressions that unit arithmetic produces (a product for
+                    # 'val * units.ft', but a division for 'val * units.ft/units.s'
+                    # and a power for '1.0 * units.ft**2').
                     corrected_value = pyo.value(
                         pyomo_units.convert(vl, outputOptimizationUnits)
                     )  # now unitless in correct units
                     outputVector.append(corrected_value)
 
                 else:
-                    raise ValueError("Invalid output variable type")
+                    raise ValueError(
+                        "Invalid value returned by the black box for output %d ('%s'): "
+                        "expected a pyomo united scalar or array, or a plain number in "
+                        "units of %s, received %s"
+                        % (
+                            i,
+                            self.outputs[i].name,
+                            str(modelOutputUnits),
+                            type(valueList[i]).__name__,
+                        )
+                    )
 
-            self._cache['pyomo_outputs'] = outputVector
+            cache['pyomo_outputs'] = outputVector
 
             outputJacobian = (
                 np.ones([self._NunwrappedOutputs, self._NunwrappedInputs]) * -1
@@ -484,15 +523,11 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     liunits = lipt.units
                     # ishape  = [len(idx) for idx in oipt.index_set().subsets()]
 
-                    jacobianValue_raw = jacobianList[i][j]
+                    jacobianValue_raw = self.attachUnits(
+                        jacobianList[i][j], lounits / liunits
+                    )
 
-                    if isinstance(
-                        jacobianValue_raw,
-                        (
-                            pyomo.core.expr.numeric_expr.NPV_ProductExpression,
-                            pyomo.core.base.units_container._PyomoUnit,
-                        ),
-                    ):
+                    if isinstance(jacobianValue_raw, NumericValue):
                         corrected_value = pyo.value(
                             pyomo_units.convert(jacobianValue_raw, oounits / oiunits)
                         )  # now unitless in correct units
@@ -571,11 +606,24 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                             ptr_row_step = len(validIndices_o)
 
                     else:
-                        raise ValueError("Invalid jacobian type")
+                        raise ValueError(
+                            "Invalid jacobian type for d(output %d, '%s')/d(input %d, "
+                            "'%s'): expected a pyomo united scalar or array, or a plain "
+                            "number in units of %s, received %s"
+                            % (
+                                i,
+                                lopt.name,
+                                j,
+                                lipt.name,
+                                str(lounits / liunits),
+                                type(jacobianList[i][j]).__name__,
+                            )
+                        )
 
                 ptr_row += ptr_row_step
 
-            self._cache['pyomo_jacobian'] = sps.coo_matrix(outputJacobian)
+            cache['pyomo_jacobian'] = sps.coo_matrix(outputJacobian)
+            self._cache = cache
 
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
