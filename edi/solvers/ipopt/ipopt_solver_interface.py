@@ -146,7 +146,11 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 "method='cyipopt' (pip install cyipopt).")
         for k, v in options.items():
             opt.options[k] = v
-        results = opt.solve(m, tee=tee, load_solutions=load_solutions)
+        # Defer loading: with load_solutions=True Pyomo raises a bare
+        # ValueError inside solutions.load_from on any bad status, before the
+        # clean "IPOPT did not converge" diagnosis below can run. Solve without
+        # loading, check the termination condition, then load explicitly.
+        results = opt.solve(m, tee=tee, load_solutions=False)
     else:
         opt = pyo.SolverFactory('cyipopt')
         if not opt.available(exception_flag=False):
@@ -170,6 +174,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         raise RuntimeError(
             f"IPOPT did not converge: termination_condition={tc}, "
             f"status={summary['status']}. {summary['message']}".strip())
+
+    if route == 'pyomo' and load_solutions:
+        m.solutions.load_from(results)
 
     # Pyomo has already written the solution onto the model; report it in the
     # same {name: value} form the other EDI backends use.
