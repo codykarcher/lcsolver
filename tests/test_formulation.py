@@ -179,7 +179,7 @@ class TestEDIFormulation(unittest.TestCase):
         # NOTE: a trailing dimension of size 1 is now ACCEPTED. The check that
         # rejected sizes of 0 or 1 is commented out in Formulation.Variable, so
         # size=[2, 1] collapses to a 2-element indexed variable. This test asserts
-        # the current behaviour; if the restriction is reinstated, restore the
+        # the current behavior; if the restriction is reinstated, restore the
         # assertRaises(ValueError, ...) that was here.
         x11 = f.Variable(
             name='x11',
@@ -360,7 +360,7 @@ class TestEDIFormulation(unittest.TestCase):
         )
         # NOTE: as with Variable, a trailing dimension of size 1 is now ACCEPTED --
         # the 0-or-1 size check is commented out in Formulation.Constant. This test
-        # asserts the current behaviour; restore the assertRaises if the restriction
+        # asserts the current behavior; restore the assertRaises if the restriction
         # is reinstated.
         c11 = f.Constant(
             name='c11',

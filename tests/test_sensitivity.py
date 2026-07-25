@@ -239,7 +239,7 @@ class TestSensitivityAgainstFiniteDifference(unittest.TestCase):
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 @unittest.skipIf(not numpy_available, 'sensitivity requires numpy')
 class TestSensitivityInterface(unittest.TestCase):
-    """The public surface and its failure behaviour."""
+    """The public surface and its failure behavior."""
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_formulation_method(self):

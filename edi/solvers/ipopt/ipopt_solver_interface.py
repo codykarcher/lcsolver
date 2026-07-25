@@ -7,7 +7,7 @@
 """IPOPT interface for EDI formulations.
 
 Unlike the cvxopt backends, which require the formulation to fall into a
-recognised structure (LP, QP, GP, SP) and solve a transformed problem, IPOPT
+recognized structure (LP, QP, GP, SP) and solve a transformed problem, IPOPT
 solves the general nonlinear program directly. That makes it the natural default
 for a formulation that is not in one of those classes, and the only option for a
 formulation containing black-box (grey-box) constraints.
@@ -17,7 +17,7 @@ Two routes to IPOPT are supported, in this order of preference:
 ``pyomo``
     ``pyo.SolverFactory('ipopt')``, Pyomo's own AMPL-based interface, driving the
     ``ipopt`` executable. This is the preferred route: it is pure Pyomo, it
-    handles the whole modelling language, and it loads the solution back onto the
+    handles the whole modeling language, and it loads the solution back onto the
     model itself. It requires the ``ipopt`` binary on PATH (or an explicit path).
 
 ``cyipopt``
@@ -57,7 +57,7 @@ def _executable_available(name='ipopt'):
         return False
 
 
-def _summarise(results):
+def _summarize(results):
     """Condense a Pyomo results object into a plain dict."""
     out = {'solver': None, 'status': None, 'termination_condition': None,
            'objective': None, 'message': None}
@@ -158,7 +158,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         results = opt.solve(m, tee=tee)
 
     # ---- interpret --------------------------------------------------------
-    summary = _summarise(results)
+    summary = _summarize(results)
     summary['solver'] = route
     summary['problem_structure'] = 'nonlinear_program'
 

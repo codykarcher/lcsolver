@@ -76,7 +76,7 @@ def hoburg_gp():
     # --- variables ------------------------------------------------------------
     scalars = [
         ('AR', 12.0, '', 'aspect ratio'),
-        ('I_cap_bar', 1.0e-2, '', 'normalised spar cap area moment'),
+        ('I_cap_bar', 1.0e-2, '', 'normalized spar cap area moment'),
         ('M_r_bar', 1.0e4, '', 'root bending moment per unit chord'),
         ('nu', 0.8, '', 'taper placeholder'),
         ('p', 2.0, '', 'dummy variable 1 + 2 lam'),

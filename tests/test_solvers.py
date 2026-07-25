@@ -23,7 +23,7 @@ except Exception:
 
 
 def _linear_model():
-    """Trivial LP with a known answer: minimise x + y s.t. x>=1, y>=2 -> (1, 2)."""
+    """Trivial LP with a known answer: minimize x + y s.t. x>=1, y>=2 -> (1, 2)."""
     f = Formulation()
     f.Variable(name='x', guess=5.0, units='m', description='x')
     f.Variable(name='y', guess=5.0, units='m', description='y')
@@ -151,10 +151,10 @@ def _unit_circle_model():
 
     The analytic optimum is on the unit circle at x = y = -1/sqrt(2), z = 1.
     The black box declares its inputs/outputs in feet while the model variables
-    are metres, so this also exercises unit conversion across the interface.
+    are meters, so this also exercises unit conversion across the interface.
 
     Bounds on x and y are deliberate: a grey-box model is evaluated wherever the
-    optimiser proposes, so an unbounded input can send the external code
+    optimizer proposes, so an unbounded input can send the external code
     somewhere it cannot be evaluated. Without them IPOPT diverges here.
     """
     from edi import BlackBoxFunctionModel
@@ -256,7 +256,7 @@ class TestConvexIpoptBackend(unittest.TestCase):
 
     This is an option alongside cvxopt, not a replacement. A geometric program is
     solved in log space, where it is convex, so the global-optimality guarantee is
-    preserved rather than being traded for general-NLP behaviour.
+    preserved rather than being traded for general-NLP behavior.
     """
 
     @unittest.skipIf(not (_ipopt_route_available('pyomo')

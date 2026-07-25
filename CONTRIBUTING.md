@@ -22,7 +22,7 @@ much easier to advise on concrete code.
 
 1. Fork the repository and create a branch for your change.
 2. Add or update tests. The suite lives in `tests/` and runs with
-   `python -m pytest tests/`. Pull requests that change behaviour should include a
+   `python -m pytest tests/`. Pull requests that change behavior should include a
    test that fails before the change and passes after it.
 3. Keep the existing code style.
 4. Make sure the full suite passes locally before opening the pull request; CI runs
@@ -58,4 +58,4 @@ better provided by Pyomo itself generally are not.
 ## Code of conduct
 
 Participation in this project is governed by the expectation that contributors treat
-one another with respect. Harassment or abusive behaviour is not tolerated.
+one another with respect. Harassment or abusive behavior is not tolerated.

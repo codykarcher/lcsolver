@@ -24,7 +24,7 @@ optimization problems, with first-class support for units, black-box analysis
 codes, and structure detection (LP/QP/GP/SP).
 
 Note on history: this package began life as ``pyomo.contrib.edi``. When it was
-split into a standalone distribution the modules were reorganised into
+split into a standalone distribution the modules were reorganized into
 ``edi.objects`` / ``edi.solvers`` / ``edi.structure`` / ``edi.units``, but the
 package ``__init__`` continued to import from ``pyomo.contrib.edi`` inside a
 bare ``try/except: pass``. Because that module no longer ships with Pyomo, every

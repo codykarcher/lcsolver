@@ -78,7 +78,7 @@ def _polar(thickness_pct, Re, alpha_min=-10.0, alpha_max=25.0, alpha_step=1.0):
     return cl, cd
 
 
-_CDREF = 0.01          # normalisation used by the reference implementation
+_CDREF = 0.01          # normalization used by the reference implementation
 
 
 def _fit(cl, cd):

@@ -59,7 +59,7 @@ def con(terms, names, operator='<='):
 
     Dispatches on the coefficients and the operator: a form that is
     GP-compatible becomes a :class:`Posynomial` so SLCP can impose it exactly;
-    anything else becomes a :class:`Signomial` and gets linearised. This is the
+    anything else becomes a :class:`Signomial` and gets linearized. This is the
     split that the whole algorithm turns on, so it is done here once rather than
     being asserted by hand at each constraint.
     """
@@ -277,7 +277,7 @@ def _ko_constraints(mode):
         The notebook's comparison form: five constraints tightened to
         equalities. Every multi-term posynomial thereby becomes a signomial
         equality, leaving only monomials GP-compatible. Since a monomial is
-        affine in log space, linearising it is exact -- so on this variant SLCP
+        affine in log space, linearizing it is exact -- so on this variant SLCP
         and LSQP are *mathematically identical*, exactly as the paper's remark
         that the SLCP sub-problem "reverts to the LSQP sub-problem in the absence
         of posynomial constraints" would predict. Useful as a consistency check,
@@ -446,7 +446,7 @@ def ko_reference(mode=3):
 def kirschen_ozturk(mode=3):
     """Kirschen-Ozturk aircraft sizing, paper Equation 18.
 
-    Minimise fuel weight over 18 variables. Attribution in the paper is to
+    Minimize fuel weight over 18 variables. Attribution in the paper is to
     Kirschen (2018), with the problem originating in Hoburg (2014).
 
     The reference optimum is obtained by solving ``mode=1`` exactly as a
@@ -679,7 +679,7 @@ def _profile_drag_blackbox(C_L, Re, tau):
     This is the black box of paper Sections 7.5 and 7.6. It deliberately returns
     *exactly* what the explicit five-term posynomial constraint would give at its
     active bound -- the physics is unchanged and so is the optimum. All that
-    changes is that the posynomial is now hidden from SLCP, which must linearise
+    changes is that the posynomial is now hidden from SLCP, which must linearize
     it like any other opaque analysis code. That is what makes this a clean
     measurement of what exact posynomial handling is worth.
 

@@ -131,7 +131,7 @@ solver core:
      - exact at the local optimum
 
 For a signomial program the duals belong to the **final convex subproblem** of
-the sequence, so the sensitivities describe the neighbourhood of the returned
+the sequence, so the sensitivities describe the neighborhood of the returned
 point rather than a global property. This is the intended reading, and the
 result carries ``result['approximate'] == True`` so it is never silently
 presented as exact.

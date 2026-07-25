@@ -12,7 +12,7 @@ groups:
 
 * posynomials :math:`p(x) \\le 1` and monomials :math:`m(x) = 1`, which become
   convex exactly under the log transform and are imposed **directly**; and
-* everything else, :math:`g(x) \\le 1` and :math:`h(x) = 1`, which is linearised
+* everything else, :math:`g(x) \\le 1` and :math:`h(x) = 1`, which is linearized
   in log space as SQP would.
 
 The sub-problem is therefore log-convex rather than quadratic, which is what
@@ -155,7 +155,7 @@ class Constraint:
     """One constraint in the standard form ``body <= 1`` or ``body == 1``.
 
     ``body`` is a :class:`Posynomial` or a :class:`Signomial`. Which of the two it
-    is determines whether SLCP imposes it exactly or linearises it.
+    is determines whether SLCP imposes it exactly or linearizes it.
     """
 
     __slots__ = ('body', 'operator')
@@ -166,7 +166,7 @@ class Constraint:
         if operator == '==' and isinstance(body, Posynomial) and not body.is_monomial:
             raise ValueError(
                 'a multi-term posynomial equality is not GP-compatible; supply it '
-                'as a Signomial so it is linearised instead')
+                'as a Signomial so it is linearized instead')
         self.body = body
         self.operator = operator
 
@@ -176,7 +176,7 @@ class Constraint:
 
         Posynomial ``<= 1`` becomes log-sum-exp ``<= 0`` (convex); monomial ``== 1``
         becomes an affine equality. Both can be imposed directly. Everything else
-        must be linearised.
+        must be linearized.
         """
         return isinstance(self.body, Posynomial)
 
@@ -250,13 +250,13 @@ def _solve_subproblem(problem, x_k, B, options, method):
 
     ``'slcp'``
         Posynomials and monomials imposed exactly (log-sum-exp / affine);
-        everything else linearised in log space. Paper Equation 15.
+        everything else linearized in log space. Paper Equation 15.
     ``'lsqp'``
-        Every constraint linearised in log space. The sub-problem is then a QP,
+        Every constraint linearized in log space. The sub-problem is then a QP,
         which is exactly what the paper says SLCP degenerates to when no
         posynomial constraints are present.
     ``'sqp'``
-        Every constraint linearised in the natural variables, no log transform.
+        Every constraint linearized in the natural variables, no log transform.
     """
     n = problem.n
     cons = problem.constraints
@@ -282,7 +282,7 @@ def _solve_subproblem(problem, x_k, B, options, method):
     # --- constraints -------------------------------------------------------
     # Every constraint gets its own relaxation variable sigma >= 0, penalised in
     # the objective. Without this the sub-problem can be infeasible even when the
-    # true problem is not -- the standard SQP inconsistent-linearisation problem.
+    # true problem is not -- the standard SQP inconsistent-linearization problem.
     m.S = pyo.RangeSet(0, len(cons) - 1) if cons else pyo.RangeSet(0, -1)
     m.sigma = pyo.Var(m.S, domain=pyo.NonNegativeReals, initialize=0.0)
     penalty = options.penalty_constant * sum(m.sigma[i] ** 2 for i in range(len(cons)))
@@ -304,7 +304,7 @@ def _solve_subproblem(problem, x_k, B, options, method):
                 m.cons.add(expr == m.sigma[i] if op == '==' else expr <= m.sigma[i])
             else:
                 # Posynomial: log-sum-exp, convex, imposed exactly. This is the
-                # whole point of SLCP -- no linearisation error here at all.
+                # whole point of SLCP -- no linearization error here at all.
                 expr = sum(pyo.exp(math.log(c)
                                    + sum(a[j] * (m.d[j] + log_xk[j]) for j in range(n)))
                            for c, a in terms)
@@ -316,7 +316,7 @@ def _solve_subproblem(problem, x_k, B, options, method):
             m.cons.add(expr == 1.0 + m.sigma[i] if op == '=='
                        else expr <= 1.0 + m.sigma[i])
         else:
-            # Log-space linearisation: log v + (x . grad v)/v . d
+            # Log-space linearization: log v + (x . grad v)/v . d
             v = body(x_k)
             g = body.log_grad(x_k)
             expr = math.log(v) + sum(g[j] * m.d[j] for j in range(n))

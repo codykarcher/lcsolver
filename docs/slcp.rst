@@ -18,7 +18,7 @@ The Idea
 Constraints are split in two. Posynomials :math:`p(x) \le 1` and monomials
 :math:`m(x) = 1` become convex *exactly* under the log transform, so they are
 imposed directly. Everything else, :math:`g(x) \le 1` and :math:`h(x) = 1`, is
-linearised in log space as SQP would linearise in the natural variables.
+linearized in log space as SQP would linearize in the natural variables.
 
 .. math::
 
@@ -43,11 +43,11 @@ linearised in log space as SQP would linearise in the natural variables.
 The subproblem is therefore log-convex rather than quadratic, which is what
 distinguishes SLCP from a log-space SQP. Keeping the posynomials exact stops the
 subproblem from stepping outside a constraint that a linear model would have
-badly underestimated -- the failure mode that costs the linearised method
+badly underestimated -- the failure mode that costs the linearized method
 iterations.
 
 The relaxation variables :math:`\sigma_i` and their penalty :math:`K` handle the
-inconsistent-linearisation problem familiar from SQP: without them the subproblem
+inconsistent-linearization problem familiar from SQP: without them the subproblem
 can be infeasible even when the true problem is not.
 
 Two details matter more than they look:
@@ -74,7 +74,7 @@ are GP-compatible and needs value/gradient callbacks for the ones that are not::
     from edi.solvers.ipopt.slcp import (
         Constraint, Posynomial, Problem, Signomial, Options, solve)
 
-    # minimise x*y  subject to  x >= 1, y >= 2
+    # minimize x*y  subject to  x >= 1, y >= 2
     objective = Posynomial([(1.0, [1, 1])], n=2)
     constraints = [
         Constraint(Posynomial([(1.0, [-1, 0])], 2), '<='),   # 1/x <= 1
@@ -112,10 +112,10 @@ The same driver implements two comparison algorithms, selected by ``method``:
 ``'slcp'``
     As described above.
 ``'lsqp'``
-    Every constraint linearised in log space. This is what the SLCP subproblem
+    Every constraint linearized in log space. This is what the SLCP subproblem
     degenerates to when no posynomial constraints are present.
 ``'sqp'``
-    Every constraint linearised in the natural variables, no log transform.
+    Every constraint linearized in the natural variables, no log transform.
 
 Options
 -------
@@ -169,9 +169,9 @@ Validation
 
 ``examples/run_slcp.py`` reproduces the published results. On the two-variable
 example from :math:`(0.3, 0.05)`, SLCP converges in 13 iterations and the
-fully-linearised baseline in 17, matching the reference implementation; the two
+fully-linearized baseline in 17, matching the reference implementation; the two
 are identical through iteration 5 and diverge at iteration 6, where the
-linearised method overshoots the constraint to 1.387 while SLCP holds it at
+linearized method overshoots the constraint to 1.387 while SLCP holds it at
 0.999999.
 
 Across multiple starting points the advantage grows with distance from the

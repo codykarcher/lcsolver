@@ -42,7 +42,7 @@ together. It provides a `Formulation` object that behaves exactly like a Pyomo
 `ConcreteModel` while adding unit-aware variable and constant declarations, a
 structured interface for wrapping black-box analysis codes as differentiable
 constraints, and automatic detection of problem structure so that a model written
-once can be recognised as linear, quadratic, geometric, or signomial and handed to
+once can be recognized as linear, quadratic, geometric, or signomial and handed to
 an appropriate solver.
 
 The interface deliberately borrows its ergonomics from `GPkit` [@burnell2020gpkit]
@@ -53,7 +53,7 @@ ecosystem of Pyomo.
 # Statement of need
 
 Design optimization in aerospace, energy, and mechanical engineering is
-characterised by models that mix closed-form physics with legacy analysis codes,
+characterized by models that mix closed-form physics with legacy analysis codes,
 and by quantities that carry units whose mismatch is a common and expensive source
 of error. Existing tools address parts of this problem. Disciplined convex modeling
 packages such as `CVXPY` and geometric-programming packages such as `GPkit` give
@@ -82,7 +82,7 @@ standalone package so that it can evolve independently of the Pyomo release cycl
   structured way to expose an external analysis code, including its derivatives, as
   a Pyomo constraint via the grey-box interface.
 - **Structure detection.** A model walker classifies the algebraic structure of the
-  formulation, recognising linear, quadratic, geometric, and signomial forms.
+  formulation, recognizing linear, quadratic, geometric, and signomial forms.
 - **Solver routing.** Detected structure is dispatched to an appropriate backend:
   linear, quadratic and geometric programs to `cvxopt` or, optionally, to IPOPT
   applied to the log-transformed problem; signomial programs to a solver built on
@@ -101,7 +101,7 @@ standalone package so that it can evolve independently of the Pyomo release cycl
 - **Sequential Log-Convex Programming.** For the common case of a model that is
   *almost* GP-compatible, `EDI` implements SLCP [@karcher2022slcp]. Posynomial and
   monomial constraints are imposed exactly in a log-convex subproblem while the
-  remainder — including constraints evaluated by external codes — is linearised
+  remainder — including constraints evaluated by external codes — is linearized
   in log space. This recovers much of the conditioning and reliability of a
   geometric program without requiring the whole model to be one.
 

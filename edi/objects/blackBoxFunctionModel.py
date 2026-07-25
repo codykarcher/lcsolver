@@ -359,7 +359,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         # _NunwrappedInputs is assigned when the black box is attached to a
         # Formulation (see formulation.py); at construction time it is still
         # None. numpy >= 2.0 rejects None as a shape, so fall back to a scalar
-        # placeholder (the numpy 1.x behaviour) until the real size is known.
+        # placeholder (the numpy 1.x behavior) until the real size is known.
         n = self._NunwrappedInputs
         self._input_values = np.ones(() if n is None else n) * defaultVal
 

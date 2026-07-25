@@ -27,10 +27,10 @@ convex. The GP standard form ``posynomial <= 1`` therefore becomes
 
 .. math::  \\sum_k e^{\\,b_k + a_k^\\top t} \\;\\le\\; 1,
 
-and the objective is the same sum, minimised. Both are convex in :math:`t`, so
+and the objective is the same sum, minimized. Both are convex in :math:`t`, so
 IPOPT converges to the global optimum. (The outer logarithm usually seen in
-textbook presentations is omitted deliberately: minimising a positive sum and
-minimising its logarithm give the same minimiser, and dropping it avoids a
+textbook presentations is omitted deliberately: minimizing a positive sum and
+minimizing its logarithm give the same minimizer, and dropping it avoids a
 ``log`` of a quantity that the solver may drive toward zero.)
 
 Monomial equality constraints are affine in :math:`t` and are passed through as
@@ -115,7 +115,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
 
     # ---- solve -----------------------------------------------------------
     from edi.solvers.ipopt.ipopt_solver_interface import (
-        _executable_available, _summarise)
+        _executable_available, _summarize)
     from pyomo.opt import TerminationCondition
 
     route = method
@@ -134,7 +134,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
         opt.options[k] = v
 
     results = opt.solve(m, tee=tee) if route == 'cyipopt' else opt.solve(m, tee=tee)
-    summary = _summarise(results)
+    summary = _summarize(results)
 
     tc = summary['termination_condition']
     if tc not in (str(TerminationCondition.optimal),
