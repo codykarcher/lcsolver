@@ -18,6 +18,34 @@ this module maps the solution vector onto those variables.
 """
 
 from pyomo.common.dependencies import numpy as np
+from pyomo.core.base.componentuid import ComponentUID
+
+
+def _resolve_on(model, v):
+    """Find the counterpart of variable ``v`` on ``model``, or None.
+
+    A ``ComponentUID`` is built from the component *object* rather than from
+    ``v.name``. That matters for indexed variables: ``model.find_component(name)``
+    round-trips through a string, so 'sK[0]' has to be re-parsed, and a variable
+    whose parent component has been collected reports its name as
+    '[Unattached VarData]' -- which the CUID parser turns into a bare index with
+    no component name and then raises ``TypeError`` on. Going through the object
+    keeps the real index values (ints, strings, tuples) intact and never parses.
+    """
+    try:
+        cuid = ComponentUID(v)
+    except Exception:
+        # v's parent component is gone, so it can no longer be located by name.
+        return None
+    return cuid.find_component_on(model)
+
+
+def _name_of(v):
+    """A usable name for ``v``, even if its parent component was collected."""
+    try:
+        return v.name
+    except Exception:                                # pragma: no cover - defensive
+        return str(v)
 
 
 def write_solution(structures, res, model=None):
@@ -34,7 +62,8 @@ def write_solution(structures, res, model=None):
         ``.clone()``, so ``structures['variables']`` belong to a *copy* of the
         user's model. Writing to them leaves the caller's model untouched --
         exactly the bug this module exists to fix. When ``model`` is supplied,
-        each variable is resolved by name onto it via ``find_component``.
+        each variable is resolved onto it by ``ComponentUID`` (see
+        ``_resolve_on``), which handles indexed variables correctly.
 
     Returns
     -------
@@ -68,18 +97,18 @@ def write_solution(structures, res, model=None):
         val = float(x[i])
         target = v
         if model is not None:
-            # Resolve onto the caller's model by name, since `variables` may
-            # belong to the clone produced by unit_corrector.
-            found = model.find_component(v.name)
+            # Resolve onto the caller's model, since `variables` may belong to
+            # the clone produced by unit_corrector.
+            found = _resolve_on(model, v)
             if found is None:
-                unresolved.append(v.name)
+                unresolved.append(_name_of(v))
                 continue
             target = found
         try:
             target.set_value(val, skip_validation=True)
         except TypeError:            # older Pyomo without skip_validation
             target.set_value(val)
-        written[v.name] = val
+        written[_name_of(target)] = val
 
     if unresolved:
         raise KeyError(
@@ -92,4 +121,4 @@ def solution_dict(structures, res):
     """Return ``{variable_name: value}`` without modifying the model."""
     variables = structures['variables']
     x = np.asarray(res['x'], dtype=float).ravel()
-    return {v.name: float(x[i]) for i, v in enumerate(variables)}
+    return {_name_of(v): float(x[i]) for i, v in enumerate(variables)}

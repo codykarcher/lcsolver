@@ -461,6 +461,12 @@ def structure_detector(pyomo_component):
     # The solution vector returned by the cvxopt backends is indexed in exactly
     # this order, so downstream code (notably solution write-back) needs it.
     structures['variables'] = list(unwrappedVariables)
+    # Keep a strong reference to the model the variables came from. Callers
+    # routinely write `structure_detector(unit_corrector(m))`, which leaves the
+    # clone unreferenced; once it is collected, the IndexedVar components die
+    # with it and every VarData in `variables` reports its name as
+    # '[Unattached VarData]', breaking name-based write-back.
+    structures['model'] = pyomo_component
     # print(structures)
     return structures
 

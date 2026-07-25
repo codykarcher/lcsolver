@@ -109,12 +109,21 @@ def solve(m, solver='auto', convex_backend='cvxopt', **kwargs):
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
+    import warnings
+
     try:
-        structures = structure_detector(unit_corrector(m))
+        # Bind the corrected clone to a local: `structures['variables']` holds
+        # only the VarData objects, and if the clone were collected here their
+        # parent components would go with it.
+        corrected = unit_corrector(m)
+        structures = structure_detector(corrected)
         structured = any(structures[k][0] for k in
                          ('Linear_Program', 'Quadratic_Program',
                           'Geometric_Program', 'Signomial_Program'))
-    except Exception:
+    except Exception as e:
+        warnings.warn(
+            f"structure detection failed ({type(e).__name__}: {e}); "
+            f"solving with IPOPT instead.", RuntimeWarning, stacklevel=2)
         structured = False
 
     if structured:
@@ -122,8 +131,13 @@ def solve(m, solver='auto', convex_backend='cvxopt', **kwargs):
             if convex_backend == 'ipopt':
                 return _convex_ipopt(m, structures=structures, **kwargs)
             return cvxopt_solve(m, **kwargs)
-        except Exception:
-            pass                                    # fall through to plain IPOPT
+        except Exception as e:
+            # Fall through to plain IPOPT, but say why: a silent fallback turns
+            # a bug in the structured path into a confusing IPOPT failure.
+            warnings.warn(
+                f"the structured backend failed ({type(e).__name__}: {e}); "
+                f"falling back to IPOPT on the raw model.",
+                RuntimeWarning, stacklevel=2)
     return ipopt_solve(m, **kwargs)
 
 

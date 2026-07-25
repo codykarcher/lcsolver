@@ -314,3 +314,156 @@ class TestConvexIpoptBackend(unittest.TestCase):
         r = solve(f)
         self.assertEqual(r.get('problem_structure'), 'geometric_program')
         self.assertAlmostEqual(pyo.value(f.x), 1.0, places=4)
+
+
+def _indexed_gp(n=4):
+    """min sum_i sK[i] + y  s.t.  sK[i]*y >= 2, y >= 0.5.
+
+    With sK[i] = 2/y at the optimum the objective is 2n/y + y, minimized at
+    y = sqrt(2n) and sK[i] = 2/sqrt(2n). For n = 4 that is y = 2*sqrt(2) and
+    sK[i] = 1/sqrt(2).
+    """
+    f = Formulation()
+    f.Variable(name='sK', guess=1.0, units='', description='sK', size=n)
+    f.Variable(name='y', guess=1.0, units='', description='y')
+    f.Objective(sum(f.sK[i] for i in range(n)) + f.y)
+    cons = [f.sK[i] * f.y >= 2.0 * units.dimensionless for i in range(n)]
+    cons.append(f.y >= 0.5 * units.dimensionless)
+    f.ConstraintList(cons)
+    return f
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+@unittest.skipIf(not pint_available, 'Testing units requires pint')
+class TestIndexedVariableWriteBack(unittest.TestCase):
+    """Write-back must work for INDEXED variables, e.g. Variable(..., size=16).
+
+    Regression guard for two coupled bugs:
+
+    * ``structure_detector`` published only the VarData objects from the
+      ``unit_corrector`` clone. Callers write ``structure_detector(unit_corrector(m))``,
+      leaving the clone unreferenced; once it was collected the parent IndexedVar
+      went with it and every VarData reported its name as '[Unattached VarData]'.
+      Write-back then fed that string to ``find_component``, and ComponentUID
+      raised ``TypeError: attribute name must be string, not 'NoneType'``.
+      Scalar variables were unaffected, because there the VarData *is* the
+      component that ``structures['variables']`` keeps alive -- so the failure
+      only ever showed up on indexed variables.
+    * ``solve()``'s auto path swallowed that exception and fell through to raw
+      IPOPT, which failed later and for an unrelated-looking reason.
+    """
+
+    def test_structures_keep_the_corrected_model_alive(self):
+        import gc
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+
+        # The clone is deliberately not bound to a local here: this is exactly
+        # how callers invoke it, and it is what used to strand the VarData.
+        s = structure_detector(unit_corrector(_indexed_gp()))
+        gc.collect()
+        names = [v.name for v in s['variables']]
+        self.assertEqual(names, ['sK[0]', 'sK[1]', 'sK[2]', 'sK[3]', 'y'])
+
+    def test_write_solution_resolves_indexed_variables(self):
+        import gc
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+        from edi.solvers.writeback import write_solution
+
+        f = _indexed_gp()
+        s = structure_detector(unit_corrector(f))
+        gc.collect()
+        written = write_solution(s, {'x': [1.0, 2.0, 3.0, 4.0, 5.0]}, model=f)
+        self.assertEqual(sorted(written), ['sK[0]', 'sK[1]', 'sK[2]', 'sK[3]', 'y'])
+        # written onto the CALLER's model, not the unit-corrected clone
+        self.assertAlmostEqual(pyo.value(f.sK[2]), 3.0)
+        self.assertAlmostEqual(pyo.value(f.y), 5.0)
+
+    @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
+    def test_indexed_gp_solves_and_writes_back_cvxopt(self):
+        from edi.solvers.solver import solve
+
+        f = _indexed_gp()
+        r = solve(f, solver='auto')
+        self.assertEqual(r.get('problem_structure'), 'geometric_program')
+        self.assertIsNone(r.get('writeback_error'))
+        for i in range(4):
+            self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
+        self.assertAlmostEqual(pyo.value(f.y), 8 ** 0.5, places=4)
+
+    @unittest.skipIf(not (_ipopt_route_available('pyomo')
+                          or _ipopt_route_available('cyipopt')),
+                     'no IPOPT backend available')
+    def test_indexed_gp_solves_and_writes_back_convex_ipopt(self):
+        import warnings
+        from edi.solvers.solver import solve
+
+        f = _indexed_gp()
+        with warnings.catch_warnings():
+            # a fallback to raw IPOPT now warns; make that a hard failure here
+            warnings.simplefilter('error', RuntimeWarning)
+            r = solve(f, solver='auto', convex_backend='ipopt')
+        self.assertEqual(r['status'], 'optimal')
+        # the log-space convex path, NOT a silent fallback to raw IPOPT (which
+        # happens to reach the same point here, so the optimum alone proves
+        # nothing about which route ran)
+        self.assertIn('log-transformed', str(r.get('solver', '')))
+        self.assertEqual(r.get('problem_structure'), 'geometric_program')
+        for i in range(4):
+            self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
+        self.assertAlmostEqual(pyo.value(f.y), 8 ** 0.5, places=4)
+
+    @unittest.skipIf(not (_ipopt_route_available('pyomo')
+                          or _ipopt_route_available('cyipopt')),
+                     'no IPOPT backend available')
+    def test_auto_path_survives_garbage_collection(self):
+        """The clone must outlive a GC pass that lands mid-solve.
+
+        Pyomo blocks are freed by the cyclic collector rather than by refcount,
+        so before the fix this failure depended on when a collection happened to
+        run -- it showed up on real (larger) models and not on small ones.
+        Forcing a collection right after detection makes it deterministic.
+        """
+        import gc
+        from edi.solvers import solver as solver_module
+
+        original = solver_module._convex_ipopt
+
+        def _collect_then_solve(*a, **k):
+            gc.collect()                    # detection is done; the clone is on
+            return original(*a, **k)        # its own from here
+
+        solver_module._convex_ipopt = _collect_then_solve
+        try:
+            f = _indexed_gp()
+            r = solver_module.solve(f, solver='auto', convex_backend='ipopt')
+        finally:
+            solver_module._convex_ipopt = original
+
+        self.assertIn('log-transformed', str(r.get('solver', '')))
+        for i in range(4):
+            self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
+
+    def test_auto_fallback_warns_instead_of_swallowing(self):
+        """A failing structured backend must not fall through in silence."""
+        import warnings
+        from edi.solvers import solver as solver_module
+
+        def _boom(*a, **k):
+            raise RuntimeError('structured backend exploded')
+
+        original = solver_module.cvxopt_solve
+        solver_module.cvxopt_solve = _boom
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                try:
+                    solver_module.solve(_gp_known_optimum(), solver='auto')
+                except Exception:
+                    pass                    # IPOPT may be absent; the warning is the point
+            messages = [str(w.message) for w in caught]
+            self.assertTrue(any('structured backend exploded' in msg for msg in messages),
+                            msg=f'no explanatory warning was issued; got {messages}')
+        finally:
+            solver_module.cvxopt_solve = original
