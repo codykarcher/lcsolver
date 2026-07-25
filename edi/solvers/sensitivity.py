@@ -372,6 +372,45 @@ def constraint_duals(model, method='auto', rtol=ACTIVE_RTOL):
 # ---------------------------------------------------------------------------
 # public entry point
 # ---------------------------------------------------------------------------
+
+def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
+                      abs_step=1e-6, solve_fn=None):
+    """Central-difference sensitivities by re-solving the model per Constant.
+
+    Duals are never consulted, so this is immune to the degenerate-active-set
+    failure of KKT recovery. Cost: two solves per Constant. Requires that the
+    solve backend writes the solution back onto the model (every EDI backend
+    does), and leaves the model re-solved at the baseline on exit.
+    """
+    if solve_fn is None:
+        from edi.solvers.solver import cvxopt_solve as solve_fn
+    obj = _objective(model)
+    sens = {}
+    for name, pd in _constants(model).items():
+        c0 = float(pyo.value(pd))
+        h = abs(c0) * rel_step if c0 != 0.0 else abs_step
+        try:
+            pd.set_value(c0 + h)
+            solve_fn(model)
+            f_up = float(pyo.value(obj))
+            pd.set_value(c0 - h)
+            solve_fn(model)
+            f_dn = float(pyo.value(obj))
+        except Exception:
+            pd.set_value(c0)
+            solve_fn(model)                       # restore before propagating
+            raise
+        pd.set_value(c0)
+        dfdc = (f_up - f_dn) / (2.0 * h)
+        if normalized:
+            sens[name] = dfdc * c0 / fstar if fstar != 0.0 else float('nan')
+        else:
+            sens[name] = dfdc
+    solve_fn(model)                               # leave baseline solution
+    return {'sensitivities': sens, 'objective': fstar, 'normalized': normalized,
+            'method': 'fd', 'approximate': False}
+
+
 def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
                   duals=None, approximate=None):
     """Sensitivity of the optimum to every Constant in the model.
@@ -386,8 +425,14 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         ``d log f* / d log c``, which is unitless and therefore comparable
         across constants. When False report the raw derivative ``d f* / d c``,
         which carries units of ``[objective]/[constant]``.
-    method : {'auto', 'suffix', 'kkt'}
+    method : {'auto', 'suffix', 'kkt', 'fd'}
         How to obtain the constraint duals; see :func:`constraint_duals`.
+        ``'fd'`` bypasses duals entirely and central-differences the optimum
+        with respect to each Constant by re-solving the model. It is the slow,
+        assumption-free fallback for the degenerate-active-set case in which
+        dual recovery is ambiguous (large stationarity residual): exactness of
+        the dual route is traded for ~2 extra solves per Constant. The model is
+        left holding the baseline solution afterwards.
     rtol : float
         Relative tolerance for the active-set test.
     duals : ComponentMap, optional
@@ -409,6 +454,27 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     For a signomial program it describes the final convex subproblem and is
     therefore local to the returned point.
     """
+    # Frame selection. Suffix duals (the IPOPT route) belong to the original
+    # model's constraint objects, so that path stays on the original model.
+    # KKT recovery, however, must run on the UNIT-CORRECTED twin: the raw
+    # model's constraint expressions mix declared units (a Prouty weight
+    # coefficient in lb/ft^2.3 beside a chord in m), so evaluating them raw
+    # gives numbers in no consistent frame -- genuinely tight constraints look
+    # slack, the recovered active set is wrong, and the stationarity system
+    # goes inconsistent (observed as a residual of 0.19 on the first model
+    # with non-SI Constants). unit_corrector folds the conversion factors into
+    # the expressions as literals, the cloned variable values ride along
+    # unchanged, and the Params keep their names and magnitudes, so the
+    # normalized log-log sensitivities are identical to those defined on the
+    # declared-units model. (method='fd' re-solves through the same correction
+    # and needs neither.)
+    if method != 'fd' and duals is None:
+        use_suffix = (method in ('auto', 'suffix')
+                      and _duals_from_suffix(model) is not None)
+        if not use_suffix:
+            from edi.units.unitCorrector import unit_corrector
+            model = unit_corrector(model)
+
     obj = _objective(model)
     try:
         fstar = float(pyo.value(obj))
@@ -416,6 +482,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         raise RuntimeError(
             "could not evaluate the objective; the model does not appear to "
             f"hold a solution ({type(e).__name__}: {e})")
+
+    if method == 'fd':
+        return _fd_sensitivities(model, fstar, normalized=normalized)
 
     # A signomial program is solved as a sequence of convex subproblems, so its
     # duals belong to the last of those. Flag that unless the caller has said
