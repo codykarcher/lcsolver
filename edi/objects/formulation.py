@@ -455,6 +455,34 @@ class Formulation(ConcreteModel):
             if nm in self._runtimeConstraint_keys
         ]
 
+    def sensitivities(self, normalized=True, **kwargs):
+        """How strongly the optimum responds to each Constant.
+
+        Call this after a solve. By default it returns the log-log sensitivity
+        ``d log(f*) / d log(c)`` for every Constant, which is unitless and so
+        comparable across constants with different physical units. Pass
+        ``normalized=False`` for the raw derivative ``d f* / d c``.
+
+        The numbers come from the constraint duals via the envelope theorem, so
+        they cost one solve regardless of how many constants the model has, and
+        every partial derivative is taken symbolically rather than by
+        differencing. See :mod:`edi.solvers.sensitivity` for the details.
+
+        Returns
+        -------
+        dict
+            See :func:`edi.solvers.sensitivity.sensitivities`.
+        """
+        from edi.solvers.sensitivity import sensitivities as _sens
+
+        return _sens(self, normalized=normalized, **kwargs)
+
+    def print_sensitivities(self, **kwargs):
+        """Print the sensitivity table, sorted by magnitude."""
+        from edi.solvers.sensitivity import format_sensitivities
+
+        print(format_sensitivities(self.sensitivities(**kwargs)))
+
     def check_units(self):
         for i in range(1, self._objective_counter + 1):
             assert_units_consistent(self.__dict__['objective_' + str(i)])

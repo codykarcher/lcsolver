@@ -67,6 +67,14 @@ def cvxopt_solve(m, write_back=True):
             f"be infeasible or non-optimal. Consider convex_backend='ipopt'.",
             RuntimeWarning, stacklevel=2)
 
+    # Record which structure was solved. `sensitivities` reads this to tell
+    # whether the duals came from a genuinely convex solve or from the final
+    # subproblem of a signomial sequence, which is only a local approximation.
+    try:
+        m._edi_last_problem_structure = res['problem_structure']
+    except Exception:
+        pass
+
     # Write the solution back onto the Pyomo model. Without this the solve
     # succeeds but pyo.value(m.x) still returns the initial guess, because the
     # cvxopt backends work in a transformed space and return only a raw vector.

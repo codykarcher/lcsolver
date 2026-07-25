@@ -48,8 +48,17 @@ from edi.objects.blackBoxFunctionModel import (
     TypeCheckedList,
 )
 
+from edi.solvers.sensitivity import (
+    sensitivities,
+    constraint_duals,
+    format_sensitivities,
+)
+
 __all__ = [
     "Formulation",
+    "sensitivities",
+    "constraint_duals",
+    "format_sensitivities",
     "BlackBoxFunctionModel",
     "BlackBoxFunctionModel_Variable",
     "BlackBoxVariable",

@@ -49,6 +49,36 @@ import pyomo.environ as pyo
 pyo.value(f.x)                    # the optimum, not the initial guess
 ```
 
+### Sensitivities
+
+After a solve, EDI reports how strongly the optimum responds to each `Constant`,
+the way GPkit does for a geometric program:
+
+```python
+solve(f)
+f.print_sensitivities()
+```
+```
+========================================================================
+Sensitivities to constants    [d log(f*) / d log(c)]
+objective = 254.872    duals: kkt
+========================================================================
+  W_0                             +0.9953   ++++++++++++++++++++
+  e                               -0.4795   ----------
+  k                               +0.4108   +++++++++
+  ...
+```
+
+The numbers are log-log sensitivities (elasticities), so they are unitless and
+can be ranked against each other: `+0.4108` means a 1% increase in `k` costs
+about 0.41% of objective. They come from the constraint duals via the envelope
+theorem, so the cost is one solve regardless of how many constants the model
+has — not the `2N` re-solves a finite difference would need — and every partial
+derivative is taken symbolically, so there is no step size to tune. Available
+for LP, QP, GP and SP on both the cvxopt and IPOPT cores; for a signomial
+program the result is a local approximation from the final convex subproblem and
+is flagged as such. See the [documentation](docs/sensitivities.rst).
+
 ### IPOPT
 
 Two routes are supported. `method='pyomo'` uses `SolverFactory('ipopt')`, Pyomo's

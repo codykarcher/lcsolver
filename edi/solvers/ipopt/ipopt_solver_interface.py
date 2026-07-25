@@ -128,6 +128,13 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             "this model contains black-box (grey-box) constraints, which the "
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
 
+    # Ask the solver for constraint duals. They cost nothing extra and are what
+    # `edi.solvers.sensitivity` uses to report how the optimum responds to each
+    # Constant; without the Suffix those duals would have to be reconstructed
+    # from the primal solution.
+    if not hasattr(m, 'dual'):
+        m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+
     # ---- solve ------------------------------------------------------------
     if route == 'pyomo':
         opt = (pyo.SolverFactory('ipopt', executable=executable)

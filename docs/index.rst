@@ -46,6 +46,7 @@ User's Guide
    blackboxconstraints.rst
    advancedruntimeconstraints.rst
    solvers.rst
+   sensitivities.rst
    slcp.rst
    examples.rst
    additionaltips.rst

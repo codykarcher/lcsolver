@@ -90,6 +90,14 @@ standalone package so that it can evolve independently of the Pyomo release cycl
   Sequential Log-Convex Programming; and anything else, including models
   containing black-box constraints, to IPOPT via Pyomo. Solutions are written
   back onto the model in every case.
+- **Sensitivities to constants.** After a solve, `EDI` reports the log-log
+  sensitivity of the optimum to every declared constant, ranking a model's
+  assumptions by how much they actually matter. These are obtained from the
+  constraint duals via the envelope theorem, so they cost one solve rather than
+  the two-per-constant of a finite difference, and each partial derivative is
+  taken symbolically rather than by differencing. They are available for linear,
+  quadratic and geometric programs on either solver core, and as a local
+  approximation from the final convex subproblem of a signomial program.
 - **Sequential Log-Convex Programming.** For the common case of a model that is
   *almost* GP-compatible, `EDI` implements SLCP [@karcher2022slcp]. Posynomial and
   monomial constraints are imposed exactly in a log-convex subproblem while the
