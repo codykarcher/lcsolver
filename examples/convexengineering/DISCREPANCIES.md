@@ -228,3 +228,32 @@ explanation, and anything built on the wing inherits it.
 Cheap way to settle it later: solve the *reference* model with two different
 gpkit backends. If they agree with each other and disagree with the rebuild,
 the difference is in the model, not the solver.
+
+---
+
+## 9. EDI: cvxopt non-convergence surfaced as ZeroDivisionError
+
+**Status: fixed.**
+
+`solve_GP` read cvxopt's results without checking `status`. cvxopt reports
+failure there but still returns numbers, and those numbers are in log space.
+On a diverging (typically unbounded) GP the transformed objective runs to a
+large negative value, `exp()` of it underflows to exactly 0.0, and the
+equality-dual normalization
+
+```python
+res['y'].append(1/res['primal objective']*y2)
+```
+
+then raised a bare `ZeroDivisionError` from inside the solver — a traceback
+saying nothing about the actual cause, which is almost always a model missing
+a lower bound.
+
+Found while building the empennage: the tail boom was unbounded (nothing
+forced a nonzero diameter, so it went weightless and the moment arm grew
+without limit). cvxopt terminated with a singular KKT matrix and a
+transformed objective of -1.7e5; `exp(-1.7e5)` is 0.0.
+
+`solve_GP` now checks the status first and raises with the transformed
+objective value and the likely cause. The empennage's real defect — a missing
+`TailBoomBending` constraint set — was then obvious rather than buried.

@@ -151,6 +151,65 @@ class Signomial:
         return x * np.asarray(g, dtype=float) / v
 
 
+class PosynomialRatio:
+    """``p(x) / q(x)`` with p and q both POSYNOMIALS — the signomial-program form.
+
+    A signomial constraint that can be written  p(x) <= q(x)  (equivalently
+    ``p/q <= 1``) carries structure that SLCP's default treatment throws away:
+    it linearizes the whole body into a single monomial, when in fact ``p`` is
+    log-convex and can be imposed EXACTLY.
+
+    The classical SP treatment keeps p exact and condenses only q, using the
+    arithmetic-geometric-mean inequality at the current iterate:
+
+        q_hat(x) = prod_i ( u_i(x) / w_i )^{w_i},   w_i = u_i(x_k) / q(x_k)
+
+    ``q_hat`` is a MONOMIAL, satisfies ``q_hat(x) <= q(x)`` everywhere, and is
+    tight at x_k. So imposing ``p(x) <= q_hat(x)`` is CONSERVATIVE: any point
+    it admits satisfies the true constraint. The sub-problem then contains a
+    log-sum-exp (p, exact) bounded by an affine function (log q_hat) — still
+    convex, but with only the concave-in-log part approximated instead of all
+    of it.
+
+    This is the same condensation a signomial-program solver uses, made
+    available inside SLCP so the two treatments can be compared on identical
+    problems.
+    """
+
+    __slots__ = ('p', 'q', 'n')
+
+    def __init__(self, p, q, n):
+        if not isinstance(p, Posynomial) or not isinstance(q, Posynomial):
+            raise TypeError('PosynomialRatio needs two Posynomial parts')
+        if p.n != int(n) or q.n != int(n):
+            raise ValueError('p and q must have the same dimension as the problem')
+        self.p, self.q, self.n = p, q, int(n)
+
+    def __call__(self, x):
+        return self.p(x) / self.q(x)
+
+    def grad(self, x):
+        p, q = self.p(x), self.q(x)
+        return self.p.grad(x)/q - p*self.q.grad(x)/q**2
+
+    def log_grad(self, x):
+        """d log(p/q) / d log x = log_grad(p) - log_grad(q)."""
+        return self.p.log_grad(x) - self.q.log_grad(x)
+
+    def condensed_q(self, x_k):
+        """AGM monomial under-estimator of q at x_k, as ``(coeff, exponents)``."""
+        x_k = np.asarray(x_k, dtype=float)
+        qv = self.q(x_k)
+        coeff, expo = 1.0, np.zeros(self.n)
+        for c, a in self.q.terms:
+            w = c * np.prod(x_k ** a) / qv          # AGM weight, sums to 1
+            if w <= 0:
+                continue
+            coeff *= (c / w) ** w
+            expo = expo + w * a
+        return coeff, expo
+
+
 class Constraint:
     """One constraint in the standard form ``body <= 1`` or ``body == 1``.
 
@@ -163,6 +222,10 @@ class Constraint:
     def __init__(self, body, operator='<='):
         if operator not in ('<=', '=='):
             raise ValueError("operator must be '<=' or '=='")
+        if operator == '==' and isinstance(body, PosynomialRatio):
+            raise ValueError(
+                'a PosynomialRatio equality is not supported: the AGM '
+                'condensation is one-sided (conservative for <=)')
         if operator == '==' and isinstance(body, Posynomial) and not body.is_monomial:
             raise ValueError(
                 'a multi-term posynomial equality is not GP-compatible; supply it '
@@ -179,6 +242,11 @@ class Constraint:
         must be linearized.
         """
         return isinstance(self.body, Posynomial)
+
+    @property
+    def is_sp_form(self):
+        """True for a PosynomialRatio: p exact, q condensed (see that class)."""
+        return isinstance(self.body, PosynomialRatio)
 
 
 class Problem:
@@ -205,6 +273,35 @@ class Options:
         self.penalty_constant = 1e15      # K on the sigma relaxation
         self.lagrangian_gradient_tolerance = 1e-6
         self.step_magnitude_tolerance = 1e-4
+        self.feasibility_tolerance = 1e-6    # max |constraint violation| allowed
+                                             # before a run may be called converged
+        self.max_step_ratio = None           # per-iteration TRUST REGION, stated as a
+                                             # ratio to the CURRENT outer iterate:
+                                             #   1-r <= x_sub[i]/x_outer[i] <= 1+r
+                                             # Because the sub-problem works in LOG
+                                             # space (x_sub = x_outer * exp(d)), this
+                                             # is simply d in [log(1-r), log(1+r)] -- a
+                                             # CONSTANT bound that is automatically
+                                             # relative to the current iterate every
+                                             # iteration. Scalar, or length-n array
+                                             # (np.inf to leave a variable unbounded).
+                                             # May also be a CALLABLE r(x_k) returning
+                                             # such an array, for bounds that depend on
+                                             # the current iterate (e.g. a fixed ratio
+                                             # on a SHIFTED variable q = x - c).
+        self.max_log_step = None             # per-iteration TRUST REGION on the step:
+                                             # |d_j| <= max_log_step[j] in log space,
+                                             # i.e. |dx_j / x_j| <~ max_log_step[j].
+                                             # None (default) = unbounded, as before.
+                                             # Scalar or length-n array. This is step
+                                             # control for the LINEARISATION -- needed
+                                             # even with exact gradients, and distinct
+                                             # from surrogate-model management (TRMM),
+                                             # which exact gradients do make unnecessary.
+        self.penalty_escalation = 10.0       # factor by which the merit penalty on
+                                             # a VIOLATED constraint is raised when
+                                             # the step collapses while infeasible
+        self.max_penalty_escalations = 6     # give up after this many escalations
         self.eta = 1e-4                   # Armijo parameter, in (0, 0.5)
         self.rho = 0.8                    # backtracking factor, in (0, 1)
         self.mu_margin = 1.2              # merit-multiplier margin, > 1
@@ -234,10 +331,16 @@ class Result:
         self.grad_lagrangian = []
         self.subproblem_solves = 0
         self.function_evaluations = 0
+        self.max_violation = None   # max |constraint violation| at the returned
+                                    # point, in `body <= 1` form. Set on EVERY
+                                    # exit path, converged or not, so a caller
+                                    # can always tell whether x is usable.
 
     def __repr__(self):
+        viol = ('' if self.max_violation is None
+                else f' max_violation={self.max_violation:.3e}')
         return (f'<Result {self.status!r} iterations={self.iterations} '
-                f'objective={self.objective!r}>')
+                f'objective={self.objective!r}{viol}>')
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +412,17 @@ def _solve_subproblem(problem, x_k, B, options, method):
                                    + sum(a[j] * (m.d[j] + log_xk[j]) for j in range(n)))
                            for c, a in terms)
                 m.cons.add(pyo.log(expr) <= m.sigma[i])
+        elif method == 'slcp' and con.is_sp_form:
+            # SP form: impose  log p(x)  <=  log q_hat(x)  with p EXACT
+            # (log-sum-exp) and only q condensed to a monomial (affine in log
+            # space). Convex, and strictly less approximation than linearizing
+            # the whole ratio.
+            cq, aq = body.condensed_q(x_k)
+            lhs = sum(pyo.exp(math.log(c)
+                              + sum(a[j] * (m.d[j] + log_xk[j]) for j in range(n)))
+                      for c, a in body.p.terms)
+            rhs = math.log(cq) + sum(aq[j] * (m.d[j] + log_xk[j]) for j in range(n))
+            m.cons.add(pyo.log(lhs) - rhs <= m.sigma[i])
         elif method == 'sqp':
             v = body(x_k)
             g = body.grad(x_k)
@@ -329,6 +443,41 @@ def _solve_subproblem(problem, x_k, B, options, method):
         for j in range(n):
             m.cons.add(m.d[j] >= floor - log_xk[j])
 
+    # per-iteration trust region stated as a ratio to the current iterate
+    # (see Options.max_step_ratio)
+    if getattr(options, 'max_step_ratio', None) is not None:
+        _r = options.max_step_ratio
+        # A CALLABLE r(x_k) is evaluated at the current outer iterate. That is
+        # needed when the modelled quantity is a SHIFTED variable: if x = c + q
+        # for an offset c, a fixed ratio on x is NOT a fixed ratio on q, and the
+        # region silently loosens or tightens as q moves.
+        r = np.asarray(_r(x_k) if callable(_r) else _r, dtype=float)
+        if r.ndim == 0:
+            r = np.full(n, float(r))
+        if r.shape != (n,):
+            raise ValueError(f'max_step_ratio must be scalar or length {n}, '
+                             f'got shape {r.shape}')
+        for j in range(n):
+            if np.isfinite(r[j]) and r[j] > 0:
+                if r[j] >= 1.0:
+                    raise ValueError('max_step_ratio must be < 1 (x_sub/x_outer '
+                                     'has to stay positive)')
+                m.cons.add(m.d[j] <= math.log(1.0 + float(r[j])))
+                m.cons.add(m.d[j] >= math.log(1.0 - float(r[j])))
+
+    # per-iteration trust region on the step (see Options.max_log_step)
+    if options.max_log_step is not None:
+        mls = np.asarray(options.max_log_step, dtype=float)
+        if mls.ndim == 0:
+            mls = np.full(n, float(mls))
+        if mls.shape != (n,):
+            raise ValueError(f'max_log_step must be scalar or length {n}, '
+                             f'got shape {mls.shape}')
+        for j in range(n):
+            if np.isfinite(mls[j]):
+                m.cons.add(m.d[j] <= float(mls[j]))
+                m.cons.add(m.d[j] >= -float(mls[j]))
+
     opt = pyo.SolverFactory('ipopt')
     if not opt.available(exception_flag=False):
         raise RuntimeError(
@@ -337,10 +486,17 @@ def _solve_subproblem(problem, x_k, B, options, method):
     for k, v in (options.ipopt_options or {}).items():
         opt.options[k] = v
 
-    results = opt.solve(m, tee=options.tee)
+    # load_solutions=False: pyomo's default tries to load a solution BEFORE
+    # anyone inspects the status, so a failed sub-problem dies inside
+    # `load_from` with "Cannot load a SolverResults object with bad status"
+    # instead of raising the clean RuntimeError below -- which solve() already
+    # knows how to catch and report. Same defect, and same fix, as the main
+    # ipopt path (deferring load_solutions until after the status check).
+    results = opt.solve(m, tee=options.tee, load_solutions=False)
     tc = str(results.solver.termination_condition)
     if tc not in ('optimal', 'locallyOptimal', 'feasible'):
         raise RuntimeError(f'the {method.upper()} sub-problem failed: {tc}')
+    m.solutions.load_from(results)
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
 
@@ -422,6 +578,13 @@ def _constraint_violations(problem, x):
     return out
 
 
+def _max_violation(problem, x):
+    """Largest single constraint violation at ``x``, or 0.0 if unconstrained."""
+    if not problem.constraints:
+        return 0.0
+    return float(np.max(_constraint_violations(problem, x)))
+
+
 def _merit(problem, x, mu):
     """l1 merit function phi(x) = f(x) + sum_i mu_i |c_i(x)|_+."""
     return problem.objective_value(x) + float(np.dot(mu, _constraint_violations(problem, x)))
@@ -473,6 +636,14 @@ def solve(problem, x0, method='slcp', options=None):
 
     B = np.eye(n)
     mu = np.zeros(len(problem.constraints))
+    # Persistent lower bound on the merit penalties. The mu update below is
+    # rebuilt from the SUB-PROBLEM multipliers every iteration, so a constraint
+    # the LINEARISED model believes is slack carries mu ~ 0 -- and then violating
+    # the TRUE constraint is free in the line search. That is how a black-box
+    # constraint ends up badly violated at a point the algorithm is happy to
+    # stop at. This floor lets an escalation persist instead of decaying away.
+    mu_floor = np.zeros(len(problem.constraints))
+    escalations = 0
     res = Result()
     res.history.append(x.copy())
     watchdog = 0
@@ -483,6 +654,7 @@ def solve(problem, x0, method='slcp', options=None):
         except RuntimeError as exc:
             res.status = f'sub-problem failure at iteration {k}: {exc}'
             res.x, res.objective, res.iterations = x, problem.objective_value(x), k
+            res.max_violation = _max_violation(problem, x)
             return res
         res.subproblem_solves += 1
 
@@ -491,6 +663,7 @@ def solve(problem, x0, method='slcp', options=None):
         # step to be a descent direction on phi.
         mu = np.maximum(np.abs(mults) * options.mu_margin,
                         0.5 * (mu + np.abs(mults) * options.mu_margin))
+        mu = np.maximum(mu, mu_floor)
 
         # --- line search ----------------------------------------------------
         phi0 = _merit(problem, x, mu)
@@ -536,6 +709,7 @@ def solve(problem, x0, method='slcp', options=None):
                               f'watchdog limit ({options.watchdog_iterations}) '
                               f'was exceeded')
                 res.x, res.objective, res.iterations = x, problem.objective_value(x), k
+                res.max_violation = _max_violation(problem, x)
                 return res
             alpha = 1.0
             x_probe = (x * np.exp(alpha * d)) if method != 'sqp' else (x + alpha * d)
@@ -546,6 +720,7 @@ def solve(problem, x0, method='slcp', options=None):
                     res.status = f'no positive step available at iteration {k}'
                     res.x, res.objective, res.iterations = (
                         x, problem.objective_value(x), k)
+                    res.max_violation = _max_violation(problem, x)
                     return res
                 x_probe = (x * np.exp(alpha * d)) if method != 'sqp' else (x + alpha * d)
         else:
@@ -557,6 +732,10 @@ def solve(problem, x0, method='slcp', options=None):
         # BFGS on the Reduced Lagrangian, evaluated at both points with the SAME
         # multipliers, so the difference isolates the curvature.
         reduced = (method == 'slcp')
+        # SP-form constraints ALWAYS enter the Reduced Lagrangian: they are only
+        # PARTLY exact (p is imposed exactly, but q is condensed to a monomial,
+        # which discards q's curvature). Measured: excluding them fails to
+        # converge from every start while including them takes ~20 iterations.
         g_old = _lagrangian_gradient(problem, x, mults, method, reduced)
         g_new = _lagrangian_gradient(problem, x_new, mults, method, reduced)
         s = (np.log(x_new) - np.log(x)) if method != 'sqp' else (x_new - x)
@@ -576,15 +755,57 @@ def solve(problem, x0, method='slcp', options=None):
                   f'|d|={step_norm:.3e}  |gradL|={grad_lag:.3e}  alpha={alpha:.3f}')
 
         # --- convergence ----------------------------------------------------
-        if grad_lag < options.lagrangian_gradient_tolerance:
+        # `converged` means a KKT point to tolerance: STATIONARY *and* FEASIBLE.
+        # It previously meant only "the loop stopped", and was set to True on a
+        # small step alone. That is actively misleading on hard signomial /
+        # black-box problems, where SLCP routinely crawls to a tiny step while
+        # the Lagrangian gradient is still O(1e-1) and constraints are violated:
+        # the caller sees converged=True and a plausible objective, with no way
+        # to tell it from a real optimum short of recomputing the violations by
+        # hand. max_violation is now always reported so that check is free.
+        viol = _max_violation(problem, x)
+        feasible = viol <= options.feasibility_tolerance
+        if grad_lag < options.lagrangian_gradient_tolerance and feasible:
             res.converged, res.status = True, 'converged on the gradient of the Lagrangian'
             res.x, res.objective, res.iterations = x, problem.objective_value(x), k + 1
+            res.max_violation = viol
             return res
         if step_norm < options.step_magnitude_tolerance:
-            res.converged, res.status = True, 'converged on the step magnitude'
+            if feasible:
+                # A genuine (if weakly certified) stop.
+                res.converged, res.status = True, 'converged on the step magnitude'
+                res.x, res.objective, res.iterations = x, problem.objective_value(x), k + 1
+                res.max_violation = viol
+                return res
+            # INFEASIBLE STALL. Returning here would hand back a point that
+            # violates the constraints -- which is exactly what used to be
+            # reported as 'converged'. The step has collapsed because the merit
+            # function is not charging enough for the violation, so raise the
+            # penalty on the offending constraints and carry on. Feasibility is
+            # thus part of the termination criterion, not merely reported.
+            if escalations < options.max_penalty_escalations:
+                escalations += 1
+                bad = _constraint_violations(problem, x) > options.feasibility_tolerance
+                mu_floor[bad] = np.maximum(mu_floor[bad] * options.penalty_escalation,
+                                           max(1.0, abs(problem.objective_value(x))))
+                mu = np.maximum(mu, mu_floor)
+                B = np.eye(n)          # the stored curvature is for the old merit
+                if options.verbose:
+                    print(f'  escalating merit penalty on {int(bad.sum())} violated '
+                          f'constraint(s) (escalation {escalations}/'
+                          f'{options.max_penalty_escalations}), max violation {viol:.3e}')
+                continue
+            res.converged = False
+            res.status = (f'stalled at iteration {k + 1}: step {step_norm:.3e} is below '
+                          f'tolerance and the point is still INFEASIBLE after '
+                          f'{escalations} penalty escalations (max violation '
+                          f'{viol:.3e} > {options.feasibility_tolerance:g}); '
+                          f'|gradL| = {grad_lag:.3e}')
             res.x, res.objective, res.iterations = x, problem.objective_value(x), k + 1
+            res.max_violation = viol
             return res
 
     res.status = f'did not converge within {options.max_iterations} iterations'
     res.x, res.objective, res.iterations = x, problem.objective_value(x), options.max_iterations
+    res.max_violation = _max_violation(problem, x)
     return res

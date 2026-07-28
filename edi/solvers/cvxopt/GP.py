@@ -82,6 +82,24 @@ def solve_GP(structures):
     # # print(res_transformed['snl'])
     # print(unscrambler)
 
+    # Check convergence before touching the results. cvxopt reports failure in
+    # 'status' but still returns numbers, and those numbers are in log space:
+    # on a diverging (typically unbounded) problem the transformed objective
+    # runs to a large negative value, exp() of it underflows to exactly 0.0,
+    # and the equality-dual normalization below (1/primal objective) then
+    # raises a bare ZeroDivisionError from deep inside the solver.
+    #
+    # That traceback says nothing about the real cause, which is almost always
+    # a model missing a lower bound. Fail here with something actionable.
+    if res_transformed['status'] != 'optimal':
+        raise RuntimeError(
+            "cvxopt did not converge: status=%r. The transformed objective "
+            "reached %.6g; a large negative value here means the geometric "
+            "program is unbounded below, which usually means a variable has "
+            "no lower bound. Check that every variable is bounded from both "
+            "sides." % (res_transformed['status'],
+                        res_transformed['primal objective']))
+
     res = {}
     res['status']           = res_transformed['status']
     res['primal objective'] = cvxopt.exp(res_transformed['primal objective'])
