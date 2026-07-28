@@ -15,7 +15,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `wing` | gplibrary `GP/aircraft/wing` | **verified to ~1%** | Cd +0.7%, AR 19.92 vs 20.15, weights within 0.3% |
 | `turbofan` | York/Hoburg/Drela 2018 | not started | |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
-| `solar` | Burton & Hoburg 2018 | **verified to ~1%** | Wtotal 432.5 vs 436.4; AR/E/Poper within 0.7% |
+| `solar` | Burton & Hoburg 2018 | **verified to <1%** | lat20 -0.5%, lat10 -0.7%; AR/E/Poper within 1% |
 | `gassolar` | Burton & Hoburg 2018 | reference unblocked, port not started | |
 | `jho` | Ozturk et al | not started | shares the `gassolar` blocker |
 

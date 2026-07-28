@@ -49,7 +49,8 @@ Solves on ``convex_backend="ipopt"`` and matches the gpkit reference:
 
 | quantity | rebuild | reference | delta |
 |---|---|---|---|
-| Wtotal (lbf) | 432.45 | 436.43 | -0.9% |
+| Wtotal (lbf), lat 20 | 434.25 | 436.43 | -0.5% |
+| Wtotal (lbf), lat 10 | 295.38 | 297.56 | -0.7% |
 | wing AR | 38.17 | 38.10 | +0.2% |
 | wing S (ft^2) | 400.1 | 394.2 | +1.5% |
 | wing b (ft) | 123.6 | 122.6 | +0.8% |
@@ -58,7 +59,7 @@ Solves on ``convex_backend="ipopt"`` and matches the gpkit reference:
 | Poper (W) | 2116.9 | 2101.3 | +0.7% |
 | V (m/s) | 22.71 | 22.91 | -0.9% |
 | PSmin (W/m^2) | 284.8 | 286.9 | -0.7% |
-| empennage W (lbf) | 14.45 | 15.83 | -8.7% |
+| empennage W (lbf) | 14.99 | 15.83 | -5.3% |
 
 Four bugs were found getting here, and each masked the next — worth reading
 in order, because three of the four produced a *perfectly self-consistent*
@@ -89,11 +90,14 @@ the spar cap width — and the wetted area is ``S = l*pi*w[0]``, built from the
 *cap*, not the chord. Using one variable for both made ``Sboom`` 50x too
 large and the non-wing drag ``cda`` 64% high. Wtotal 465 -> 432.
 
-The remaining gap is concentrated in the empennage (-8.7%): the horizontal
-and vertical tail spars carry no loading of their own here, only the boom
-does, so the tails come out light. The ``Climb`` mission segment is also not
-modelled, which is why the propeller's max static thrust ``T_m`` is 0.37x the
-reference — climb sizes it, cruise does not.
+Both latitudes agree to under 1%, which is an independent check on the
+embedded environment fits: latitude 10 and 20 use entirely different wind,
+ESday and EStwi coefficients.
+
+The remaining gap is concentrated in the empennage (-5.3%). The ``Climb``
+mission segment is not modelled, which is why the propeller's max static
+thrust ``T_m`` comes out 0.37x the reference — climb sizes it, cruise does
+not, and ``T_m`` feeds the propeller and motor weights.
 
 Configuration differences from the standalone subsystems
 --------------------------------------------------------
@@ -516,6 +520,19 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
                  lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i]
                  * (1 + 2 * pi * agust[i] / CL * (1 + Wwing / Wcent)))
     cons += c
+
+    # ================= tail spar loading ================================
+    # Each tail carries its own max-download case, W = qne*S*CLmax, through
+    # the same beam chain as the wing. Without it the tail spars are sized
+    # only by minimum gauge and the empennage comes out light.
+    for tag, surf in (("htailg", htail), ("vtailg", vtail)):
+        Wt_ = V_(name=f"{tag}_W", guess=50.0, units="lbf",
+                 description=f"{tag} load")
+        cons.append(Wt_ == qne_ph * surf["S"] * 1.39)      # CLmax = 1.39
+        _, c = _beam(f, tag, Ntail, surf["b"], surf["I"],
+                     surf["Sy"], lambda i, W=Wt_, sf=surf:
+                     W / sf["b"] * sf["cbar"][i])
+        cons += c
 
     # ================= weight buildup ===================================
     cons += [
