@@ -11,7 +11,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `motor` | gplibrary `GP/aircraft/motor` | **verified** | 8/8 vars, max rel 6.1e-7 |
 | `propeller` | gplibrary `GP/aircraft/prop` | **verified** | 12/12 vars, max rel 2.3e-4 |
 | `fuselage` | gplibrary `GP/aircraft/fuselage` | **verified** | 10/10 vars, max rel 4.0e-7 |
-| `empennage` | gplibrary `GP/aircraft/tail` | **structural only** | solves, sensible; bounding case is ours, no gpkit diff |
+| `empennage` | gplibrary `GP/aircraft/tail` | **verified** | 20/20 vars within 1.1e-3; objective to 7e-6 |
 | `wing` | gplibrary `GP/aircraft/wing` | **verified to ~1%** | Cd +0.7%, AR 19.92 vs 20.15, weights within 0.3% |
 | `turbofan` | York/Hoburg/Drela 2018 | not started | reference runs (244 vars, 13 GP solves) |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |

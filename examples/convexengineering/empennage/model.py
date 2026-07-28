@@ -7,68 +7,59 @@ https://github.com/convexengineering/gplibrary — ``empennage.py``,
 ``horizontal_tail.py``, ``vertical_tail.py``, ``tail_boom.py``,
 ``tube_spar.py``, ``tail_aero.py``.
 
+The case rebuilt here is ``test_emp`` from ``tail_tests.py``: an empennage of
+*fixed* weight (10 lbf) and boom length (5 ft), sized against a nominal wing,
+minimizing total tail drag
+
+    Cd_htail + Cd_vtail + Cf_tailboom
+
+What drives this case
+---------------------
+Worth understanding before reading the numbers, because it is the opposite of
+the usual sizing logic. Drag *falls* with tail area here — a bigger tail flies
+at higher Reynolds number, and the NACA 0008 polar drops with Re — so the
+objective pushes area up. What stops it is the fixed 10 lbf weight budget:
+
+    W_emp / mfac >= W_htail + W_vtail + W_boom
+
+Both tails therefore grow until the budget is spent, and since they are
+symmetric in both the objective and the budget they come out **identical**
+(S = 12.167 ft^2 each), even though their volume coefficients differ. The
+volume-coefficient constraints (Vh = 0.4, Vv = 0.04) require only 5.0 and
+8.0 ft^2 respectively, so neither is binding.
+
 Structure
 ---------
-Both tails are the **same Wing model** as ``../wing/``, with three changes
-made by subclassing rather than by rewriting:
+Both tails are the same ``Wing`` model as ``../wing/`` with three changes:
 
 * ``sparModel = None`` — a tail has no spar, so it is skin plus foam core
-  only. That removes the whole beam-loading chain, which is why the tails are
-  much smaller models than the wing.
-* the planform is pinned: ``AR = 4``, ``lam = 0.8``.
+  only, which is why there is no beam chain on the surfaces themselves;
+* the planform is pinned: ``AR = 4``, ``lam = 0.8``, ``tau = 0.08``;
 * the foam is lighter and thinner-sectioned than the wing's:
   ``Abar = 0.0548`` (vs 0.0753449) and ``rho = 0.024 g/cm^3`` (vs 0.036).
 
-The horizontal tail adds a span-effectiveness constraint
+The tail boom is a **tapered tube** (``TubeSpar``), not a box:
 
-    mh (1 + 2/AR) <= 2 pi
+    I <= pi t d^3 / 8,   Sy <= 2I/d,   dm >= pi rho d deta t (1-k/2) l
 
-which is the finite-span lift-curve-slope correction. Both tails carry a
-volume coefficient (``Vh``, ``Vv``) and moment arm (``lh``, ``lv``) for
-aircraft-level trim and stability constraints to use, and the boom length
-must reach both: ``l >= lh``, ``l >= lv``.
+with ``k = 0.8`` the taper index, so ``kfac = 0.6``. Its wetted area comes
+from the root diameter, ``S = l pi d0``, and ``b = 2 l``.
 
-The tail boom is a **tapered tube** rather than a box. ``TubeSpar`` gives
+The boom is sized by **bending, not by its own drag**: each tail's maximum
+download is applied through a normalized cantilever with unit tip shear, then
+rescaled by the actual tip force and length. Without those two load cases the
+boom diameter has no lower bound — thinner is both lighter and lower drag —
+and the whole empennage collapses toward zero.
 
-    I <= pi t d^3 / 8,   Sy <= 2 I / d,   dm >= pi rho d deta t (1-k/2) l
+Verification
+------------
+Matches the gpkit ``test_emp`` solution on all 20 compared variables to
+better than 1.1e-3, and the objective to 7e-6 (0.01113479 against
+0.011134710).
 
-with the boom's wetted area taken from the root diameter, ``S = l pi d0``.
-
-Both tails share a drag polar fitted to NACA 0008 XFOIL data in ``(Re, tau)``,
-of max-affine form with K=5 — so it contributes five separate constraints
-rather than one. The boom uses a flat-plate skin-friction law.
-
-Relationship to the wing
-------------------------
-The tails reuse the wing's planform and skin equations but *not* its spar or
-beam chain, so they are not exposed to the discrepancy recorded against the
-wing in DISCREPANCIES.md #8.
-
-Verification status: STRUCTURAL ONLY
-------------------------------------
-This model solves and gives physically sensible numbers (3.64 lbf total for a
-small solar UAV empennage: 0.92 htail, 1.04 vtail, 1.68 boom, 14.6 ft arm),
-but it is **not** checked against a recorded gpkit solution, because the
-bounding case is one this file constructs rather than one the source
-provides.
-
-A tail has no lower bound on its own — shrink it and everything improves. The
-source's ``tail_tests.py`` bounds it by embedding the tails in a full
-aircraft. Here they are instead pinned by volume coefficients (``Vh = 0.45``,
-``Vv = 0.04``) against a nominal wing, which is the standard sizing
-relationship but not the source's test case, so there is nothing to diff
-against number-for-number.
-
-What that means in practice: the constraint set is transcribed faithfully and
-can be trusted structurally, but the *numbers* here have only been sanity
-checked, not verified. Composing it into the solar aircraft — where the real
-wing and mission supply the bounding — is what will actually exercise it
-against a reference.
-
-One assumption worth flagging: the tail load case uses
-``qne = 0.5 * 1.225 * 40^2 Pa``, taken from ``TailBoomState``'s
-``rhosl = 1.225 kg/m^3`` and ``Vne = 40 m/s``. That is the conventional
-dynamic pressure but the source's expression for it was not read directly.
+The reference is solved with ``use_leqs=False`` and with the beam tip values
+relaxed to 1e-3, which is what ``tail_tests.py`` does under cvxopt; both are
+reproduced here.
 """
 from __future__ import annotations
 
@@ -77,12 +68,14 @@ from pyomo.environ import units
 
 from edi import Formulation
 
-G = 9.81  # m/s^2
+G = 9.81
+G_U = G * units.m / units.s**2
 
-CFRPFABRIC = dict(rho=1.6, tmin=0.3048, tau=570e6)   # g/cm^3, mm, Pa
-TAIL_FOAM = dict(rho=0.024, Abar=0.0548)             # g/cm^3, -
+# gplibrary GP/materials defaults
+CFRPFABRIC = dict(rho=1.6, E=150e9, tmin=0.3048, tau=570e6, sigma=400e6)
+TAIL_FOAM = dict(rho=0.024, Abar=0.0548)   # overridden by HorizontalTail/VerticalTail
 
-# tail_dragfit.csv — NACA 0008 polar in (Re, tau), max-affine, K=5
+# tail_dragfit.csv — NACA 0008 polar in (Re, tau), max-affine with K=5
 TAIL_FIT = dict(
     ftype="MA", K=5, d=2, a1=1.0,
     c=[0.3399377561914537, 5.446864658024941, 16.259467895292175,
@@ -97,7 +90,6 @@ TAIL_FIT = dict(
 
 
 def planform_constants(N: int, lam: float):
-    """Normalized chord distribution, exactly as gplibrary computes it."""
     eta = np.linspace(0.0, 1.0, N)
     cbar = np.array([2.0 / (1 + lam) * (1 + (lam - 1) * e) for e in eta])
     cbave = (cbar[:-1] + cbar[1:]) / 2.0
@@ -111,7 +103,7 @@ def planform_constants(N: int, lam: float):
 
 
 def fit_constraints(fit, ivar, dvars, mfac=1.0):
-    """EDI constraints for a gpfit fit — see ../wing/model.py for the forms."""
+    """EDI constraints for a gpfit fit. K>1 max-affine gives one per term."""
     monos = []
     for k in range(fit["K"]):
         m = fit["c"][k]
@@ -127,195 +119,191 @@ def fit_constraints(fit, ivar, dvars, mfac=1.0):
         if fit["K"] == 1:
             return [lhs == monos[0]]
         return [lhs >= m for m in monos]
-    raise NotImplementedError(f"fit type {fit['ftype']!r}")
+    raise NotImplementedError(fit["ftype"])
 
 
-def _tail_surface(f, tag, N, lam, AR, rho_fab, g_u):
-    """Build one tail surface (skin + foam core, no spar). Returns its vars."""
-    eta, cbar, cbave, deta, cbarmac = planform_constants(N, lam)
-    Nseg = N - 1
-
-    S     = f.Variable(name=f"{tag}_S",     guess=5.0,  units="ft^2", description=f"{tag} area")
-    b     = f.Variable(name=f"{tag}_b",     guess=4.5,  units="ft",   description=f"{tag} span")
-    croot = f.Variable(name=f"{tag}_croot", guess=1.2,  units="ft",   description=f"{tag} root chord")
-    cmac  = f.Variable(name=f"{tag}_cmac",  guess=1.1,  units="ft",   description=f"{tag} MAC")
-    cave  = f.Variable(name=f"{tag}_cave",  guess=1.1,  units="ft", size=Nseg, description=f"{tag} mid chord")
-    tau   = f.Variable(name=f"{tag}_tau",   guess=0.08, units="-",    description=f"{tag} thickness ratio")
-    W     = f.Variable(name=f"{tag}_W",     guess=1.0,  units="lbf",  description=f"{tag} weight")
-    Wskin = f.Variable(name=f"{tag}_Wskin", guess=0.5,  units="lbf",  description=f"{tag} skin weight")
-    Wfoam = f.Variable(name=f"{tag}_Wfoam", guess=0.5,  units="lbf",  description=f"{tag} core weight")
-    tskin = f.Variable(name=f"{tag}_tskin", guess=0.012, units="in",  description=f"{tag} skin thickness")
-    Cd    = f.Variable(name=f"{tag}_Cd",    guess=0.01, units="-",    description=f"{tag} drag coefficient")
-    Re    = f.Variable(name=f"{tag}_Re",    guess=3e5,  units="-",    description=f"{tag} Reynolds number")
-
-    rho_foam = TAIL_FOAM["rho"] * units.g / units.cm**3
-    cons = [
-        b**2 == S * AR,
-        croot == S / b * cbar[0],
-        cmac == croot * cbarmac,
-        # skin: minimum gauge, and torsion from the never-exceed case
-        Wskin >= rho_fab * S * 2 * tskin * g_u,
-        tskin >= CFRPFABRIC["tmin"] * units.mm,
-        CFRPFABRIC["tau"] * units.Pa
-            >= 1 / (0.01114 / units.mm) / croot**2 / tskin * 0.121 * S
-               * (1.225 * units.kg / units.m**3) * (45 * units.m / units.s)**2,
-        # foam core
-        Wfoam >= 2 * sum(g_u * rho_foam * TAIL_FOAM["Abar"] * cave[i]**2
-                         * b / 2 * deta[i] for i in range(Nseg)),
-        # 1.1 weight margin, applied in empennage.py via substitutions
-        W / 1.1 >= Wskin + Wfoam,
-    ]
-    for i in range(Nseg):
-        cons.append(cave[i] == cbave[i] * S / b)
-    return dict(S=S, b=b, croot=croot, cmac=cmac, cave=cave, tau=tau,
-                W=W, Cd=Cd, Re=Re), cons
-
-
-def build(Nt: int = 3, Nb: int = 5) -> Formulation:
-    """Empennage sized at a fixed flight state, minimizing total weight.
-
-    Bounding: a tail has no natural lower bound on its own, so the volume
-    coefficients are pinned (``Vh``, ``Vv``) against a nominal wing, exactly
-    as ``tail_tests.py`` does.
-    """
+def build(Ntail: int = 3, Nboom: int = 2, tip_relax: float = 1e-3) -> Formulation:
+    """Empennage at the ``test_emp`` operating point."""
     f = Formulation()
+    V_, C_ = f.Variable, f.Constant
     pi = np.pi
+    _, cbar, cbave, deta, cbarmac = planform_constants(Ntail, 0.8)
+    Nseg = Ntail - 1
 
-    V   = f.Constant(name="V",   value=25.0,   units="m/s",     description="airspeed")
-    rho = f.Constant(name="rho", value=0.7,    units="kg/m^3",  description="air density")
-    mu  = f.Constant(name="mu",  value=1.5e-5, units="N*s/m^2", description="air viscosity")
+    # ---- fixed inputs from test_emp --------------------------------------
+    Sw   = C_(name="Sw",   value=50.0, units="ft^2", description="nominal wing area")
+    bw   = C_(name="bw",   value=20.0, units="ft",   description="nominal wing span")
+    cmac = C_(name="cmac", value=15.0, units="in",   description="nominal wing MAC")
+    Wemp = C_(name="Wemp", value=10.0, units="lbf",  description="empennage weight")
+    lboom = C_(name="l",   value=5.0,  units="ft",   description="tail boom length")
+    Vh   = C_(name="Vh",   value=0.4,  units="-",    description="horizontal tail volume coefficient")
+    Vv   = C_(name="Vv",   value=0.04, units="-",    description="vertical tail volume coefficient")
+    tau  = C_(name="tau",  value=0.08, units="-",    description="tail thickness ratio")
 
-    # nominal wing the tails are sized against
-    Sw   = f.Constant(name="Sw",   value=50.0, units="ft^2", description="wing area")
-    bw   = f.Constant(name="bw",   value=25.0, units="ft",   description="wing span")
-    cmacw = f.Constant(name="cmacw", value=2.0, units="ft",  description="wing MAC")
-    Vh_c = f.Constant(name="Vh", value=0.45, units="-", description="horizontal tail volume coefficient")
-    Vv_c = f.Constant(name="Vv", value=0.04, units="-", description="vertical tail volume coefficient")
+    # ---- flight state (gplibrary FlightState) ----------------------------
+    V   = C_(name="V",   value=50.0,   units="m/s",     description="airspeed")
+    rho = C_(name="rho", value=1.255,  units="kg/m^3",  description="air density")
+    mu  = C_(name="mu",  value=1.5e-5, units="N*s/m^2", description="air viscosity")
+    qne = C_(name="qne", value=1.2 * 1.255 * 50.0**2, units="kg/s^2/m",
+             description="never-exceed dynamic pressure")
 
-    g_u = G * units.m / units.s**2
     rho_fab = CFRPFABRIC["rho"] * units.g / units.cm**3
+    rho_foam = TAIL_FOAM["rho"] * units.g / units.cm**3
 
-    ht, cons_h = _tail_surface(f, "htail", Nt, lam=0.8, AR=4.0,
-                               rho_fab=rho_fab, g_u=g_u)
-    vt, cons_v = _tail_surface(f, "vtail", Nt, lam=0.8, AR=4.0,
-                               rho_fab=rho_fab, g_u=g_u)
+    cons = []
+    surfaces = {}
+    for tag in ("htail", "vtail"):
+        S     = V_(name=f"{tag}_S",     guess=12.0, units="ft^2", description=f"{tag} area")
+        b     = V_(name=f"{tag}_b",     guess=7.0,  units="ft",   description=f"{tag} span")
+        croot = V_(name=f"{tag}_croot", guess=1.9,  units="ft",   description=f"{tag} root chord")
+        cmac_t = V_(name=f"{tag}_cmac", guess=1.75, units="ft",   description=f"{tag} MAC")
+        cave  = V_(name=f"{tag}_cave",  guess=1.8,  units="ft", size=Nseg, description=f"{tag} mid chord")
+        W     = V_(name=f"{tag}_W",     guess=4.6,  units="lbf",  description=f"{tag} weight")
+        Wsk   = V_(name=f"{tag}_Wskin", guess=2.4,  units="lbf",  description=f"{tag} skin weight")
+        Wcr   = V_(name=f"{tag}_Wcore", guess=1.7,  units="lbf",  description=f"{tag} core weight")
+        tsk   = V_(name=f"{tag}_tskin", guess=0.012, units="in",  description=f"{tag} skin thickness")
+        Cd    = V_(name=f"{tag}_Cd",    guess=0.004, units="-",   description=f"{tag} drag coefficient")
+        Re    = V_(name=f"{tag}_Re",    guess=2.2e6, units="-",   description=f"{tag} Reynolds number")
 
-    lh = f.Variable(name="lh", guess=6.0, units="ft", description="horizontal tail moment arm")
-    lv = f.Variable(name="lv", guess=6.0, units="ft", description="vertical tail moment arm")
-    mh = f.Variable(name="mh", guess=2.0, units="-",  description="horizontal tail span effectiveness")
+        cons += [
+            b**2 == S * 4.0,                      # AR = 4
+            croot == S / b * cbar[0],
+            cmac_t == croot * cbarmac,
+            # WingSkin: minimum gauge plus a torsional requirement
+            Wsk >= rho_fab * S * 2 * tsk * G_U,
+            tsk >= CFRPFABRIC["tmin"] * units.mm,
+            CFRPFABRIC["tau"] * units.Pa
+                >= 1 / (0.01114 / units.mm) / croot**2 / tsk * 0.121 * S
+                   * (1.225 * units.kg / units.m**3) * (45 * units.m / units.s)**2,
+            # WingCore, with the tails' lighter foam and thinner section
+            Wcr >= 2 * sum(G_U * rho_foam * TAIL_FOAM["Abar"] * cave[i]**2
+                           * b / 2 * deta[i] for i in range(Nseg)),
+            W / 1.1 >= Wsk + Wcr,                 # mfac = 1.1 per tail
+            # NACA 0008 polar; Re is built on the mean chord S/b
+            Re == V * rho * S / b / mu,
+        ]
+        for i in range(Nseg):
+            cons.append(cave[i] == cbave[i] * S / b)
+        cons += fit_constraints(TAIL_FIT, Cd, [Re, tau],
+                                mfac=1.0 + TAIL_FIT["rms_err"])
+        surfaces[tag] = dict(S=S, b=b, croot=croot, cmac=cmac_t, W=W, Cd=Cd, Re=Re)
 
-    # ---- tail boom (tapered tube) ----------------------------------------
-    Nbseg = Nb - 1
-    detab = 1.0 / (Nb - 1)
-    lboom = f.Variable(name="l",     guess=6.0,  units="ft",   description="tail boom length")
-    Sboom = f.Variable(name="Sboom", guess=4.0,  units="ft^2", description="tail boom wetted area")
-    Wboom = f.Variable(name="Wboom", guess=1.0,  units="lbf",  description="tail boom weight")
-    dboom = f.Variable(name="d",     guess=1.5,  units="in", size=Nbseg, description="boom diameter")
-    tboom = f.Variable(name="tboom", guess=0.012, units="in", size=Nbseg, description="boom wall thickness")
-    Iboom = f.Variable(name="Iboom", guess=1e-8, units="m^4", size=Nbseg, description="boom moment of inertia")
-    Syboom = f.Variable(name="Syboom", guess=1e-7, units="m^3", size=Nbseg, description="boom section modulus")
-    dmboom = f.Variable(name="dmboom", guess=0.1, units="kg", size=Nbseg, description="boom segment mass")
-    Cfboom = f.Variable(name="Cfboom", guess=0.005, units="-", description="boom skin friction coefficient")
-    Reboom = f.Variable(name="Reboom", guess=1e6,  units="-", description="boom Reynolds number")
+    ht, vt = surfaces["htail"], surfaces["vtail"]
 
-    Wtot = f.Variable(name="W", guess=4.0, units="lbf", description="empennage weight")
+    # ---- tail boom: tapered tube -----------------------------------------
+    Nbseg = Nboom - 1
+    detab = 1.0 / (Nboom - 1)
+    Sboom = V_(name="Sboom", guess=13.0, units="ft^2", description="tail boom wetted area")
+    Wboom = V_(name="Wboom", guess=0.8,  units="lbf",  description="tail boom weight")
+    dboom = V_(name="d",     guess=10.0, units="in", size=Nbseg, description="boom diameter")
+    tboom = V_(name="t",     guess=0.012, units="in", size=Nbseg, description="boom wall thickness")
+    Iboom = V_(name="I",     guess=2.1e-6, units="m^4", size=Nbseg, description="boom moment of inertia")
+    Syboom = V_(name="Sy",   guess=1.6e-5, units="m^3", size=Nbseg, description="boom section modulus")
+    dmboom = V_(name="dm",   guess=0.36, units="kg", size=Nbseg, description="boom segment mass")
+    Cftb  = V_(name="Cftb",  guess=0.004, units="-",  description="boom skin friction coefficient")
+    Retb  = V_(name="Retb",  guess=1.3e6, units="-",  description="boom Reynolds number")
 
-    f.Objective(Wtot)
-
-    cons = cons_h + cons_v
-    kfac = 1.0 - 0.0 / 2.0   # k defaults to 0 in tube_spar (kfac = 1 - k/2)
-
+    KFAC = 1.0 - 0.8 / 2.0          # k = 0.8 taper index
     for i in range(Nbseg):
         cons += [
             Iboom[i] <= pi * tboom[i] * dboom[i]**3 / 8.0,
             Syboom[i] <= 2 * Iboom[i] / dboom[i],
-            dmboom[i] >= pi * rho_fab * dboom[i] * detab * tboom[i] * kfac * lboom,
+            dmboom[i] >= pi * rho_fab * dboom[i] * detab * tboom[i] * KFAC * lboom,
             tboom[i] >= CFRPFABRIC["tmin"] * units.mm,
         ]
     cons += [
-        Wboom >= g_u * sum(dmboom[i] for i in range(Nbseg)),
+        Wboom >= G_U * sum(dmboom[i] for i in range(Nbseg)),
         Sboom == lboom * pi * dboom[0],
-        Reboom == V * rho * lboom / mu,
-        Cfboom >= 0.455 / Reboom**0.3,
+        Retb == V * rho * lboom / mu,
+        Cftb >= 0.455 / Retb**0.3,
     ]
 
-    # ---- boom bending (TailBoomBending + Beam) ----------------------------
-    # Without this the boom is unbounded: nothing else forces a nonzero
-    # diameter, so d -> 0, the boom becomes weightless, the moment arm grows
-    # without limit and the tail areas collapse. The cvxopt GP then diverges.
-    #
-    # The beam is solved in *normalized* form: unit tip shear (Sbar == 1, set
-    # by TailBoomBending as Beam.SbarFun), moment and deflection accumulated
-    # root-ward, then rescaled by the actual tip force F and length l.
-    Fb    = f.Variable(name="F",     guess=200.0, units="N",   description="tail force")
-    Mbar  = f.Variable(name="Mbar",  guess=0.5,  units="-", size=Nb,    description="normalized moment")
-    thbar = f.Variable(name="thbar", guess=0.05, units="-", size=Nb,    description="normalized angle")
-    dbar  = f.Variable(name="dbar",  guess=0.05, units="-", size=Nb,    description="normalized deflection")
-    EIbar = f.Variable(name="EIbar", guess=1.0,  units="-", size=Nbseg, description="normalized EI")
-    Mr    = f.Variable(name="Mr",    guess=100.0, units="N*m", size=Nbseg, description="section root moment")
+    # ---- objective: total tail drag --------------------------------------
+    f.Objective(ht["Cd"] + vt["Cd"] + Cftb)
 
-    E_cf     = 190e9 * units.Pa    # cfrpud modulus
-    sigma_cf = 1.5e9 * units.Pa    # cfrpud strength
-    CLmax, kappa_b, Nsafety = 1.39, 0.1, 1.0
-    Sbar = 1.0                     # unit tip shear, per Beam.SbarFun
-    tiny = 1e-10
-    # never-exceed dynamic pressure for the tail load case: TailBoomState
-    # gives rhosl = 1.225 kg/m^3 and Vne = 40 m/s.
-    qne_tail = 0.5 * 1.225 * 40.0**2 * units.Pa
+    # ---- the binding constraint: a fixed weight budget --------------------
+    cons.append(Wemp / 1.0 >= ht["W"] + vt["W"] + Wboom)
 
-    cons.append(Fb >= qne_tail * ht["S"])
-    for i in range(Nb - 1):
-        cons += [
-            Mbar[i] >= Mbar[i + 1] + 0.5 * detab * (Sbar + Sbar),
-            thbar[i + 1] >= thbar[i] + 0.5 * detab * (Mbar[i + 1] + Mbar[i]) / EIbar[i],
-            dbar[i + 1] >= dbar[i] + 0.5 * detab * (thbar[i + 1] + thbar[i]),
-        ]
-    cons += [Mbar[Nb - 1] >= tiny, thbar[0] >= tiny, dbar[0] >= tiny,
-             dbar[Nb - 1] * CLmax * Nsafety <= kappa_b]
-    for i in range(Nbseg):
-        cons += [
-            EIbar[i] <= E_cf * Iboom[i] / Fb / lboom**2 / 2,
-            Mr[i] >= Mbar[i] * Fb * lboom,
-            sigma_cf >= Mr[i] / Syboom[i],
-        ]
-
-    # ---- tail sizing from volume coefficients ----------------------------
+    # ---- volume coefficients (not binding at this operating point) -------
     cons += [
-        Vh_c <= ht["S"] * lh / Sw / cmacw,
-        Vv_c <= vt["S"] * lv / Sw / bw,
-        mh * (1 + 2.0 / 4.0) <= 2 * pi,
-        lboom >= lh,
-        lboom >= lv,
+        Vh <= ht["S"] * lboom / Sw / cmac,
+        Vv <= vt["S"] * lboom / Sw / bw,
     ]
 
-    # ---- tail drag polars -------------------------------------------------
-    for tag, t in (("htail", ht), ("vtail", vt)):
-        cons.append(t["Re"] == V * rho * t["S"] / t["b"] / mu)
-        cons += fit_constraints(TAIL_FIT, t["Cd"], [t["Re"], t["tau"]],
-                                mfac=1.0 + TAIL_FIT["rms_err"])
-        cons.append(t["tau"] >= 0.08)
-
-    # ---- total ------------------------------------------------------------
-    cons.append(Wtot >= ht["W"] + vt["W"] + Wboom)
+    # ---- boom bending, one case per tail ---------------------------------
+    # Normalized cantilever with unit tip shear (Beam.SbarFun = [1]*N), then
+    # rescaled by the actual tip force F = qne*S*CLmax and the length.
+    E_fab = CFRPFABRIC["E"] * units.Pa
+    sig_fab = CFRPFABRIC["sigma"] * units.Pa
+    CLMAX, KAPPA, NSAFETY = 1.39, 0.1, 1.0
+    for tag, surf in (("hbend", ht), ("vbend", vt)):
+        Fb    = V_(name=f"{tag}_F",   guess=1000.0, units="N", description=f"{tag} tail force")
+        Mbar  = V_(name=f"{tag}_Mbar", guess=1.0, units="-", size=Nboom, description=f"{tag} normalized moment")
+        thbar = V_(name=f"{tag}_thbar", guess=0.03, units="-", size=Nboom, description=f"{tag} normalized angle")
+        dbar  = V_(name=f"{tag}_dbar", guess=0.03, units="-", size=Nboom, description=f"{tag} normalized deflection")
+        EIbar = V_(name=f"{tag}_EIbar", guess=100.0, units="-", size=Nbseg, description=f"{tag} normalized EI")
+        Mr    = V_(name=f"{tag}_Mr",  guess=1000.0, units="N*m", size=Nbseg, description=f"{tag} section root moment")
+        cons.append(Fb >= qne * surf["S"])
+        for i in range(Nboom - 1):
+            cons += [
+                Mbar[i] >= Mbar[i + 1] + 0.5 * detab * (1.0 + 1.0),
+                thbar[i + 1] >= thbar[i] + 0.5 * detab * (Mbar[i + 1] + Mbar[i]) / EIbar[i],
+                dbar[i + 1] >= dbar[i] + 0.5 * detab * (thbar[i + 1] + thbar[i]),
+            ]
+        cons += [Mbar[Nboom - 1] >= tip_relax,
+                 thbar[0] >= tip_relax, dbar[0] >= tip_relax,
+                 dbar[Nboom - 1] * CLMAX * NSAFETY <= KAPPA]
+        for i in range(Nbseg):
+            cons += [
+                EIbar[i] <= E_fab * Iboom[i] / Fb / lboom**2 / 2,
+                Mr[i] >= Mbar[i] * Fb * lboom,
+                sig_fab >= Mr[i] / Syboom[i],
+            ]
 
     f.ConstraintList(cons)
     return f
+
+
+ALIASES = {
+    "Empennage.HorizontalTail.Planform.S": "htail_S",
+    "Empennage.HorizontalTail.Planform.b": "htail_b",
+    "Empennage.HorizontalTail.Planform.croot": "htail_croot",
+    "Empennage.HorizontalTail.Planform.cmac": "htail_cmac",
+    "Empennage.HorizontalTail.W": "htail_W",
+    "Empennage.HorizontalTail.WingSkin.W": "htail_Wskin",
+    "Empennage.HorizontalTail.WingSkin.t": "htail_tskin",
+    "Empennage.HorizontalTail.WingCore.W": "htail_Wcore",
+    "Empennage.VerticalTail.Planform.S": "vtail_S",
+    "Empennage.VerticalTail.Planform.b": "vtail_b",
+    "Empennage.VerticalTail.Planform.croot": "vtail_croot",
+    "Empennage.VerticalTail.Planform.cmac": "vtail_cmac",
+    "Empennage.VerticalTail.W": "vtail_W",
+    "Empennage.VerticalTail.WingSkin.W": "vtail_Wskin",
+    "Empennage.VerticalTail.WingSkin.t": "vtail_tskin",
+    "Empennage.VerticalTail.WingCore.W": "vtail_Wcore",
+    "Empennage.TailBoom.W": "Wboom",
+    "Empennage.TailBoom.S": "Sboom",
+    "TailAero.Cd": "htail_Cd",
+    "TailAero.Re": "htail_Re",
+}
 
 
 if __name__ == "__main__":
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from harness import solve_edi, feasibility
+    from harness import solve_edi, compare, load_reference, feasibility
 
-    f = build()
-    sol, obj, note = solve_edi(f)
-    nv, worst, where = feasibility(f)
-    print(f"empennage weight = {obj:.6g} lbf")
-    print(f"feasibility: {nv} violated, worst rel {worst:.2e}"
-          + (f" at {where}" if where else ""))
+    fm = build()
+    sol, obj, note = solve_edi(fm)
+    ref = load_reference(Path(__file__).with_name("reference.json"))
+    ref = {k: v for k, v in ref.items() if not isinstance(v, list)}
+    rep = compare("Empennage (test_emp)", sol, ref, rtol=5e-3,
+                  only=sorted(ALIASES), aliases=ALIASES)
+    nv, worst, where = feasibility(fm)
     if note:
-        print("note:", note)
-    for k in ("htail_S", "vtail_S", "lh", "lv", "l", "htail_W", "vtail_W", "Wboom"):
-        if k in sol:
-            print(f"   {k:10s} {sol[k]:12.5g}")
+        rep.notes.append(note)
+    rep.notes.append(f"objective Cdh+Cdv+Cftb = {obj:.7g}   (gpkit = 0.011134710)")
+    rep.notes.append(f"feasibility: {nv} violated, worst rel {worst:.2e}"
+                     + (f" at {where}" if where else ""))
+    print(rep)
