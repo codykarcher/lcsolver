@@ -65,17 +65,33 @@ the wind bound), so the components are close — but thrust, area and fuel all
 scale together at ~0.65, which is the signature of a self-consistent solution
 at the wrong size rather than a single bad constraint.
 
-Two known omissions, neither yet shown to be the cause:
+The driver is **lift-to-drag**: 30.4 here against 26.4 in the reference. A
+15% better L/D needs less power, so less fuel, so a lighter aircraft and a
+smaller wing — the whole fixed point shifts down together, which is exactly
+the uniform ~0.65 ratio above.
 
-* **The climb rate constraint.** Climb segment times are free here, so the
-  climb burns almost nothing; the source ties segment time to the altitude
-  gained. Worth only ~1.1 lbf of 64 in the reference, so probably not it.
-* **Wing gust loading.** The source applies manoeuvre *and* gust to the wing
-  (``Nmax`` 5 and 2 respectively); only manoeuvre is here. In ``../solar/``
-  exactly this omission made the structure too cheap and the wing too
-  slender, which matches the symptom (AR 23.0 against 18.2).
+The gap is entirely in *non-wing* drag. Wing profile drag is close
+(cdp 0.0098 vs 0.0080, and the induced term is analytic), but:
 
-The gust case is the first thing to try. ``reference.json`` records the gpkit
+    CDA (non-wing)   rebuild 0.00765     reference ~0.0103
+
+with the rebuild's breakdown fuselage 0.00516, vtail 0.00104, boom 0.00082,
+htail 0.00064. The fuselage dominates and is the most likely home for the
+missing ~0.0027 — its wetted area comes from the Knud Thomsen ellipsoid
+relation driven by fuel volume, and the form factor ``kfuse`` from a fineness
+ratio that nothing here pins down.
+
+Two omissions ruled out by experiment rather than assumption:
+
+* **Wing gust loading** — added (manoeuvre Nmax=5 plus gust Nmax=2) and MTOW
+  did not move at all: 78.413 before and after. The manoeuvre case dominates,
+  so unlike ``../solar/`` this is not the sizing case here. The code is kept
+  because the source has it.
+* **The climb rate constraint** — climb segment times are free here so the
+  climb burns almost nothing, but the reference's climb is only 1.1 lbf of
+  64, too small to explain a 30 lbf gap.
+
+``reference.json`` records the gpkit
 solution; note the endurance requirement ``Loiter.t = 6`` days must be
 substituted or the model is unbounded — gpkit reports
 ``Mission.Loiter.t has no lower bound``.
