@@ -473,7 +473,10 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE) -> Formulation:
     return f
 
 
-def _bound_constraints(f, decades: float = 6.0):
+ABS_LO, ABS_HI = 1e-30, 1e30
+
+
+def _bound_constraints(f):
     """The same box as ``_bound_variables``, but expressed as constraints.
 
     Both forms are needed and they are not redundant. Pyomo variable bounds
@@ -485,15 +488,11 @@ def _bound_constraints(f, decades: float = 6.0):
     import pyomo.environ as pyo
     from pyomo.core.base.var import IndexedVar
     out = []
-    lo, hi = 10.0 ** -decades, 10.0 ** decades
     for v in f.get_variables():
         items = (v[i] for i in v.index_set()) if isinstance(v, IndexedVar) else (v,)
         for vd in items:
-            g = vd.value
-            if g is None or g <= 0:
-                continue
             u = pyo.units.get_units(vd)
-            out += [vd <= g * hi * u, vd >= g * lo * u]
+            out += [vd <= ABS_HI * u, vd >= ABS_LO * u]
     return out
 
 
@@ -515,11 +514,14 @@ def _bound_variables(f, decades: float = 6.0):
     construction, so a positive lower bound is not a modelling choice here,
     it is the domain.
 
-    Bounds are placed ``decades`` orders of magnitude either side of each
-    variable's declared guess rather than at fixed absolute values, which is
-    better conditioned than 1e+-30 while still far too loose to influence a
-    converged optimum. A variable sitting against one of these is a modelling
-    bug rather than a design result, so they are worth checking after a solve.
+    The box has to be the *absolute* 1e-30..1e30 that gpkit uses, not a
+    relative one around each guess. A relative box looks better conditioned,
+    but it excludes the reference solution: in the converged gpkit answer the
+    horizontal tail's box collapses, with ``I_{cap}`` sitting at 1.0e-30 --
+    exactly on gpkit's artificial floor -- ``M_r`` at 1.3e-20 and ``W_{cap}``
+    at 0.14 N. A box even six decades around a physically-scaled guess cuts
+    that point off and makes the model infeasible. See DISCREPANCIES.md §19:
+    the degeneracy is a property of the reference, not of this rebuild.
     """
     from pyomo.core.base.var import IndexedVar
     lo, hi = 10.0 ** -decades, 10.0 ** decades

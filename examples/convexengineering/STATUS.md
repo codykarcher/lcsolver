@@ -224,3 +224,27 @@ this rebuild's constraints at that point and whichever come back violated name
 the transcription errors directly — the same technique that found the wing's
 material-property bug. It needs a gpkit-name to EDI-name map, which is the
 bulk of the work, but it does not require the model to solve first.
+
+#### Cross-check harness
+
+`spaircraft/crosscheck.py` pushes the gpkit optimum onto the rebuild and
+scores every constraint, without needing the rebuild to solve. It now maps
+1119 of 1140 variable data objects. Three mapping traps, all of which silently
+halve the match rate rather than erroring:
+
+* `key.split(".")` splits *inside* names — `A_{2.5}`, `T_{t_{4.1}}` — because
+  gpkit station numbers contain dots and so does the model path. Protect the
+  numeric dots before splitting.
+* A `WingBox` nested under a surface needs both prefixes (`HT_box_`); taking
+  only the outer one drops every box variable.
+* The `*Performance` classes (`WingPerformance`, `HorizontalTailPerformance`,
+  …) are separate path segments from their parent components.
+
+Status of the results: the top-scoring violations are the fuselage horizontal
+bending-volume constraints, but hand-evaluating one of them at the reference
+point gives `6.8e-5 <= 2.8e-3` — satisfied with room to spare. So that
+particular signal is an artefact of the checker, most likely unit handling of
+`x_{hbend}` (declared in feet where the other stations are metres), not a
+model defect. The remaining 21 unmatched names still need mapping before the
+violation list can be trusted. Resolve those two things first; the harness is
+sound, its output is not yet.
