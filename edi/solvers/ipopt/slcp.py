@@ -307,6 +307,19 @@ class Options:
         self.mu_margin = 1.2              # merit-multiplier margin, > 1
         self.max_step_size_tries = 30
         self.watchdog_iterations = 5      # consecutive non-monotone steps allowed
+        self.exact_objective = False      # Impose a POSYNOMIAL objective exactly
+                                          # (log-sum-exp) instead of linearizing
+                                          # it. SLCP already keeps posynomial
+                                          # CONSTRAINTS exact; the objective is
+                                          # linearized with a BFGS quadratic, so
+                                          # on a problem that is convex end to
+                                          # end the method still marches like a
+                                          # quasi-Newton scheme -- 72 iterations
+                                          # on the wind turbine, which the GP
+                                          # path solves in one. With this on,
+                                          # and with every constraint also exact,
+                                          # the sub-problem IS the original
+                                          # problem and the BFGS term is dropped.
         self.cache_subproblem = False     # Build the sub-problem's Pyomo model
                                           # ONCE and re-point it each iteration
                                           # through mutable Params, instead of
@@ -360,6 +373,16 @@ class Result:
                 else f' max_violation={self.max_violation:.3e}')
         return (f'<Result {self.status!r} iterations={self.iterations} '
                 f'objective={self.objective!r}{viol}>')
+
+
+def _fully_log_convex(problem):
+    """True when objective and every constraint are exact in log space.
+
+    Then the sub-problem, built with the objective imposed exactly and no
+    BFGS term, is the original problem: one solve is enough.
+    """
+    return (isinstance(problem.objective, Posynomial)
+            and all(c.exact_in_logspace for c in problem.constraints))
 
 
 class SubproblemCache:
@@ -428,10 +451,21 @@ class SubproblemCache:
         # --- objective ------------------------------------------------------
         obj = self.problem.objective
         self.obj_proj = [projection(a) for _, a in obj.terms]
-        m.obj_w = pyo.Param(range(len(obj.terms)), mutable=True,
-                            initialize=0.0, within=pyo.Reals)
-        self.obj_lin = sum(m.obj_w[k] * self.obj_proj[k]
-                           for k in range(len(obj.terms)))
+        self.exact_obj = getattr(self.options, 'exact_objective', False)
+        self.drop_quad = self.exact_obj and _fully_log_convex(self.problem)
+        if self.exact_obj:
+            # Exact: log sum exp(b_k + a_k.d), with b_k the same mutable
+            # constant the constraints use.
+            m.obj_b = pyo.Param(range(len(obj.terms)), mutable=True,
+                                initialize=0.0, within=pyo.Reals)
+            self.obj_lin = pyo.log(sum(
+                pyo.exp(m.obj_b[k] + self.obj_proj[k])
+                for k in range(len(obj.terms))))
+        else:
+            m.obj_w = pyo.Param(range(len(obj.terms)), mutable=True,
+                                initialize=0.0, within=pyo.Reals)
+            self.obj_lin = sum(m.obj_w[k] * self.obj_proj[k]
+                               for k in range(len(obj.terms)))
 
         # --- constraints ----------------------------------------------------
         m.cons = pyo.ConstraintList()
@@ -506,9 +540,13 @@ class SubproblemCache:
 
         obj = self.problem.objective
         f_k = obj(x_k)
-        for k, (c, a) in enumerate(obj.terms):
-            # log-space gradient weight of this term: c*prod(x^a)/f
-            m.obj_w[k] = float(c * np.prod(x_k ** a) / f_k)
+        if self.exact_obj:
+            for k, (c, a) in enumerate(obj.terms):
+                m.obj_b[k] = float(math.log(c) + a @ log_xk)
+        else:
+            for k, (c, a) in enumerate(obj.terms):
+                # log-space gradient weight of this term: c*prod(x^a)/f
+                m.obj_w[k] = float(c * np.prod(x_k ** a) / f_k)
 
         for i, con in enumerate(cons):
             body = con.body
@@ -560,11 +598,13 @@ class SubproblemCache:
         # O(n^2) under a dense one.
         if m.component('obj') is not None:
             m.del_component(m.obj)
-        quad = _quadratic_expression(B, m.d, n)
+        quad = 0.0 if self.drop_quad else _quadratic_expression(B, m.d, n)
         penalty = self.options.penalty_constant * sum(
             m.sigma[i] ** 2 for i in range(len(cons)))
-        m.obj = pyo.Objective(expr=math.log(f_k) + self.obj_lin + quad + penalty,
-                              sense=pyo.minimize)
+        # Under the exact form obj_lin already carries log f; under the
+        # linearized one it is only the gradient term and needs the constant.
+        base = self.obj_lin if self.exact_obj else math.log(f_k) + self.obj_lin
+        m.obj = pyo.Objective(expr=base + quad + penalty, sense=pyo.minimize)
         return self
 
 
@@ -602,6 +642,10 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
     """
     n = problem.n
     cons = problem.constraints
+    exact_obj = (getattr(options, 'exact_objective', False)
+                 and method == 'slcp'
+                 and isinstance(problem.objective, Posynomial))
+    drop_quad = exact_obj and _fully_log_convex(problem)
 
     if cache is not None and cache.usable and method == 'slcp':
         cache.update(x_k, B)
@@ -619,12 +663,23 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
         # Natural space: linear model of f plus the BFGS quadratic.
         gf = problem.objective.grad(x_k)
         lin = f_k + sum(gf[j] * m.d[j] for j in range(n))
+    elif exact_obj:
+        # The objective is a posynomial, so log f is convex in log space and
+        # can be imposed exactly -- the same argument that keeps posynomial
+        # CONSTRAINTS exact. Linearizing it is what makes a fully log-convex
+        # problem take a quasi-Newton march instead of one solve.
+        lin = pyo.log(sum(
+            pyo.exp(math.log(c) + sum(a[j] * (m.d[j] + log_xk[j])
+                                      for j in range(n)))
+            for c, a in problem.objective.terms))
     else:
         # Log space, Equation 11: (x . grad f) / f is the log-space gradient.
         gf = problem.objective.log_grad(x_k)
         lin = math.log(f_k) + sum(gf[j] * m.d[j] for j in range(n))
 
-    quad = _quadratic_expression(B, m.d, n)
+    # With objective and constraints both exact the sub-problem already IS the
+    # original problem; a curvature term would only bias the step.
+    quad = 0.0 if drop_quad else _quadratic_expression(B, m.d, n)
 
     # --- constraints -------------------------------------------------------
     # Every constraint gets its own relaxation variable sigma >= 0, penalised in
