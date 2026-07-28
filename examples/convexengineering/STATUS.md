@@ -152,3 +152,40 @@ Two traps, both of which silently return a clean bill of health:
 * not substituting the model's **constants** leaves most constraints
   unevaluable, and a bare `except: continue` counts them as passing. Always
   report evaluated-vs-skipped.
+
+## turbofan (York, Hoburg & Drela)
+
+The 1D core + fan flowpath engine, rebuilt in `turbofan/model.py` and verified
+against a gpkit snapshot for the two engines whose missions are transcribed:
+
+| engine | objective vs gpkit | worst quantity | feasibility |
+|---|---|---|---|
+| CFM56 | +0.012% | 1.7e-2 | 0 violated, 3.1e-7 |
+| GE90  | −0.402% | 1.0e-2 | 1 violated, 6.0e-3 |
+
+The GE90's single residual is on the LPT shaft power balance, which is one of
+the signomial `Tight` constraints — that is PCCP slack, not a model defect.
+The remaining ~1% spread on individual quantities against a 0.01–0.4% match on
+the objective is the usual flat-optimum signature: the objective weights the
+first segment's TSFC by 10, so the other operating points are cheap to trade.
+
+Two things about this model are worth knowing before extending it:
+
+* **The GE90 has no `\alpha_{OD}` substitution.** On-design bypass ratio is a
+  free variable for that engine and a constant for the others. Supplying one
+  "for consistency" over-constrains the fan-size bracket.
+* **`T_{t_{4.1_{max}}}` constrains nothing.** `Engine.Ttmax` is `True` and the
+  variable is substituted at 1400 K in all four substitution sets, but it
+  appears in no constraint in the source. Solved turbine inlet temperature
+  duly exceeds it (1554 K at the GE90's top of climb). Reproduced as-is.
+
+Still to transcribe: the 3-segment TASOPT 737-800 mission and the D8.2
+mission, both of which the reference snapshot already covers.
+
+## SPaircraft (York, Öztürk, Burnell & Hoburg)
+
+Reference captured (`spaircraft/reference.json`): the D8.2 converges to
+20859.7 lbf of fuel and satisfies every constraint of the unmodified gpkit
+model to 4e-8. The EDI rebuild is not yet written. Four findings about the
+reference are recorded in DISCREPANCIES.md §12–15; the sys.path collision in
+§12 in particular will silently corrupt any future re-capture.
