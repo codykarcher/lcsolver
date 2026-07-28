@@ -79,7 +79,7 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE) -> Formulation:
     fu, c = add_fuselage(f); cons += c
     eng, c = add_engine(f, N, {"P_atm": st["P_atm"], "T_atm": st["T_atm"],
                                "a": st["a"], "V": st["V"], "M": st["M"]},
-                        engine="D82", BLI=True, prefix="Eng_"); cons += c
+                        engine="D82_SPaircraft", BLI=True, prefix="Eng_"); cons += c
 
     # ---- aircraft-level scalars -------------------------------------------
     W_total = V("W_total", 1.4e5, "lbf", "total aircraft weight")
@@ -438,7 +438,9 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE) -> Formulation:
         lg["dx_n"] + lg["x_n"] >= xCG[Nclimb],
         lg["dx_m"] + xCG[Nclimb] >= lg["x_m"],
         lg["x_m"] >= lg["tan_phi"] * (lg["z_CG"] + lg["l_m"]) + xCG[Nclimb],
-        eng["OPR"][0] <= 35.0,
+        # Mission caps bypass ratio rather than fixing it; subs/optimalD8.py
+        # supplies neither alpha_max nor alpha_OD, so both are free.
+        eng["alpha_max"] <= 100.0,
     ]
     for i in range(1, N):
         cons += [

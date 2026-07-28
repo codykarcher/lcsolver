@@ -33,11 +33,29 @@ COMPONENT = {
 # Nested inside a surface, the box gets its own second-level prefix.
 BOX = "WingBox"
 
+# Names this rebuild spells differently, or hoists to a different owner.
+# Left is the rebuild's name, right is the key derived from gpkit's.
+ALIASES = {
+    "LoD": "L_D",
+    "Re_nacelle": "R_e_nacelle",
+    "D_fuse": "Fuse_D_fuse",
+    "L_fuse": "Fuse_L_fuse",
+    "M_r_out": "HT_box_M_r_out",
+    "VT_AR_vt": "VT_box_AR_vt",
+    "VT_C_D_vis_vt": "VT_C_D_vis",
+    "HT_box_pi_M_fac": "HT_box_pi_M-fac",
+    "Eng_mbar_fan_D": "Eng_mbar_fan_D",
+    "y_eng": "VT_y_eng",
+}
+
 # Leaf-name rewrites where the rebuild's spelling is not mechanical.
 LEAF = {
     "\\lambda": "lambda", "\\tau": "tau", "\\eta": "eta", "\\alpha": "alpha",
     "\\rho": "rho", "\\sigma": "sigma", "\\theta": "theta", "\\pi": "pi",
-    "\\mu": "mu", "\\gamma": "gamma", "\\nu": "nu", "\\Delta": "d",
+    "\\mu": "mu", "\\gamma": "gamma", "\\nu": "nu",
+    # "\\Delta x" -> "dx": the space must go too, or d_f (fan diameter) and
+    # dx_m (a delta) become indistinguishable after underscore normalisation.
+    "\\Delta ": "d", "\\Delta": "d",
     "\\bar": "bar", "\\cos": "cos", "\\tan": "tan", "\\dot": "dot",
 }
 
@@ -59,8 +77,12 @@ def leafname(raw: str) -> str:
     s = re.sub(r"^C_p_", "Cp_", s)
     # "+1" suffixes: alpha_+1 -> alpha_p1
     s = s.replace("+1", "p1").replace("_p_1", "_p1")
-    # Deltas collapse onto the following symbol: d_x_... -> dx_..., d_R -> dR
-    s = re.sub(r"^d_([xRP])", r"d\1", s)
+    # \bar{c}_{ht} -> cbar_ht, \bar{m}_{fan_D} -> mbar_fan_D
+    s = re.sub(r"bar([A-Za-z])", r"\1bar", s)
+    # f(\lambda_w) -> f_lambda_w, tan(\phi) -> tan_phi. Restricted to the
+    # greek names, so that fp1 (fuel-air ratio plus one) is left alone.
+    s = re.sub(r"^(f|tan|cos)(lambda|phi|psi|gamma|theta|Lambda)",
+               r"\1_\2", s)
     return s
 
 
@@ -82,6 +104,9 @@ def reference_point(path: Path) -> dict:
                 prefix = COMPONENT[seg]
                 break
         out.setdefault(prefix + suffix + leaf, val)
+    for mine, theirs in ALIASES.items():
+        if theirs in out:
+            out.setdefault(mine, out[theirs])
     return out
 
 

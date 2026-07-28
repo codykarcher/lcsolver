@@ -35,6 +35,8 @@ depends on them. See DISCREPANCIES.md §17-18.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from pyomo.environ import units
 
@@ -65,8 +67,8 @@ def add_landing_gear(f, *, prefix="LG_"):
     d_nac = V("d_nacelle", 2.0, "m", "nacelle diameter")
     t_nac = V("t_nacelle", 0.15, "m", "nacelle thickness")
 
-    tan_phi = V("tan_phi", 0.2679, "-", "angle between main gear and CG")
-    tan_psi = V("tan_psi", 1.9626, "-", "tip over angle")
+    tan_phi = V("tan_phi", math.tan(math.radians(15.0)), "-", "angle between main gear and CG")
+    tan_psi = V("tan_psi", math.tan(math.radians(63.0)), "-", "tip over angle")
 
     # ---- loads -------------------------------------------------------------
     L_m = V("L_m", 7e5, "N", "max static load through main gear")
@@ -120,10 +122,13 @@ def add_landing_gear(f, *, prefix="LG_"):
     rho_st = C("rho_st", 7850.0, "kg/m^3", "density of 4340 steel")
     sig_y_c = C("sigma_y_c", 470e6, "Pa",
                 "compressive yield strength, 4340 steel")
-    tan_15 = C("tan_phi_min", 0.2679, "-", "lower bound on phi (15 deg)")
-    tan_63 = C("tan_psi_max", 1.9626, "-", "upper bound on psi (63 deg)")
-    tan_gam = C("tan_gamma", 0.08749, "-", "dihedral angle")
-    tan_th = C("tan_theta_max", 0.2679, "-", "max rotation angle")
+    tan_15 = C("tan_phi_min", math.tan(math.radians(15.0)), "-",
+                "lower bound on phi (15 deg)")
+    tan_63 = C("tan_psi_max", math.tan(math.radians(63.0)), "-",
+                "upper bound on psi (63 deg)")
+    tan_gam = C("tan_gamma", math.tan(math.radians(5.0)), "-", "dihedral angle")
+    tan_th = C("tan_theta_max", math.tan(math.radians(15.0)), "-",
+                "max rotation angle")
     w_ult = C("w_ult", 10.0, "ft/s", "ultimate velocity of descent")
     Clg = C("C_lg", 1.0, "-", "landing gear weight margin/sensitivity factor")
 

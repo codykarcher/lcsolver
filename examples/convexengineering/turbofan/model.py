@@ -76,6 +76,7 @@ GAMMAS = dict(fgamma=1.401, lpcgamma=1.398, hpcgamma=1.354, ccgamma=1.313,
 
 # Polytropic efficiencies: fan, LPC, HPC, HPT, LPT.
 ETAS = {
+    "D82_SPaircraft": (0.9300, 0.9200, 0.8900, 0.9100, 0.9200),
     "CFM56":         (0.9005, 0.9306, 0.9030, 0.8731, 0.8851),
     "TASOPT_737800": (0.8948, 0.8800, 0.8700, 0.8990, 0.8890),
     "GE90":          (0.9153, 0.9037, 0.9247, 0.9121, 0.9228),
@@ -130,12 +131,39 @@ SUBS = {
                 alpha_OD=6.97, alpha_max=6.97, hf=43.003, OPR_max=32.0,
                 eta_B=0.9827, r_uc=0.01, alpha_c=0.19036, M_takeoff=0.9556,
                 pi_tn=0.995, pi_d=0.995, pi_fn=0.985),
+    # As installed in SPaircraft's optimalD8, which is NOT the same engine as
+    # the standalone "D82" above. subs/optimalD8.py overrides the shaft and
+    # burner efficiencies, the cooling fraction, all three specific heats and
+    # the OPR limit; and SPaircraft.optimize_aircraft(pRatOpt=True) *deletes*
+    # the three design pressure ratios so the optimizer picks them. alpha_OD
+    # and alpha_max are likewise absent, leaving bypass ratio free under the
+    # aircraft-level bound alpha_max <= 100. Anything None here is free.
+    "D82_SPaircraft": dict(pi_f_D=None, pi_lc_D=None, pi_hc_D=None,
+                           alpha_OD=None, alpha_max=None, hf=43.003,
+                           OPR_max=35.0, eta_B=0.985, r_uc=0.01,
+                           alpha_c=0.16, M_takeoff=0.9556,
+                           pi_tn=0.995, pi_d=0.995, pi_fn=0.985,
+                           eta_HPshaft=0.978, eta_LPshaft=0.99,
+                           Cp_c=1257.9, Cp_t1=1236.5, Cp_t2=1200.4,
+                           # subs/optimalD8.py sets hold_{4a} from a local
+                           # M4a = 0.2 but never substitutes M_{4a} itself,
+                           # which therefore keeps the Combustor's declared
+                           # default of 0.1025. The two are supposed to be the
+                           # same number -- hold_{4a} IS 1+(g-1)/2 M_4a^2 --
+                           # so the shipped model is internally inconsistent
+                           # by a factor of 0.1025/0.2 in u_{4a}. Reproduced,
+                           # because the reference solution depends on it.
+                           M_4a=0.1025, M_4a_for_hold=0.2),
 }
 
 # On-design mass flow anchors, from the `onDest` blocks of Engine.setup().
 # (Tt_HPT, Pt_HPT, Tt_LPT, Pt_LPT, Tt_lpc, Pt_lpc, Tt_hpc, Pt_hpc,
 #  fan_lo, fan_hi, Pt_fan)
 ONDESIGN = {
+    # The BLI branch of eng==3, which is the one optimalD8 takes. Using the
+    # non-BLI numbers instead leaves the LPC mass-flow bracket ~12% out.
+    "D82_SPaircraft": (1400.0, 1433.49, 1121.85, 706.84, 289.77, 65.79434,
+                       481.386, 327.66, 0.7, 1.3, 41.0),
     "CFM56":         (1400.0, 1527.0, 1038.8, 589.2, 292.57, 84.25,
                       362.47, 163.02, 0.7, 1.3, 50.0),
     "TASOPT_737800": (1400.0, 1498.0, 1144.8, 788.5, 294.5, 84.25,
@@ -253,15 +281,20 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
                                       description=d)
 
+    def CV(n, key, guess, u, d):
+        """Constant if the substitution set defines it, free variable if not."""
+        v = sub.get(key)
+        return C(n, v, u, d) if v is not None else V(n, guess, u, d)
+
     # ---- gas properties (Cp values are the source's, at the stated temps) --
     R      = C("R", 287.0, "J/kg/K", "air gas constant")
     Cpair  = C("Cp_air", 1003.0, "J/kg/K", "Cp of air at 250 K")
     Cp1    = C("Cp_1", 1008.0, "J/kg/K", "Cp of air at 350 K")
     Cp2    = C("Cp_2", 1099.0, "J/kg/K", "Cp of air at 800 K")
-    Cpc    = C("Cp_c", 1216.0, "J/kg/K", "Cp of fuel/air mix in combustor")
+    Cpc    = C("Cp_c", sub.get("Cp_c", 1216.0), "J/kg/K", "Cp of fuel/air mix in combustor")
     Cpfuel = C("Cp_fuel", 2010.0, "J/kg/K", "Cp of kerosene")
-    Cpt1   = C("Cp_t1", 1280.0, "J/kg/K", "Cp of combustion products, HPT")
-    Cpt2   = C("Cp_t2", 1184.0, "J/kg/K", "Cp of combustion products, LPT")
+    Cpt1   = C("Cp_t1", sub.get("Cp_t1", 1280.0), "J/kg/K", "Cp of combustion products, HPT")
+    Cpt2   = C("Cp_t2", sub.get("Cp_t2", 1184.0), "J/kg/K", "Cp of combustion products, LPT")
     Cptex  = C("Cp_tex", 1029.0, "J/kg/K", "Cp of core exhaust at 500 K")
     Cpfex  = C("Cp_fex", 1005.0, "J/kg/K", "Cp of fan exhaust at 300 K")
     hf     = C("h_f", sub["hf"], "MJ/kg", "heat of combustion of jet fuel")
@@ -273,8 +306,10 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     pib   = C("pi_b", 0.94, "-", "burner pressure ratio")
     pitn  = C("pi_tn", sub["pi_tn"], "-", "turbine nozzle pressure ratio")
     etaB  = C("eta_B", sub["eta_B"], "-", "burner efficiency")
-    etaHP = C("eta_HPshaft", 0.97, "-", "HP shaft transmission efficiency")
-    etaLP = C("eta_LPshaft", 0.97, "-", "LP shaft transmission efficiency")
+    etaHP = C("eta_HPshaft", sub.get("eta_HPshaft", 0.97), "-",
+              "HP shaft transmission efficiency")
+    etaLP = C("eta_LPshaft", sub.get("eta_LPshaft", 0.97), "-",
+              "LP shaft transmission efficiency")
     Mtakeoff = C("M_takeoff", sub["M_takeoff"], "-",
                  "1 - bleed mass flow fraction")
     Tref  = C("T_ref", 288.15, "K", "reference stagnation temperature")
@@ -284,21 +319,24 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     alpha_c = C("alpha_c", sub["alpha_c"], "-",
                 "total cooling flow bypass ratio")
     ruc   = C("r_uc", sub["r_uc"], "-", "cooling flow velocity ratio")
-    hold4a = C("hold_4a", HOLD4A, "-", "1 + (gamma-1)/2 M_4a^2")
-    M4a   = C("M_4a", M4A, "-", "station 4a Mach number")
+    m4a = sub.get("M_4a", M4A)
+    m4a_hold = sub.get("M_4a_for_hold", m4a)   # see the SUBS note for D8
+    hold4a = C("hold_4a", 1 + 0.5 * (1.313 - 1) * m4a_hold ** 2, "-",
+               "1 + (gamma-1)/2 M_4a^2")
+    M4a   = C("M_4a", m4a, "-", "station 4a Mach number")
     Ttf   = C("T_t_f", 435.0, "K", "incoming fuel total temperature")
 
     # ---- design pressure ratios and geometry ratios -----------------------
-    piFanD = C("pi_f_D", sub["pi_f_D"], "-", "fan on-design pressure ratio")
-    pilcD  = C("pi_lc_D", sub["pi_lc_D"], "-", "LPC on-design pressure ratio")
-    pihcD  = C("pi_hc_D", sub["pi_hc_D"], "-", "HPC on-design pressure ratio")
-    alphaOD = (C("alpha_OD", sub["alpha_OD"], "-", "on-design bypass ratio")
-               if sub["alpha_OD"] is not None else
-               V("alpha_OD", 8.0, "-", "on-design bypass ratio (free)"))
-    alphamax = C("alpha_max", sub["alpha_max"], "-", "maximum bypass ratio")
+    piFanD = CV("pi_f_D", "pi_f_D", 1.6, "-", "fan on-design pressure ratio")
+    pilcD  = CV("pi_lc_D", "pi_lc_D", 4.98, "-", "LPC on-design pressure ratio")
+    pihcD  = CV("pi_hc_D", "pi_hc_D", 4.375, "-", "HPC on-design pressure ratio")
+    alphaOD = CV("alpha_OD", "alpha_OD", 8.0, "-", "on-design bypass ratio")
+    alphamax = CV("alpha_max", "alpha_max", 8.0, "-", "maximum bypass ratio")
     Gf     = C("G_f", 1.0, "-", "fan/LPC gear ratio")
     OPRmax = C("OPR_max", sub["OPR_max"], "-",
                "maximum overall pressure ratio")
+    out_extra = dict(alpha_max=alphamax, alpha_OD=alphaOD, pi_f_D=piFanD,
+                     pi_lc_D=pilcD, pi_hc_D=pihcD, OPR_max=OPRmax)
     HTRfS  = C("HTR_f_SUB", 1 - 0.3 ** 2, "-", "1 - HTR_fan^2")
     fBLIP  = C("f_BLI_P", 0.9627, "-", "BLI stagnation pressure loss ratio")
     fBLIV  = C("f_BLI_V", 0.927288, "-", "BLI velocity loss ratio")
@@ -671,6 +709,7 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
                alpha=alpha, alpha_p1=alphap1, OPR=OPR, T_t_41=Tt41,
                T_t_4=Tt4, m_core=mCore, m_fan=mFan, m_total=mtot, f=fuel,
                pi_f=pif, pi_lc=pilc, pi_hc=pihc, N_1=N1, N_2=N2, I_sp=Isp)
+    out.update(out_extra)
     return out, cons
 
 
