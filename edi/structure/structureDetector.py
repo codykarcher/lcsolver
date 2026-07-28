@@ -423,8 +423,33 @@ def structure_detector(pyomo_component):
                     unique, counts = numpy.unique([lhz[0] for lhz in lhs_zeroed], return_counts=True)
                     countDict = dict(zip(unique, counts))
                     if len(unique) > 1:
-                        # have a fraction, this shouldnt be possible at this stage
-                        raise RuntimeError('Encountered an unexpected signomial fraction, shouldnt happen but not sure')
+                        # lhs - rhs came out as a fraction N/D, which happens
+                        # whenever the constraint divides by a multi-term
+                        # expression -- `z == 1 - a*(1-y)/(1+y)` and the like.
+                        #
+                        # Once the constraint has been moved to the form
+                        # N/D {<=,==,>=} 0 the denominator can be dropped:
+                        # every variable in a GP or SP is strictly positive, so
+                        # a denominator whose monomials all carry positive
+                        # coefficients is itself strictly positive, and
+                        # dividing through by it preserves the relation and its
+                        # direction. What remains, N {<=,==,>=} 0, is exactly
+                        # what the rest of this branch expects.
+                        #
+                        # A denominator with a negative coefficient could
+                        # change sign over the domain, so its direction is not
+                        # safe to assume; that case is still rejected.
+                        numerator_rows = [r for r in lhs_zeroed if r[0] >= 0]
+                        denominator_rows = [r for r in lhs_zeroed if r[0] < 0]
+                        if (not numerator_rows or not denominator_rows
+                                or not all(r[1] > 0.0 for r in denominator_rows)):
+                            raise RuntimeError(
+                                'Encountered a signomial fraction whose denominator '
+                                'is not provably positive; cannot clear it')
+                        lhs_zeroed = numerator_rows
+                        unique, counts = numpy.unique(
+                            [lhz[0] for lhz in lhs_zeroed], return_counts=True)
+                        countDict = dict(zip(unique, counts))
                     negative_monomial_indices = []
                     for ii in range(0,len(lhs_zeroed)):
                         if lhs_zeroed[ii][1] < 0:

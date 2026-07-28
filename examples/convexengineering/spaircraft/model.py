@@ -321,7 +321,7 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Pin VT constraint: zero moment at the wingtip.
         ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
             == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                     # [SP] SigEq
-        hb["b_ht_out"] + fu["w_fuse"] == 0.5 * ht["b_ht"],               # [SP] SigEq
+        hb["b_ht_out"] == 0.5 * ht["b_ht"] - fu["w_fuse"],               # [SP] SigEq
         hb["M_r"] * ht["c_root_ht"] >= (hb["L_ht_rect"] * (ht["b_ht"] / 4.)
                                         + hb["L_ht_tri"] * (ht["b_ht"] / 6.)
                                         - fu["w_fuse"] * ht["L_ht_max"] / 2.),
@@ -366,13 +366,10 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             # ---- stability ---------------------------------------------------
             xAC[i] <= fu["x_wing"] + 0.25 * wing["dx_AC_wing"] + xNP[i],
             wing["c_m_w"][i] == cmw,
-            # Neutral point approximation, from Unified's aircraft design
-            # rules. The source writes the right side as (1+2/AR)(AR-2),
-            # which expands to AR - 4/AR; the 4/AR is moved across so both
-            # sides are posynomial. Same equation, no subtraction.
+            # Neutral point approximation, from Unified's aircraft design rules.
             (xNP[i] / wing["mac"] / ht["V_ht"] * (wing["AR"] + 2.)
-             * (1. + 2. / ht["AR_ht"]) + 4. / wing["AR"]
-             == wing["AR"]),                                            # [SP] SigEq
+             * (1. + 2. / ht["AR_ht"])
+             == (1. + 2. / wing["AR"]) * (wing["AR"] - 2.)),             # [SP] SigEq
             xCG[i] + vt["dx_trail_vt"] <= fu["l_fuse"],
             vt["x_CG_vt"] >= xCG[i] + 0.5 * (vt["dx_lead_vt"] + vt["dx_trail_vt"]),
             ht["x_CG_ht"] >= xCG[i] + 0.5 * (ht["dx_lead_ht"] + ht["dx_trail_ht"]),
@@ -613,12 +610,18 @@ CHECKS = [
 ]
 
 
-def verify(seed=None, rtol=0.02):
+# EDI's PCCP loop defaults to 50 iterations, which is not enough here: the
+# model has 1174 variables and the sequential-GP sequence is still moving at
+# 50. It settles by ~200, and 500 gives the same answer to seven figures.
+MAX_ITER = 200
+
+
+def verify(seed=None, rtol=0.02, max_iter=MAX_ITER):
     """Solve and diff the headline quantities against the gpkit reference."""
     from harness import solve_edi, feasibility, load_reference, solution_dict
 
     fm = build(seed=seed)
-    solve_edi(fm, solver="ipopt-convex")
+    solve_edi(fm, solver="ipopt-convex", max_iter=max_iter)
     sol = solution_dict(fm)
     ref = load_reference(Path(__file__).with_name("reference.json"))
     chk = ref["optimalD8"]["checked"]

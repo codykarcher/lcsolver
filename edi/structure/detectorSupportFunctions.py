@@ -30,30 +30,98 @@ if numpy_available:
 else:
     raise ImportError('The stucture detector requires numpy')
 
+def _splitFraction(gr):
+    """Separate a row list into its numerator and denominator rows.
+
+    A fraction is carried as a single list: numerator rows keep the
+    constraint index ``n`` and denominator rows are tagged ``-n-1`` (see
+    :func:`gpRow_divide`). A plain posynomial has no negative-index rows.
+    """
+    numerator = [r for r in gr if r[0] >= 0]
+    denominator = [r for r in gr if r[0] < 0]
+    return numerator, denominator
+
+
+def _posyMultiply(rowsA, rowsB, outIndex):
+    """Multiply two posynomials term by term, tagging the result ``outIndex``.
+
+    ``gpRow_multiply`` only handles the monomial case, which is all the
+    expression walker needs; combining two fractions needs the general
+    product, so it lives here.
+    """
+    out = []
+    for ra in rowsA:
+        for rb in rowsB:
+            row = [outIndex, ra[1] * rb[1]]
+            row += [ra[j] + rb[j] for j in range(2, len(ra))]
+            out.append(row)
+    return collapseGProws(out)
+
+
+def _retag(rows, index):
+    """Copy rows with their constraint index replaced."""
+    return [[index] + r[1:] for r in rows]
+
+
 def gpRow_add(gr1, gr2):
-    gr1_isFrac = any([g[0] <= 0 for g in gr1])
-    gr2_isFrac = any([g[0] <= 0 for g in gr2])
-    if gr1_isFrac or gr2_isFrac:
-        # if gr1_isFrac and gr2_isFrac:
-        raise RuntimeError('Signomial Fraction addition should not be occurring here')
-    #     elif gr2_isFrac: 
-    #         gr1_temp = copy.deepcopy(gr2)
-    #         gr2 = gr1
-    #         gr1 = gr1_temp
-    #     else:
-    #         pass
+    """Add two row lists, either of which may be a signomial fraction.
 
-    #     if len(gr2) > 1 :
-    #         raise RuntimeError('Adding a posynomial to a fraction, shouldnt happen but not sure')
+    Dividing by a multi-term expression produces a fraction rather than a
+    plain posynomial, and such a fraction may then be added to something --
+    ``lsfac == 1 - a*(1-lam)/(1+lam)`` in TASOPT's spanwise drag integral is a
+    typical case. This used to raise outright, which forced callers to clear
+    every denominator by hand before writing the constraint.
 
-    #     for i in range(0,len(gr1)):
-    #         gr1[i][1] *= gr2[0][1]
-    #         for j in range(2,len(gr1[0])):
-    #             gr1[i][j] += gr2[0][j]
+    The fractions are combined over a common denominator:
 
-    #     return gr1
-    # else:
-    return collapseGProws(gr1+gr2)
+        A/B + C     = (A + C*B) / B
+        A/B + C/D   = (A*D + C*B) / (B*D)
+
+    Term count grows as the product of the operands' lengths, which is
+    inherent to putting them over a common denominator, not an artefact here.
+    """
+    num1, den1 = _splitFraction(gr1)
+    num2, den2 = _splitFraction(gr2)
+
+    if not den1 and not den2:
+        return collapseGProws(gr1 + gr2)
+
+    # Numerator index to carry forward, and the matching denominator tag.
+    if num1:
+        nix = num1[0][0]
+    elif num2:
+        nix = num2[0][0]
+    else:
+        raise RuntimeError('gpRow_add received a fraction with no numerator')
+    dix = -1 * nix - 1
+
+    # Denominator rows are stored with a negative tag; treat them as ordinary
+    # monomials while multiplying, then re-tag at the end.
+    d1 = _retag(den1, nix) if den1 else None
+    d2 = _retag(den2, nix) if den2 else None
+
+    if d1 is not None and d2 is not None:
+        numerator = collapseGProws(_posyMultiply(num1, d2, nix)
+                                   + _posyMultiply(num2, d1, nix))
+        denominator = _posyMultiply(d1, d2, nix)
+    elif d1 is not None:
+        numerator = collapseGProws(_retag(num1, nix)
+                                   + _posyMultiply(num2, d1, nix))
+        denominator = d1
+    else:
+        numerator = collapseGProws(_retag(num2, nix)
+                                   + _posyMultiply(num1, d2, nix))
+        denominator = d2
+
+    # A denominator that collapsed to a single monomial is no longer a
+    # fraction: fold it into the numerator so downstream code sees a plain
+    # posynomial wherever possible.
+    if len(denominator) == 1:
+        inverse = [[nix, 1.0 / denominator[0][1]]
+                   + [-v for v in denominator[0][2:]]]
+        return gpRow_multiply(numerator, inverse)
+
+    return numerator + _retag(denominator, dix)
 
 def gpRow_subtract(gr1, gr2):
     for i in range(0,len(gr2)):
