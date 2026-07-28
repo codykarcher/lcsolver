@@ -158,7 +158,29 @@ def pccp_modification(constraintList,penalty_exponent=5.0):
     return constraintList, spCounter
 
 
-def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0):
+def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0, gp_solver=None):
+    """Solve a signomial program by PCCP (penalty convex-concave).
+
+    Each iteration replaces the non-GP parts with a monomial approximation
+    about the current point, adds slack variables penalized at
+    ``penalty_exponent``, and solves the resulting geometric program.
+
+    ``gp_solver`` selects the *inner* GP solve and takes ``(rows, relations,
+    x0)``, returning a dict with ``'x'`` and ``'primal objective'``. It
+    defaults to the cvxopt backend. Passing
+    ``edi.solvers.ipopt.convex.solve_gp_rows_ipopt`` runs the same PCCP
+    outer loop with IPOPT underneath, which is substantially more robust on
+    larger models -- cvxopt stalls with ``status='unknown'`` where IPOPT
+    converges. The outer algorithm is identical either way; only the
+    subproblem solver changes.
+    """
+    if gp_solver is None:
+        def gp_solver(rows, relations, x0=None):
+            pack = {'Linear_Program': [False], 'Quadratic_Program': [False],
+                    'Geometric_Program': [True, rows, relations],
+                    'info': structures['info']}
+            return solve_GP(pack)
+
     variableList = [ vr for vr in m.component_objects( pyo.Var, descend_into=True, active=True ) ]
 
     unwrappedVariables = []
@@ -336,18 +358,11 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
                     for j in numix:
                         gpRows[j] = posy[j-numix[0]]
 
-        pack = {}
-        pack['Linear_Program'] = [False]
-        pack['Quadratic_Program'] = [False]
-        pack['Geometric_Program'] = [True, gpRows, ['<=']*gpRows[-1][0]]
+        relations_inner = ['<=']*gpRows[-1][0]
         # print(len(newOperators))
         # print(newOperators)
         # print(gpRows[-1][0])
 
-        pack['info']={}
-        pack['info']['N_cons_total']    = structures['info']['N_cons_total']
-        pack['info']['N_cons_noBounds'] = structures['info']['N_cons_noBounds']
-        pack['info']['N_cons_bounds']   = structures['info']['N_cons_bounds']
         
         if itr == 0:
             prevObj = np.inf
@@ -356,7 +371,7 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
 
         # print(pack)
         # print('solving GP approximation')
-        res = solve_GP(pack)
+        res = gp_solver(gpRows, relations_inner, x0=x_star)
 
         # new_x_star = x_star + 0.5*(np.array(res['x']).reshape(len(x_star))-x_star)
         new_x_star = np.array(res['x']).reshape(len(x_star))

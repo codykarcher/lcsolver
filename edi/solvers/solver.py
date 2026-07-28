@@ -157,8 +157,29 @@ def _convex_ipopt(m, structures=None, **kwargs):
         return solve_gp_ipopt(structures, model=m, **kwargs)
     if structures['Linear_Program'][0] or structures['Quadratic_Program'][0]:
         return solve_lp_qp_ipopt(m, **kwargs)
-    # Signomial: no convex form exists, so hand the raw model to IPOPT and be
-    # explicit that global optimality is not claimed.
+    if structures['Signomial_Program'][0]:
+        # A signomial has no convex form, but PCCP does: each iteration is a
+        # geometric program, and those ARE convex in log space. So run the
+        # usual penalty convex-concave loop with the IPOPT GP solver
+        # underneath rather than handing the raw model to a general NLP
+        # solver, which would forfeit both the per-iteration global solve and
+        # the slack-penalty machinery.
+        from edi.solvers.cvxopt.SP import solve_SP
+        from edi.solvers.ipopt.convex import solve_gp_rows_ipopt
+        from edi.solvers.writeback import write_solution
+
+        def _inner(rows, relations, x0=None):
+            return solve_gp_rows_ipopt(rows, relations, x0=x0)
+
+        res = solve_SP(structures, m, gp_solver=_inner,
+                       **{k: v for k, v in kwargs.items()
+                          if k in ('reltol', 'var_reltol', 'max_iter',
+                                   'use_pccp', 'penalty_exponent')})
+        res['solver'] = 'ipopt (PCCP, log-transformed subproblems)'
+        res['problem_structure'] = 'signomial_program_pccp'
+        res['solution'] = write_solution(structures, res, model=m)
+        return res
+    # Nothing structured left to exploit.
     return ipopt_solve(m, **kwargs)
 
 

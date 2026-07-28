@@ -187,14 +187,30 @@ def save_reference(path: str | Path, values: dict, *, source: str,
 # Solve helpers
 # ---------------------------------------------------------------------------
 
-def solve_edi(f, solver: str = "auto", **kw):
-    """Solve an EDI formulation, returning (solution_dict, objective, note)."""
+def solve_edi(f, solver: str = "auto", convex_backend: str = "ipopt", **kw):
+    """Solve an EDI formulation, returning (solution_dict, objective, note).
+
+    ``convex_backend`` defaults to ``"ipopt"`` rather than EDI's own default
+    of ``"cvxopt"``. Both take the same route structurally — a GP is solved in
+    log space where it is convex, and a signomial goes through the PCCP
+    penalty convex-concave loop whose every subproblem is a GP — but IPOPT is
+    markedly more robust on the larger models here. cvxopt stalls with
+    ``status='unknown'`` on the solar aircraft and on the wing at N=8, where
+    IPOPT converges cleanly; gpkit's reference solutions came from MOSEK,
+    which is stronger than cvxopt again, so a cvxopt stall says little about
+    the model.
+
+    That distinction cost real time. Several models were diagnosed as
+    under-bounded when the actual problem was the backend, so if a model will
+    not converge, try both before concluding the model is at fault.
+    """
     from edi.solvers.solver import solve as _solve
-    note = ""
     import warnings
+
+    note = ""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        _solve(f, solver=solver, **kw)
+        _solve(f, solver=solver, convex_backend=convex_backend, **kw)
         for c in caught:
             if "status" in str(c.message) or "converge" in str(c.message):
                 note = str(c.message)[:90]

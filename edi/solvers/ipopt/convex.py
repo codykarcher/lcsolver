@@ -51,40 +51,53 @@ def _group_rows(rows):
     return groups
 
 
-def solve_gp_ipopt(structures, model=None, tee=False, options=None,
-                   method='auto', executable=None):
-    """Solve a detected geometric program with IPOPT in log space.
+def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
+                        method='auto', executable=None):
+    """Solve a geometric program given only its monomial rows, with IPOPT.
 
-    Returns a dict shaped like the other EDI backends: ``status``,
-    ``primal objective`` (in the ORIGINAL variables), ``x`` (original variables,
-    in ``structures['variables']`` order), and ``solution``.
+    This is the row-level core of :func:`solve_gp_ipopt`, split out so that it
+    can also serve as the inner solve of the signomial (PCCP) loop. That loop
+    linearizes about a moving point and *adds slack columns*, so its
+    subproblems have more variables than the original model and no
+    ``structures['variables']`` list to size them by — the width comes from
+    the rows themselves and the warm start from the current iterate.
+
+    Parameters
+    ----------
+    rows : list of ``[constraint_index, coefficient, *exponents]``
+    relations : operator per constraint index 1..N
+    x0 : optional warm start in the ORIGINAL (not log) variables
+
+    Returns a dict with ``status``, ``primal objective``, ``x``.
     """
-    gp = structures['Geometric_Program']
-    if not gp[0]:
-        raise ValueError('the formulation was not detected as a geometric program')
-
-    rows, relations = gp[1], gp[2]
-    variables = structures['variables']
-    n = len(variables)
     groups = _group_rows(rows)
-
     if 0 not in groups:
         raise ValueError('no objective monomials found in the GP structure')
+
+    # width is set by the rows, not by any external variable list
+    n = max(len(a) for terms in groups.values() for _, a in terms)
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
 
-    # t_j = log(x_j). Warm-start from the declared guesses where they are usable.
     def _t0(_m, j):
-        try:
-            v = pyo.value(variables[j])
-            if v is not None and v > 0:
-                return math.log(v)
-        except Exception:
-            pass
+        if x0 is not None and j < len(x0):
+            try:
+                v = float(x0[j])
+                if v > 0:
+                    return math.log(v)
+            except Exception:
+                pass
         return 0.0
 
     m.t = pyo.Var(m.J, initialize=_t0)
+    return _build_and_solve_gp(m, n, groups, relations, tee, options,
+                               method, executable)
+
+
+def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
+                        executable):
+    """Shared objective/constraint assembly and IPOPT call."""
 
     def _posy(t, terms):
         """Sum of exp(b_k + a_k . t) for one constraint/objective group."""
@@ -157,6 +170,32 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
         'n_eq': n_eq,
     }
 
+    return res
+
+
+def solve_gp_ipopt(structures, model=None, tee=False, options=None,
+                   method='auto', executable=None):
+    """Solve a detected geometric program with IPOPT in log space.
+
+    Returns a dict shaped like the other EDI backends: ``status``,
+    ``primal objective`` (in the ORIGINAL variables), ``x`` (original
+    variables, in ``structures['variables']`` order), and ``solution``.
+    """
+    gp = structures['Geometric_Program']
+    if not gp[0]:
+        raise ValueError('the formulation was not detected as a geometric program')
+
+    variables = structures['variables']
+    x0 = []
+    for v in variables:
+        try:
+            val = pyo.value(v)
+        except Exception:
+            val = None
+        x0.append(val if (val is not None and val > 0) else None)
+
+    res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
+                              method=method, executable=executable)
     if model is not None:
         from edi.solvers.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)
