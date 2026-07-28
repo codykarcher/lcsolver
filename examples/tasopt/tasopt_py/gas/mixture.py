@@ -153,6 +153,50 @@ def gas_prat(alpha, n: int, po, to, ho, so, cpo, ro,
         f"gas_prat: convergence failed, dT = {dt} (to={to}, pi={pi})")
 
 
+def gas_mach(alpha, n: int, po, to, ho, so, cpo, ro,
+             mo: float, m: float, epol: float) -> tuple:
+    """State change across a specified *Mach number* change.
+
+    Constant-cp equivalent::
+
+        g = cp/(cp-r);  gexp = (g-1)/(g*epol)
+        tau = (1 + 0.5*(g-1)*mo**2) / (1 + 0.5*(g-1)*m**2)
+        pi = tau**(1/gexp);  p = po*pi;  t = to*tau
+
+    The variable-cp statement is conservation of stagnation enthalpy,
+    ``h + u^2/2 = ho + uo^2/2`` with ``u^2 = m^2 * cp*r/(cp-r) * t``, solved
+    for ``t`` by Newton. Note the residual's derivative carries a ``cp_t``
+    term that the source sets to zero with the comment "could evaluate this
+    from the cp(T) splines (later)" -- so the Newton step uses an approximate
+    Jacobian. That costs iterations, not accuracy: the residual itself is
+    exact, so the converged root is the true one. Reproduced as written.
+    """
+    uosq = mo ** 2 * cpo * ro / (cpo - ro) * to
+
+    # Constant-gamma initial guess.
+    t = (to * (1.0 + 0.5 * ro / (cpo - ro) * mo ** 2)
+         / (1.0 + 0.5 * ro / (cpo - ro) * m ** 2))
+
+    for _ in range(ITMAX):
+        st = gassum(alpha, n, t)
+        cp_t = 0.0                      # see the note above
+
+        usq = m ** 2 * st.cp * st.r / (st.cp - st.r) * t
+        usq_t = m ** 2 * st.cp * st.r / (st.cp - st.r)
+        usq_cp = m ** 2 * st.r / (st.cp - st.r) * t - usq / (st.cp - st.r)
+
+        res = st.h + 0.5 * usq - ho - 0.5 * uosq
+        res_t = st.h_t + 0.5 * (usq_t + usq_cp * cp_t)
+        dt = -res / res_t
+
+        if abs(dt) < TTOL:
+            p = po * math.exp(epol * (st.s - so) / st.r)
+            return p, t, st.h, st.s, st.cp, st.r
+        t += dt
+    raise ConvergenceError(
+        f"gas_mach: convergence failed, dT = {dt} (mo={mo}, m={m})")
+
+
 def gas_delh(alpha, n: int, po, to, ho, so, cpo, ro,
              delh: float, epol: float) -> tuple:
     """State change across a specified enthalpy change *delh*.
@@ -200,6 +244,6 @@ def gas_burn(alpha, beta, gamma, n: int, ifuel: int,
 
 __all__ = [
     "gassum", "gassumd", "gasfuel", "gas_tset", "gas_prat", "gas_delh",
-    "gas_burn", "MixState", "ConvergenceError",
+    "gas_burn", "gas_mach", "MixState", "ConvergenceError",
     "I_N2", "I_O2", "I_CO2", "I_H2O", "W_CHON",
 ]
