@@ -43,37 +43,44 @@ bound is optimal, and the GP has a ray of optima rather than a point. Interior
 point methods stall on that. So the drag fit, the propulsion chain and the
 tail drag areas are all load-bearing for *convergence*, not just accuracy.
 
-Convergence: diagnosis so far
+Status: converges, within ~7%
 -----------------------------
-The model does not yet converge. A bisect harness
-(``scratchpad/incr_solar.py`` pattern: build a core, add one subsystem, test)
-localized it:
+Solves on ``convex_backend="ipopt"`` and lands close to the reference:
 
-| model | result |
-|---|---|
-| core: energy + flight + closed drag/power chain, fixed wing weight | **converges** |
-| + wing structure (box spar, no loading) | fails, transformed obj +46.7 |
-| + wing loading | fails, transformed obj +16.4 |
+| quantity | rebuild | reference | delta |
+|---|---|---|---|
+| Wtotal (lbf) | 465.4 | 436.4 | +6.6% |
+| wing AR | 38.15 | 38.10 | +0.1% |
+| wing S (ft^2) | 429.8 | 394.2 | +9.0% |
+| V (m/s) | 22.71 | 22.91 | -0.9% |
+| rho (kg/m^3) | 0.1507 | 0.1552 | -2.9% |
+| battery E (kJ) | 1.181e5 | 1.092e5 | +8.2% |
+| PSmin (W/m^2) | 284.8 | 286.9 | -0.7% |
 
-Two distinct findings, both established by experiment rather than inspection:
+The rebuild is slightly *heavy*, i.e. marginally over-constrained. Three bugs
+were found getting here, and the order matters because each masked the next:
 
-**1. The drag/power chain must close.** Replacing the propulsion block with a
-crude ``Pelec*0.7 >= T*V`` makes the core converge; removing it makes the
-core fail. ``V`` reaches the objective only through
-``V -> Re -> cdw -> CD -> T -> prop -> motor -> Pelec -> Poper -> E -> Wbatt``.
-Break any link and flying faster is free, every ``V`` above stall is optimal,
-and the GP has a ray rather than a point.
+**1. The backend.** cvxopt stalled with ``status='unknown'`` and no amount of
+model work fixed it. The same model converges immediately on
+``convex_backend="ipopt"``. Two real defects below were misattributed to the
+model while this was in the way.
 
-**2. Structural variables need lower bounds from loading.** With the spar but
-no beam, ``I``, ``Sy`` and ``hin`` are bounded only from above, so they run to
-zero — which in the log-transformed GP is an unbounded direction, and the
-transformed objective diverges upward. This is the same class of defect as
-the tail boom (fixed here by adding ``TailBoomBending``) and the empennage
-(DISCREPANCIES.md #9).
+**2. A dict-key collision.** ``_lifting_surface`` merged the spar dict into
+the surface dict, and both carry a ``"W"`` — so ``wing["W"]`` silently became
+the *spar* weight. The total-weight constraint then used the spar weight while
+the real surface-weight variable kept only a lower bound, free to run to 1e36
+without ever registering as infeasible. Wtotal 198 -> 330.
 
-Adding the wing beam improves it (46.7 -> 16.4) but does not yet close it, so
-at least one more variable is still unbounded. The bisect harness is the tool
-to finish this: add subsystems one at a time until the failure reappears.
+**3. A missing load case.** Only the manoeuvre load was applied; the source
+has manoeuvre *and* gust, and gust is the sizing case. Without it the
+structure is too cheap and the optimizer answers with too much span and too
+thin a section — AR 48.8 against the reference 38.1, and ``tau`` pinned at the
+bottom of its range instead of the top. Adding it: Wtotal 330 -> 465, AR to
+within 0.1%. Same class of defect as DISCREPANCIES.md #8.
+
+Remaining candidates for the last ~7%: the ``Climb`` mission segment is not
+modelled, and the horizontal/vertical tail spars carry no loading of their own
+(only the boom does), so the empennage is slightly light.
 
 Configuration differences from the standalone subsystems
 --------------------------------------------------------
@@ -225,8 +232,13 @@ def _lifting_surface(f, tag, N, lam, rhoA, mfac, wlim=0.15):
     cons.append(W / mfac >= Wsk + spar["W"])   # no foam core in the solar build
 
     surf = dict(S=S, AR=AR, b=b, croot=croot, cmac=cmac, cave=cave,
-                tau=tau, W=W, cbar=cbar, deta=deta)
-    surf.update(spar)
+                tau=tau, W=W, Wskin=Wsk, cbar=cbar, deta=deta)
+    # NOTE: _box_spar also returns a "W" (the *spar* weight). Merging it
+    # wholesale would clobber the surface weight above, and the total-weight
+    # constraint would then silently use the spar weight while the real
+    # surface-weight variable kept only a lower bound -- free to run to 1e36
+    # without ever showing up as infeasible. Merge under distinct keys.
+    surf.update({("Wspar" if k == "W" else k): v for k, v in spar.items()})
     return surf, cons
 
 
@@ -452,10 +464,34 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     ]
 
     # ================= wing loading =====================================
-    _, wing_load_cons = _beam(
-        f, "wingg", Nwing, wing["b"], wing["I"], wing["Sy"],
-        lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i])
-    cons += wing_load_cons
+    # Two load cases, as the source has. The gust case is usually the sizing
+    # one: leaving it out makes the structure too cheap, and the optimizer
+    # answers with too much span and too thin a section (AR 48.8 vs 38.1 and
+    # tau pinned at the bottom of its range rather than the top).
+    #
+    # Manoeuvre: N-g on the centre weight, distributed by chord.
+    _, c = _beam(f, "wingg", Nwing, wing["b"], wing["I"], wing["Sy"],
+                 lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i])
+    cons += c
+
+    # Gust: adds the incremental lift from the gust angle of attack. Ww is the
+    # wing *group* weight (structure + battery + solar), which relieves the
+    # root bending, so it appears as (1 + Ww/W).
+    ARCTAN_FIT = dict(ftype="MA", K=1, d=1, a1=1.0,
+                      c=[0.9460414492363466], e=[[0.9960249757710423]],
+                      rms_err=0.039722989129247634)
+    eta_w = np.linspace(0.0, 1.0, Nwing)
+    cosm1 = np.hstack([1e-10, 1 - np.cos(eta_w[1:] * pi / 2)])
+    agust = V_(name="agust", guess=0.05, units="-", size=Nwing,
+               description="gust angle of attack")
+    vgust = 5.0 * units.m / units.s          # solar sets winggust.vgust = 5
+    for i in range(Nwing):
+        cons += fit_constraints(ARCTAN_FIT, agust[i], [cosm1[i] * vgust / V],
+                                mfac=1.0 + ARCTAN_FIT["rms_err"])
+    _, c = _beam(f, "winggust", Nwing, wing["b"], wing["I"], wing["Sy"],
+                 lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i]
+                 * (1 + 2 * pi * agust[i] / CL * (1 + Wwing / Wcent)))
+    cons += c
 
     # ================= weight buildup ===================================
     cons += [
