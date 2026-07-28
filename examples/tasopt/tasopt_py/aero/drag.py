@@ -198,7 +198,16 @@ def _surfcd2_quadrature(*, n, etao, etas, b, co, cosL, Mach, clp1,
                 toc = tocs * (1.0 - frac) + toct * frac
                 fdu = fdus * (1.0 - frac) + fdut * frac
 
-            fSuns = math.exp(-(eta - etao) * b / (kSuns * C * 2.0 * co))
+            # kSuns = 0 disables shock unsweep. The Fortran gets there by
+            # IEEE arithmetic -- the divide gives -Inf and exp(-Inf) is 0 --
+            # which Python raises on instead, so it is written out. cdsum
+            # passes 0.5 for the wing, so this branch is only reached by a
+            # caller that switches unsweep off deliberately.
+            if kSuns == 0.0:
+                fSuns = 0.0
+            else:
+                fSuns = math.exp(-(eta - etao) * b
+                                 / (kSuns * C * 2.0 * co))
 
             clp = clp1 * (P / C) / (1.0 + fdu) ** 2
             Rec = Reco * C * (1.0 + fdu)
