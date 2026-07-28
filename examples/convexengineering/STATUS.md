@@ -228,3 +228,40 @@ subproblem at its own warm start, rather than reading rows and guessing at
 the format -- two earlier attempts to interpret the row format by hand
 produced confident, wrong answers.
 
+
+## Solver comparison: PCCP vs SLCP
+
+`edi/solvers/ipopt/slcp.py` implements sequential log-convex programming, but
+over its own `Problem` object that nothing in EDI constructed — so it could
+not be run on a Formulation at all. `edi/solvers/ipopt/slcp_bridge.py` is the
+adapter: numerator-only groups become `Posynomial`s imposed exactly in log
+space, numerator/denominator pairs become `PosynomialRatio`s (numerator exact,
+denominator condensed by AGM — the classical SP treatment), single-term
+equalities stay affine.
+
+**They agree.** On the small models SLCP matches PCCP to between 2.4e-7 and
+3.3e-10, which is a useful independent check on both.
+
+| model | PCCP | SLCP (dense) | rel |
+|---|---|---|---|
+| simpleac | 0.03 s | 0.15 s | 2.4e-7 |
+| motor | 0.01 s | 0.13 s | 2.7e-8 |
+| propeller | 0.02 s | 0.02 s | 2.3e-8 |
+| windturbine | 0.04 s | 3.94 s | 3.3e-10 |
+
+**SLCP is slower, and the gap grows with size.** The cause is not the BFGS
+update but the sub-problem: the dense path builds
+`0.5 * sum_ij B[i][j] d_i d_j` as an n²-term Pyomo expression every iteration.
+For SPaircraft (n = 1173) that is **1,375,929 terms per sub-problem**.
+
+`Options.hessian_memory` is a toggle for that. The damped BFGS update is a
+rank-two correction, so `B` is exactly `gamma*I` plus signed rank-one terms;
+keeping the last *m* gives `d'Bd = gamma*sum(d^2) + sum_k sign_k (v_k.d)^2`,
+which is O(n·m) — **7,038 terms at m = 3, a 195x reduction**. Within its window
+the operator reproduces the dense matrix to 1e-9 (tested against
+`_damped_bfgs` directly). The default stays dense and unchanged.
+
+Timings for the D8.2 (1174 variables) for reference: build 0.12 s, PCCP cold
+start 146 s (~56 iterations at ~2.6 s), PCCP seeded from the reference 12.8 s.
+gpkit with the same IPOPT plugin does it in 19 s; the York paper reports 7.66 s
+with MOSEK.
