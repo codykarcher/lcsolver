@@ -73,11 +73,11 @@ D_w         = f.Variable(name='D_w',        guess=17344,  units='N',      size=3
 D_wm        = f.Variable(name='D_wm',       guess=3609,     units='N',      size=3, description='Engine out windmill drag')
 d_nacelle   = f.Variable(name='d_nacelle',  guess=2.05,     units='m',              description='Nacelle diameter')
 d_oleo      = f.Variable(name='d_oleo',     guess=0.3119,     units='m',              description='Diameter of oleo shock absorber')
-d_tm        = f.Variable(name='d_tm',       guess=39.72,   units='m',           description='Diameter of main gear tires')
-d_tn        = f.Variable(name='d_tn',       guess=31.78,     units='m',           description='Diameter of nose gear tires')
+d_tm        = f.Variable(name='d_tm',       guess=1.008,   units='m',           description='Diameter of main gear tires')
+d_tn        = f.Variable(name='d_tn',       guess=0.8066,    units='m',           description='Diameter of nose gear tires')
 delt_Lo     = f.Variable(name='delt_Lo',    guess=50,     units='N',      size=3, description='Center wing lift loss')
 delt_Lt     = f.Variable(name='delt_Lt',    guess=50,     units='N',      size=3, description='Wing-tip lift loss')
-delt_xacw   = f.Variable(name='delt_xacw',  guess=50,     units='N',      size=3, description='Wing aerodynamic center shift')
+delt_xacw   = f.Variable(name='delt_xacw',  guess=50,     units='m',      size=3, description='Wing aerodynamic center shift')
 delt_xlht  = f.Variable(name='delt_xlht',  guess=32.57,     units='m',      size=3, description='Distance from c.g. to HT leading edge')
 delt_xtht   = f.Variable(name='delt_xtht',  guess=34.88,     units='m',      size=3, description='Distance from c.g. to HT trailing edge')
 delt_xlvt   = f.Variable(name='delt_xlvt',  guess=25.73,     units='m',      size=3, description='Distance from c.g. to VT leading edge')
@@ -90,8 +90,8 @@ eta_o       = f.Variable(name='eta_o',      guess=1,     units='-',      size=3,
 f_fuel      = f.Variable(name='f_fuel',     guess=1,      units='-',      size=3, description='Percent fuel remaining')
 f_lambdaht = f.Variable(name='f_lambdaht', guess=0.0524,     units='-',      size=3, description='Horizontal tail taper ratio function')
 f_lambdaw   = f.Variable(name='f_lambdaw',  guess=0.0033,      units='-',      size=3, description='Empirical efficiency function of taper')
-F_wm        = f.Variable(name='F_wm',       guess=4458,   units='-',      size=3, description='Weight factor (main)')
-F_wn        = f.Variable(name='F_wn',       guess=400.9,    units='-',      size=3, description='Weight Factor (nose)')
+F_wm        = f.Variable(name='F_wm',       guess=1.001e6,units='-',      size=3, description='Weight factor (main)')
+F_wn        = f.Variable(name='F_wn',       guess=4.007e5,  units='-',      size=3, description='Weight Factor (nose)')
 h_fuse      = f.Variable(name='h_fuse',     guess=100,    units='m',              description='Fuelage height')
 I_hshell    = f.Variable(name='I_hshell',   guess=1000,   units='m^4',            description='Shell horizontal bending inertia')
 I_m         = f.Variable(name='I_m',        guess=5.007e-6,   units='m^4',    size=3, description='Area moment of inertia (main strut)')
@@ -133,7 +133,7 @@ mu          = f.Variable(name='mu',         guess=1.4e-5,    units='N*s/m^2',siz
 n_rows      = f.Variable(name='n_rows',     guess=31,     units='-',              description='Number of rows')
 n_seats     = f.Variable(name='n_seats',    guess=186,      units='-',              description='Number of seats')
 P_floor     = f.Variable(name='P_floor',    guess=1.137e6,    units='N',      size=3, description='Distributed floor load')
-p_ht       = f.Variable(name='p_ht',       guess=1.4,     units='N/m',           description='Horizontal tail theoretical wing loading')
+p_ht       = f.Variable(name='p_ht',       guess=1.4,     units='-',              description='Dummy variable (1+2*lambda_ht)')
 p_o         = f.Variable(name='p_o',        guess=10,     units='N/m',    size=3, description='Center section theoretical wing loading')
 p_w         = f.Variable(name='p_w',        guess=1.4,     units='-',              description='Dummy variable (1+2lambda_w)')
 p_vt        = f.Variable(name='p_vt',       guess=1.6,     units='-',              description='Dummy variable(1+2lambdavt)')
@@ -184,7 +184,7 @@ V_hbend     = f.Variable(name='V_hbend',    guess=100,    units='m^3',    size=3
 V_hbndb     = f.Variable(name='V_hbndb',    guess=100,    units='m^3',            description='Horizontal bending material volume b')
 V_hbndc     = f.Variable(name='V_hbndc',    guess=100,    units='m^3',            description='Horizontal bending material volume c')
 V_hbndf     = f.Variable(name='V_hbndf',    guess=100,    units='m^3',            description='Horizontal bending material volume f')
-V_ht        = f.Variable(name='V_ht',       guess=1,    units='m^3',            description='Horizontal tail volume')
+V_ht        = f.Variable(name='V_ht',       guess=1,    units='-',              description='Horizontal tail volume coefficient')
 V_nose      = f.Variable(name='V_nose',     guess=0.04645,    units='m^3',            description='Nose skin volume')
 V_TO        = f.Variable(name='V_TO',       guess=73.38,    units='m/s',    size=3, description='Takeoff Velocity')
 V_vbend     = f.Variable(name='V_vbend',    guess=100,    units='m^3',    size=3, description='Vertical bending material volume')
@@ -230,8 +230,8 @@ W_structvt  = f.Variable(name='W_structvt', guess=1.2e4,   units='N',    size=3,
 W_structw   = f.Variable(name='W_structw',  guess=3927,   units='N',    size=3, description='Wing box weight')
 W_vbend     = f.Variable(name='W_vbend',    guess=5000,   units='N',    size=3, description='Vertical bending material weight') # Changed from lbf
 W_vt        = f.Variable(name='W_vt',       guess=1963,   units='N',            description='Vertical tail weight')
-W_wam       = f.Variable(name='W_wam',      guess=200.2,   units='N',            description='Wheel assembly weight for single main gear wheel') # Changed from lbf
-W_wan       = f.Variable(name='W_wan',      guess=46.18,   units='N',            description='Wheel assembly weight for single nose gear wheel') # Changed from lbf
+W_wam       = f.Variable(name='W_wam',      guess=2.408e4, units='N',            description='Wheel assembly weight for single main gear wheel') # Changed from lbf
+W_wan       = f.Variable(name='W_wan',      guess=1.379e4, units='N',            description='Wheel assembly weight for single nose gear wheel') # Changed from lbf
 W_window    = f.Variable(name='W_window',   guess=1.062e4,   units='N',            description='Window weight')
 W_wing      = f.Variable(name='W_wing',     guess=1.204e5,  units='N',            description='Wing Weight')
 x_b         = f.Variable(name='x_b',        guess=1000,   units='m',      size=3, description='Wing box forward bulkhead location')
@@ -244,7 +244,7 @@ x_CGvt      = f.Variable(name='x_CGvt',     guess=47.9,   units='m',      size=3
 x_fwb       = f.Variable(name='x_fwb',      guess=10,     units='m',              description='x location of front of wing box')
 x_hbndld    = f.Variable(name='x_hbndld',   guess=100,    units='m',             description='Horizontal zero bending location (landing case)') # Changed from m
 x_hbndMLF   = f.Variable(name='x_hbndMLF',  guess=100,    units='m',             description='Horizontal zero bending location (maximum aero load case)') # Changed from m
-x_hpesys    = f.Variable(name='x_hpesys',   guess=1000,   units='m',      size=3, description='Power systems centroid')
+x_hpesys    = f.Variable(name='x_hpesys',   guess=1.0,    units='m',      size=3, description='Power systems centroid')
 x_m         = f.Variable(name='x_m',        guess=20.75,   units='m',      size=3, description='x location of main gear')
 x_mg        = f.Variable(name='x_mg',       guess=20.75,   units='m',      size=3, description='Main landing gear centroid')
 x_n         = f.Variable(name='x_n',        guess=5,   units='m',      size=3, description='x location of nose gear')
@@ -374,7 +374,7 @@ pi          = np.pi
 p_cabin     = f.Constant(name='p_cabin',    value=7.5e4,  units='N/m^2',  description='Cabin Air Pressure')
 p_oleo      = f.Constant(name='p_oleo',     value=1800,   units='psi',    description='Oleo Pressure')
 p_s         = f.Constant(name='p_s',        value=0.787,     units='m',     description='Seat pitch')
-R_sheat     = f.Constant(name='R_sheat',    value=287,   units='J/kg*K', description='Air specific heat')
+R_sheat     = f.Constant(name='R_sheat',    value=287,   units='J/(kg*K)', description='Air specific heat')
 R_e         = f.Constant(name='R_e',        value=1,      units='-',      description='Ratio of stringer/skin moduli')
 R_Mh        = f.Constant(name='R_Mh',       value=1,      units='-',      description='Horizontal inertial relief factor')
 R_Mv        = f.Constant(name='R_Mv',       value=1,      units='-',      description='Vertical inertial relief factor')
@@ -490,7 +490,7 @@ for i in [0,1,2]:
                     x_TO[i]    <= l_r,
                     1 + y[i]   <= 2 * ((g * x_TO[i] * T_TO) / (W_max[i] * V_TO[i]**2)),
                     1       >= 0.0464 * (zeta[i]**2.7 / y[i]**2.9) + 1.044 * (zeta[i]**0.3 / y[i]**0.049),
-                    zeta[i]    >= 0.5 * ((rho_TO * S_w * C_D[i]) / T_TO),
+                    zeta[i]    >= 0.5 * ((rho_TO * S_w * C_D[i] * V_TO[i]**2) / T_TO),
                     V_TO[i]    == 1.2 * ((2 * W_max[i]) / (c_Lwmax * S_w *rho_TO))**0.5,
                     ]
 
@@ -506,7 +506,7 @@ for i in [0,1,2]:
                 f_fuel[i]              >= (W_fuel[0] + W_fuel[1] + W_fuel[2]) / W_fuelprim[i],
                 W_lg * x_CGlg[i]       >= W_mg * x_mg[i] + W_ng * x_ng[i],
                 W_misc * x_CGmisc[i]   >= W_hpesys * x_hpesys[i],
-                x_hpesys[i] >= 1,
+                x_hpesys[i] >= 1 * units.m,
                 I_z[i]                 >= I_zwing[i] + I_zfuse[i] + I_ztail[i],
                 I_zwing[i]             >= ((n_eng * W_eng * y_eng**2) / g) + 
                                        ((W_fuelwing[i] + W_wing) / g) * ((c_rootw * b_w**3) / (16*S_w)) * (lambda_w + (1/3)),
@@ -662,7 +662,7 @@ for i in [0,1,2]:
 # Crosswind Landing Condition
 for i in [0,1,2]:
     Constraints += [
-                rdot_req / I_z[i]  <= 0.5 * rho_TO * S_vt * l_vt[i] * C_Lvtland[i] * V_land**2,
+                rdot_req * I_z[i]  <= 0.5 * rho_TO * S_vt * l_vt[i] * C_Lvtland[i] * V_land**2,
                 ]
 
 # Vertical Tail Drag
@@ -985,19 +985,26 @@ for i in [0,1,2]:
                 40      >= (2 * r_n) / t_n,
                 W_mw    == n_wps * W_wam,
                 W_nw    == n_wps * W_wan,
-                W_wam   == 1.2 * F_wm[i]**0.609,
-                F_wm[i]    == L_wm[i] * d_tm,
+                # Raymer/Currey landing gear correlations are dimensional fits:
+                # the coefficients are only valid with static wheel load in lbf,
+                # tire dimensions in inches, and assembly weight in lbf. Each fit
+                # below nondimensionalizes its argument in those units and gives
+                # the coefficient the output unit, so the constraint is
+                # dimensionally consistent while the fitted numbers stay as
+                # published. F_w is the (dimensionless) load-diameter factor.
+                W_wam   == 1.2 * units.lbf * F_wm[i]**0.609,
+                F_wm[i]    == (L_wm[i] / units.lbf) * (d_tm / units.inch),
                 L_wm[i]    == L_m[i] / (n_mg * n_wps),
-                W_wan   == 1.2 * F_wn[i]**0.609,
-                F_wn[i]    == L_wn[i] * d_tn,
+                W_wan   == 1.2 * units.lbf * F_wn[i]**0.609,
+                F_wn[i]    == (L_wn[i] / units.lbf) * (d_tn / units.inch),
                 L_wn[i]    == L_n[i] / n_wps,
                 # L_n[i] >= 1,
-                d_tm    == 1.63 * L_wm[i]**0.315,
-                wdt_tm  == 0.104 * L_wm[i]**0.48,
+                d_tm    == 1.63 * units.inch * (L_wm[i] / units.lbf)**0.315,
+                wdt_tm  == 0.104 * units.inch * (L_wm[i] / units.lbf)**0.48,
                 d_tn    == 0.8 * d_tm,
                 wdt_tn  == 0.8 * wdt_tm,
                 h_hold  >= 2 * wdt_tm + 2 * r_m,
-                0.8     >= 2 * wdt_tn + 2 * r_n,
+                0.8 * units.m >= 2 * wdt_tn + 2 * r_n,
                 ]
 
 # Landing Gear Loads

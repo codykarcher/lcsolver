@@ -124,3 +124,66 @@ before this rebuild started, including a missing `V_TO**2` in the takeoff
 constraint and a `rdot_req / I_z` that should have been a product. The model
 is now dimensionally consistent throughout but still does not converge; the
 author confirms it was never in working order.
+
+---
+
+## 5. EDI: `structure_detector` crashes on unclassifiable models
+
+**Status: fixed.**
+
+`parseDict_GP` checked the monomial and signomial cases, then *assumed*
+signomial fraction without testing its status. An expression outside the GP
+algebra (a transcendental, say) satisfies none of the four categories, so the
+walker leaves `leadingCoefficients` as `None` and `len()` raised
+
+    TypeError: object of type 'NoneType' has no len()
+
+It now returns `None` for "not representable", and the three call sites
+translate that into the module's existing `unstructured_dict()` idiom with a
+message naming the offending constraint and side.
+
+---
+
+## 6. EDI: constant-only constraints silently defeat structure detection
+
+**Status: fixed.** This one produced a *wrong answer*, not a crash.
+
+A constraint containing no `Var` — `Qmax >= Q` where both were substituted —
+was fed to the posynomial machinery, which zeroes it to a bare negative
+number (`10 - 100 = -90`, then `+1` gives `-89`). The negative leading
+coefficient reads as a subtraction, and the whole model is declared
+unstructured. A model that **is** a GP was then misrouted to IPOPT, which
+failed with `Error in step computation` and no hint that structure detection
+was the cause.
+
+Such constraints are now dropped before the constraint numbering is
+established, or reported as infeasible if false as written.
+
+The filtering has to happen before the loop, not inside it: `parseDict_GP` is
+handed the `enumerate` index and uses it to group monomials by constraint, so
+skipping one mid-loop leaves a gap in the numbering and later indexing walks
+off the end of the operator list. (That was the first attempt, and it turned
+a silent misroute into an `IndexError`.)
+
+---
+
+## 7. TASOPT: notes rather than defects
+
+Nothing in TASOPT 2.16 has turned out to be wrong so far — five modules
+reproduce to machine precision. Three things are worth recording anyway
+because they look like bugs and are not:
+
+* **`fusew.f` assigns `Afweb` twice** with unrelated meanings — first the
+  shell web area, later the floor web area. The port names them separately.
+* **`fusew.f` uses the unlimited `wfb`** in `hfb = sqrt(Rfuse^2 - wfb^2)`
+  while using the clamped `wfblim` for `thetafb`, so `wfb > Rfuse` would take
+  the square root of a negative number. No sane input reaches it; preserved
+  rather than "fixed".
+* **`surfw.f` recomputes `Vout`** identically just before returning. Dead
+  code; not reproduced.
+
+The one real trap was in *my* verification drivers, not in TASOPT: passing
+literal constants through these implicit-interface calls under `-O` delivered
+garbage (a `gas_prat` called with a literal `4.0d0` pressure ratio received
+`0.0`), which initially looked like a porting error. All drivers now pass
+named variables only.
