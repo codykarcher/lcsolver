@@ -43,44 +43,57 @@ bound is optimal, and the GP has a ray of optima rather than a point. Interior
 point methods stall on that. So the drag fit, the propulsion chain and the
 tail drag areas are all load-bearing for *convergence*, not just accuracy.
 
-Status: converges, within ~7%
------------------------------
-Solves on ``convex_backend="ipopt"`` and lands close to the reference:
+Status: verified to ~1%
+-----------------------
+Solves on ``convex_backend="ipopt"`` and matches the gpkit reference:
 
 | quantity | rebuild | reference | delta |
 |---|---|---|---|
-| Wtotal (lbf) | 465.4 | 436.4 | +6.6% |
-| wing AR | 38.15 | 38.10 | +0.1% |
-| wing S (ft^2) | 429.8 | 394.2 | +9.0% |
+| Wtotal (lbf) | 432.45 | 436.43 | -0.9% |
+| wing AR | 38.17 | 38.10 | +0.2% |
+| wing S (ft^2) | 400.1 | 394.2 | +1.5% |
+| wing b (ft) | 123.6 | 122.6 | +0.8% |
+| battery E (kJ) | 1.0995e5 | 1.0915e5 | +0.7% |
+| battery W (lbf) | 245.5 | 243.7 | +0.7% |
+| Poper (W) | 2116.9 | 2101.3 | +0.7% |
 | V (m/s) | 22.71 | 22.91 | -0.9% |
-| rho (kg/m^3) | 0.1507 | 0.1552 | -2.9% |
-| battery E (kJ) | 1.181e5 | 1.092e5 | +8.2% |
 | PSmin (W/m^2) | 284.8 | 286.9 | -0.7% |
+| empennage W (lbf) | 14.45 | 15.83 | -8.7% |
 
-The rebuild is slightly *heavy*, i.e. marginally over-constrained. Three bugs
-were found getting here, and the order matters because each masked the next:
+Four bugs were found getting here, and each masked the next — worth reading
+in order, because three of the four produced a *perfectly self-consistent*
+model that simply had the wrong answer.
 
 **1. The backend.** cvxopt stalled with ``status='unknown'`` and no amount of
-model work fixed it. The same model converges immediately on
-``convex_backend="ipopt"``. Two real defects below were misattributed to the
-model while this was in the way.
+model work moved it; the same model converges immediately on
+``convex_backend="ipopt"``. Everything below was invisible until this was
+fixed, and two real defects were misattributed to the model in the meantime.
 
 **2. A dict-key collision.** ``_lifting_surface`` merged the spar dict into
-the surface dict, and both carry a ``"W"`` — so ``wing["W"]`` silently became
-the *spar* weight. The total-weight constraint then used the spar weight while
-the real surface-weight variable kept only a lower bound, free to run to 1e36
-without ever registering as infeasible. Wtotal 198 -> 330.
+the surface dict and both carry a ``"W"``, so ``wing["W"]`` silently became
+the *spar* weight. The total-weight constraint then used the spar weight
+while the real surface-weight variable kept only a lower bound — free to run
+to 1e36 while the model stayed feasible and the solver stayed happy.
+Wtotal 198 -> 330.
 
 **3. A missing load case.** Only the manoeuvre load was applied; the source
 has manoeuvre *and* gust, and gust is the sizing case. Without it the
-structure is too cheap and the optimizer answers with too much span and too
-thin a section — AR 48.8 against the reference 38.1, and ``tau`` pinned at the
-bottom of its range instead of the top. Adding it: Wtotal 330 -> 465, AR to
-within 0.1%. Same class of defect as DISCREPANCIES.md #8.
+structure is too cheap and the optimizer answers with span and thinness —
+AR 48.8 against 38.1, and ``tau`` pinned at the bottom of its range instead
+of the top. Wtotal 330 -> 465, AR to within 0.1%.
 
-Remaining candidates for the last ~7%: the ``Climb`` mission segment is not
-modelled, and the horizontal/vertical tail spars carry no loading of their own
-(only the boom does), so the empennage is slightly light.
+**4. Conflating two boom widths.** In the solar build the tail boom is a
+*box* spar (``TailBoom.__bases__`` is reassigned), so its section has two
+distinct widths: ``cave``, the box chord that ``wlim`` scales, and ``d == w``,
+the spar cap width — and the wetted area is ``S = l*pi*w[0]``, built from the
+*cap*, not the chord. Using one variable for both made ``Sboom`` 50x too
+large and the non-wing drag ``cda`` 64% high. Wtotal 465 -> 432.
+
+The remaining gap is concentrated in the empennage (-8.7%): the horizontal
+and vertical tail spars carry no loading of their own here, only the boom
+does, so the tails come out light. The ``Climb`` mission segment is also not
+modelled, which is why the propeller's max static thrust ``T_m`` is 0.37x the
+reference — climb sizes it, cruise does not.
 
 Configuration differences from the standalone subsystems
 --------------------------------------------------------
@@ -264,13 +277,24 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
 
     # ---- tail boom: box spar with a secondary areal weight ---------------
     lboom = V_(name="lboom", guess=15.0, units="ft",   description="tail boom length")
-    Sboom = V_(name="Sboom", guess=10.0, units="ft^2", description="tail boom wetted area")
-    dboom = V_(name="dboom", guess=3.0,  units="in",   description="tail boom diameter")
+    Sboom = V_(name="Sboom", guess=1.0,  units="ft^2", description="tail boom wetted area")
     Wboom = V_(name="Wboom", guess=5.0,  units="lbf",  description="tail boom weight")
-    boom, c = _box_spar(f, "boom", Nboom, dboom, 1.0, 2 * lboom, wlim=1.0)
+    # The boom is a *box* spar in the solar build (TailBoom.__bases__ is
+    # reassigned to BoxSpar), so its section is described by two different
+    # widths and conflating them is easy to get wrong:
+    #   cave  -- the box "chord", a free vector, what wlim scales
+    #   d == w -- the spar cap width, and what the wetted area is built from
+    # The wetted area is S = l*pi*w[0], i.e. it tracks the slender cap, not
+    # the chord. Using the chord here made Sboom 50x too large and the
+    # non-wing drag cda 64% high.
+    caveb = V_(name="caveb", guess=3.0, units="in", size=Nboom - 1,
+               description="tail boom box chord")
+    boom, c = _box_spar(f, "boom", Nboom, caveb, 1.0, 2 * lboom, wlim=1.0)
     cons += c
-    cons += [Sboom == lboom * pi * dboom,
+    cons += [Sboom == lboom * pi * boom["w"][0],
              Wboom >= boom["W"] + 0.15 * units.kg / units.m**2 * Sboom * G_U]
+    for i in range(Nboom - 2):
+        cons.append(caveb[i] >= caveb[i + 1])      # boom tapers inboard-out
 
     Wemp = V_(name="Wemp", guess=15.0, units="lbf", description="empennage weight")
     cons.append(Wemp / 1.0 >= htail["W"] + vtail["W"] + Wboom)
@@ -455,7 +479,7 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     cons += [
         0.45 <= htail["S"] * lboom / wing["S"] / wing["cmac"],   # Vh
         0.02 <= vtail["S"] * lboom / wing["S"] / wing["b"],      # Vv
-        dboom <= wing["tau"] * wing["croot"],
+        boom["w"][0] <= wing["tau"] * wing["croot"],
         vtail["tau"] >= 0.09,
         htail["tau"] >= 0.06,
         wing["tau"] <= 0.144,
