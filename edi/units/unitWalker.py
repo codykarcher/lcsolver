@@ -146,7 +146,16 @@ def handle_negation_node(visitor,node,arg1):
         nodeunits=units.get_units(node.expr)
         return unitsPack(expr = value(node)*nodeunits, units = nodeunits)
     else:
-        return unitsPack(expr=node, units=arg1.units)
+        # Negate the *rebuilt* child, not the original node. Returning `node`
+        # here silently discarded every unit conversion performed inside a
+        # negated subexpression: in `A*((x - y)**2 - (x - z)**2)` with z in
+        # feet and everything else in metres, the first difference was
+        # rebuilt as `x - 0.3048*z` but the second, sitting under the
+        # negation, came back as the untouched `- (x - z)**2`. The constraint
+        # then evaluated with feet read as metres -- no error, just a wrong
+        # number. Swapping the two operands used to "fix" it, which is how
+        # this was found.
+        return unitsPack(expr=-arg1.expr, units=arg1.units)
 
 def handle_sumExpression_node(visitor,node, *args):
     arg_checker = []
