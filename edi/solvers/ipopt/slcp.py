@@ -330,6 +330,32 @@ class Options:
                                           # posynomial ratios, method='slcp');
                                           # anything else silently keeps the
                                           # rebuild path. Off by default.
+        self.hessian_gamma = 1.0          # Weight of the background curvature
+                                          # gamma*I in the limited-memory B.
+                                          # On problems where the curvature
+                                          # condition s.z > 0 keeps failing --
+                                          # which it does whenever almost every
+                                          # constraint is already exact, so the
+                                          # Reduced Lagrangian has little left
+                                          # in it -- the damped update
+                                          # degenerates and B stays at gamma*I
+                                          # forever. The quadratic is then
+                                          # purely a proximal term, and gamma
+                                          # is its weight: it sets the step
+                                          # length directly. Lower it to take
+                                          # longer steps.
+        self.hessian_scaling = False      # Scale the initial limited-memory
+                                          # Hessian by the Shanno-Phua ratio
+                                          # y.y / s.y measured on the first
+                                          # update, instead of leaving it at
+                                          # the identity. The quadratic term is
+                                          # the sub-problem's proximal term, so
+                                          # its scale sets the step length; an
+                                          # identity background on a problem
+                                          # whose curvature is orders of
+                                          # magnitude away throttles every
+                                          # step. Only affects the
+                                          # limited-memory path.
         self.hessian_memory = None        # None (default) keeps the DENSE n-by-n
                                           # BFGS matrix and the n^2-term quadratic
                                           # expression. An integer m switches to a
@@ -822,7 +848,8 @@ def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
 # ---------------------------------------------------------------------------
 # Lagrangian gradients
 # ---------------------------------------------------------------------------
-def _lagrangian_gradient(problem, x, mults, method, reduced):
+def _lagrangian_gradient(problem, x, mults, method, reduced,
+                         exact_objective=False):
     """Gradient of the (optionally Reduced) Lagrangian in the working space.
 
     The *Reduced* Lagrangian, paper Equation 14, omits the constraints that SLCP
@@ -835,6 +862,15 @@ def _lagrangian_gradient(problem, x, mults, method, reduced):
     so approximating it again in the BFGS Hessian sets the approximation fighting
     the true constraint. The paper is emphatic that this matters: "Imposing exact
     constraints without this modification performs worse than strict LSQP."
+
+    ``exact_objective`` extends that same principle to the objective. With
+    ``Options.exact_objective`` set, the objective is imposed exactly in the
+    sub-problem as a log-sum-exp, so its curvature is already there in full;
+    leaving it in the Reduced Lagrangian makes B model it a *second* time. The
+    effect is the one the paper describes for constraints -- the approximation
+    fights the exact term -- and it shows up as short steps and slow linear
+    descent rather than as failure. On SPaircraft, whose signomial constraints
+    keep B alive, this alone is the difference between crawling and converging.
     """
     if method == 'sqp':
         g = problem.objective.grad(x)
@@ -842,7 +878,10 @@ def _lagrangian_gradient(problem, x, mults, method, reduced):
             g = g + mults[i] * con.body.grad(x)
         return g
 
-    g = problem.objective.log_grad(x)
+    # Objective omitted when it too is imposed exactly, for the same reason
+    # the exact constraints are.
+    g = (np.zeros(len(x)) if (reduced and method == 'slcp' and exact_objective)
+         else problem.objective.log_grad(x))
     for i, con in enumerate(problem.constraints):
         if reduced and method == 'slcp' and con.exact_in_logspace:
             continue                     # excluded from the Reduced Lagrangian
@@ -875,12 +914,13 @@ class LimitedMemoryB:
     keeps the dense matrix and the original expression, unchanged.
     """
 
-    __slots__ = ('n', 'memory', 'gamma', 'pairs')
+    __slots__ = ('n', 'memory', 'gamma', 'pairs', 'autoscale')
 
-    def __init__(self, n, memory=5, gamma=1.0):
+    def __init__(self, n, memory=5, gamma=1.0, autoscale=False):
         self.n = int(n)
         self.memory = int(memory)
         self.gamma = float(gamma)
+        self.autoscale = bool(autoscale)
         self.pairs = []          # list of (sign, vector), newest last
 
     def matvec(self, s):
@@ -899,6 +939,17 @@ class LimitedMemoryB:
         """Damped BFGS, stored as two more rank-one terms."""
         s = np.asarray(s, dtype=float).ravel()
         z = np.asarray(z, dtype=float).ravel()
+        if self.autoscale and not self.pairs:
+            # Shanno-Phua initial scaling, applied ONCE while B is still
+            # gamma*I so the stored pairs stay consistent with it. Without it
+            # the background curvature is the identity in log space forever,
+            # whatever the problem's actual scale -- and since the quadratic
+            # acts as the sub-problem's proximal term, that sets the step
+            # length directly.
+            zz = float(z @ z)
+            sz0 = float(s @ z)
+            if zz > 0.0 and sz0 > 0.0:
+                self.gamma = max(1e-8, min(1e8, zz / sz0))
         Bs = self.matvec(s)
         sBs = float(s @ Bs)
         sz = float(s @ z)
@@ -1015,7 +1066,9 @@ def solve(problem, x0, method='slcp', options=None):
     if np.any(x <= 0):
         raise ValueError('SLCP works in log space, so x0 must be strictly positive')
 
-    B = (LimitedMemoryB(n, options.hessian_memory)
+    B = (LimitedMemoryB(n, options.hessian_memory,
+                        gamma=getattr(options, 'hessian_gamma', 1.0),
+                        autoscale=getattr(options, 'hessian_scaling', False))
          if options.hessian_memory else np.eye(n))
     cache = None
     if options.cache_subproblem and method == 'slcp':
@@ -1126,8 +1179,12 @@ def solve(problem, x0, method='slcp', options=None):
         # PARTLY exact (p is imposed exactly, but q is condensed to a monomial,
         # which discards q's curvature). Measured: excluding them fails to
         # converge from every start while including them takes ~20 iterations.
-        g_old = _lagrangian_gradient(problem, x, mults, method, reduced)
-        g_new = _lagrangian_gradient(problem, x_new, mults, method, reduced)
+        exact_obj_opt = (getattr(options, 'exact_objective', False)
+                         and isinstance(problem.objective, Posynomial))
+        g_old = _lagrangian_gradient(problem, x, mults, method, reduced,
+                                     exact_obj_opt)
+        g_new = _lagrangian_gradient(problem, x_new, mults, method, reduced,
+                                     exact_obj_opt)
         s = (np.log(x_new) - np.log(x)) if method != 'sqp' else (x_new - x)
         if isinstance(B, LimitedMemoryB):
             B.update(s, g_new - g_old)
