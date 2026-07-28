@@ -364,3 +364,96 @@ Consequence for anyone reusing the model: the wing is sized by a 5-g *gust*
 case rather than a 5-g manoeuvre, which are not the same load distribution —
 the gust case adds the incremental lift term ``2 pi agust/cl (1 + Ww/W)``
 and is relieved by wing weight.
+
+---
+
+## 12. SPaircraft: `stand_alone_simple_profile` is ambiguous across two repos
+
+**Status: real trap, avoided in `spaircraft/reference.py`.**
+
+SPaircraft and turbofan each ship a top-level `stand_alone_simple_profile.py`
+(and a `simple_ac_imports.py`), and `aircraft.py:15` imports it unqualified:
+
+```python
+from stand_alone_simple_profile import FlightState
+```
+
+Both checkouts must be on `sys.path` — SPaircraft needs turbofan for the
+engine — so whichever lands first silently wins. With turbofan first you get
+*its* `FlightState`, whose `Atmosphere` leaves gravity a free variable rather
+than a substituted constant. The model still builds, still solves, still
+reports convergence, and burns **20391.6 lbf instead of 20859.7 — a 2.2%
+error with no warning of any kind**. The only visible symptom is one extra
+entry in the solution (`Mission.FlightState.Atmosphere.g[:]`).
+
+Running from inside the SPaircraft checkout hides this, because the working
+directory wins; that is why `SPaircraft.test()` is unaffected and nothing in
+CI catches it.
+
+## 13. SPaircraft: the shipped SGP tolerance does not converge the model
+
+`optimize_aircraft` calls `localsolve(..., reltol=0.01)`, stopping the
+sequential-GP loop as soon as two successive costs agree to 1%. That is
+reached long before convergence. Repeated runs of the identical D8.2 model
+return anywhere in 21.6k–23.3k lbf and differ from *each other* by up to 6%,
+against a converged 20.86k — so the shipped setting is not merely imprecise,
+it is not reproducible. At `reltol <= 1e-4` the loop settles; at `1e-6` with
+`PYTHONHASHSEED` fixed it is bit-identical across processes, and varies only
+in the sixth digit without.
+
+## 14. SPaircraft: only one of six configurations converges
+
+`optimalD8` (the paper's D8.2) and `D8_no_BLI` solve. `optimal737`,
+`optimal777`, `M072_737` and `D8_eng_wing` all run to a degenerate
+near-zero-fuel point (cost ~4e-19) with variables pinned at gpkit's own
+`Bounded` limit of 1e30, and PCCP reporting 4–5% slack on the signomial
+constraints. Raising `pccp_penalty` (1e3…1e8) makes it worse, not better —
+the cost then diverges to ~1e272; warm-starting from the converged D8, and
+every combination of `fixedBPR`/`pRatOpt`, leave the failure bit-identical.
+
+This is consistent with the repo's own coverage: `TESTS` lists only
+`SPaircraft.py`, whose `test()` drives `optimalD8`. No other configuration is
+exercised by CI, so the 737 and 777 results in Tables 2 and 4 of York et al.
+cannot be reproduced from master with the shipped code.
+
+## 15. SPaircraft D8.2 at master is lighter than the published Table 3
+
+Converged master, versus York et al. Table 3 (SP column):
+
+| quantity | master | Table 3 | delta |
+|---|---|---|---|
+| fuel, lbf | 20860 | 27529 | −24.2% |
+| takeoff weight, lbf | 133565 | 143421 | −6.9% |
+| dry weight, lbf | 74005 | 77129 | −4.1% |
+| span, ft | 140.0 | 140.0 | 0.0% |
+
+Span agrees exactly because it is at its limit in both. The solution is
+feasible in the unmodified gpkit model to 4e-8, so this is repo-versus-paper
+drift, not a bad solve. Master sits much closer to the TASOPT D8.2 figures the
+repo itself carries in `TASOPT_weight_fractions.csv` (takeoff 133884 lbf, a
+0.24% difference) than to the paper.
+
+## 16. turbofan: TOC TSFC runs high, the other points low
+
+Against the SP model's *own* published values (York, Hoburg & Drela, Tables 9
+and 12) rather than the measured engine data:
+
+| point | rebuilt | paper SP | delta |
+|---|---|---|---|
+| 737-800 takeoff | 0.44799 | 0.4751 | −5.7% |
+| 737-800 top of climb | 0.79462 | 0.7166 | +10.9% |
+| 737-800 cruise | 0.60985 | 0.6445 | −5.4% |
+| GE90 on-design | 0.51166 | 0.5328 | −4.0% |
+| GE90 top of climb | 0.66137 | 0.5997 | +10.3% |
+
+Consistent in sign across two unrelated engines: top of climb high, every
+other point low. The objective weights the first segment's TSFC by 10, so the
+optimizer is free to trade top-of-climb away, and the paper notes TOC is the
+point where the low-pressure spool pins at its maximum speed of 1.1 — the one
+place the fan map is furthest off. Engine weight lands at exactly +10.00% of
+the TASOPT value, i.e. hard against the 110% cap that the paper's Table 9 case
+uses, so the configuration being solved is the intended one.
+
+Note also that `test_missions.diffs()` uses 0.5846 for the GE90 top-of-climb
+NPSS TSFC where Table 12 prints 0.5876; one of the two is a transcription
+slip, unresolved here.
