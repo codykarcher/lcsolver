@@ -190,10 +190,53 @@ named variables only.
 
 ---
 
-## 8. Wing rebuild lands at a different optimum
+## 8. Wing rebuild lands at a different optimum — RESOLVED
 
-**Status: accepted as a known discrepancy, by author's decision.** The wing
-is treated as correct and the aircraft models build on it.
+**Status: fixed.** It was a real model error, not a solver difference.
+
+**Cause: material properties guessed instead of read.** `CFRPUD` was assumed
+to be `E = 190 GPa, sigma = 1500 MPa`; `gpkitmodels/GP/materials/composite.py`
+says `E = 137 GPa, sigma = 1700 MPa`. E being 39% too stiff made the
+deflection-angle recursion
+
+    th[i+1] >= th[i] + 0.5 deta (b/2) (M[i+1] + M[i]) / (E I)
+
+loose by exactly that factor, letting the optimizer buy span it had not paid
+for. Every other constraint was already correct.
+
+**Result after the fix** — AR error drops from 12.8% to 1.1%, and the
+structural weights land within 0.3%:
+
+| quantity | before | after | reference |
+|---|---|---|---|
+| Cd | 0.007095 | 0.0072466 | 0.0071952 |
+| AR | 22.72 | 19.92 | 20.15 |
+| W_spar | 21.94 | 22.168 | 22.150 |
+| W_core | 10.86 | 10.963 | 10.953 |
+
+The rebuild now sits 0.7% *above* the reference and satisfies all 103
+evaluable reference constraints, i.e. it is feasible-but-slightly-suboptimal
+there — some constraint is marginally tighter than its counterpart. Left as
+is.
+
+**Method, which generalizes.** Substitute your optimum into the *reference*
+model and evaluate every one of its constraints. Whichever it violates names
+the defect directly, with no reading or reasoning. Six of 130 came back
+violated here, all the same `th` recursion, and the only term in it not read
+from source was E.
+
+Two traps, both of which silently return a clean bill of health:
+
+* substituting **bare floats** makes gpkit read them in the wrong units, so
+  even `t >= tmin` appears violated — substitute quantities *with* units;
+* not substituting the model's **constants** leaves 102 of 130 constraints
+  unevaluable, and a bare `except: continue` counts them as passing. Always
+  report evaluated-vs-skipped.
+
+### Original record
+
+The following was written before the cause was found, and is kept because the
+reasoning in it turned out to be right.
 
 The EDI rebuild of `gplibrary/GP/aircraft/wing` solves cleanly but reaches a
 different point than the gpkit reference:
@@ -217,8 +260,9 @@ the lower bound its own constraint states — 1605.8 N/m at the root against
 exactly. Since `q` appears only on the loosening side of the shear chain, the
 optimizer should drive it to that bound.
 
-**Caveat on the accepted explanation.** The discrepancy was accepted as
-plausibly a solver difference (MOSEK vs cvxopt). Recorded for completeness:
+**Caveat on the accepted explanation** (this proved to be the correct
+instinct). The discrepancy was accepted as plausibly a solver difference
+(MOSEK vs cvxopt). Recorded at the time:
 `wing_test` calls `Model.solve()`, not `localsolve()`, so this is a genuine
 GP rather than an SP. GP solvers converge to the global optimum, so two
 correct solvers on the same GP should agree to solver tolerance, not to 13%

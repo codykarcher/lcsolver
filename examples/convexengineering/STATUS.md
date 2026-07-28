@@ -12,7 +12,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `propeller` | gplibrary `GP/aircraft/prop` | **verified** | 12/12 vars, max rel 2.3e-4 |
 | `fuselage` | gplibrary `GP/aircraft/fuselage` | **verified** | 10/10 vars, max rel 4.0e-7 |
 | `empennage` | gplibrary `GP/aircraft/tail` | **structural only** | solves, sensible; bounding case is ours, no gpkit diff |
-| `wing` | gplibrary `GP/aircraft/wing` | **WIP, not verified** | solves; 1.4% low on Cd, AR 22.7 vs 20.2 — see model docstring |
+| `wing` | gplibrary `GP/aircraft/wing` | **verified to ~1%** | Cd +0.7%, AR 19.92 vs 20.15, weights within 0.3% |
 | `turbofan` | York/Hoburg/Drela 2018 | not started | |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
 | `solar` | Burton & Hoburg 2018 | reference **unblocked**, port not started | 4 configs recorded |

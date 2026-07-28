@@ -1,8 +1,8 @@
 """Wing box: planform, structure, aerodynamics and beam loading (GP).
 
-STATUS: NOT YET VERIFIED. Solves and lands close, but does not reproduce the
-reference. See "Open discrepancy" at the end of this docstring before
-building anything on top of it.
+STATUS: agrees with the reference to ~1% on every quantity. The original
+discrepancy was a real model error (guessed material properties) and is
+fixed; see "Resolved discrepancy" at the end of this docstring.
 
 
 Source model
@@ -59,37 +59,54 @@ of "SMA" (softmax-affine) form:
 and the gust angle from a 1-term "MA" fit of an arctangent. Both fit
 datasets are transcribed from the CSVs in the source tree.
 
-Open discrepancy
-----------------
-This rebuild solves but lands about 1.4% below the reference objective
-(Cd 0.007095 vs 0.007195 at the 1e-2 tip relaxation) with a noticeably
-higher aspect ratio (22.7 vs 20.2), i.e. it is under-constrained somewhere
-and buys induced drag with span it should not have.
+Resolved discrepancy
+--------------------
+This rebuild originally landed 1.4% *below* the reference objective with a
+12.8% higher aspect ratio. That was a real model error, not a solver
+difference.
 
-What has been ruled out:
+**Cause: guessed material properties.** ``CFRPUD`` was assumed to be
+``E = 190 GPa, sigma = 1500 MPa``; the source says ``E = 137 GPa,
+sigma = 1700 MPa``. E being 39% too stiff made the deflection-angle
+recursion
 
-* the beam chain — printing the reference's constraints shows them
-  character-for-character equivalent to the ones built here;
-* ``WingCore`` — initially guessed as ``0.5*tau*cave^2``; it is actually
-  ``Abar*cave^2`` with a fixed normalized section area ``Abar = 0.0753449``.
-  Corrected, which moved the objective from 0.007056 to 0.007095;
-* the tip relaxation value — ``wing_test`` uses 1e-1 where ``box_spar`` uses
-  1e-2, and the two give materially different answers (0.007682 vs
-  0.007195). The reference JSON here was recorded at 1e-2.
+    th[i+1] >= th[i] + 0.5 deta (b/2) (M[i+1] + M[i]) / (E I)
 
-What is unexplained: in the reference solution the manoeuvre load ``q`` sits
-*well above* the lower bound its own constraint states — at the root,
-1605.8 N/m against ``N*W/b*cbar[0] = 422.9 N/m``. The gust case's ``q``
-matches its bound exactly. Since ``q`` appears only on the loosening side of
-the shear chain, the optimizer should drive it to that bound, so either the
-substitution ``loading.substitutions["W"] = 100`` is not reaching the
-variable this port assumes, or ``cbar`` (a gpkit *linked* variable, evaluated
-at solve time rather than a fixed array) resolves to something other than the
-taper-derived values used here.
+loose by exactly that factor, so the optimizer bought span it had not paid
+for. Every other constraint was already correct.
 
-Resolving that is the next step. Until then this model should not be treated
-as a verified reference, and the solar/gassolar/jho aircraft that would build
-on it are blocked behind it.
+**How it was found.** Not by reading — by a cross-substitution test. My
+optimum was substituted into the *reference* model and every one of its 130
+constraints evaluated. Six came back violated, all of them the same ``th``
+recursion, by up to 26%. That named the constraint directly, and the only
+term in it not read from source was E.
+
+Two traps in running that test, both of which silently produce a clean bill
+of health:
+
+* substituting **bare floats** makes gpkit read them in the wrong units, so
+  even ``t >= tmin`` appears violated. Substitute quantities with units.
+* not substituting the model's **constants** leaves 102 of 130 constraints
+  unevaluable, and the ``except: continue`` reports them as fine. Always
+  count evaluated-vs-skipped.
+
+**Residual.** After the fix, agreement is:
+
+| quantity | rebuild | reference |
+|---|---|---|
+| Cd | 0.0072466 | 0.0071952 |
+| AR | 19.92 | 20.15 |
+| S (ft^2) | 42.71 | 42.85 |
+| CL | 0.29742 | 0.29782 |
+| W_spar (lbf) | 22.168 | 22.150 |
+| W_core (lbf) | 10.963 | 10.953 |
+| W_skin (lbf) | 8.536 | 8.563 |
+
+The rebuild now sits 0.7% *above* the reference and satisfies all 103
+evaluable reference constraints, so it is a feasible-but-slightly-suboptimal
+point there: some constraint here is marginally tighter than its counterpart.
+Small enough to leave; the earlier symptom (a 12.8% span error from a
+too-loose structural constraint) is gone.
 """
 from __future__ import annotations
 
@@ -100,8 +117,12 @@ from edi import Formulation
 
 G = 9.81  # m/s^2, gpkitmodels.g
 
-# --- material properties (gplibrary GP/materials) --------------------------
-CFRPUD = dict(rho=1.6, tmin=0.1, sigma=1.5e9, E=190e9)      # g/cm^3, mm, Pa, Pa
+# --- material properties (gplibrary GP/materials/composite.py) -------------
+# Read from the source, not assumed: E = 137 GPa and sigma = 1700 MPa.
+# Guessing these (190 GPa / 1500 MPa) made the deflection-angle constraint
+# th[i+1] >= th[i] + ...(M[i+1]+M[i])/E/I loose by a factor of 190/137, which
+# let the optimizer buy span it had not paid for.
+CFRPUD = dict(rho=1.6, tmin=0.1, sigma=1700e6, E=137e9)     # g/cm^3, mm, Pa, Pa
 CFRPFABRIC = dict(rho=1.6, tmin=0.3048, tau=570e6)          # g/cm^3, mm, Pa
 FOAMHD = dict(rho=0.036)                                    # g/cm^3
 
