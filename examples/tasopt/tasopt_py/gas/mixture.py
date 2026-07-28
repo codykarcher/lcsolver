@@ -244,6 +244,71 @@ def gas_burn(alpha, beta, gamma, n: int, ifuel: int,
 
 __all__ = [
     "gassum", "gassumd", "gasfuel", "gas_tset", "gas_prat", "gas_delh",
-    "gas_burn", "gas_mach", "MixState", "ConvergenceError",
+    "gas_burn", "gas_mach", "gas_mass", "MixState", "ConvergenceError",
+    "GasMassError",
     "I_N2", "I_O2", "I_CO2", "I_H2O", "W_CHON",
 ]
+
+
+class GasMassError(RuntimeError):
+    """``gas_mass`` failed to converge on the static state."""
+
+
+def gas_mass(alpha, n: int, po, to, ho, so, cpo, ro,
+             mflux: float, mguess: float) -> tuple:
+    """Static state at a specified mass flux ``rho*u = mdot/A``.
+
+    The inverse of the usual question: instead of "what mass flux does this
+    Mach number give", it asks "what state carries this mass flux". That has
+    *two* answers -- one subsonic, one supersonic -- because mass flux peaks
+    at the throat and falls away on both sides. ``mguess`` picks the branch:
+    it sets the starting temperature, and Newton then stays on whichever side
+    of the throat it started.
+
+    The residual is mass flux squared,
+
+        2 p^2 / (t r)^2 (ho - h) - mflux^2
+
+    using ``rho u = p/(rT) * sqrt(2(ho - h))``. Squaring avoids the square
+    root, which is what makes the derivative clean.
+
+    The relaxation ``dt <= 0.8 (to - t)`` keeps the static temperature below
+    total; without it a large Newton step overshoots past stagnation, where
+    ``ho - h`` goes negative and the flux is imaginary.
+
+    Returns ``(p, t, h, s, cp, r)``. Convergence tolerance is 1e-6 K, as in
+    the source -- absolute, not relative, so this routine is meaningfully
+    looser than the rest of the gas package.
+    """
+    itmax = 25
+    ttol = 0.000001
+
+    t = to / (1.0 + 0.5 * ro / (cpo - ro) * mguess ** 2)
+
+    for _ in range(itmax):
+        st = gassum(alpha, n, t)
+        s, s_t, h, h_t, cp, r = st.s, st.s_t, st.h, st.h_t, st.cp, st.r
+
+        p = po * math.exp((s - so) / r)
+        p_t = p * s_t / r
+
+        res = 2.0 * p ** 2 / (t * r) ** 2 * (ho - h) - mflux ** 2
+        res_t = (4.0 * p * p_t / (t * r) ** 2 * (ho - h)
+                 - 4.0 * p ** 2 / (t * r) ** 2 * (ho - h) / t
+                 + 2.0 * p ** 2 / (t * r) ** 2 * (-h_t))
+
+        dt = -res / res_t
+
+        rlx = 1.0
+        if rlx * dt > 0.8 * (to - t):
+            rlx = 0.8 * (to - t) / dt
+
+        if abs(dt) < ttol:
+            break
+
+        t = t + rlx * dt
+    else:
+        raise GasMassError(f"gas_mass: convergence failed. dT = {dt!r}")
+
+    return p, t, h, s, cp, r
+

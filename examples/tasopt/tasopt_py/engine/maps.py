@@ -61,9 +61,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-__all__ = ["MapEfficiency", "CMAPF", "CMAPLC", "CMAPHC",
+__all__ = ["MapEfficiency", "MapSpeed", "CMAPF", "CMAPLC", "CMAPHC",
            "CMAPF_PENALISED", "CMAPLC_PENALISED", "CMAPHC_PENALISED",
-           "ecmap"]
+           "ecmap", "Ncmap", "MapSpeedError", "TMAPL", "TMAPH", "etmap"]
 
 # Map constants, in the order the routine unpacks them:
 #     a, b, k, mo, da, c, d, CK, DK
@@ -74,6 +74,11 @@ __all__ = ["MapEfficiency", "CMAPF", "CMAPLC", "CMAPHC",
 CMAPF = (3.50, 0.80, 0.03, 0.95, -0.50, 3.0, 6.0, 0.0, 0.0)
 CMAPLC = (1.90, 1.00, 0.03, 0.95, -0.20, 3.0, 5.5, 0.0, 0.0)
 CMAPHC = (1.75, 2.00, 0.03, 0.95, -0.35, 3.0, 5.0, 0.0, 0.0)
+
+# Turbine maps -- (Pcon, Ncon) only, a far simpler shape than the compressor
+# maps above. Both turbines share the same pair in tfmap.inc.
+TMAPL = (0.15, 0.15)
+TMAPH = (0.15, 0.15)
 
 # Historical sets, kept commented out in tfmap.inc above the active ones.
 # These DO have nonzero CK/DK, so they exercise the penalty terms; the tests
@@ -129,3 +134,135 @@ def ecmap(pi: float, mb: float, piD: float, mbD: float, Cmap,
     return MapEfficiency(eff=eff,
                          eff_pi=eff_p * p_pi + effK,
                          eff_mb=eff_m * m_mb)
+
+
+class MapSpeedError(RuntimeError):
+    """``Ncmap`` failed to invert the map for corrected speed."""
+
+
+@dataclass(frozen=True)
+class MapSpeed:
+    Nb: float        # corrected wheel speed
+    Nb_pi: float     # d(Nb)/d(pressure ratio)
+    Nb_mb: float     # d(Nb)/d(corrected mass flow)
+
+
+def Ncmap(pi: float, mb: float, piD: float, mbD: float, NbD: float,
+          Cmap) -> MapSpeed:
+    """Corrected wheel speed at ``(pi, mb)`` -- a port of ``Ncmap``.
+
+    Unlike :func:`ecmap` this one has no closed form. The map is written as
+    ``(p, m)`` given ``N``, so getting ``N`` back out takes a Newton solve,
+    and the two branches of that map meet along the *spine* ``p = m^a``:
+
+    * above the spine the map is single-valued in ``p``, so the residual is
+      written on pressure ratio;
+    * below it the same is true of ``m``, so the residual switches to mass
+      flow.
+
+    Both branches are the same surface -- the switch only picks the better
+    conditioned of the two residuals, which is why the derivatives coming out
+    are continuous across it.
+
+    The step limit ``|dN| <= 0.05`` matters: the ``log(1 - (m - ms)/k)``
+    on the upper branch goes to ``-inf`` as the working line approaches the
+    surge boundary, and an unlimited Newton step walks straight past it into
+    the domain error.
+
+    Note this routine reads ``CK``/``DK`` out of ``Cmap`` and never uses
+    them -- speed does not carry the efficiency penalties.
+    """
+    a, b, k, mrato, da, c, d, CK, DK = Cmap
+    eps = 1.0e-11
+
+    m = mb / mbD
+    m_mb = 1.0 / mbD
+    p = (pi - 1.0) / (piD - 1.0)
+    p_pi = 1.0 / (piD - 1.0)
+
+    psm = m ** a            # p on the spine at this m
+    N = m ** (1.0 / b)      # initial guess, also from the spine
+
+    res = res_N = res_m = res_p = 0.0
+    for _ in range(20):
+        ms = N ** b
+        ms_N = b * ms / N
+        ps = N ** (a * b)
+        ps_N = a * b * ps / N
+
+        if p >= psm:
+            # Above the spine: residual on pressure ratio.
+            res = ps + 2.0 * N * k * math.log(1.0 - (m - ms) / k) - p
+            res_N = (ps_N + 2.0 * k * math.log(1.0 - (m - ms) / k)
+                     + 2.0 * N * k / (1.0 - (m - ms) / k) * ms_N / k)
+            res_m = -2.0 * N * k / (1.0 - (m - ms) / k) * 1.0 / k
+            res_p = -1.0
+        else:
+            # Below the spine: residual on mass flow.
+            res = ms + k * (1.0 - math.exp((p - ps) / (2.0 * N * k))) - m
+            res_N = ms_N + k * (-math.exp((p - ps) / (2.0 * N * k))) \
+                * (-ps_N / (2.0 * N * k) - (p - ps) / (2.0 * N * k) / N)
+            res_m = -1.0
+            res_p = k * (-math.exp((p - ps) / (2.0 * N * k))) / (2.0 * N * k)
+
+        dN = -res / res_N
+
+        rlx = 1.0
+        dNlim = 0.05
+        if rlx * dN > dNlim:
+            rlx = dNlim / dN
+        if rlx * dN < -dNlim:
+            rlx = -dNlim / dN
+
+        if abs(dN) < eps:
+            break
+
+        N = N + rlx * dN
+    else:
+        raise MapSpeedError(
+            f"Ncmap: convergence failed. N={N!r}, dN={dN!r}")
+
+    N_m = -res_m / res_N
+    N_p = -res_p / res_N
+    return MapSpeed(Nb=NbD * N,
+                    Nb_pi=NbD * N_p * p_pi,
+                    Nb_mb=NbD * N_m * m_mb)
+
+
+def etmap(dh: float, mb: float, Nb: float, piD: float, mbD: float,
+          NbD: float, ept0: float, Tmap,
+          Tt: float, cpt: float, Rt: float) -> float:
+    """Turbine polytropic efficiency -- a port of ``etmap``.
+
+    Two quadratic penalties, one on pressure ratio and one on the speed-flow
+    product, both centred on the design point::
+
+        ept = ept0 (1 - Pcon (1 - prat/piD)^2 - Ncon (1 - Nb mb/(NbD mbD))^2)
+
+    The pressure ratio is not an input -- it is reconstructed from the
+    specified enthalpy change through the isentropic relation
+
+        prat = (Tt/(Tt + dh/cpt))^(cpt/(Rt ept0))
+
+    which is why the total state has to come in alongside. ``dh`` is negative
+    for a turbine, so ``Trat > 1``: ``prat`` here is the *inverse* expansion
+    ratio, matching the sign convention ``piD`` carries in ``tfoper``.
+
+    Unlike the compressor maps this one has no dead constants -- ``Pcon`` and
+    ``Ncon`` are both 0.15 in the shipped configuration, so both penalties are
+    live. The Fortran also returns six derivatives, which are only used to
+    build its analytic Jacobian; :func:`tasopt_py.engine.tfoper.tfoper`
+    differentiates numerically, so only the value comes back here.
+    """
+    pcon, Ncon = Tmap[0], Tmap[1]
+
+    Trat = Tt / (Tt + dh / cpt)
+    gex = cpt / (Rt * ept0)
+    prat = Trat ** gex
+
+    Nmb = Nb * mb
+    NmbD = NbD * mbD
+
+    return ept0 * (1.0 - pcon * (1.0 - prat / piD) ** 2
+                        - Ncon * (1.0 - Nmb / NmbD) ** 2)
+
