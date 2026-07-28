@@ -467,3 +467,61 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
                             msg=f'no explanatory warning was issued; got {messages}')
         finally:
             solver_module.cvxopt_solve = original
+
+
+class TestGPObjectiveForm(unittest.TestCase):
+    """The GP backend can write posynomials two ways; neither suits everything.
+
+    'sum' hands IPOPT the posynomial itself, which is better conditioned when
+    log c + a.t is O(1..30) -- the JHO sailplane solves under 'sum' and fails
+    IPOPT's restoration phase under 'lse'. 'lse' takes the logarithm, which is
+    required once the arguments approach the exp() overflow threshold --
+    SPaircraft reaches log c = 176 with exponents to 1022.7. 'auto' picks from
+    the row magnitudes and retries with 'lse' if 'sum' fails.
+    """
+
+    def _box(self):
+        from edi import Formulation
+        f = Formulation()
+        h = f.Variable(name="h", guess=1.0, units="m", description="")
+        w = f.Variable(name="w", guess=1.0, units="m", description="")
+        d = f.Variable(name="d", guess=1.0, units="m", description="")
+        f.Objective(2 * (h * w + h * d + w * d))
+        f.ConstraintList([h * w * d >= 8.0 * pyo.units.m ** 3,
+                          h <= 4.0 * pyo.units.m, w <= 4.0 * pyo.units.m])
+        return f
+
+    def test_both_forms_give_the_same_optimum(self):
+        from edi.solvers.ipopt.convex import solve_gp_ipopt
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+        answers = {}
+        for form in ("sum", "lse", "auto"):
+            st = structure_detector(unit_corrector(self._box()))
+            answers[form] = solve_gp_ipopt(st, form=form)["primal objective"]
+        self.assertAlmostEqual(answers["sum"], answers["lse"], places=5)
+        self.assertAlmostEqual(answers["sum"], answers["auto"], places=5)
+
+    def test_auto_picks_sum_for_ordinary_magnitudes(self):
+        from edi.solvers.ipopt.convex import _auto_form
+        groups = {0: [(1.0, [1.0, 0.0])], 1: [(2.5, [1.0, 2.0])]}
+        self.assertEqual(_auto_form(groups), "sum")
+
+    def test_auto_picks_lse_for_large_exponents(self):
+        from edi.solvers.ipopt.convex import _auto_form
+        groups = {0: [(1.0, [1.0, 0.0])], 1: [(1.0, [1022.7, 0.0])]}
+        self.assertEqual(_auto_form(groups), "lse")
+
+    def test_auto_picks_lse_for_large_coefficients(self):
+        from edi.solvers.ipopt.convex import _auto_form
+        import math
+        groups = {0: [(1.0, [1.0])], 1: [(math.exp(176.0), [1.0])]}
+        self.assertEqual(_auto_form(groups), "lse")
+
+    def test_invalid_form_is_rejected(self):
+        from edi.solvers.ipopt.convex import solve_gp_ipopt
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+        st = structure_detector(unit_corrector(self._box()))
+        with self.assertRaises(ValueError):
+            solve_gp_ipopt(st, form="nonsense")

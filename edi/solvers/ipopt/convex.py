@@ -104,7 +104,7 @@ def _log_box(n, groups):
 
 
 def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
-                        method='auto', executable=None):
+                        method='auto', executable=None, form='auto'):
     """Solve a geometric program given only its monomial rows, with IPOPT.
 
     This is the row-level core of :func:`solve_gp_ipopt`, split out so that it
@@ -146,12 +146,74 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     m.t = pyo.Var(m.J, initialize=_t0,
                   bounds=lambda _m, j: (-box[j], box[j]))
     return _build_and_solve_gp(m, n, groups, relations, tee, options,
-                               method, executable)
+                               method, executable, form)
+
+
+# How the posynomials are written for IPOPT.
+#
+#   'sum'  ->  sum_k exp(b_k + a_k.t)        <= 1     (the original form)
+#   'lse'  ->  log sum_k exp(b_k + a_k.t)    <= 0
+#
+# Neither is right for every model, which is why this is a choice rather than
+# a rewrite.
+#
+# 'sum' hands IPOPT the posynomial itself. That is better conditioned for the
+# common case, where every log c + a.t is O(1..30): residuals stay near 1 and
+# IPOPT's restoration phase behaves. The JHO sailplane is such a model
+# (max |log c| = 30, max |a| = 19) and it solves with 'sum' and fails under
+# 'lse'.
+#
+# 'lse' is needed once the arguments get large. SPaircraft reaches
+# log c = 176 with exponents to 1022.7, so log c + a.t lands near 676 against
+# an overflow threshold of 709; one line-search step under 'sum' produces inf
+# and IPOPT aborts with "Invalid number in NLP function or derivative". Under
+# the logarithm the same quantity is ~676 and stays finite.
+#
+# 'auto' picks 'lse' only when the row data says the plain sum is at risk,
+# and otherwise falls back to 'lse' if 'sum' fails outright -- so a model that
+# needs it still gets it without every model paying for it.
+GP_FORM_AUTO_LOGC = 100.0     # |log c| above which 'auto' switches to 'lse'
+GP_FORM_AUTO_EXPONENT = 100.0  # |exponent| likewise
+
+
+def _auto_form(groups):
+    """Choose 'sum' or 'lse' from the magnitudes actually present."""
+    max_logc = 0.0
+    max_a = 0.0
+    for terms in groups.values():
+        for c, a in terms:
+            if c:
+                max_logc = max(max_logc, abs(math.log(abs(c))))
+            for aj in a:
+                if aj:
+                    max_a = max(max_a, abs(aj))
+    if max_logc > GP_FORM_AUTO_LOGC or max_a > GP_FORM_AUTO_EXPONENT:
+        return 'lse'
+    return 'sum'
 
 
 def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
-                        executable):
+                        executable, form='auto'):
     """Shared objective/constraint assembly and IPOPT call."""
+    if form not in ('auto', 'sum', 'lse'):
+        raise ValueError("form must be 'auto', 'sum' or 'lse'")
+    chosen = _auto_form(groups) if form == 'auto' else form
+    try:
+        return _assemble_and_solve(m, n, groups, relations, tee, options,
+                                   method, executable, chosen)
+    except Exception:
+        if form != 'auto' or chosen == 'lse':
+            raise
+        # 'sum' failed and we had not already tried the logarithm; the usual
+        # cause is an overflow the magnitude test did not predict.
+        m.del_component(m.obj)
+        m.del_component(m.cons)
+        return _assemble_and_solve(m, n, groups, relations, tee, options,
+                                   method, executable, 'lse')
+
+
+def _assemble_and_solve(m, n, groups, relations, tee, options, method,
+                        executable, form):
 
     def _affine(t, c, a):
         return math.log(c) + sum(a[j] * t[j] for j in range(n) if a[j])
@@ -181,8 +243,14 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
             return _affine(t, c, a)
         return pyo.log(sum(pyo.exp(_affine(t, c, a)) for c, a in terms))
 
-    # objective: log of the posynomial (convex in t, same minimizer)
-    m.obj = pyo.Objective(expr=_lse(m.t, groups[0]), sense=pyo.minimize)
+    def _body(t, terms):
+        return _lse(t, terms) if form == 'lse' else _posy(t, terms)
+
+    def _posy(t, terms):
+        return sum(pyo.exp(_affine(t, c, a)) for c, a in terms)
+
+    # objective: the posynomial, or its logarithm (same minimizer either way)
+    m.obj = pyo.Objective(expr=_body(m.t, groups[0]), sense=pyo.minimize)
 
     # constraints: index i in 1..N maps to relations[i-1]
     m.cons = pyo.ConstraintList()
@@ -200,8 +268,8 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
             m.cons.add(math.log(c) + sum(a[j] * m.t[j] for j in range(n)) == 0)
             n_eq += 1
         else:
-            # posy <= 1  <=>  log(posy) <= 0
-            m.cons.add(_lse(m.t, terms) <= 0.0)
+            # posy <= 1, or equivalently log(posy) <= 0
+            m.cons.add(_body(m.t, terms) <= (0.0 if form == 'lse' else 1.0))
             n_ineq += 1
 
     # ---- solve -----------------------------------------------------------
@@ -237,12 +305,17 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
 
     # ---- map back to the original variables -------------------------------
     x = [math.exp(pyo.value(m.t[j])) for j in range(n)]
-    # The objective is solved as log(posynomial); callers want the posynomial.
-    log_obj = pyo.value(m.obj)
+    # Under 'lse' the objective solved is log(posynomial); callers want the
+    # posynomial itself.
+    raw_obj = pyo.value(m.obj)
+    if form == 'lse':
+        obj = math.exp(raw_obj) if raw_obj < 700 else float('inf')
+    else:
+        obj = raw_obj
     res = {
         'status': 'optimal',
-        'primal objective': math.exp(log_obj) if log_obj < 700 else float('inf'),
-        'log primal objective': log_obj,
+        'primal objective': obj,
+        'gp form': form,
         'x': x,
         'solver': f'ipopt ({route}, log-transformed)',
         'problem_structure': 'geometric_program',
@@ -255,7 +328,7 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
 
 
 def solve_gp_ipopt(structures, model=None, tee=False, options=None,
-                   method='auto', executable=None):
+                   method='auto', executable=None, form='auto'):
     """Solve a detected geometric program with IPOPT in log space.
 
     Returns a dict shaped like the other EDI backends: ``status``,
@@ -276,7 +349,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
         x0.append(val if (val is not None and val > 0) else None)
 
     res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
-                              method=method, executable=executable)
+                              method=method, executable=executable, form=form)
     if model is not None:
         from edi.solvers.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)
