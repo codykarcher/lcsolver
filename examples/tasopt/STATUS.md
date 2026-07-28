@@ -17,8 +17,9 @@ Fortran to machine precision. TASOPT is built with `-fdefault-real-8`, so
 | `aero.moment` | `surfcm.f`, `tailpo.f` | 15x3, 5.2e-16 |
 | `aero.drag` | `surfcd.f` | 30 values, 1e-13 |
 | `engine.cooling` | `tfcool.f` | 105 values, 1e-13 |
+| `aero.loading` | `wingpo.f` | 20 values, 1e-13 |
 
-41 tests. Reference CSVs are committed, so the suite runs without a Fortran
+46 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 Where a routine needs a table this port does not carry, the dependency is
