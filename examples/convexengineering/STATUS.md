@@ -12,24 +12,41 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `propeller` | gplibrary `GP/aircraft/prop` | **verified** | 12/12 vars, max rel 2.3e-4 |
 | `fuselage` | gplibrary `GP/aircraft/fuselage` | **verified** | 10/10 vars, max rel 4.0e-7 |
 | `tail` | gplibrary `GP/aircraft/tail` | not started | |
-| `wing` | gplibrary `GP/aircraft/wing` | not started | vectorized beam model, larger port |
+| `wing` | gplibrary `GP/aircraft/wing` | **WIP, not verified** | solves; 1.4% low on Cd, AR 22.7 vs 20.2 — see model docstring |
 | `turbofan` | York/Hoburg/Drela 2018 | not started | |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
-| `gassolar` / `solar` | Burton & Hoburg 2018 | **blocked** | see below |
+| `solar` | Burton & Hoburg 2018 | reference **unblocked**, port not started | 4 configs recorded |
+| `gassolar` | Burton & Hoburg 2018 | reference unblocked, port not started | |
 | `jho` | Ozturk et al | not started | shares the `gassolar` blocker |
 
-## The gassolar / solar blocker
+## The gassolar / solar blocker is lifted
 
-These two are the only models blocked rather than merely unstarted. They use
-`gpfit`-fitted constraints for wind and solar availability, and the fit
-machinery builds numpy arrays from ragged lists of monomials — which numpy
-made a hard error in 1.24. `numpy<2` is *not* sufficient; it needs
-`numpy<1.24`, which does not build on Python 3.11+.
+These were blocked on the `gpfit` fit machinery building numpy arrays from
+ragged lists of monomials, which numpy made a hard error in 1.24. Two things
+were needed and both now exist:
 
-Reproducing their reference solutions therefore needs an older interpreter as
-well as an older numpy. That is doable but was not worth the time against
-rebuilding models that run today. The EDI rebuild itself would be
-unaffected — only the ground-truth generation is blocked.
+1. a **python 3.10 + numpy 1.23** conda env (`gpkit-old`) — `numpy<2` alone is
+   not enough, and `numpy<1.24` will not build on python 3.11+;
+2. the **pre-rename gpfit** checked out as a git worktree at `07b6362~1`.
+   The current gpfit renamed both the module and the fit-type keys, so
+   `fit(..., "MA")` raises `KeyError` against modern gpfit.
+
+With those, `solar` runs. Reference solutions are recorded in
+`solar/reference.json` for four configurations:
+
+| configuration | Wtotal | free vars |
+|---|---|---|
+| Npod=0, GP, lat 20 | 436.43 | 210 |
+| Npod=0, SP, lat 20 | 579.86 | 222 |
+| Npod=1, SP, lat 20 | 845.72 | 236 |
+| Npod=0, GP, lat 10 | 297.56 | 210 |
+
+Only the `Npod=3, SP` configuration still defeats cvxopt — the original
+targets MOSEK. That is a solver limitation, not a model one.
+
+`solar` depends on essentially the whole gplibrary aircraft tree (wing,
+empennage, tail boom, fuselage, prop, motor), so the port is gated on the
+wing above.
 
 ## Findings
 
