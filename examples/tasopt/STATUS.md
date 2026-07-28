@@ -1,8 +1,8 @@
 # TASOPT Python port
 
 A module-by-module port of TASOPT 2.16, each verified against the compiled
-Fortran to machine precision. TASOPT is built with `-fdefault-real-8`, so
-`implicit real` is double precision; the reference drivers use the same flag.
+Fortran. TASOPT is built with `-fdefault-real-8`, so `implicit real` is double
+precision; the reference drivers use the same flag.
 
 ## Verified
 
@@ -10,64 +10,116 @@ Fortran to machine precision. TASOPT is built with `-fdefault-real-8`, so
 |---|---|---|
 | `atmosphere` | `atmos.f` | 4.4e-16 |
 | `gas.properties` | `gasfun.f` | 2046 values, 3.6e-14 |
-| `gas.mixture` | `gascalc.f` | 212 values, 4.4e-16 |
+| `gas.mixture` | `gascalc.f` | 212 values + `gas_mass`, 4.4e-16 |
 | `gas.burn` | `gasburn.f` | 60 values, 1e-13 |
 | `structures.fuselage` | `fusew.f` | 66x3 configs, 3.5e-16 |
 | `structures.surface` | `surfw.f` | 111x3 planforms, 3.8e-16 |
-| `aero.moment` | `surfcm.f`, `tailpo.f` | 15x3, 5.2e-16 |
+| `structures.planform` | `tailpo.f`, `surfdx.f`, `wingsc.f` | 52 values, 4.1e-16 |
+| `aero.moment` | `surfcm.f` | 15x3, 5.2e-16 |
 | `aero.drag` | `surfcd.f` | 30 values, 1e-13 |
-| `engine.cooling` | `tfcool.f` | 105 values, 1e-13 |
 | `aero.loading` | `wingpo.f` | 20 values, 1e-13 |
+| `aero.airfoil` | `airtable.f`, `airfun.f`, `spline.f` | 328 values, 4.1e-16 |
+| `aero.trefftz` | `trefftz.f` (`trefftz1`) | 90 values, 1.3e-13 |
+| `aero.cdsum` | `cdsum.f` | 64 values, 4.4e-16 |
+| `engine.cooling` | `tfcool.f` | 105 values, 1e-13 |
+| `engine.maps` | `tfmap.f` | 170 values, 3.4e-16 |
+| `engine.tfsize` | `tfsize.f` | 54 values x 3 cases, 1e-15 |
+| `engine.tfoper` | `tfoper.f` | 124 values x 4 cases, **9e-10** |
+| `engine.weight` | `tfweight.f` | 72 values, 2.6e-16 |
+| `sizing.balance` | `balance.f` | 56 values, 3.4e-16 |
+| `sizing.takeoff` | `takeoff.f` | 36 values, 2.8e-16 |
+| `model` | `index.inc` | 611 constants, generated |
 
-46 tests. Reference CSVs are committed, so the suite runs without a Fortran
+161 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
+`tfoper` is the one module at 1e-10 rather than 1e-13 and the reason is
+structural, not sloppiness — see below.
+
+## Still to port
+
+| source | lines | what it is |
+|---|---|---|
+| `wsize.f` | 1727 | the outer sizing loop |
+| `mission.f` | 985 | the mission march |
+| `tfcalc.f` | 766 | engine wrapper over `tfsize`/`tfoper` |
+| `blax.f` | 632 | axisymmetric boundary layer |
+| `axisol.f` | 365 | axisymmetric potential flow |
+| `fusebl.f` | 151 | fuselage BL driver — supplies `PAfinf` to `cdsum` |
+| `noise.f` | 460 | noise estimate (not on the sizing path) |
+| `engwrt` | — | output formatting only |
+
+Everything the drag buildup, trim and takeoff need is done. What remains is
+the loop that drives them.
+
+## Things found in the source
+
+Recorded because they change what the results mean, and none is visible from
+a call site.
+
+**`tfoper.f`'s Newton iteration diverges off design.** Warm-started from its
+own converged design point, it fails to converge for almost any perturbation
+— `Tt4`, `p0`, `M0` or `T0`, in either direction — while drifting
+geometrically away from a solution it is sitting next to, with no step limit
+active. The `p0` case has an exact analytic answer that this port reproduces
+to 1e-11 and the Fortran cannot reach at all. On the cases the Fortran does
+converge on, the two agree to 9e-10. Full write-up, with the iteration trace,
+in `../convexengineering/DISCREPANCIES.md` §22.
+
+**Constants hide in commented-out stacks.** `tfmap.inc` carries four
+generations of compressor map constants and `airfrac.inc` three air
+compositions, in both cases with the live one *last* and the others commented
+out. Taking the first shifts sized core mass flow by 0.14% — small enough to
+read as a tolerance problem rather than wrong constants. Both were caught only
+by comparing against the Fortran.
+
+**The active compressor maps have their off-design penalties switched off.**
+`CK = DK = 0` in all three live sets, so `ecmap` collapses to a straight line
+in pressure ratio with no mass-flow dependence at all. The elaborate map shape
+in the source is dead in the shipped configuration.
+
+**Fuselage drag is not computed from the fuselage.** `cdsum` reads
+`CDfuse = PAfinf/S` out of `para`, put there by the BL solve. The wetted-area
+route through `bodycd` is commented out, so `bodycd` is dead — and a drag
+buildup run without the BL solve reports zero fuselage drag rather than
+failing.
+
+**BLI is credited, not modelled**, and the wing credit is scaled by a bare
+`CDwing * 0.15`, "assume 15% of the wing dissipation is in wake".
+
+**`airfun`'s wave drag output is always zero.** `cdw = 0.` unconditionally;
+compressibility drag reaches the aircraft through `surfcd`'s own correlation.
+Outside the tabulated `cl`/`tau` box there is no guard, only a quadratic
+penalty folded into `cdp` — an optimiser fence, not physics.
+
+**`balance`'s `itrim = 2` updates the weight moment but not the weight**, so
+the reported `xCG` does not equal `xCP` in that mode alone.
+
+**`tfoper.f` cannot be linked as shipped.** It needs `-fdollar-ok` for its
+`res$`/`a$` debug declarations, and it references `compare(ss, aa, dd)`, which
+exists in no source file in the distribution. The call sits behind
+`if (iter .eq. -1)` so it never runs, but the reference is emitted anyway.
+
+**Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
+in `trefftz.f`, whose only call site is commented out); `bodycd`.
+
+**`constants.inc` is a COMMON block filled at runtime by `tasopt.f`.** A
+standalone driver that does not fill it gets `pi = 0`, which silently deletes
+the engine inlet's contribution to the neutral point. Every driver in
+`fortran_ref/` that touches it fills it.
+
+## Conventions
+
 Where a routine needs a table this port does not carry, the dependency is
-injected rather than stubbed out — `surfcd2` takes an `airfoil` callable in
-place of `airfun`, which is what lets a fitted surrogate be substituted, and
-is exactly what the signomial formulation does.
+injected rather than stubbed — `surfcd2` takes an `airfoil` callable in place
+of `airfun`, which is what lets a fitted surrogate be substituted, and is
+exactly what the signomial formulation does.
 
-## Not yet ported
+Index constants are **generated** from `index.inc` by `tools/gen_indices.py`
+rather than transcribed: 611 hand-copied integers is 611 chances at a silent
+off-by-one. They stay 1-based so ported lines match their originals, and
+out-of-range access raises.
 
-* **Engine cycle** — `tfsize.f` (841), `tfoper.f` (3419), `tfcalc.f` (766).
-  The largest remaining piece. `gasburn` and `tfcool` above are its
-  prerequisites and are done.
-* **Induced drag** — `trefftz.f` (641), a Trefftz-plane solve with its own LU
-  factorization.
-* **Drag summation** — `cdsum.f` (490), which orchestrates `surfcd`,
-  `trefftz` and the fuselage boundary layer.
-* **Sizing loop** — `wsize.f` (1727), `mission.f` (985), `balance.f` (744).
-
-So this is a verified physics library, not yet a runnable aircraft.
-
-## Signomial forms
-
-`sp/surface_drag.py` writes `surfcd` as an EDI signomial program and checks it
-against the exact port over six designs, agreeing to 5.4e-8. That is the York
-claim made checkable for one routine; doing it for the rest is what would
-substantiate "TASOPT can be made almost entirely SP".
-
-Three things obstruct GP/SP compatibility in that routine and are worth
-expecting elsewhere: quotients of differences (the spanwise integral factors),
-a `1 - x` blend (the sweep/unsweep mix), and posynomials appearing on the
-greater side of a relation.
-
-## Do not port `tfani.f`
-
-It looks like exactly what this port wants next — a self-contained ideal-gas
-turbofan cycle in 132 lines, no external calls, returning TSFC, specific
-thrust, fuel fraction and every station state. It is dead code, and broken.
-
-* `pit` is *read* by the line that computes `etat`, and *assigned* on the line
-  after. With `implicit real (a-z)` and no initialization it is whatever was
-  on the stack.
-* `cpb`, `cpt` and `cpf` are used in the fuel-flow and turbine-work
-  expressions and never assigned anywhere in the routine.
-* `gam2`…`gam7` are built from `cpt2`/`Rt2`/…, which are *output* arguments,
-  so they are read before anything writes them.
-
-`grep` finds no call to it anywhere in `src/`, and it is absent from the
-Makefile. The working cycle is `tfsize.f` (on-design) and `tfoper.f`
-(off-design), which is where the effort has to go.
-
-Checked because it would have been an easy afternoon and a wrong one.
+Where the source does something surprising, the port reproduces it and says
+so in a comment, with a test pinning the behaviour. Corrections are not made
+silently.
