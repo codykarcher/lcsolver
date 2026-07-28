@@ -187,3 +187,44 @@ literal constants through these implicit-interface calls under `-O` delivered
 garbage (a `gas_prat` called with a literal `4.0d0` pressure ratio received
 `0.0`), which initially looked like a porting error. All drivers now pass
 named variables only.
+
+---
+
+## 8. Wing rebuild lands at a different optimum
+
+**Status: accepted as a known discrepancy, by author's decision.** The wing
+is treated as correct and the aircraft models build on it.
+
+The EDI rebuild of `gplibrary/GP/aircraft/wing` solves cleanly but reaches a
+different point than the gpkit reference:
+
+| quantity | rebuild | reference | delta |
+|---|---|---|---|
+| Cd (objective) | 0.007095 | 0.007195 | -1.4% |
+| AR | 22.72 | 20.15 | +12.8% |
+| S (ft^2) | 44.35 | 42.85 | +3.5% |
+
+Ruled out: the beam chain (the reference's constraints print equivalent to
+the rebuilt ones), `WingCore` (initially guessed as `0.5*tau*cave^2`, actually
+`Abar*cave^2` with a fixed `Abar = 0.0753449` — correcting it moved the
+objective from 0.007056 to 0.007095), and the tip-relaxation constant
+(`wing_test` uses 1e-1, `box_spar` 1e-2, and the two give 0.007682 vs
+0.007195).
+
+Unexplained: in the reference solution the manoeuvre load `q` sits well above
+the lower bound its own constraint states — 1605.8 N/m at the root against
+`N*W/b*cbar[0] = 422.9 N/m` — while the gust case's `q` matches its bound
+exactly. Since `q` appears only on the loosening side of the shear chain, the
+optimizer should drive it to that bound.
+
+**Caveat on the accepted explanation.** The discrepancy was accepted as
+plausibly a solver difference (MOSEK vs cvxopt). Recorded for completeness:
+`wing_test` calls `Model.solve()`, not `localsolve()`, so this is a genuine
+GP rather than an SP. GP solvers converge to the global optimum, so two
+correct solvers on the same GP should agree to solver tolerance, not to 13%
+in a design variable. That makes a residual model difference the more likely
+explanation, and anything built on the wing inherits it.
+
+Cheap way to settle it later: solve the *reference* model with two different
+gpkit backends. If they agree with each other and disagree with the rebuild,
+the difference is in the model, not the solver.
