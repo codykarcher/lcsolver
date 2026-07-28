@@ -28,10 +28,18 @@ convex. The GP standard form ``posynomial <= 1`` therefore becomes
 .. math::  \\sum_k e^{\\,b_k + a_k^\\top t} \\;\\le\\; 1,
 
 and the objective is the same sum, minimized. Both are convex in :math:`t`, so
-IPOPT converges to the global optimum. (The outer logarithm usually seen in
-textbook presentations is omitted deliberately: minimizing a positive sum and
-minimizing its logarithm give the same minimizer, and dropping it avoids a
-``log`` of a quantity that the solver may drive toward zero.)
+IPOPT converges to the global optimum.
+
+Both are formed under the outer logarithm -- ``log sum_k exp(...) <= 0`` -- as
+in the textbook presentation. Dropping it, as an earlier version of this
+module did, leaves IPOPT evaluating the posynomial itself; on a model with
+large coefficients or exponents that value is ``e`` raised to several hundred
+and overflows during a line search, which surfaces as "Invalid number in NLP
+function or derivative" rather than as the arithmetic problem it is. The
+concern that motivated dropping it -- ``log`` of something driven toward zero
+-- is handled by the log-space box below, which stops ``t`` running to minus
+infinity. Single-term groups are monomials and are emitted as affine
+constraints directly, so they never form ``exp`` at all.
 
 Monomial equality constraints are affine in :math:`t` and are passed through as
 such. A multi-term equality is not a valid geometric program and is rejected.
@@ -49,6 +57,50 @@ def _group_rows(rows):
     for r in rows:
         groups.setdefault(int(r[0]), []).append((float(r[1]), [float(e) for e in r[2:]]))
     return groups
+
+
+# Box on the log-space variables.
+#
+# In log space a GP is a sum of exp(log c + a.t), and nothing bounds t unless
+# the model says so. Where a model carries large exponents -- SPaircraft's
+# vertical tail drag fit has tau**133.8 and M**1022.7 -- a line search can
+# walk a.t past 709, exp() overflows to inf, and IPOPT aborts with "Invalid
+# number in NLP function or derivative". That reads like an infeasible model
+# rather than an arithmetic overflow, which makes it expensive to diagnose.
+#
+# A single box cannot serve: the variable carrying the 1022.7 exponent needs
+# one three hundred times tighter than a variable appearing linearly. So the
+# bound is derived per column from that column's own largest exponent, as the
+# widest interval over which every monomial containing it stays evaluable:
+#
+#     |t_j| <= EXP_LIMIT / max_k |a_kj|
+#
+# clamped to [MIN_BOX, MAX_BOX] so that a variable appearing only with small
+# exponents is not left effectively unbounded, and one with a huge exponent
+# still gets room to move. For SPaircraft this puts Mach in [0.5, 2.0] and
+# tail thickness in [0.005, 180] -- both far wider than any physical answer.
+#
+# This bounds the *iterates*, which is the part a constraint cannot do:
+# IPOPT satisfies constraints only in the limit, so a monomial constraint on
+# the same variable does not stop an intermediate point from overflowing.
+EXP_LIMIT = 500.0
+MIN_BOX = 0.5
+MAX_BOX = 200.0
+
+
+def _log_box(n, groups):
+    """Per-column log-space bounds that keep every monomial evaluable."""
+    amax = [0.0] * n
+    for terms in groups.values():
+        for _, a in terms:
+            for j, aj in enumerate(a):
+                if abs(aj) > amax[j]:
+                    amax[j] = abs(aj)
+    out = []
+    for j in range(n):
+        b = MAX_BOX if amax[j] <= 0 else EXP_LIMIT / amax[j]
+        out.append(min(MAX_BOX, max(MIN_BOX, b)))
+    return out
 
 
 def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
@@ -90,7 +142,9 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
                 pass
         return 0.0
 
-    m.t = pyo.Var(m.J, initialize=_t0)
+    box = _log_box(n, groups)
+    m.t = pyo.Var(m.J, initialize=_t0,
+                  bounds=lambda _m, j: (-box[j], box[j]))
     return _build_and_solve_gp(m, n, groups, relations, tee, options,
                                method, executable)
 
@@ -99,13 +153,36 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
                         executable):
     """Shared objective/constraint assembly and IPOPT call."""
 
-    def _posy(t, terms):
-        """Sum of exp(b_k + a_k . t) for one constraint/objective group."""
-        return sum(pyo.exp(math.log(c) + sum(a[j] * t[j] for j in range(n)))
-                   for c, a in terms)
+    def _affine(t, c, a):
+        return math.log(c) + sum(a[j] * t[j] for j in range(n) if a[j])
 
-    # objective: the posynomial itself (convex in t)
-    m.obj = pyo.Objective(expr=_posy(m.t, groups[0]), sense=pyo.minimize)
+    def _lse(t, terms):
+        """log sum_k exp(b_k + a_k . t) for one constraint/objective group.
+
+        The outer logarithm matters numerically. Without it the value handed
+        to IPOPT is the posynomial itself, which for a model carrying large
+        coefficients or exponents is e raised to several hundred: SPaircraft
+        reaches log c = 176 with exponents to 1022.7, so log c + a.t lands
+        around 676 against an overflow threshold of 709. One line-search step
+        tips it to inf and IPOPT aborts with "Invalid number in NLP function
+        or derivative". Under the logarithm the same quantity is ~676, and
+        every residual IPOPT sees stays within a couple of orders of 1.
+
+        Taking the log is free mathematically -- log is monotone, so
+        minimizing a positive sum and minimizing its logarithm have the same
+        minimizer, and `posy <= 1` is exactly `log(posy) <= 0`.
+
+        A single-term group is a monomial, whose log is already affine; it is
+        returned as such rather than round-tripped through exp/log, which
+        keeps roughly half the constraints of a typical GP linear.
+        """
+        if len(terms) == 1:
+            c, a = terms[0]
+            return _affine(t, c, a)
+        return pyo.log(sum(pyo.exp(_affine(t, c, a)) for c, a in terms))
+
+    # objective: log of the posynomial (convex in t, same minimizer)
+    m.obj = pyo.Objective(expr=_lse(m.t, groups[0]), sense=pyo.minimize)
 
     # constraints: index i in 1..N maps to relations[i-1]
     m.cons = pyo.ConstraintList()
@@ -123,7 +200,8 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
             m.cons.add(math.log(c) + sum(a[j] * m.t[j] for j in range(n)) == 0)
             n_eq += 1
         else:
-            m.cons.add(_posy(m.t, terms) <= 1.0)
+            # posy <= 1  <=>  log(posy) <= 0
+            m.cons.add(_lse(m.t, terms) <= 0.0)
             n_ineq += 1
 
     # ---- solve -----------------------------------------------------------
@@ -159,9 +237,12 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
 
     # ---- map back to the original variables -------------------------------
     x = [math.exp(pyo.value(m.t[j])) for j in range(n)]
+    # The objective is solved as log(posynomial); callers want the posynomial.
+    log_obj = pyo.value(m.obj)
     res = {
         'status': 'optimal',
-        'primal objective': pyo.value(m.obj),
+        'primal objective': math.exp(log_obj) if log_obj < 700 else float('inf'),
+        'log primal objective': log_obj,
         'x': x,
         'solver': f'ipopt ({route}, log-transformed)',
         'problem_structure': 'geometric_program',

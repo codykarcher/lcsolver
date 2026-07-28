@@ -62,8 +62,17 @@ SWEEP_W, SWEEP_VT, SWEEP_HT = 13.237, 25.0, 8.0
 NCLIMB, NCRUISE = 3, 2
 
 
-def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE) -> Formulation:
-    """Build the D8.2. Returns an EDI ``Formulation``."""
+def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
+          seed: str | None = None) -> Formulation:
+    """Build the D8.2. Returns an EDI ``Formulation``.
+
+    ``seed="reference"`` initialises every variable from ``reference.json``
+    instead of the hand-written guesses. That is a statement about the
+    *solver*, not the model: the constraints are verified independently by
+    ``crosscheck``, which shows the gpkit optimum satisfies all 3713 of them
+    to 1e-7. Seeding only asks whether EDI's PCCP loop can hold and reproduce
+    that point, which the naive all-guesses start cannot reach.
+    """
     N = Nclimb + Ncruise
     f = Formulation()
     V = lambda n, g, u, d: f.Variable(name=n, guess=g, units=u, description=d)
@@ -472,7 +481,31 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE) -> Formulation:
     cons += _bound_constraints(f)
     f.ConstraintList(cons)
     _bound_variables(f)
+    if seed == "reference":
+        _seed_from_reference(f)
     return f
+
+
+def _seed_from_reference(f):
+    """Initialise every variable from the recorded gpkit optimum."""
+    from pyomo.core.base.var import IndexedVar
+    from .crosscheck import reference_point
+    ref = reference_point(Path(__file__).with_name("reference.json"))
+    n = 0
+    for v in f.get_variables():
+        items = ([(f"{v.name}[{i}]", v[i]) for i in v.index_set()]
+                 if isinstance(v, IndexedVar) else [(v.name, v)])
+        for nm, vd in items:
+            base = nm.split("[")[0]
+            idx = int(nm.split("[")[1].rstrip("]")) if "[" in nm else None
+            val = ref.get(base)
+            if val is None:
+                continue
+            if isinstance(val, list):
+                val = val[idx] if idx is not None and idx < len(val) else val[0]
+            vd.set_value(float(val), skip_validation=True)
+            n += 1
+    return n
 
 
 ABS_LO, ABS_HI = 1e-30, 1e30

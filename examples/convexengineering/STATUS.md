@@ -248,3 +248,35 @@ particular signal is an artefact of the checker, most likely unit handling of
 model defect. The remaining 21 unmatched names still need mapping before the
 violation list can be trusted. Resolve those two things first; the harness is
 sound, its output is not yet.
+
+#### Where the SPaircraft solve stands
+
+The *model* is verified: cross-substitution maps 1173/1173 variables and the
+gpkit optimum satisfies all 3713 constraints to 1e-7. What remains is a solver
+capability question on a problem of this size (1173 variables, ~6900 monomial
+rows after extraction), not a fidelity question.
+
+Two EDI bugs were found and fixed on the way, both of which affected every
+model, not just this one:
+
+1. `unit_corrector` discarded conversions inside negated subexpressions.
+2. The log-space GP backend formed the posynomial itself rather than its
+   logarithm, so `exp()` overflowed on models with large coefficients or
+   exponents. Now log-sum-exp, with monomial groups emitted as affine
+   constraints and a per-column log-space box derived from each column's
+   largest exponent.
+
+After those, the failure is a clean "locally infeasible" on the *first* PCCP
+subproblem rather than an arithmetic crash — and it persists when the model is
+seeded exactly at the reference optimum, with the bounding box removed, and
+across `penalty_exponent` 2/5/10, `use_pccp=False` and looser `reltol`. So the
+linearized subproblem is being built infeasible from a point that satisfies
+the model.
+
+The next diagnostic is to evaluate the *extracted rows* at the reference point
+and find which groups disagree with the Pyomo expressions. A first attempt at
+this reported 1393 violated groups, but that almost certainly reflects a
+misreading of the SP row format rather than a real defect: `cvxopt/SP.py`
+carries a numerator/denominator split (`constraintList[i]['denominator']`,
+`approximateNumerator`) that a naive `sum c*prod x^a <= 1` reading ignores.
+Read that format properly before trusting any number from it.
