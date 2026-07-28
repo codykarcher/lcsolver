@@ -307,6 +307,16 @@ class Options:
         self.mu_margin = 1.2              # merit-multiplier margin, > 1
         self.max_step_size_tries = 30
         self.watchdog_iterations = 5      # consecutive non-monotone steps allowed
+        self.cache_subproblem = False     # Build the sub-problem's Pyomo model
+                                          # ONCE and re-point it each iteration
+                                          # through mutable Params, instead of
+                                          # rebuilding every constraint
+                                          # symbolically. Only the shapes the
+                                          # structure bridge produces are
+                                          # cacheable (exact posynomials and
+                                          # posynomial ratios, method='slcp');
+                                          # anything else silently keeps the
+                                          # rebuild path. Off by default.
         self.hessian_memory = None        # None (default) keeps the DENSE n-by-n
                                           # BFGS matrix and the n^2-term quadratic
                                           # expression. An integer m switches to a
@@ -352,10 +362,230 @@ class Result:
                 f'objective={self.objective!r}{viol}>')
 
 
+class SubproblemCache:
+    """Build the sub-problem's Pyomo model once and re-point it each iteration.
+
+    The uncached path rebuilds every constraint symbolically on every
+    iteration. For SPaircraft that is 6077 log-sum-exp expressions over 1173
+    variables, constructed from scratch ~50 times, and it dominates the run --
+    far more than the Hessian ever did.
+
+    Almost none of that structure actually changes. Each exact term is
+
+        exp( log c_k + a_k . (d + log x_k) )
+            = exp( [log c_k + a_k . log x_k]  +  [a_k . d] )
+
+    where ``a_k . d`` is FIXED and only the bracketed constant moves with the
+    iterate. So the projections are built once as Pyomo expressions and the
+    constants become mutable Params.
+
+    The condensed denominator of a PosynomialRatio looks like it breaks this,
+    since its AGM exponent vector ``aq`` is rebuilt every iteration -- but
+    ``aq = sum_i w_i a_i``, so
+
+        aq . d = sum_i w_i (a_i . d)
+
+    reuses the same fixed projections and needs only one mutable weight per
+    term. The objective's log-space gradient has the identical form. What is
+    left varying is a handful of scalars per constraint rather than a
+    full-length coefficient vector.
+
+    Only the shapes this module's own bridge produces are cached: exact
+    monomials, exact posynomials and posynomial ratios, under ``method='slcp'``.
+    A Signomial body, or the ``lsqp``/``sqp`` methods, need a fresh gradient
+    everywhere and fall back to rebuilding.
+    """
+
+    def __init__(self, problem, options):
+        self.problem = problem
+        self.options = options
+        self.n = problem.n
+        self.model = None
+        self.usable = self._is_cacheable()
+
+    def _is_cacheable(self):
+        for con in self.problem.constraints:
+            if not (isinstance(con.body, Posynomial)
+                    or isinstance(con.body, PosynomialRatio)):
+                return False
+        return isinstance(self.problem.objective, Posynomial)
+
+    def build(self):
+        n = self.n
+        cons = self.problem.constraints
+        m = pyo.ConcreteModel()
+        m.J = pyo.RangeSet(0, n - 1)
+        m.d = pyo.Var(m.J, initialize=0.0)
+        m.S = pyo.RangeSet(0, len(cons) - 1) if cons else pyo.RangeSet(0, -1)
+        m.sigma = pyo.Var(m.S, domain=pyo.NonNegativeReals, initialize=0.0)
+        m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+
+        def projection(a):
+            """The fixed part a . d, built once."""
+            nz = np.nonzero(a)[0]
+            return sum(float(a[j]) * m.d[j] for j in nz) if nz.size else 0.0
+
+        # --- objective ------------------------------------------------------
+        obj = self.problem.objective
+        self.obj_proj = [projection(a) for _, a in obj.terms]
+        m.obj_w = pyo.Param(range(len(obj.terms)), mutable=True,
+                            initialize=0.0, within=pyo.Reals)
+        self.obj_lin = sum(m.obj_w[k] * self.obj_proj[k]
+                           for k in range(len(obj.terms)))
+
+        # --- constraints ----------------------------------------------------
+        m.cons = pyo.ConstraintList()
+        self.const_params = []      # per constraint: list of mutable Params
+        self.weight_params = []     # per SP constraint: AGM weights
+        self.rhs_params = []        # per SP constraint: scalar rhs constant
+        m.pblocks = pyo.Block()
+
+        pcount = 0
+        for i, con in enumerate(cons):
+            body, op = con.body, con.operator
+            if isinstance(body, Posynomial):
+                terms = body.terms
+                names = []
+                for k, (_, a) in enumerate(terms):
+                    pname = f'b_{pcount}'
+                    setattr(m.pblocks, pname,
+                            pyo.Param(mutable=True, initialize=0.0,
+                                      within=pyo.Reals))
+                    names.append(getattr(m.pblocks, pname))
+                    pcount += 1
+                self.const_params.append(names)
+                self.weight_params.append(None)
+                self.rhs_params.append(None)
+                if body.is_monomial:
+                    expr = names[0] + projection(terms[0][1])
+                    m.cons.add(expr == m.sigma[i] if op == '=='
+                               else expr <= m.sigma[i])
+                else:
+                    expr = sum(pyo.exp(names[k] + projection(a))
+                               for k, (_, a) in enumerate(terms))
+                    m.cons.add(pyo.log(expr) <= m.sigma[i])
+            else:
+                # PosynomialRatio: p exact, q condensed by AGM.
+                pterms, qterms = body.p.terms, body.q.terms
+                names = []
+                for k, (_, a) in enumerate(pterms):
+                    pname = f'b_{pcount}'
+                    setattr(m.pblocks, pname,
+                            pyo.Param(mutable=True, initialize=0.0,
+                                      within=pyo.Reals))
+                    names.append(getattr(m.pblocks, pname))
+                    pcount += 1
+                wname = f'w_{i}'
+                setattr(m.pblocks, wname,
+                        pyo.Param(range(len(qterms)), mutable=True,
+                                  initialize=0.0, within=pyo.Reals))
+                rname = f'r_{i}'
+                setattr(m.pblocks, rname,
+                        pyo.Param(mutable=True, initialize=0.0,
+                                  within=pyo.Reals))
+                wpar = getattr(m.pblocks, wname)
+                rpar = getattr(m.pblocks, rname)
+                self.const_params.append(names)
+                self.weight_params.append(wpar)
+                self.rhs_params.append(rpar)
+                qproj = [projection(a) for _, a in qterms]
+                lhs = sum(pyo.exp(names[k] + projection(a))
+                          for k, (_, a) in enumerate(pterms))
+                rhs = rpar + sum(wpar[k] * qproj[k] for k in range(len(qterms)))
+                m.cons.add(pyo.log(lhs) - rhs <= m.sigma[i])
+
+        self.model = m
+        return self
+
+    def update(self, x_k, B):
+        """Re-point the cached model at a new iterate."""
+        m = self.model
+        n = self.n
+        log_xk = np.log(x_k)
+        cons = self.problem.constraints
+
+        obj = self.problem.objective
+        f_k = obj(x_k)
+        for k, (c, a) in enumerate(obj.terms):
+            # log-space gradient weight of this term: c*prod(x^a)/f
+            m.obj_w[k] = float(c * np.prod(x_k ** a) / f_k)
+
+        for i, con in enumerate(cons):
+            body = con.body
+            terms = body.terms if isinstance(body, Posynomial) else body.p.terms
+            for k, (c, a) in enumerate(terms):
+                self.const_params[i][k].value = float(math.log(c) + a @ log_xk)
+            if self.weight_params[i] is not None:
+                qterms = body.q.terms
+                qv = body.q(x_k)
+                aq = np.zeros(n)
+                const = 0.0
+                for k, (c, a) in enumerate(qterms):
+                    w = c * np.prod(x_k ** a) / qv
+                    self.weight_params[i][k] = float(w)
+                    if w > 0:
+                        const += w * math.log(c / w)
+                        aq = aq + w * a
+                self.rhs_params[i].value = float(const + aq @ log_xk)
+
+        # Positivity floor and trust region become variable BOUNDS, which cost
+        # nothing to change; in the uncached path they are extra constraints.
+        floor = math.log(self.options.x_min)
+        lo = floor - log_xk
+        hi = np.full(n, np.inf)
+        mls = self.options.max_log_step
+        if mls is not None:
+            mls = np.asarray(mls, dtype=float)
+            if mls.ndim == 0:
+                mls = np.full(n, float(mls))
+            lo = np.maximum(lo, -mls)
+            hi = np.minimum(hi, mls)
+        _r = getattr(self.options, 'max_step_ratio', None)
+        if _r is not None:
+            r = np.asarray(_r(x_k) if callable(_r) else _r, dtype=float)
+            if r.ndim == 0:
+                r = np.full(n, float(r))
+            ok = np.isfinite(r) & (r > 0)
+            if np.any(r[ok] >= 1.0):
+                raise ValueError('max_step_ratio must be < 1')
+            lo = np.where(ok, np.maximum(lo, np.log(1.0 - r)), lo)
+            hi = np.where(ok, np.minimum(hi, np.log(1.0 + r)), hi)
+        for j in range(n):
+            m.d[j].setlb(float(lo[j]))
+            m.d[j].setub(None if not np.isfinite(hi[j]) else float(hi[j]))
+            m.d[j].set_value(0.0)
+
+        # The objective is the one part worth rebuilding: it carries the
+        # Hessian term, which is O(n*memory) under a limited-memory B and
+        # O(n^2) under a dense one.
+        if m.component('obj') is not None:
+            m.del_component(m.obj)
+        quad = _quadratic_expression(B, m.d, n)
+        penalty = self.options.penalty_constant * sum(
+            m.sigma[i] ** 2 for i in range(len(cons)))
+        m.obj = pyo.Objective(expr=math.log(f_k) + self.obj_lin + quad + penalty,
+                              sense=pyo.minimize)
+        return self
+
+
+def _quadratic_expression(B, d, n):
+    """0.5 d^T B d, in whichever representation B is carried."""
+    if isinstance(B, LimitedMemoryB):
+        gamma, pairs = B.quad_terms()
+        quad = 0.5 * gamma * sum(d[j] ** 2 for j in range(n))
+        for sign, v in pairs:
+            nz = np.nonzero(v)[0]
+            if nz.size:
+                proj = sum(float(v[j]) * d[j] for j in nz)
+                quad = quad + 0.5 * sign * proj ** 2
+        return quad
+    return 0.5 * sum(B[i][j] * d[i] * d[j] for i in range(n) for j in range(n))
+
+
 # ---------------------------------------------------------------------------
 # Sub-problem construction
 # ---------------------------------------------------------------------------
-def _solve_subproblem(problem, x_k, B, options, method):
+def _solve_subproblem(problem, x_k, B, options, method, cache=None):
     """Build and solve one sub-problem; return the step ``d`` and the multipliers.
 
     ``method`` selects how constraints enter:
@@ -372,6 +602,11 @@ def _solve_subproblem(problem, x_k, B, options, method):
     """
     n = problem.n
     cons = problem.constraints
+
+    if cache is not None and cache.usable and method == 'slcp':
+        cache.update(x_k, B)
+        return _solve_pyomo_subproblem(cache.model, n, len(cons), options)
+
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
     m.d = pyo.Var(m.J, initialize=0.0)
@@ -389,18 +624,7 @@ def _solve_subproblem(problem, x_k, B, options, method):
         gf = problem.objective.log_grad(x_k)
         lin = math.log(f_k) + sum(gf[j] * m.d[j] for j in range(n))
 
-    if isinstance(B, LimitedMemoryB):
-        # d^T B d = gamma*sum(d^2) + sum_k sign_k (v_k . d)^2, which is
-        # O(n*memory) terms rather than the dense O(n^2).
-        gamma, pairs = B.quad_terms()
-        quad = 0.5 * gamma * sum(m.d[j] ** 2 for j in range(n))
-        for sign, v in pairs:
-            nz = np.nonzero(v)[0]
-            if nz.size:
-                proj = sum(float(v[j]) * m.d[j] for j in nz)
-                quad = quad + 0.5 * sign * proj ** 2
-    else:
-        quad = 0.5 * sum(B[i][j] * m.d[i] * m.d[j] for i in range(n) for j in range(n))
+    quad = _quadratic_expression(B, m.d, n)
 
     # --- constraints -------------------------------------------------------
     # Every constraint gets its own relaxation variable sigma >= 0, penalised in
@@ -498,6 +722,15 @@ def _solve_subproblem(problem, x_k, B, options, method):
                 m.cons.add(m.d[j] <= float(mls[j]))
                 m.cons.add(m.d[j] >= -float(mls[j]))
 
+    return _solve_pyomo_subproblem(m, n, len(cons), options, method)
+
+
+def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
+    """Hand an assembled sub-problem to IPOPT and read back (d, multipliers).
+
+    Shared by the rebuild path and the cached one, so both report failures the
+    same way.
+    """
     opt = pyo.SolverFactory('ipopt')
     if not opt.available(exception_flag=False):
         raise RuntimeError(
@@ -521,8 +754,8 @@ def _solve_subproblem(problem, x_k, B, options, method):
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
 
     # Multipliers on the original constraints, for the merit function and BFGS.
-    mults = np.zeros(len(cons))
-    for i in range(len(cons)):
+    mults = np.zeros(n_cons)
+    for i in range(n_cons):
         try:
             mults[i] = abs(m.dual.get(m.cons[i + 1], 0.0) or 0.0)
         except Exception:
@@ -729,6 +962,13 @@ def solve(problem, x0, method='slcp', options=None):
 
     B = (LimitedMemoryB(n, options.hessian_memory)
          if options.hessian_memory else np.eye(n))
+    cache = None
+    if options.cache_subproblem and method == 'slcp':
+        cache = SubproblemCache(problem, options)
+        if cache.usable:
+            cache.build()
+        else:
+            cache = None
     mu = np.zeros(len(problem.constraints))
     # Persistent lower bound on the merit penalties. The mu update below is
     # rebuilt from the SUB-PROBLEM multipliers every iteration, so a constraint
@@ -744,7 +984,8 @@ def solve(problem, x0, method='slcp', options=None):
 
     for k in range(options.max_iterations):
         try:
-            d, mults = _solve_subproblem(problem, x, B, options, method)
+            d, mults = _solve_subproblem(problem, x, B, options, method,
+                                         cache=cache)
         except RuntimeError as exc:
             res.status = f'sub-problem failure at iteration {k}: {exc}'
             res.x, res.objective, res.iterations = x, problem.objective_value(x), k
