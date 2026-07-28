@@ -164,6 +164,36 @@ def structure_detector(pyomo_component):
     objectives    = [ obj for obj in pyomo_component.component_data_objects(pyo.Objective , descend_into=True, active=True ) ]
     # get all the constraints
     constraints   = [ con for con in pyomo_component.component_objects(     pyo.Constraint, descend_into=True, active=True ) ]
+
+    # Drop constraints that contain no Vars before the numbering below is
+    # established. A constant-only constraint -- `Qmax >= Q` where both were
+    # substituted, say -- carries no structure, but feeding it to the
+    # posynomial machinery zeroes it to a bare negative number
+    # (10 - 100 = -90, then +1 -> -89); the negative leading coefficient
+    # reads as a subtraction and silently declares the whole model
+    # unstructured, so a model that IS a GP gets misrouted to a general NLP
+    # solver with no diagnostic.
+    #
+    # This must happen here rather than inside the loop: `parseDict_GP` is
+    # handed `i+1` from `enumerate(constraints)` and uses it to group
+    # monomials by constraint, so skipping one mid-loop leaves a gap in the
+    # numbering and later indexing walks off the end of the operator list.
+    _kept = []
+    for con in constraints:
+        datas = list(con.values())
+        if datas and not any(list(identify_variables(c.expr)) for c in datas):
+            try:
+                if not all(bool(pyo.value(c.expr)) for c in datas):
+                    return unstructured_dict() | {
+                        "message": "Constraint %s involves no variables and is false "
+                                   "as written; the model is infeasible" % (con.name,)}
+            except Exception:
+                # Not evaluable (mismatched units, say) -- that is the unit
+                # checker's job to report, not something to guess at here.
+                pass
+            continue
+        _kept.append(con)
+    constraints = _kept
     # get all the parameters
     parameterList = [ pm for pm in pyomo_component.component_objects(       pyo.Param     , descend_into=True, active=True ) ]
     # variables were extracted above
@@ -249,6 +279,8 @@ def structure_detector(pyomo_component):
         rv = visitor.walk_expression(obj.sense * obj)
         # parses into a gp-solver like matrix/vector
         gpRows = parseDict_GP(0,rv,N_vars_unwrapped,variableMap)
+        if gpRows is None:
+            return unstructured_dict() | { "message":"The objective is not expressible in the GP algebra (it contains an operation outside the monomial/signomial/signomial-fraction forms, such as a transcendental function)"}
         # Should be in the form [constraint_number, leading constant, exponent for var_1, exponent for var_2...]
         # constraint_number for objectives will be either 0 for numerator or -1 for denomonator
 
@@ -324,6 +356,9 @@ def structure_detector(pyomo_component):
                     # Extract all of the GP style matricies
                     gpRows_lhs = parseDict_GP(i+1,rvv['lhs'],N_vars_unwrapped,variableMap)
                     gpRows_rhs = parseDict_GP(i+1,rvv['rhs'],N_vars_unwrapped,variableMap)
+                    if gpRows_lhs is None or gpRows_rhs is None:
+                        side = 'lhs' if gpRows_lhs is None else 'rhs'
+                        return unstructured_dict() | { "message":"The %s of constraint %s is not expressible in the GP algebra (it contains an operation outside the monomial/signomial/signomial-fraction forms, such as a transcendental function)"%(side,c.name)}
                     operator = rvv['operator']
                     operatorList.append(operator)
 

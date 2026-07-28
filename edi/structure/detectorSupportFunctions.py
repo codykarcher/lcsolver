@@ -187,7 +187,20 @@ def parseDict_GP(ix,rv,N_vars_unwrapped,variableMap):
             gpRows.append(gpRow)
         return collapseGProws(gpRows)
 
-    # if neither other thing flags, it is a signomial fraction
+    # Neither monomial nor signomial. That leaves signomial fraction --- but
+    # only if the walker actually flagged one. An expression built from an
+    # operation outside the GP algebra (a transcendental such as cos(x), say)
+    # satisfies none of the four categories, and the walker leaves every
+    # signomial_fraction field as None. Indexing them raised
+    # "TypeError: object of type 'NoneType' has no len()" out of the loop
+    # below, so a model the detector simply cannot classify crashed instead
+    # of being reported as unstructured.
+    #
+    # Return None to say "not representable"; callers translate that into
+    # unstructured_dict().
+    if rv['signomial_fraction']['status'] != 'yes':
+        return None
+
     # Denominators have the index -ix-1, except objective which is -1
     gpRows = []
     for j in [0,1]:
