@@ -86,3 +86,32 @@ def test_gamma_drops_across_the_burner():
     """Hot combustion products have a lower ratio of specific heats."""
     for r in _solved().values():
         assert r.gam4 < r.gam3
+
+
+def test_agrees_with_the_gasprop_variant():
+    """TASOPT ships a second copy of this routine, in gasprop.f.
+
+    It is the same physics without the composition argument: air is hardcoded
+    at 78/21 N2/O2 with traces of CO2 and H2O. Running the port at that
+    composition must reproduce it, which checks the port against a second
+    independently written Fortran source rather than only the one it was
+    transcribed from.
+
+    Reference regenerated with::
+
+        gfortran -fdefault-real-8 -O0 -o drv_gasprop drv_gasprop.f gasprop.f
+        ./drv_gasprop > tests/data/gasprop_ref.csv
+    """
+    GASPROP_AIR = [0.78, 0.21, 0.00035, 0.00965, 0.0]
+    r = gasburn(alpha=list(GASPROP_AIR), **BASE)
+    n = 0
+    with (DATA / "gasprop_ref.csv").open() as fh:
+        for row in csv.reader(fh):
+            if not row or row[0].strip() == "name":
+                continue
+            name, ref = row[0].strip(), float(row[1])
+            actual = getattr(r, name)
+            rel = abs(actual - ref) / max(abs(ref), 1e-300)
+            assert rel <= RTOL, f"{name}: {actual!r} vs {ref!r} rel {rel:.3e}"
+            n += 1
+    assert n == 5
