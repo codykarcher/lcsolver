@@ -95,10 +95,11 @@ penalty folded into `cdp` — an optimiser fence, not physics.
 **`balance`'s `itrim = 2` updates the weight moment but not the weight**, so
 the reported `xCG` does not equal `xCP` in that mode alone.
 
-**`tfoper.f` cannot be linked as shipped.** It needs `-fdollar-ok` for its
-`res$`/`a$` debug declarations, and it references `compare(ss, aa, dd)`, which
-exists in no source file in the distribution. The call sits behind
-`if (iter .eq. -1)` so it never runs, but the reference is emitted anyway.
+**`tfoper.f` needs two things to link.** `-fdollar-ok`, for its `res$`/`a$`
+debug declarations; and `compare.f`, which defines `compare(ss, aa, dd)` as
+uppercase `SUBROUTINE COMPARE` and is not a dependency of any numerical
+module. The call sits behind `if (iter .eq. -1)` so it never runs, but the
+reference is emitted anyway.
 
 **Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
 in `trefftz.f`, whose only call site is commented out); `bodycd`.

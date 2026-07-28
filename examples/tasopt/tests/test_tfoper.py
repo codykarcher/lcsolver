@@ -18,8 +18,10 @@ Reference regenerated with::
         tfoper.f tfsize.f tfcool.f tfmap.f gascalc.f gasfun.f gaussn.f
 
 ``-fdollar-ok`` is needed because tfoper.f declares ``res$``/``a$`` for a
-debug block, and the driver supplies a ``compare`` stub for the same reason:
-tfoper references a routine that exists in no file in the distribution.
+debug block. The driver also supplies a ``compare`` stub: ``tfoper`` references
+``compare``, which lives in ``compare.f`` -- a file that is not a dependency of
+any numerical module, so a minimal link does not pull it in. Linking
+``compare.f`` instead works equally well.
 """
 from __future__ import annotations
 
