@@ -103,3 +103,45 @@ fn = float(np.asarray(prob.get_val('DESIGN.perf.Fn', units='lbf')).ravel()[0])
 
 Note the balance variables are named `balance.Fn_target` / `balance.T4_target`
 in this version, not the `balance.rhs:FAR` form some older docs use.
+
+## First MAIDAS result
+
+`maidas_case.py` transcribes six pycycle `ExplicitComponent.compute()` methods
+as plain functions (arithmetic copied verbatim, source line cited for each)
+and runs MAIDAS structure detection over them:
+
+| component | tightest form | why |
+|---|---|---|
+| `CorrectedInputsCalc` | monomial | ratios and half-powers only |
+| `PressureRise` | monomial | `PR * Pt_in` |
+| `ShaftPower` | monomial | `trq * Nmech` |
+| `PressureLoss` | signomial | `Pt_in*(1 - dPqP)` — a subtraction |
+| `EnthalpyRise` | signomial | `(ideal_ht - inlet_ht)/eff + inlet_ht` |
+| `eff_poly_calc` | **not GP/SP** | `log(PR)` of a design variable |
+
+Half the sampled components are monomial — trivially GP-compatible, usable as
+equality constraints. Two more are signomial, needing an SP treatment or a
+reformulation. Only one has a genuine obstruction: a logarithm of a design
+variable, which no monomial form can express and which would have to be
+fitted. That is precisely what the York turbofan model does.
+
+This is a small sample and not yet a claim about pycycle as a whole, but it
+is consistent with the York result: an engine model written with no convex
+form in mind is mostly SP-representable, with the obstructions confined to a
+few identifiable atoms.
+
+### A MAIDAS gotcha worth knowing
+
+`analyze()`'s **return shape is not fixed**. It gives back:
+
+* a bare IR node for a single scalar output,
+* a tuple for a multiple-return,
+* an `IntermediateRepresentation` (dict) once tapping fires — whose `'_'`
+  key holds the original return, *itself possibly a tuple*, alongside one
+  entry per tapped intermediate.
+
+Whether tapping fires depends on whether the traced function's module has
+other user-defined functions in its globals to AST-rewrite. So the same
+function analyzed from a script and from inside a module comes back with
+different shapes — which is exactly how the first version of this script
+broke. Consume the result by flattening recursively (see `_flatten`).
