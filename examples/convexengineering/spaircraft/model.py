@@ -603,22 +603,49 @@ def _bound_variables(f):
     return n
 
 
-if __name__ == "__main__":
-    from harness import solve_edi, feasibility, load_reference
+# gpkit reference name -> (rebuilt name, scale). Scale converts to the unit
+# the reference reports in.
+CHECKS = [
+    ("fuel_lbf", "W_f_total", 1.0),
+    ("takeoff_weight_lbf", "W_total", 1.0),
+    ("dry_weight_lbf", "W_dry", 1.0),
+    ("span_ft", "Wing_b", 3.28084),
+]
 
-    fm = build()
-    print(f"built: {len(list(fm.get_variables()))} variables")
-    sol, obj, note = solve_edi(fm)
-    print(f"objective W_f_total = {obj:.6g} lbf")
+
+def verify(seed=None, rtol=0.02):
+    """Solve and diff the headline quantities against the gpkit reference."""
+    from harness import solve_edi, feasibility, load_reference, solution_dict
+
+    fm = build(seed=seed)
+    solve_edi(fm, solver="ipopt-convex")
+    sol = solution_dict(fm)
     ref = load_reference(Path(__file__).with_name("reference.json"))
     chk = ref["optimalD8"]["checked"]
-    print(f"{'quantity':22} {'rebuilt':>12} {'gpkit':>12} {'rel':>10}")
-    for k, e in chk.items():
-        got = {"fuel_lbf": obj,
-               "takeoff_weight_lbf": sol.get("W_total"),
-               "dry_weight_lbf": sol.get("W_dry"),
-               "span_ft": (sol.get("Wing_b") or 0) * 3.28084}[k]
-        print(f"{k:22} {got:12.5g} {e:12.5g} {abs(got - e) / e:10.2e}")
+    paper = ref["optimalD8"].get("paper_sp", {})
+
+    rows = []
+    for key, name, scale in CHECKS:
+        got = sol[name] * scale
+        exp = chk[key]
+        rows.append((key, got, exp, abs(got - exp) / abs(exp),
+                     paper.get(key)))
     nv, worst, where = feasibility(fm)
+    return rows, (nv, worst, where)
+
+
+if __name__ == "__main__":
+    import sys
+    seed = "reference" if "--seed" in sys.argv else None
+    rows, (nv, worst, where) = verify(seed=seed)
+    print(f"\nSPaircraft D8.2 ({'seeded' if seed else 'cold start'})")
+    print(f"{'quantity':22} {'rebuilt':>12} {'gpkit':>12} {'rel':>9} "
+          f"{'paper':>12}")
+    worst_rel = 0.0
+    for key, got, exp, rel, pap in rows:
+        worst_rel = max(worst_rel, rel)
+        p = "--" if pap is None else f"{pap:12.6g}"
+        print(f"{key:22} {got:12.6g} {exp:12.6g} {rel:9.2e} {p:>12}")
+    print(f"worst relative difference vs gpkit: {worst_rel:.2e}")
     print(f"feasibility: {nv} violated, worst rel {worst:.2e}"
           + (f" at {where}" if where else ""))

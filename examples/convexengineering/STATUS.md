@@ -190,93 +190,41 @@ model to 4e-8. The EDI rebuild is not yet written. Four findings about the
 reference are recorded in DISCREPANCIES.md §12–15; the sys.path collision in
 §12 in particular will silently corrupt any future re-capture.
 
-### SPaircraft: assembled, not yet converging
+### SPaircraft D8.2: verified
 
-`spaircraft/model.py` assembles the D8.2: flight state, wing, HT, VT, landing
-gear, fuselage and the turbofan (reused from `turbofan/model.py` via
-`add_engine`, not duplicated), plus the aircraft-level coupling and the
-5-segment mission. 464 variables, 3703 constraints. EDI's structure detector
-classifies it correctly as a Signomial Program.
+`spaircraft/model.py` assembles the D8.2 -- flight state, wing, HT, VT,
+landing gear, fuselage, the turbofan (reused from `turbofan/model.py`, not
+duplicated) and the 5-segment mission. It solves from a cold start:
 
-It does not yet solve. What is known:
+| quantity | rebuilt | gpkit | rel |
+|---|---|---|---|
+| fuel, lbf | 20887.6 | 20859.7 | 1.3e-3 |
+| takeoff weight, lbf | 133237 | 133574 | 2.5e-3 |
+| dry weight, lbf | 73645 | 74014 | 5.0e-3 |
+| span, ft | 139.997 | 140.0 | 1.8e-5 |
 
-* The raw-NLP path dies on **negative iterates**. EDI declares variables over
-  `Reals`, and this model is full of fractional and negative powers — the wing
-  drag polar alone has `C_L**-1.44114`. `_bound_variables` fixes that path by
-  setting positive Pyomo bounds.
-* Those Pyomo bounds **do not reach the PCCP path**. EDI's log-space GP
-  backend extracts the model to coefficient/exponent rows and builds a fresh
-  Pyomo model over its own variable vector, so declared bounds are dropped.
-  Only constraints survive, hence `_bound_constraints` as well.
-* Bare (unbounded) PCCP runs 301 subproblems and then fails with a non-finite
-  objective gradient — the same divergence signature gpkit shows without its
-  `Bounded` wrapper, which `SPaircraft.py` does apply. Adding the bounding box
-  at 6, 3 and 2 decades does not yet fix it.
-* Mach number needs an explicit `0.1 <= M <= 0.95`, which is *not* in the
-  source. The VT drag fit carries `M**1022.7` and `M**-114.577`; in the
-  log-space GP those become ~1023·log(M), and a line search stepping M above 1
-  overflows `exp()`. gpkit avoids this because MOSEK's exponential-cone form
-  never materializes `exp()`.
+Feasibility 3.5e-6. Independently, `crosscheck.py` maps 1174/1174 variables
+and confirms the gpkit optimum satisfies all 3734 constraints to 1.0e-7, so
+the equations are verified separately from the solve.
 
-Next step, and the one most likely to be decisive: **cross-substitution**.
-`reference.json` holds all 688 gpkit values at the converged optimum. Evaluate
-this rebuild's constraints at that point and whichever come back violated name
-the transcription errors directly — the same technique that found the wing's
-material-property bug. It needs a gpkit-name to EDI-name map, which is the
-bulk of the work, but it does not require the model to solve first.
+Getting here needed two EDI fixes and one modelling fix, none of which were
+visible from reading the model:
 
-#### Cross-check harness
+* **`implementVariableBound` built the upper-bound constraint from
+  `var_lower_bound`.** Every variable with an upper bound got
+  `x <= lower_bound`; with a 1e-30 floor that is `x <= 1e-30`. Silent and
+  infeasible.
+* **`solve_SP` inverted posynomial equalities term by term.** An equality
+  whose numerator had been reduced to a sum was routed through the
+  monomial-equality branch, whose reverse direction reciprocates each row.
+  `sum(1/m_i)` is not `1/sum(m_i)`, so `b == a - k*c` became
+  `a/b + a/(k*c) <= 1` instead of `a/(b + k*c) <= 1`.
+* **Eighteen substituted quantities were left free.** `n_pass` mattered most:
+  unpinned, payload collapsed to 15 lbf and the aircraft shrank around it,
+  giving 409 lbf of fuel instead of 20860.
 
-`spaircraft/crosscheck.py` pushes the gpkit optimum onto the rebuild and
-scores every constraint, without needing the rebuild to solve. It now maps
-1119 of 1140 variable data objects. Three mapping traps, all of which silently
-halve the match rate rather than erroring:
+The diagnostic that found all three was evaluating the *solver's own*
+subproblem at its own warm start, rather than reading rows and guessing at
+the format -- two earlier attempts to interpret the row format by hand
+produced confident, wrong answers.
 
-* `key.split(".")` splits *inside* names — `A_{2.5}`, `T_{t_{4.1}}` — because
-  gpkit station numbers contain dots and so does the model path. Protect the
-  numeric dots before splitting.
-* A `WingBox` nested under a surface needs both prefixes (`HT_box_`); taking
-  only the outer one drops every box variable.
-* The `*Performance` classes (`WingPerformance`, `HorizontalTailPerformance`,
-  …) are separate path segments from their parent components.
-
-Status of the results: the top-scoring violations are the fuselage horizontal
-bending-volume constraints, but hand-evaluating one of them at the reference
-point gives `6.8e-5 <= 2.8e-3` — satisfied with room to spare. So that
-particular signal is an artefact of the checker, most likely unit handling of
-`x_{hbend}` (declared in feet where the other stations are metres), not a
-model defect. The remaining 21 unmatched names still need mapping before the
-violation list can be trusted. Resolve those two things first; the harness is
-sound, its output is not yet.
-
-#### Where the SPaircraft solve stands
-
-The *model* is verified: cross-substitution maps 1173/1173 variables and the
-gpkit optimum satisfies all 3713 constraints to 1e-7. What remains is a solver
-capability question on a problem of this size (1173 variables, ~6900 monomial
-rows after extraction), not a fidelity question.
-
-Two EDI bugs were found and fixed on the way, both of which affected every
-model, not just this one:
-
-1. `unit_corrector` discarded conversions inside negated subexpressions.
-2. The log-space GP backend formed the posynomial itself rather than its
-   logarithm, so `exp()` overflowed on models with large coefficients or
-   exponents. Now log-sum-exp, with monomial groups emitted as affine
-   constraints and a per-column log-space box derived from each column's
-   largest exponent.
-
-After those, the failure is a clean "locally infeasible" on the *first* PCCP
-subproblem rather than an arithmetic crash — and it persists when the model is
-seeded exactly at the reference optimum, with the bounding box removed, and
-across `penalty_exponent` 2/5/10, `use_pccp=False` and looser `reltol`. So the
-linearized subproblem is being built infeasible from a point that satisfies
-the model.
-
-The next diagnostic is to evaluate the *extracted rows* at the reference point
-and find which groups disagree with the Pyomo expressions. A first attempt at
-this reported 1393 violated groups, but that almost certainly reflects a
-misreading of the SP row format rather than a real defect: `cvxopt/SP.py`
-carries a numerator/denominator split (`constraintList[i]['denominator']`,
-`approximateNumerator`) that a naive `sum c*prod x^a <= 1` reading ignores.
-Read that format properly before trusting any number from it.

@@ -457,3 +457,26 @@ uses, so the configuration being solved is the intended one.
 Note also that `test_missions.diffs()` uses 0.5846 for the GE90 top-of-climb
 NPSS TSFC where Table 12 prints 0.5876; one of the two is a transcription
 slip, unresolved here.
+
+## 20. SPaircraft: the takeoff-density substitution does not take
+
+`subs/optimalD8.py` sets `\rho_{TO}` and `\rho_0` to 1.23 kg/m^3, but the
+solved reference carries **1.225** for both, and for the aircraft-level
+`\rho_{T/O}` as well. `vertical_tail.py` and `wing.py` declare those variables
+with 1.225 baked into the declaration, and that value survives. Anyone reading
+the substitution file would conclude the model runs at 1.23; it does not.
+
+The rebuild matches the reference (1.225), not the substitution dict.
+
+## 21. SPaircraft: `M_{r_{out}}` is bounded at 1e20 N and sits at 2.7e11
+
+The pi-tail joint moment carries an explicit `<= 1e20 N` "upper bounding"
+constraint in `aircraft.py`, and the converged reference puts it at
+2.66e11 N -- a moment of 270 billion newton-metres per unit chord. Together
+with the horizontal tail box collapsing (`I_{cap}` at exactly 1.0e-30, on
+gpkit's `Bounded` floor, `M_r` at 1.3e-20 and `W_{cap}` at 0.14 N), this says
+the pi-tail structural path is not actually sizing anything in the converged
+D8.2 -- it is degenerate, held up only by artificial bounds. The rebuild
+reproduces this faithfully, which is why its bounding box has to be the same
+absolute 1e-30..1e30 gpkit uses: a box scaled around physically sensible
+guesses excludes the reference solution outright.
