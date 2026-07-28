@@ -13,10 +13,9 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `fuselage` | gplibrary `GP/aircraft/fuselage` | **verified** | 10/10 vars, max rel 4.0e-7 |
 | `empennage` | gplibrary `GP/aircraft/tail` | **structural only** | solves, sensible; bounding case is ours, no gpkit diff |
 | `wing` | gplibrary `GP/aircraft/wing` | **verified to ~1%** | Cd +0.7%, AR 19.92 vs 20.15, weights within 0.3% |
-| `turbofan` | York/Hoburg/Drela 2018 | not started | |
+| `turbofan` | York/Hoburg/Drela 2018 | not started | reference runs (244 vars, 13 GP solves) |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
 | `solar` | Burton & Hoburg 2018 | **verified to <1%** | lat20 -0.5%, lat10 -0.7%; AR/E/Poper within 1% |
-| `gassolar` | Burton & Hoburg 2018 | reference unblocked, port not started | |
 | `jho` / `gassolar` | Burton & Hoburg 2018 | **WIP** | solves as GP; MTOW 78.4 vs 108.5 |
 
 ## The gassolar / solar blocker is lifted
@@ -92,3 +91,64 @@ one-to-one.
 See [README.md](README.md) for the isolated-environment recipe and the four
 environment landmines (broken PyPI gpkit 1.1.0, the numpy ragged-array
 change, the `gpfit` API rename, and `PYTHONPATH` leaking the wrong numpy).
+
+
+## Solver backend — read this before debugging a model
+
+Backend choice is **structure dependent** and matters more than it sounds.
+`harness.solve_edi` defaults to `convex_backend="ipopt"`:
+
+* **GP** -> log-space IPOPT. cvxopt stalls with `status='unknown'` on the
+  solar aircraft and on the wing at N=8, where IPOPT converges cleanly.
+* **SP** -> PCCP (penalty convex-concave), whose every subproblem is a GP.
+  EDI now supports PCCP with either inner solver.
+
+gpkit's reference solutions came from MOSEK, stronger than cvxopt again.
+**A cvxopt stall says almost nothing about the model.** Several models here
+were diagnosed as under-bounded when the real problem was the backend; that
+mistake cost hours. Try both before concluding the model is at fault.
+
+## Recurring bug patterns
+
+Four distinct bugs showed up more than once. Every one of them produces a
+*self-consistent model with the wrong answer* — the solver is happy,
+feasibility is clean, nothing looks wrong. That is the case worth being able
+to detect.
+
+**1. Guessed constants.** The wing was 12.8% off in aspect ratio because
+`CFRPUD` was assumed (E = 190 GPa) rather than read (137 GPa). Read every
+material property and fit coefficient from source.
+
+**2. Dict-key collisions.** A spar dict carrying `"W"` merged into a surface
+dict also carrying `"W"`, so the surface weight silently became the spar
+weight and the real variable ran to 1e36 while the model stayed feasible.
+Prefer `dict(**other)`, which *raises* on a duplicate key, over `.update()`,
+which does not — that is the only reason the same bug was caught instantly in
+`jho` having taken an hour in `solar`.
+
+**3. Missing load cases.** Structural variables bounded only from above run
+to zero, which is an unbounded direction in the log-transformed GP. Every
+spar needs a beam; every boom needs a bending case. Cost: the empennage
+collapsing to 3.6e-10 lbf, and solar's wing at AR 48.8 instead of 38.1.
+
+**4. Posynomial on the greater side.** `sum(t_i) >= T` is not
+GP-representable and was the single constraint of 397 that pushed `jho` out
+of GP into SP. The sources avoid it by constraining each element
+(`t_i >= T/N`) — the same device the wind turbine uses for equal-power
+spanwise bins. maidas' `check_problem_form` finds these immediately.
+
+## The debugging technique that works
+
+**Cross-substitution.** Substitute your optimum into the *reference* model
+and evaluate every one of its constraints; whichever it violates names the
+defect directly, with no reading or reasoning. This is what found the wing's
+material-property bug — six of 130 constraints came back violated, all the
+same deflection recursion, and the only term in it not read from source was E.
+
+Two traps, both of which silently return a clean bill of health:
+
+* substituting **bare floats** makes gpkit read them in the wrong units, so
+  even `t >= tmin` appears violated — substitute quantities *with* units;
+* not substituting the model's **constants** leaves most constraints
+  unevaluable, and a bare `except: continue` counts them as passing. Always
+  report evaluated-vs-skipped.
