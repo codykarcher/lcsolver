@@ -346,7 +346,13 @@ def tfsize(gee, M0, T0, p0, a0, M2, M25,
         mcore *= min(2.0, 1.0 / (1.0 - dfo))
         Pom = Pofft / mcore
 
-        Fsp = Feng / (u0 * mcore * (1.0 + BPR))
+        # No guard on u0 in the source either: at zero flight speed this is
+        # a divide by zero, which in IEEE gives infinity rather than a trap.
+        # Specific thrust is meaningless standing still, and tfsize is never
+        # the routine used for the static point -- tfoper is, and it does
+        # guard. Written out because Python raises where Fortran does not.
+        Fsp = (Feng / (u0 * mcore * (1.0 + BPR)) if u0 != 0.0
+               else math.inf if Feng > 0.0 else 0.0)
         TSFC = 0.0 if Feng <= 0.0 else (gee * ff * mcore) / Feng
 
         # --- nozzles: choke if the plume is supersonic -----------------------------
