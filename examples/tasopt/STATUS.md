@@ -51,3 +51,23 @@ Three things obstruct GP/SP compatibility in that routine and are worth
 expecting elsewhere: quotients of differences (the spanwise integral factors),
 a `1 - x` blend (the sweep/unsweep mix), and posynomials appearing on the
 greater side of a relation.
+
+## Do not port `tfani.f`
+
+It looks like exactly what this port wants next — a self-contained ideal-gas
+turbofan cycle in 132 lines, no external calls, returning TSFC, specific
+thrust, fuel fraction and every station state. It is dead code, and broken.
+
+* `pit` is *read* by the line that computes `etat`, and *assigned* on the line
+  after. With `implicit real (a-z)` and no initialization it is whatever was
+  on the stack.
+* `cpb`, `cpt` and `cpf` are used in the fuel-flow and turbine-work
+  expressions and never assigned anywhere in the routine.
+* `gam2`…`gam7` are built from `cpt2`/`Rt2`/…, which are *output* arguments,
+  so they are read before anything writes them.
+
+`grep` finds no call to it anywhere in `src/`, and it is absent from the
+Makefile. The working cycle is `tfsize.f` (on-design) and `tfoper.f`
+(off-design), which is where the effort has to go.
+
+Checked because it would have been an easy afternoon and a wrong one.
