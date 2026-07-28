@@ -17,7 +17,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
 | `solar` | Burton & Hoburg 2018 | **verified to <1%** | lat20 -0.5%, lat10 -0.7%; AR/E/Poper within 1% |
 | `gassolar` | Burton & Hoburg 2018 | reference unblocked, port not started | |
-| `jho` | Ozturk et al | not started | shares the `gassolar` blocker |
+| `jho` / `gassolar` | Burton & Hoburg 2018 | **WIP** | solves as GP; MTOW 78.4 vs 108.5 |
 
 ## The gassolar / solar blocker is lifted
 
