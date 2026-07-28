@@ -53,7 +53,7 @@ python -m pytest tests/ -q
 | `gas.mixture` | `gascalc.f` | **verified** | 212 values, max rel 4.4e-16 |
 | `engine` | `tfsize.f`, `tfoper.f`, `tfcalc.f` | not started | |
 | `structures.fuselage` | `fusew.f` | **verified** | 66 values x 3 configs, max rel 3.5e-16 |
-| `structures.wing` | `surfw.f`, `tailpo.f` | not started | |
+| `structures.surface` | `surfw.f` | **verified** | 111 values x 3 planforms, max rel 3.8e-16 |
 | `aero` | `surfcd.f`, `cdsum.f`, `trefftz.f`, `blax.f` | not started | |
 | `mission` | `mission.f`, `wsize.f`, `balance.f` | not started | |
 
