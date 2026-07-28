@@ -417,6 +417,10 @@ def tfsize(gee, M0, T0, p0, a0, M2, M25,
 
     S = {
         0: Station(Tt=Tt0, ht=ht0, pt=pt0, cpt=cpt0, Rt=Rt0, u=u0),
+        # 18 is behind the inlet, 19 is the core stream after any BLI
+        # entropy rise. With Kinl = 0 all three of 18, 19 and 2 coincide.
+        18: Station(Tt=Tt18, ht=ht18, pt=pt18, cpt=cpt18, Rt=Rt18),
+        19: Station(Tt=Tt19, ht=ht19, pt=pt19, cpt=cpt19, Rt=Rt19),
         2: Station(Tt=Tt2, ht=ht2, pt=pt2, cpt=cpt2, Rt=Rt2,
                    T=T2, u=u2, p=p2, cp=cp2, R=R2, A=A2),
         21: Station(Tt=Tt21, ht=ht21, pt=pt21, cpt=cpt21, Rt=Rt21),
