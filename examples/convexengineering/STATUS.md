@@ -16,7 +16,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `turbofan` | York/Hoburg/Drela 2018 | not started | reference runs (244 vars, 13 GP solves) |
 | `spaircraft` | Kirschen et al 2018 | not started | partial precedent in `../Kirschen2sp.py` |
 | `solar` | Burton & Hoburg 2018 | **verified to <1%** | lat20 -0.5%, lat10 -0.7%; AR/E/Poper within 1% |
-| `jho` / `gassolar` | Burton & Hoburg 2018 | **WIP** | solves as GP; MTOW 78.4 vs 108.5 |
+| `jho` / `gassolar` | Burton & Hoburg 2018 | **verified to ~2%** | MTOW 110.8 vs 108.5; fuel +0.4% |
 
 ## The gassolar / solar blocker is lifted
 

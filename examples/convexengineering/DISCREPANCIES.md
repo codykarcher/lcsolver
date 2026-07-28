@@ -301,3 +301,66 @@ transformed objective of -1.7e5; `exp(-1.7e5)` is 0.0.
 `solve_GP` now checks the status first and raises with the transformed
 objective value and the likely cause. The empennage's real defect — a missing
 `TailBoomBending` constraint set — was then obvious rather than buried.
+
+---
+
+## 10. gassolar/gas: the fuselage is charged for drag twice
+
+**Status: reproduced, since the reference numbers depend on it.**
+
+``AircraftPerf`` in ``gassolar/gas/gas.py`` builds the area-drag sum by
+looping over components and appending a term for **each** of ``"Cf"``,
+``"Cd"``, ``"C_d"`` that the component's flight model happens to define:
+
+```python
+for dc, dm in zip(areadragcomps, areadragmodel):
+    if "Cf" in dm.varkeys:  dvars.append(dm["Cf"]*dc["S"]/static.wing["S"])
+    if "Cd" in dm.varkeys:  dvars.append(dm["Cd"]*dc["S"]/static.wing["S"])
+    if "C_d" in dm.varkeys: dvars.append(dm["C_d"]*dc["S"]/static.wing["S"])
+```
+
+``TailBoomAero`` defines only ``Cf`` and ``TailAero`` only ``Cd``, so those
+contribute once each. But ``FuselageAero`` defines **both**, and since its
+own constraint is ``Cd/mfac >= Cf*k``, the fuselage is charged roughly
+``(1 + k) = 2.15x`` its actual drag.
+
+The arithmetic at the reference solution:
+
+| term | value |
+|---|---|
+| fuselage via Cf | 0.003872 |
+| fuselage via Cd | 0.004467 |
+| htail + vtail + boom | 0.001974 |
+| **sum** | **0.010313** |
+| reference CDA | 0.010314 |
+
+Dropping the duplicate gives 0.006441 and MTOW lands 28% low, so this is not
+cosmetic — it is load-bearing for every published number from this model.
+
+---
+
+## 11. gassolar/gas: the wing load factors end up swapped
+
+**Status: reproduced, since the reference numbers depend on it.**
+
+``gas.py`` lines 194-195:
+
+```python
+loading[0].substitutions[loading[0].Nmax] = 5
+loading[1].substitutions[loading[0].Nmax] = 2
+```
+
+The second line keys *loading[1]'s* substitution dict with **loading[0]'s**
+varkey. Both entries therefore target the manoeuvre case, the later one wins
+and sets it to 2, and the gust case never receives a substitution at all —
+it keeps ``Nmax``'s default of 5.
+
+The solved reference confirms the outcome: ``SparLoading.N = 2`` and
+``GustL.N = 5``, with gust moments dominating throughout (2420 vs 1503 N*m at
+the root). The evident intent, reading the two lines, was manoeuvre 5 and
+gust 2.
+
+Consequence for anyone reusing the model: the wing is sized by a 5-g *gust*
+case rather than a 5-g manoeuvre, which are not the same load distribution —
+the gust case adds the incremental lift term ``2 pi agust/cl (1 + Ww/W)``
+and is relieved by wing weight.

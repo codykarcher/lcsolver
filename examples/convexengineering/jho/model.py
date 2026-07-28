@@ -44,52 +44,54 @@ the box spar in section:
 
     box:  I <= w t hin^2          cap:  I <= 2 w t (hin/2)^2
 
-Status: WIP — converges, MTOW 28% low
--------------------------------------
-Solves as a GP. MTOW 78.4 lbf against the reference 108.5. The whole
-aircraft converges to a smaller fixed point rather than any single quantity
-being wrong:
+Status: verified to ~2%
+-----------------------
+Solves as a GP and matches the gpkit reference:
 
-| quantity | rebuild | reference | ratio |
+| quantity | rebuild | reference | delta |
 |---|---|---|---|
-| V (m/s) | 32.555 | 32.555 | 1.000 |
-| wing cdp | 0.00984 | 0.00804 | 1.22 |
-| fuselage Cd | 0.00623 | 0.00631 | 0.99 |
-| htail Cd | 0.00931 | 0.00867 | 1.07 |
-| thrust (N) | 10.72 | 16.82 | 0.64 |
-| wing S (ft^2) | 8.88 | 13.38 | 0.66 |
-| fuel (lbf) | 41.4 | 64.1 | 0.65 |
+| MTOW (lbf) | 110.78 | 108.55 | +2.1% |
+| fuel (lbf) | 64.30 | 64.06 | +0.4% |
+| fuselage W (lbf) | 3.80 | 3.79 | +0.4% |
+| W_cent (lbf) | 98.91 | 97.54 | +1.4% |
+| wing AR | 17.75 | 18.24 | -2.7% |
+| wing S (ft^2) | 12.81 | 13.38 | -4.3% |
+| wing W (lbf) | 10.32 | 9.60 | +7.5% |
+| engine W (lbf) | 12.81 | 11.69 | +9.5% |
 
-Every drag coefficient is within ~20% and flight speed is exact (it sits on
-the wind bound), so the components are close — but thrust, area and fuel all
-scale together at ~0.65, which is the signature of a self-consistent solution
-at the wrong size rather than a single bad constraint.
+Getting from an initial -28% to +2% took four fixes, two of them **bugs in
+the source that have to be reproduced** to match the reference numbers.
 
-The driver is **lift-to-drag**: 30.4 here against 26.4 in the reference. A
-15% better L/D needs less power, so less fuel, so a lighter aircraft and a
-smaller wing — the whole fixed point shifts down together, which is exactly
-the uniform ~0.65 ratio above.
+**1. Posynomial on the greater side.** ``sum(t_i) >= 6 days`` is not
+GP-representable and was the single constraint of 397 that pushed the model
+out of GP into SP; maidas' ``check_problem_form`` located it directly. The
+source constrains each segment instead, ``t_i >= t/N`` — the same device the
+wind turbine uses for equal-power spanwise bins.
 
-The gap is entirely in *non-wing* drag. Wing profile drag is close
-(cdp 0.0098 vs 0.0080, and the induced term is analytic), but:
+**2. The ``W`` dict collision**, as in ``../solar/``. Caught immediately here
+only because the merge used ``dict(**sp)``, which raises on a duplicate key
+where ``.update()`` silently overwrites. Prefer the former.
 
-    CDA (non-wing)   rebuild 0.00765     reference ~0.0103
+**3. SOURCE BUG — the fuselage is charged for drag twice.**
+``AircraftPerf`` loops over the area-drag components appending a term for
+each of ``"Cf"``, ``"Cd"``, ``"C_d"`` that a component's flight model happens
+to define. ``TailBoomAero`` defines only ``Cf`` and ``TailAero`` only ``Cd``,
+but ``FuselageAero`` defines **both** — and since ``Cd/mfac >= Cf*k``, the
+fuselage is charged about ``(1+k) = 2.15x`` its own drag. It is load-bearing
+for the reference numbers: CDA is 0.010314 with the double count and 0.006441
+without, and without it MTOW lands 28% low.
 
-with the rebuild's breakdown fuselage 0.00516, vtail 0.00104, boom 0.00082,
-htail 0.00064. The fuselage dominates and is the most likely home for the
-missing ~0.0027 — its wetted area comes from the Knud Thomsen ellipsoid
-relation driven by fuel volume, and the form factor ``kfuse`` from a fineness
-ratio that nothing here pins down.
+**4. SOURCE BUG — the wing load factors end up swapped.** ``gas.py`` reads
 
-Two omissions ruled out by experiment rather than assumption:
+    loading[0].substitutions[loading[0].Nmax] = 5
+    loading[1].substitutions[loading[0].Nmax] = 2
 
-* **Wing gust loading** — added (manoeuvre Nmax=5 plus gust Nmax=2) and MTOW
-  did not move at all: 78.413 before and after. The manoeuvre case dominates,
-  so unlike ``../solar/`` this is not the sizing case here. The code is kept
-  because the source has it.
-* **The climb rate constraint** — climb segment times are free here so the
-  climb burns almost nothing, but the reference's climb is only 1.1 lbf of
-  64, too small to explain a 30 lbf gap.
+The second line keys *loading[1]'s* substitution with **loading[0]'s**
+varkey, so both entries target the manoeuvre case; the later wins and sets it
+to 2, while the gust case silently keeps its default of 5. The solved
+reference confirms it — ``SparLoading.N = 2``, ``GustL.N = 5`` — and the gust
+moments dominate throughout (2420 vs 1503 N*m at the root). The evident
+intent was the reverse.
 
 ``reference.json`` records the gpkit
 solution; note the endurance requirement ``Loiter.t = 6`` days must be
@@ -466,7 +468,16 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
             Cff[i] >= 0.455 / Ref[i]**0.3,
             cdf[i] >= Cff[i] * kfuse,
             cdw[i] >= cdp[i] + CLseg[i]**2 / pi / ARw / 0.9,
-            CDAseg[i] >= (cdf[i] * Sfuse / Sw + cdh[i] * htail["S"] / Sw
+            # NOTE the fuselage appears TWICE, via both Cf and Cd. That is
+            # what the source does -- AircraftPerf loops over the area-drag
+            # components appending a term for each of "Cf", "Cd", "C_d" that
+            # the component's flight model happens to define, and
+            # FuselageAero defines both. Since Cd/mfac >= Cf*k, the fuselage
+            # is charged ~(1+k) = 2.15x its own drag. See DISCREPANCIES.md;
+            # reproduced here because it is load-bearing for the reference
+            # numbers -- CDA is 0.010314 with it and 0.006441 without.
+            CDAseg[i] >= (cdf[i] * Sfuse / Sw + Cff[i] * Sfuse / Sw
+                          + cdh[i] * htail["S"] / Sw
                           + cdv[i] * vtail["S"] / Sw + Cfb[i] * Sboom / Sw),
             CDseg[i] >= CDAseg[i] + cdw[i],
             # engine: power lapse with altitude, and BSFC penalty at part power
@@ -501,11 +512,24 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     cons.append(Wfuel >= sum(Wfs[i] for i in range(n)))
 
     # ================= wing loading ======================================
-    # Manoeuvre (Nmax = 5) and gust (Nmax = 2), as the source has. Leaving
-    # the gust case out makes the structure too cheap and the wing too
-    # slender -- the same failure seen in ../solar/.
+    # Load factors: manoeuvre Nmax = 2, gust Nmax = 5.
+    #
+    # That is NOT what gas.py appears to intend, and the reason is a bug in
+    # the source worth knowing about. Lines 194-195 read
+    #
+    #     loading[0].substitutions[loading[0].Nmax] = 5
+    #     loading[1].substitutions[loading[0].Nmax] = 2
+    #
+    # The second keys loading[1]'s substitution with **loading[0]'s** varkey,
+    # so both entries target the manoeuvre case; the later one wins and sets
+    # it to 2, while the gust case keeps its default of 5. The solved
+    # reference confirms it: SparLoading.N = 2, GustL.N = 5, and the gust
+    # moments dominate throughout (2420 vs 1503 N*m at the root).
+    #
+    # Reproduced as the source behaves, since that is what the reference
+    # numbers come from. See DISCREPANCIES.md.
     _, c = _beam(f, "wingg", Nwing, bw, spar["I"], spar["Sy"],
-                 lambda i: 5.0 * Wcent / bw * cbar[i])
+                 lambda i: 2.0 * Wcent / bw * cbar[i])
     cons += c
 
     ARCTAN = dict(ftype="MA", K=1, d=1, a1=1.0,
@@ -522,7 +546,7 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
         cons += fit_constraints(ARCTAN, agust[i], [cosm1[i] * vgust / Vref],
                                 mfac=1.0 + ARCTAN["rms_err"])
     _, c = _beam(f, "winggust", Nwing, bw, spar["I"], spar["Sy"],
-                 lambda i: 2.0 * Wcent / bw * cbar[i]
+                 lambda i: 5.0 * Wcent / bw * cbar[i]
                  * (1 + 2 * pi * agust[i] / CLref * (1 + Wwing / Wcent)))
     cons += c
 
