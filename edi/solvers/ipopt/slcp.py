@@ -307,6 +307,15 @@ class Options:
         self.mu_margin = 1.2              # merit-multiplier margin, > 1
         self.max_step_size_tries = 30
         self.watchdog_iterations = 5      # consecutive non-monotone steps allowed
+        self.hessian_memory = None        # None (default) keeps the DENSE n-by-n
+                                          # BFGS matrix and the n^2-term quadratic
+                                          # expression. An integer m switches to a
+                                          # limited-memory representation keeping
+                                          # the last m rank-two updates, which makes
+                                          # the sub-problem quadratic O(n*m) terms
+                                          # instead of O(n^2). Same algorithm, same
+                                          # damped update; only the curvature that
+                                          # has scrolled out of the window is lost.
         self.x_min = 1e-9                 # the epsilon floor of Equation 16
         self.tee = False
         self.verbose = False
@@ -380,7 +389,18 @@ def _solve_subproblem(problem, x_k, B, options, method):
         gf = problem.objective.log_grad(x_k)
         lin = math.log(f_k) + sum(gf[j] * m.d[j] for j in range(n))
 
-    quad = 0.5 * sum(B[i][j] * m.d[i] * m.d[j] for i in range(n) for j in range(n))
+    if isinstance(B, LimitedMemoryB):
+        # d^T B d = gamma*sum(d^2) + sum_k sign_k (v_k . d)^2, which is
+        # O(n*memory) terms rather than the dense O(n^2).
+        gamma, pairs = B.quad_terms()
+        quad = 0.5 * gamma * sum(m.d[j] ** 2 for j in range(n))
+        for sign, v in pairs:
+            nz = np.nonzero(v)[0]
+            if nz.size:
+                proj = sum(float(v[j]) * m.d[j] for j in nz)
+                quad = quad + 0.5 * sign * proj ** 2
+    else:
+        quad = 0.5 * sum(B[i][j] * m.d[i] * m.d[j] for i in range(n) for j in range(n))
 
     # --- constraints -------------------------------------------------------
     # Every constraint gets its own relaxation variable sigma >= 0, penalised in
@@ -542,6 +562,79 @@ def _lagrangian_gradient(problem, x, mults, method, reduced):
     return g
 
 
+class LimitedMemoryB:
+    """Limited-memory stand-in for the dense BFGS matrix ``B``.
+
+    Two things scale as ``n^2`` in the dense path, and the second dominates:
+    storing and updating ``B`` itself, and -- much worse -- building the
+    sub-problem's quadratic term ``0.5 * sum_ij B[i][j] d_i d_j``, which is an
+    ``n^2``-term Pyomo expression constructed from scratch every iteration. At
+    n = 1173 that is 1.4 million terms per sub-problem.
+
+    The damped BFGS update is a rank-two correction,
+
+        B+ = B - (Bs)(Bs)^T / (s^T B s) + (r r^T) / (s^T r),
+
+    so ``B`` is exactly ``gamma*I`` plus a sum of signed rank-one terms. Keeping
+    only the most recent ``memory`` updates gives
+
+        d^T B d = gamma * sum_j d_j^2  +  sum_k sigma_k (v_k . d)^2,
+
+    which is ``O(n * memory)`` terms instead of ``O(n^2)``: ~12k rather than
+    1.4M at n = 1173 with memory = 5.
+
+    This is a *option*, not a replacement -- ``Options.hessian_memory = None``
+    keeps the dense matrix and the original expression, unchanged.
+    """
+
+    __slots__ = ('n', 'memory', 'gamma', 'pairs')
+
+    def __init__(self, n, memory=5, gamma=1.0):
+        self.n = int(n)
+        self.memory = int(memory)
+        self.gamma = float(gamma)
+        self.pairs = []          # list of (sign, vector), newest last
+
+    def matvec(self, s):
+        """``B @ s``, in O(n * memory)."""
+        s = np.asarray(s, dtype=float).ravel()
+        out = self.gamma * s
+        for sign, v in self.pairs:
+            out = out + sign * v * float(v @ s)
+        return out
+
+    def quad_terms(self):
+        """``(gamma, [(sign, vector), ...])`` for building the quadratic form."""
+        return self.gamma, list(self.pairs)
+
+    def update(self, s, z):
+        """Damped BFGS, stored as two more rank-one terms."""
+        s = np.asarray(s, dtype=float).ravel()
+        z = np.asarray(z, dtype=float).ravel()
+        Bs = self.matvec(s)
+        sBs = float(s @ Bs)
+        sz = float(s @ z)
+        if sBs <= 0:
+            return self
+        theta = 1.0 if sz >= 0.2 * sBs else (0.8 * sBs) / (sBs - sz)
+        r = theta * z + (1.0 - theta) * Bs
+        sr = float(s @ r)
+        if abs(sr) < 1e-14:
+            return self
+        self.pairs.append((-1.0, Bs / math.sqrt(sBs)))
+        self.pairs.append((+1.0, r / math.sqrt(abs(sr))))
+        # Keep the newest `memory` updates, i.e. 2*memory vectors. Discarding
+        # the oldest pair is what makes this limited-memory rather than exact;
+        # the identity scaling underneath keeps the result positive definite.
+        if len(self.pairs) > 2 * self.memory:
+            self.pairs = self.pairs[-2 * self.memory:]
+        return self
+
+    def reset(self):
+        self.pairs = []
+        return self
+
+
 def _damped_bfgs(B, s, z):
     """Damped BFGS update, paper Equation 13 (Nocedal & Wright Procedure 18.2).
 
@@ -634,7 +727,8 @@ def solve(problem, x0, method='slcp', options=None):
     if np.any(x <= 0):
         raise ValueError('SLCP works in log space, so x0 must be strictly positive')
 
-    B = np.eye(n)
+    B = (LimitedMemoryB(n, options.hessian_memory)
+         if options.hessian_memory else np.eye(n))
     mu = np.zeros(len(problem.constraints))
     # Persistent lower bound on the merit penalties. The mu update below is
     # rebuilt from the SUB-PROBLEM multipliers every iteration, so a constraint
@@ -739,7 +833,10 @@ def solve(problem, x0, method='slcp', options=None):
         g_old = _lagrangian_gradient(problem, x, mults, method, reduced)
         g_new = _lagrangian_gradient(problem, x_new, mults, method, reduced)
         s = (np.log(x_new) - np.log(x)) if method != 'sqp' else (x_new - x)
-        B = _damped_bfgs(B, s, g_new - g_old)
+        if isinstance(B, LimitedMemoryB):
+            B.update(s, g_new - g_old)
+        else:
+            B = _damped_bfgs(B, s, g_new - g_old)
 
         x = x_new
         res.history.append(x.copy())
@@ -789,7 +886,9 @@ def solve(problem, x0, method='slcp', options=None):
                 mu_floor[bad] = np.maximum(mu_floor[bad] * options.penalty_escalation,
                                            max(1.0, abs(problem.objective_value(x))))
                 mu = np.maximum(mu, mu_floor)
-                B = np.eye(n)          # the stored curvature is for the old merit
+                # the stored curvature is for the old merit
+                B = (B.reset() if isinstance(B, LimitedMemoryB)
+                     else np.eye(n))
                 if options.verbose:
                     print(f'  escalating merit penalty on {int(bad.sum())} violated '
                           f'constraint(s) (escalation {escalations}/'
