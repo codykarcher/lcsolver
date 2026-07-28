@@ -189,3 +189,38 @@ Reference captured (`spaircraft/reference.json`): the D8.2 converges to
 model to 4e-8. The EDI rebuild is not yet written. Four findings about the
 reference are recorded in DISCREPANCIES.md §12–15; the sys.path collision in
 §12 in particular will silently corrupt any future re-capture.
+
+### SPaircraft: assembled, not yet converging
+
+`spaircraft/model.py` assembles the D8.2: flight state, wing, HT, VT, landing
+gear, fuselage and the turbofan (reused from `turbofan/model.py` via
+`add_engine`, not duplicated), plus the aircraft-level coupling and the
+5-segment mission. 464 variables, 3703 constraints. EDI's structure detector
+classifies it correctly as a Signomial Program.
+
+It does not yet solve. What is known:
+
+* The raw-NLP path dies on **negative iterates**. EDI declares variables over
+  `Reals`, and this model is full of fractional and negative powers — the wing
+  drag polar alone has `C_L**-1.44114`. `_bound_variables` fixes that path by
+  setting positive Pyomo bounds.
+* Those Pyomo bounds **do not reach the PCCP path**. EDI's log-space GP
+  backend extracts the model to coefficient/exponent rows and builds a fresh
+  Pyomo model over its own variable vector, so declared bounds are dropped.
+  Only constraints survive, hence `_bound_constraints` as well.
+* Bare (unbounded) PCCP runs 301 subproblems and then fails with a non-finite
+  objective gradient — the same divergence signature gpkit shows without its
+  `Bounded` wrapper, which `SPaircraft.py` does apply. Adding the bounding box
+  at 6, 3 and 2 decades does not yet fix it.
+* Mach number needs an explicit `0.1 <= M <= 0.95`, which is *not* in the
+  source. The VT drag fit carries `M**1022.7` and `M**-114.577`; in the
+  log-space GP those become ~1023·log(M), and a line search stepping M above 1
+  overflows `exp()`. gpkit avoids this because MOSEK's exponential-cone form
+  never materializes `exp()`.
+
+Next step, and the one most likely to be decisive: **cross-substitution**.
+`reference.json` holds all 688 gpkit values at the converged optimum. Evaluate
+this rebuild's constraints at that point and whichever come back violated name
+the transcription errors directly — the same technique that found the wing's
+material-property bug. It needs a gpkit-name to EDI-name map, which is the
+bulk of the work, but it does not require the model to solve first.

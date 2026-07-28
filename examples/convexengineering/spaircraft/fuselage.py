@@ -183,6 +183,7 @@ def add_fuselage(f, *, prefix="Fuse_"):
     Cfuse = con("C_fuse", 1.0, "-", "fuselage weight margin and sensitivity")
     rMh = con("r_M_h", 0.4, "-", "horizontal inertial relief factor")
     rMv = con("r_M_v", 0.7, "-", "vertical inertial relief factor")
+    plamv = con("p_lambda_vt", 1.6, "-", "1 + 2 * VT taper ratio")
     # These carry per-configuration values; the defaults are the D8's.
     dPover = con("dP_over", 8.382, "psi", "cabin overpressure")
     SPR = con("SPR", 8.0, "-", "number of seats per row")

@@ -177,20 +177,81 @@ G2, G25 = 1.398, 1.354
 
 
 def build(engine: str = "CFM56") -> Formulation:
-    """Build the EDI turbofan for one of the validated engines."""
+    """Build the standalone EDI turbofan for one of the validated engines.
+
+    This is the engine on its own test stand: it creates its own ambient
+    state, pins the operating points from ``MISSIONS``, applies the published
+    engine-weight cap, and sets the TSFC-weighted objective. For the engine as
+    a *component* of an aircraft -- where ambient conditions, Mach number and
+    thrust all come from the mission -- call ``add_engine`` directly.
+    """
     if engine not in MISSIONS:
         raise ValueError(f"no mission defined for {engine!r}; "
                          f"have {sorted(MISSIONS)}")
-    exp = exponents(engine)
-    sub = SUBS[engine]
     segs = MISSIONS[engine]
     N = len(segs)
-
     f = Formulation()
-    V = lambda n, g, u, d: f.Variable(name=n, guess=g, units=u, description=d)
+
     Vn = lambda n, g, u, d: f.Variable(name=n, guess=g, units=u,
                                        description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=n, value=v, units=u, description=d)
+    state = {
+        "P_atm": Vn("P_atm", 23.84, "kPa", "ambient static pressure"),
+        "T_atm": Vn("T_atm", 218.0, "K", "ambient static temperature"),
+        "a": Vn("a", 300.0, "m/s", "ambient speed of sound"),
+        "V": Vn("V", 240.0, "m/s", "flight speed"),
+        "M": Vn("M", 0.8, "-", "flight Mach number"),
+    }
+    v, cons = add_engine(f, N, state, engine=engine)
+
+    # The test-stand mission: prescribed operating points, weight cap, and the
+    # TSFC-weighted objective from engine_validation.__main__.
+    R = v["R"]
+    for i in range(N):
+        thrust_N, P_kPa, T_K, m0, m2, m25 = segs[i]
+        cons += [
+            state["P_atm"][i] == P_kPa * units.kPa,
+            state["T_atm"][i] == T_K * units.K,
+            state["M"][i] == m0,
+            state["a"][i] == (1.4 * R * state["T_atm"][i]) ** 0.5,
+            state["V"][i] == state["M"][i] * state["a"][i],
+            v["M_2"][i] == m2,
+            v["M_25"][i] == m25,
+            v["c1"][i] == 1 + 0.5 * 0.401 * m0 ** 2,
+            v["hold_2"][i] == 1 + 0.5 * (G2 - 1) * m2 ** 2,
+            v["hold_25"][i] == 1 + 0.5 * (G25 - 1) * m25 ** 2,
+            v["F"][i] == thrust_N * units.N,
+        ]
+    cons += [v["W_engine"] <= WCAP_N[engine] * units.N]
+
+    w = [10.0] + [1.0] * (N - 1)
+    f.Objective(v["W_engine"] ** 0.5
+                * sum(w[i] * v["TSFC"][i] for i in range(N)))
+    f.ConstraintList(cons)
+    return f
+
+
+def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
+               prefix: str = ""):
+    """Add one turbofan to ``f``, sharing geometry across ``N`` segments.
+
+    ``state`` supplies the per-segment freestream as ``P_atm``, ``T_atm``,
+    ``a``, ``V`` and ``M``. Everything else -- the cycle, the maps, the
+    areas, the weight -- is created here. Returns ``(vars, constraints)``.
+
+    With ``BLI=True`` the inlet ingests boundary layer: free-stream stagnation
+    pressure is reduced by ``f_{BLI_P}`` and the fan-thrust momentum balance
+    sees an inlet velocity reduced by ``f_{BLI_V}``. Those two factors are the
+    entire boundary-layer-ingestion model as far as the engine is concerned.
+    """
+    exp = exponents(engine)
+    sub = SUBS[engine]
+    P = prefix
+    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
+                                      description=d)
+    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
+                                       description=d, size=N)
+    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
+                                      description=d)
 
     # ---- gas properties (Cp values are the source's, at the stated temps) --
     R      = C("R", 287.0, "J/kg/K", "air gas constant")
@@ -239,6 +300,8 @@ def build(engine: str = "CFM56") -> Formulation:
     OPRmax = C("OPR_max", sub["OPR_max"], "-",
                "maximum overall pressure ratio")
     HTRfS  = C("HTR_f_SUB", 1 - 0.3 ** 2, "-", "1 - HTR_fan^2")
+    fBLIP  = C("f_BLI_P", 0.9627, "-", "BLI stagnation pressure loss ratio")
+    fBLIV  = C("f_BLI_V", 0.927288, "-", "BLI velocity loss ratio")
     HTRlS  = C("HTR_lpc_SUB", 1 - 0.6 ** 2, "-", "1 - HTR_lpc^2")
 
     # ---- engine-level free variables (shared across all segments) ---------
@@ -257,13 +320,10 @@ def build(engine: str = "CFM56") -> Formulation:
     mhcD = V("m_hc_D", 15.0, "kg/s", "HPC on-design corrected mass flow")
 
     # ---- per-segment free variables ---------------------------------------
-    # ambient / flight state
-    Patm = Vn("P_atm", 23.84, "kPa", "ambient static pressure")
-    Tatm = Vn("T_atm", 218.0, "K", "ambient static temperature")
-    a    = Vn("a", 300.0, "m/s", "ambient speed of sound")
-    Vinf = Vn("V", 240.0, "m/s", "flight speed")
-    M0   = Vn("M", 0.8, "-", "flight Mach number")
-    c1   = Vn("c1", 1.13, "-", "1 + (gamma-1)/2 M_0^2")
+    # Ambient state is supplied by the caller; c1 is the engine's own.
+    Patm, Tatm = state["P_atm"], state["T_atm"]
+    a, Vinf, M0 = state["a"], state["V"], state["M"]
+    c1 = Vn("c1", 1.13, "-", "1 + (gamma-1)/2 M_0^2")
 
     # stagnation states through the machine
     Pt0  = Vn("P_t_0", 36.0, "kPa", "free stream stagnation pressure")
@@ -383,11 +443,6 @@ def build(engine: str = "CFM56") -> Formulation:
     Isp = Vn("I_sp", 5000.0, "s", "specific impulse")
     TSFC = Vn("TSFC", 0.7, "1/hr", "thrust specific fuel consumption")
 
-    # ---- objective ---------------------------------------------------------
-    # engine_validation.__main__: W_engine**0.5 * dot([10, 1, ...], TSFC)
-    w = [10.0] + [1.0] * (N - 1)
-    f.Objective(W_engine ** 0.5 * sum(w[i] * TSFC[i] for i in range(N)))
-
     cons = []
     pi = np.pi
 
@@ -417,33 +472,17 @@ def build(engine: str = "CFM56") -> Formulation:
         mhcD <= 1.3 * mCoreD * (Tthc / 288) ** 0.5 / (Pthc / 101.325),
         mFanD >= flo * alphaOD * mCoreD * (250.0 / 288) ** 0.5 / (Ptfan / 101.325),
         mFanD <= fhi * alphaOD * mCoreD * (250.0 / 288) ** 0.5 / (Ptfan / 101.325),
-        W_engine <= WCAP_N[engine] * units.N,
     ]
 
     # ---- per-segment -------------------------------------------------------
     for i in range(N):
-        thrust_N, P_kPa, T_K, m0, m2, m25 = segs[i]
-
-        # flight state and the prescribed operating point
-        cons += [
-            Patm[i] == P_kPa * units.kPa,
-            Tatm[i] == T_K * units.K,
-            M0[i] == m0,
-            M2v[i] == m2,
-            M25v[i] == m25,
-            c1[i] == 1 + 0.5 * 0.401 * m0 ** 2,
-            hold2[i] == 1 + 0.5 * (G2 - 1) * m2 ** 2,
-            hold25[i] == 1 + 0.5 * (G25 - 1) * m25 ** 2,
-            F[i] == thrust_N * units.N,
-            a[i] == (1.4 * R * Tatm[i]) ** 0.5,
-            Vinf[i] == M0[i] * a[i],
-        ]
-
-        # diffuser (station 0 -> 1.8)
+        # diffuser (station 0 -> 1.8). With BLI the free-stream stagnation
+        # pressure is knocked down by f_BLI_P before the diffuser sees it.
         cons += [
             Tt0[i] == Tatm[i] * c1[i],
             ht0[i] == Cpair * Tt0[i],
-            Pt0[i] == Patm[i] * c1[i] ** 3.5,
+            (Pt0[i] == fBLIP * Patm[i] * c1[i] ** 3.5) if BLI else
+            (Pt0[i] == Patm[i] * c1[i] ** 3.5),
             Pt18[i] == pid * Pt0[i],
             Tt18[i] == Tt0[i],
             ht18[i] == ht0[i],
@@ -611,7 +650,8 @@ def build(engine: str = "CFM56") -> Formulation:
             alpha[i] <= alphamax,
             F[i] <= F6[i] + F8[i],                                   # [SP]
             F6[i] / (Mtakeoff * mCore[i]) + fp1[i] * Vinf[i] <= fp1[i] * u6[i],
-            F8[i] / (alpha[i] * mCore[i]) + Vinf[i] <= u8[i],
+            (F8[i] / (alpha[i] * mCore[i]) + Vinf[i] * fBLIV <= u8[i]) if BLI
+            else (F8[i] / (alpha[i] * mCore[i]) + Vinf[i] <= u8[i]),
             Fsp[i] == F[i] / (alphap1[i] * mCore[i] * a[i]),
             Isp[i] == Fsp[i] * a[i] * alphap1[i] / (fuel[i] * g0),
             TSFC[i] == 1 / Isp[i],
@@ -625,8 +665,13 @@ def build(engine: str = "CFM56") -> Formulation:
                    + 1662.2 * (alpha[i] / 5) ** 1.2),
         ]
 
-    f.ConstraintList(cons)
-    return f
+    out = dict(W_engine=W_engine, TSFC=TSFC, F=F, F_6=F6, F_8=F8, R=R,
+               M_2=M2v, M_25=M25v, hold_2=hold2, hold_25=hold25, c1=c1,
+               A_2=A2, A_25=A25, A_5=A5, A_7=A7, d_f=df, d_LPC=dlpc,
+               alpha=alpha, alpha_p1=alphap1, OPR=OPR, T_t_41=Tt41,
+               T_t_4=Tt4, m_core=mCore, m_fan=mFan, m_total=mtot, f=fuel,
+               pi_f=pif, pi_lc=pilc, pi_hc=pihc, N_1=N1, N_2=N2, I_sp=Isp)
+    return out, cons
 
 
 if __name__ == "__main__":

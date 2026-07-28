@@ -132,7 +132,11 @@ def add_landing_gear(f, *, prefix="LG_"):
                h_hold=hhold, x_up=x_upswp, L_m=L_m, L_n=L_n, L_n_dyn=L_n_dyn,
                E_land=Eland, W_lg=W_lg, W_mg=W_mg, W_ng=W_ng, d_t_m=dtm,
                d_nacelle=d_nac, t_nacelle=t_nac, h_nacelle=h_nac,
-               w_ult=w_ult, lambda_LG=lam)
+               w_ult=w_ult, lambda_LG=lam, tan_phi=tan_phi, tan_psi=tan_psi,
+               W_ms=W_ms, W_mw=W_mw, W_ns=W_ns, W_nw=W_nw, l_oleo=l_oleo,
+               d_oleo=d_oleo, S_sa=S_sa, r_m=r_m, r_n=r_n, t_m=t_m, t_n=t_n,
+               d_t_n=dtn, w_t_m=wtm, w_t_n=wtn, F_w_m=Fwm, F_w_n=Fwn,
+               W_wa_m=WAWm, W_wa_n=WAWn, L_w_m=Lwm, L_w_n=Lwn, g=g)
 
     N, inch, lbf, m = units.N, units.inch, units.lbf, units.m
 
