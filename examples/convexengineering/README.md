@@ -66,7 +66,12 @@ them.
   `git show 07b6362~1:gpfit/fit_constraintset.py`.
 * **A `PYTHONPATH` that pins the base interpreter's `site-packages`** (as a
   login shell may set) leaks the wrong numpy into the isolated env. Run the
-  reference interpreter with `env -u PYTHONPATH`.
+  reference interpreter with `env -u PYTHONPATH` — and note this applies to
+  **pip commands too, not just imports**. Running
+  `<isolated-python> -m pip install gpkit` with that PYTHONPATH set made pip
+  see the *base* env's gpkit and uninstall it while installing into the
+  isolated env, leaving the base install as a broken namespace package. See
+  `../ENVIRONMENT_CHANGES.md`.
 * **Subsystem models are unbounded standalone.** `Wing`, `Fuselage`, etc. have
   no lower bounds on their own; they must be driven by the loading/mission
   wrappers used in each directory's `*_test.py`.
