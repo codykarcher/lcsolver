@@ -70,7 +70,7 @@ def add_fuselage(f, *, prefix="Fuse_"):
     Wpaymax = var("W_payload_max", 38700.0, "lbf", "maximum payload weight")
     Wpass = var("W_pass", 32400.0, "lbf", "passenger weight")
     Wlugg = var("W_lugg", 6000.0, "lbf", "passenger luggage weight")
-    Wcargo = var("W_cargo", 0.1, "N", "cargo weight")
+    Wcargo = var("W_cargo", 0.0225, "lbf", "cargo weight")
 
     # ---- cross-section ------------------------------------------------------
     Adb = var("A_db", 0.01, "m^2", "web cross-sectional area")
@@ -147,6 +147,7 @@ def add_fuselage(f, *, prefix="Fuse_"):
     xhbendLand = var("x_hbend_Land", 60.0, "ft", "horizontal zero-bending station, landing")
     xhbendMLF = var("x_hbend_MLF", 60.0, "ft", "horizontal zero-bending station, max aero")
     xvbend = var("x_vbend", 60.0, "ft", "vertical zero-bending station")
+    dx_vbend = var("dx_vbend", 8.0, "m", "x_tail minus the vertical zero-bending station")
 
     # ---- weights ---------------------------------------------------------------
     Wapu = var("W_apu", 1400.0, "lbf", "APU weight")
@@ -312,7 +313,10 @@ def add_fuselage(f, *, prefix="Fuse_"):
 
         # ---- vertical bending material -----------------------------------------------
         xvbend >= xwing, xvbend <= lfuse,
-        B0v == B1v * (xtail - xvbend),                               # [SP] SigEq
+        # Span from the vertical zero-bending station to the tail, carried as
+        # its own variable so the products below never contain a subtraction.
+        dx_vbend + xvbend == xtail,                                  # [SP] SigEq
+        B0v == B1v * dx_vbend,
         B0v == Ivshell / (rE * wfuse ** 2),
         Avbendb >= B1v * (xtail - xb) - B0v,
         Vvbendb >= 0.5 * B1v * ((xtail - xb) ** 2 - (xtail - xvbend) ** 2) - B0v * (xvbend - xb),
@@ -322,7 +326,7 @@ def add_fuselage(f, *, prefix="Fuse_"):
 
         # ---- wingbox stations -----------------------------------------------------------
         xf == xwing + .5 * c0 * w,                                   # [SP] SigEq
-        xb == xwing - .5 * c0 * w,                                   # [SP] SigEq
+        xb + .5 * c0 * w == xwing,                                   # [SP] SigEq
         sigMh <= sigbend - rE * dPover / 2 * Rfuse / tshell,
         sigMv <= sigbend - rE * dPover / 2 * Rfuse / tshell,
 

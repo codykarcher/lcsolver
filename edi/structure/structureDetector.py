@@ -125,7 +125,7 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons):
                     break
             raise ValueError('Could not found a unique identifier for the upper bound on variable '+vr.name)
         # and add the new constraint
-        setattr(pyomo_component, proposedKey, pyo.Constraint(expr = vr <= var_lower_bound))
+        setattr(pyomo_component, proposedKey, pyo.Constraint(expr = vr <= var_upper_bound))
         # increment the number of bounding constraints
         N_bound_cons += 1
 

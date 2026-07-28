@@ -83,7 +83,8 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_"):
                y_cbar_vt=ymac, z_cbar_vt=zmac, dx_lead_vt=dxlead,
                dx_trail_vt=dxtrail, l_vt=lvt, x_CG_vt=xCGvt, L_vt_max=Lvmax,
                L_vt_EO=LvtEO, C_L_vt_EO=CLvtEO, D_wm=Dwm, V_1=V1, T_e=Te,
-               I_z_max=Iz, V_vt=Vvt, W_vt=Wvt, C_L_vt_yaw=CLvyaw, e_vt=e)
+               I_z_max=Iz, V_vt=Vvt, W_vt=Wvt, C_L_vt_yaw=CLvyaw, e_vt=e,
+               c_l_vt_EO=clvtEO, AR_vt=ARvt)
 
     rho0 = f.Variable(name=f"{P}rho_TO", guess=1.225, units="kg/m^3",
                       description="air density at sea level")

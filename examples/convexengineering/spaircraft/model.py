@@ -321,7 +321,7 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Pin VT constraint: zero moment at the wingtip.
         ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
             == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                     # [SP] SigEq
-        hb["b_ht_out"] == 0.5 * ht["b_ht"] - fu["w_fuse"],               # [SP] SigEq
+        hb["b_ht_out"] + fu["w_fuse"] == 0.5 * ht["b_ht"],               # [SP] SigEq
         hb["M_r"] * ht["c_root_ht"] >= (hb["L_ht_rect"] * (ht["b_ht"] / 4.)
                                         + hb["L_ht_tri"] * (ht["b_ht"] / 6.)
                                         - fu["w_fuse"] * ht["L_ht_max"] / 2.),
@@ -366,10 +366,13 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             # ---- stability ---------------------------------------------------
             xAC[i] <= fu["x_wing"] + 0.25 * wing["dx_AC_wing"] + xNP[i],
             wing["c_m_w"][i] == cmw,
-            # Neutral point approximation, from Unified's aircraft design rules.
+            # Neutral point approximation, from Unified's aircraft design
+            # rules. The source writes the right side as (1+2/AR)(AR-2),
+            # which expands to AR - 4/AR; the 4/AR is moved across so both
+            # sides are posynomial. Same equation, no subtraction.
             (xNP[i] / wing["mac"] / ht["V_ht"] * (wing["AR"] + 2.)
-             * (1. + 2. / ht["AR_ht"])
-             == (1. + 2. / wing["AR"]) * (wing["AR"] - 2.)),             # [SP] SigEq
+             * (1. + 2. / ht["AR_ht"]) + 4. / wing["AR"]
+             == wing["AR"]),                                            # [SP] SigEq
             xCG[i] + vt["dx_trail_vt"] <= fu["l_fuse"],
             vt["x_CG_vt"] >= xCG[i] + 0.5 * (vt["dx_lead_vt"] + vt["dx_trail_vt"]),
             ht["x_CG_ht"] >= xCG[i] + 0.5 * (ht["dx_lead_ht"] + ht["dx_trail_ht"]),
@@ -478,6 +481,37 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     for i in range(N):
         cons += [wing["alpha_w"][i] <= (0.18 if i < Nclimb else 0.10)]
 
+    # ---- substitutions -------------------------------------------------------
+    # subs/optimalD8.py *fixes* these; leaving any of them free lets the
+    # optimizer choose it. n_pass is the one that matters most: unpinned, the
+    # payload collapses to 15 lbf and the whole aircraft shrinks with it,
+    # landing at 409 lbf of fuel instead of 20860.
+    for handle, name, value, unit in [
+        (fu, "n_pass", 180.0, None),
+        (fu, "W_cargo", 0.1, units.N),
+        (fu, "l_nose", 29.0, units.ft),
+        (fu, "h_floor", 5.12, units.inch),
+        (fu, "w_db", 0.93, units.m),
+        (fu, "lambda_cone", 0.3, None),
+        (vt, "A_vt", 2.2, None),
+        (vt, "V_1", 70.0, units.m / units.s),
+        (vt, "c_l_vt_EO", 0.5, None),
+        (vt, "e_vt", 0.8, None),
+        (vt, "lambda_vt", 0.3, None),
+        # 1.225, not the 1.23 that subs/optimalD8.py specifies: vertical_tail.py
+        # and wing.py declare rho with 1.225 baked in, and the solved reference
+        # carries 1.225 for \rho_{TO}, \rho_0 and \rho_{T/O} alike. The
+        # substitution does not take. Matching the reference, not the subs dict.
+        (vt, "rho_TO", 1.225, units.kg / units.m ** 3),
+        (ht, "lambda_ht", 0.3, None),
+        (ht, "C_L_ht_fCG", 0.85, None),
+        (lg, "z_CG", 2.0, units.m),
+        (lg, "z_wing", 0.5, units.m),
+        (lg, "h_hold", 1.0, units.m),
+        (lg, "t_nacelle", 0.15, units.m),
+    ]:
+        cons.append(handle[name] == (value * unit if unit is not None else value))
+
     cons += _bound_constraints(f)
     f.ConstraintList(cons)
     _bound_variables(f)
@@ -531,7 +565,7 @@ def _bound_constraints(f):
     return out
 
 
-def _bound_variables(f, decades: float = 6.0):
+def _bound_variables(f):
     """Bound every free variable strictly positive, as gpkit's Bounded does.
 
     ``SPaircraft.py`` never solves this model bare -- it wraps it in
@@ -559,16 +593,12 @@ def _bound_variables(f, decades: float = 6.0):
     the degeneracy is a property of the reference, not of this rebuild.
     """
     from pyomo.core.base.var import IndexedVar
-    lo, hi = 10.0 ** -decades, 10.0 ** decades
     n = 0
     for v in f.get_variables():
         items = (v[i] for i in v.index_set()) if isinstance(v, IndexedVar) else (v,)
         for vd in items:
-            g = vd.value
-            if g is None or g <= 0:
-                continue
-            vd.setlb(g * lo)
-            vd.setub(g * hi)
+            vd.setlb(ABS_LO)
+            vd.setub(ABS_HI)
             n += 1
     return n
 

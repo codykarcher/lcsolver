@@ -252,8 +252,10 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
                 constraintList.append(TemplateDict(copy.deepcopy(denominatorBuffer), copy.deepcopy(numeratorBuffer), True))
                 newOperators.append('<=')   
 
-            elif operator == '==':
-                # monomial equality
+            elif operator == '==' and len(numeratorBuffer) == 1:
+                # monomial equality: m == 1 becomes m <= 1 and 1/m <= 1, and
+                # for a single monomial the reciprocal is exact -- invert the
+                # coefficient and negate the exponents.
                 constraintList.append(TemplateDict(copy.deepcopy(numeratorBuffer), None, False))
                 newOperators.append('<=')
 
@@ -262,6 +264,32 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
                     newRow = [ srw[0], 1.0/srw[1] ] + [-1*vl for vl in srw[2:]]
                     flippedRows.append(newRow)
                 constraintList.append(TemplateDict(copy.deepcopy(flippedRows), None, False))
+                newOperators.append('<=')
+
+            elif operator == '==':
+                # Posynomial equality: p == 1 where p is a SUM of monomials.
+                # This arises whenever a constraint like `b == a - k*c` has
+                # its negative term moved across and is divided through.
+                #
+                # The forward direction p <= 1 is already GP. The reverse,
+                # 1/p <= 1, cannot be formed by inverting each monomial in
+                # turn, because sum(1/m_i) is not 1/sum(m_i). Doing that
+                # yields a/b + 1/(k*c) <= 1 in place of a/(b + k*c) <= 1 --
+                # silently, and wrong by orders of magnitude once the terms
+                # differ in scale. It is exact only when p has one term,
+                # which is the branch above.
+                #
+                # So the reverse is written as the fraction 1/p, with p as
+                # the denominator. The assembly below monomializes a
+                # denominator about the current iterate, which is the
+                # approximation PCCP wants, and is the same device the
+                # signomial-equality branch already uses.
+                constraintList.append(TemplateDict(copy.deepcopy(numeratorBuffer), None, False))
+                newOperators.append('<=')
+
+                unitRow = [None, 1.0] + [0.0]*len(x_star)
+                constraintList.append(
+                    TemplateDict([unitRow], copy.deepcopy(numeratorBuffer), False))
                 newOperators.append('<=')
                 
             else:

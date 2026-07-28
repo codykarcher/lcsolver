@@ -107,6 +107,13 @@ def reference_point(path: Path) -> dict:
     for mine, theirs in ALIASES.items():
         if theirs in out:
             out.setdefault(mine, out[theirs])
+    # Variables this rebuild introduces that the source does not carry.
+    # dx_vbend replaces the subtraction in B_0v == B_1v*(x_tail - x_vbend);
+    # its reference value follows from the two stations. x_vbend is in feet
+    # in the source, x_tail in metres.
+    if "Fuse_x_tail" in out and "Fuse_x_vbend" in out:
+        out.setdefault("Fuse_dx_vbend",
+                       out["Fuse_x_tail"] - out["Fuse_x_vbend"] * 0.3048)
     return out
 
 
