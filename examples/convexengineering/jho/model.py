@@ -485,8 +485,29 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     cons.append(Wfuel >= sum(Wfs[i] for i in range(n)))
 
     # ================= wing loading ======================================
+    # Manoeuvre (Nmax = 5) and gust (Nmax = 2), as the source has. Leaving
+    # the gust case out makes the structure too cheap and the wing too
+    # slender -- the same failure seen in ../solar/.
     _, c = _beam(f, "wingg", Nwing, bw, spar["I"], spar["Sy"],
-                 lambda i: 5.0 * Wcent / bw * cbar[i])          # Nmax = 5
+                 lambda i: 5.0 * Wcent / bw * cbar[i])
+    cons += c
+
+    ARCTAN = dict(ftype="MA", K=1, d=1, a1=1.0,
+                  c=[0.9460414492363466], e=[[0.9960249757710423]],
+                  rms_err=0.039722989129247634)
+    etaw = np.linspace(0.0, 1.0, Nwing)
+    cosm1 = np.hstack([1e-10, 1 - np.cos(etaw[1:] * pi / 2)])
+    agust = V_(name="agust", guess=0.05, units="-", size=Nwing,
+               description="gust angle of attack")
+    vgust = 10.0 * units.m / units.s
+    Vref = Vseg[Nclimb]                      # loiter speed sizes the gust case
+    CLref = CLseg[Nclimb]
+    for i in range(Nwing):
+        cons += fit_constraints(ARCTAN, agust[i], [cosm1[i] * vgust / Vref],
+                                mfac=1.0 + ARCTAN["rms_err"])
+    _, c = _beam(f, "winggust", Nwing, bw, spar["I"], spar["Sy"],
+                 lambda i: 2.0 * Wcent / bw * cbar[i]
+                 * (1 + 2 * pi * agust[i] / CLref * (1 + Wwing / Wcent)))
     cons += c
 
     f.ConstraintList(cons)
