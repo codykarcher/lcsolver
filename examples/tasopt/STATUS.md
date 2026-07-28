@@ -33,8 +33,13 @@ precision; the reference drivers use the same flag.
 161 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
-`tfoper` is the one module at 1e-10 rather than 1e-13 and the reason is
-structural, not sloppiness — see below.
+`tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
+numerically where the source differentiates analytically, so the two Newtons
+stop at slightly different points inside the same convergence ball.
+
+The reference program itself builds and runs: `runs/737/737.tas` sizes in 18
+iterations to WTO = 174979 lbf. That is the check every claim below is held
+against.
 
 ## Still to port
 
@@ -57,14 +62,14 @@ the loop that drives them.
 Recorded because they change what the results mean, and none is visible from
 a call site.
 
-**`tfoper.f`'s Newton iteration diverges off design.** Warm-started from its
-own converged design point, it fails to converge for almost any perturbation
-— `Tt4`, `p0`, `M0` or `T0`, in either direction — while drifting
-geometrically away from a solution it is sitting next to, with no step limit
-active. The `p0` case has an exact analytic answer that this port reproduces
-to 1e-11 and the Fortran cannot reach at all. On the cases the Fortran does
-converge on, the two agree to 9e-10. Full write-up, with the iteration trace,
-in `../convexengineering/DISCREPANCIES.md` §22.
+**`tfoper.f` is not robust off the shipped engine envelope.** On the shipped
+737 it is fine — 552 converged calls in one sizing, worst residual 1.8e-10,
+zero failures. On an engine with an unusual LPC/HPC pressure-ratio split it
+can fail to converge, and in one case *exits reporting success with 19%
+residuals*, because its convergence test is on the Newton step size rather
+than the residual. This port's numerical Jacobian solves those cases; on the
+shipped engine the two agree to 9e-10. See `DISCREPANCIES.md` §22 — an earlier
+and much stronger version of this claim was wrong and is retracted there.
 
 **Constants hide in commented-out stacks.** `tfmap.inc` carries four
 generations of compressor map constants and `airfrac.inc` three air
@@ -99,7 +104,7 @@ the reported `xCG` does not equal `xCP` in that mode alone.
 debug declarations; and `compare.f`, which defines `compare(ss, aa, dd)` as
 uppercase `SUBROUTINE COMPARE` and is not a dependency of any numerical
 module. The call sits behind `if (iter .eq. -1)` so it never runs, but the
-reference is emitted anyway.
+reference is emitted anyway. See `DISCREPANCIES.md` §23.
 
 **Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
 in `trefftz.f`, whose only call site is commented out); `bodycd`.

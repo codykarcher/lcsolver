@@ -3,12 +3,13 @@
 The **sizing** path is compared directly: two cases, uncooled and cooled with
 offtakes, 74 values.
 
-The **off-design** path cannot be compared against the Fortran at all. Driving
-``tfcalc`` with ``icall = 1`` or 2 makes it call ``tfoper``, which fails to
-converge (DISCREPANCIES.md §22), and ``tfcalc`` responds with a hard ``stop``
--- so the reference program terminates rather than producing numbers. That is
-true even re-solving at the engine's own design point, warm-started from the
-state ``tfsize`` just wrote.
+The **off-design** path cannot be compared against the Fortran *for this
+engine*. The parameters here use an LPC/HPC pressure-ratio split
+(1.935 / 9.369) well outside the shipped envelope, and on it ``tfoper`` fails
+to converge; ``tfcalc`` then responds with a bare ``stop``, so the reference
+program terminates rather than producing numbers. See DISCREPANCIES.md §22 --
+on the shipped 737 engine ``tfoper`` converges at all 552 calls, so this is a
+robustness limit, not a defect in the routine.
 
 What is checked instead is that this port does the calculation, that
 re-solving at the design point returns the design answer exactly, and that

@@ -175,8 +175,9 @@ def test_ambient_pressure_only_scales_the_engine():
     is unchanged too.
 
     This is a property of the equations, not of any particular solver, and it
-    holds here to 1e-9. The shipped Fortran cannot reach this solution at all
-    -- its Newton iteration drifts away from it. See DISCREPANCIES.md.
+    holds here to 1e-9. On the engine used by this test the shipped Fortran
+    does not reach it -- see DISCREPANCIES.md §22, which also records that on
+    the shipped 737 engine it converges perfectly well.
     """
     _, A = _design()
     warm = _warm_state(_run(A))
