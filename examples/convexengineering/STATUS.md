@@ -10,7 +10,7 @@ compared variable to the stated tolerance. Run each model's self-check with
 | `windturbine` | Hoburg & Abbeel 2012 (paper only) | **verified** | Betz to 0.13%; Fig 1 peaks within 0.03 |
 | `motor` | gplibrary `GP/aircraft/motor` | **verified** | 8/8 vars, max rel 6.1e-7 |
 | `propeller` | gplibrary `GP/aircraft/prop` | **verified** | 12/12 vars, max rel 2.3e-4 |
-| `fuselage` | gplibrary `GP/aircraft/fuselage` | pending | |
+| `fuselage` | gplibrary `GP/aircraft/fuselage` | **verified** | 10/10 vars, max rel 4.0e-7 |
 | `tail` | gplibrary `GP/aircraft/tail` | pending | |
 | `wing` | gplibrary `GP/aircraft/wing` | pending | |
 | `turbofan` | York/Hoburg/Drela 2018 | pending | |
