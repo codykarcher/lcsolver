@@ -249,17 +249,56 @@ equalities stay affine.
 | propeller | 0.02 s | 0.02 s | 2.3e-8 |
 | windturbine | 0.04 s | 3.94 s | 3.3e-10 |
 
-**SLCP is slower, and the gap grows with size.** The cause is not the BFGS
-update but the sub-problem: the dense path builds
-`0.5 * sum_ij B[i][j] d_i d_j` as an n²-term Pyomo expression every iteration.
-For SPaircraft (n = 1173) that is **1,375,929 terms per sub-problem**.
+**SLCP is slower, and the reason is iteration count, not per-iteration cost.**
+Each sub-problem takes about the same time in both solvers (~20 ms on the wind
+turbine). What differs is how many:
 
-`Options.hessian_memory` is a toggle for that. The damped BFGS update is a
-rank-two correction, so `B` is exactly `gamma*I` plus signed rank-one terms;
-keeping the last *m* gives `d'Bd = gamma*sum(d^2) + sum_k sign_k (v_k.d)^2`,
-which is O(n·m) — **7,038 terms at m = 3, a 195x reduction**. Within its window
-the operator reproduces the dense matrix to 1e-9 (tested against
-`_damped_bfgs` directly). The default stays dense and unchanged.
+| model | kind | PCCP sub-problems | SLCP sub-problems |
+|---|---|---|---|
+| windturbine | GP | 1 | 72 |
+| motor | GP | 1 | 11 |
+| propeller | GP | 1 | 2 |
+| simpleac | SP | 2 | 9 |
+
+SLCP keeps posynomial *constraints* exact in log space — the idea the method
+is built on — but **linearizes the objective**:
+
+```python
+lin = log(f_k) + gf . d          # first-order model
+m.obj = lin + quad + penalty     # curvature from BFGS
+```
+
+So on a model that is convex end to end, the objective is still only a
+first-order model with quasi-Newton curvature, and the method marches where an
+interior-point solver would finish in one solve. That is the whole gap on a
+pure GP.
+
+`Options.exact_objective` applies the method's own argument one step further:
+a posynomial objective is log-convex, so impose it exactly too. When every
+constraint is also exact the sub-problem *is* the original problem, so the
+BFGS term is dropped as well.
+
+| model | linearized | exact objective |
+|---|---|---|
+| windturbine | 1.83 s, 72 sub | 0.06 s, 2 sub |
+| motor | 0.16 s, 11 sub | 0.03 s, 2 sub |
+| propeller | 0.03 s, 2 sub | 0.02 s, 1 sub |
+| simpleac (SP) | 0.14 s, 9 sub | 0.14 s, 9 sub |
+
+Identical objectives throughout. simpleac being unchanged is the confirmation,
+not a disappointment: it is a genuine SP, so the sub-problem is not exact and
+the quadratic stays, and its objective is a single monomial that log-space
+linearization already handled exactly.
+
+Two other options exist and are worth knowing about, though neither was the
+main story: `hessian_memory` (limited-memory BFGS, which shrinks the
+sub-problem quadratic from O(n^2) to O(n*memory) — 1,375,929 terms to 7,038 on
+SPaircraft) and `cache_subproblem` (build the Pyomo model once and re-point it
+through mutable Params, rather than rebuilding 6077 log-sum-exp expressions
+every iteration). Both are real improvements — the wind turbine goes
+4.34 s to 1.60 s on them alone — but they make each iteration cheaper without
+reducing how many there are, which is why they did not close the gap on their
+own.
 
 Timings for the D8.2 (1174 variables) for reference: build 0.12 s, PCCP cold
 start 146 s (~56 iterations at ~2.6 s), PCCP seeded from the reference 12.8 s.
