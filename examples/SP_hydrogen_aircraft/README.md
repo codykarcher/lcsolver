@@ -24,6 +24,62 @@ build, the solve, and the self-checks.
 | fan | D = 1.47 m per side | interior optimum — see "the bypass valley" below |
 | current density | 10 000 A/m² | **at the fit's validity cap** — see caveats |
 
+
+## Weight completeness (corrected)
+
+The FC-electric aircraft's zero-fuel weight was seven terms — wing, fuselage,
+tail, payload, tank, stack, powertrain — and that was **all** of it. No
+landing gear, no hydraulics or electrics, no APU, no furnishings. On top of
+that the wing carried `f_nonstruct = 1.2` for secondary structure with no
+area-proportional term at all.
+
+Together those made the aircraft roughly a third too light. What was added,
+all of it TASOPT's own parameterisation:
+
+| term | value | source |
+|---|---|---|
+| landing gear | 0.055 × MTOW | TASOPT 2.16 `flgnose` 0.011 + `flgmain` 0.044 |
+| hydraulics / pneumatics / electrics | 0.010 × MTOW | `fhpesys` |
+| furnishings, galleys, lavatories, APU | 0.385 × payload | `fpadd` 0.35 + `fapu` 0.035 |
+| wing secondary structure | 195 N/m² of area | 0.541 × SPaircraft's 80.9 lbf/m² box |
+
+`k_fuse = 260 N/m²` turned out to be a structure-only calibration — the solved
+fuselage sits at exactly 260 against TASOPT's ~450 N/m² all-in — so none of
+the furnishings had been counted anywhere.
+
+| | before | after |
+|---|---:|---:|
+| MTOW [lb] | 88,492 | **124,946** |
+| OEW [lb] | 44,371 | **80,022** |
+| wing [lb] | 4,226 | 10,217 |
+| landing gear [lb] | — | 6,872 |
+| systems [lb] | — | 1,249 |
+| furnishings + APU [lb] | — | 15,579 |
+| OEW / MTOW | 50.1% | 64.0% |
+
+**On charging secondary structure by area rather than as a multiple of box
+weight.** Matching SPaircraft's itemised 1.541 multiplier fixed the magnitude
+but not the shape, and `add_wing_h2`'s own docstring says why: the Hoburg box
+is weak in area (`S^0.5`), so with span free the optimiser grows chord for
+free. It did — at `f_nonstruct=1.541, k_area=0` the wing came out at **AR
+7.02**, which is not a transport wing. Charging skins, ribs and flaps per unit
+area instead restores the trade: **AR 10.53** against SPaircraft's 10.39, and
+127.6 lbf/m² of wing against its 124.8.
+
+Both settings are applied at the *call site*, not in `add_wing_h2` or
+`add_cryo_tank`, so `model_lh2tf.py`'s TASOPT replication stays bit-identical
+at 162,328 lbf.
+
+**Still open.** The wing box itself is 43.8 lbf/m² here against SPaircraft's
+80.9 at 1.32× the load, 1.29× the aspect ratio and 1.53× the area. Hoburg's
+measured scaling (`AR^1.56/S^0.50`) accounts for about 1.58× of the observed
+2.83× ratio, and the residual is not explained. Both models run the *same*
+`add_wingbox("wing", ...)` code, so the difference is entirely in the inputs
+or in the two root-moment formulations — SPaircraft's carries a bending-relief
+subtraction this one deliberately drops, which pushes the wrong way. Worth
+running down; not run down yet.
+
+
 ## What this demonstrates
 
 The hydrogen physics — cryogenic tank, PEM stack, electric drivetrain,

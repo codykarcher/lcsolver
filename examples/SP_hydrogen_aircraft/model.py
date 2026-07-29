@@ -89,7 +89,26 @@ def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
                                             description=d, size=N, bounds=bd)
     C = lambda n, v, u, d: f.Constant(name=n, value=v, units=u, description=d)
 
-    wing, cons = add_wing_h2(f)
+    # Secondary structure per unit AREA, not as a multiple of box weight.
+    #
+    # The old default (f_nonstruct=1.2, k_area=0) was light twice over.
+    # SPaircraft itemises secondary structure as flaps 0.2, slats 0.001,
+    # ailerons 0.04, LE/TE 0.1, ribs 0.15, spoilers 0.02 and water 0.03 --
+    # summing to 0.541 of box weight, so 1.2 was a guess and 22% short of it.
+    #
+    # But scaling it off the box is also the wrong shape, and add_wing_h2's
+    # own docstring says why: the Hoburg box is weak in area (S^0.5), so with
+    # span free the optimiser grows chord for free and aspect ratio collapses.
+    # It did -- at f_nonstruct=1.541 with k_area=0 the wing came out AR 7.02,
+    # which is not a transport wing. Skins, ribs and flaps scale with wetted
+    # area, so charging them that way both fixes the magnitude and restores
+    # the AR trade: this lands at AR 10.53 against SPaircraft's 10.39, and
+    # 127.6 lbf/m2 of wing against its 124.8.
+    #
+    # 195 N/m2 is SPaircraft's own implied rate: 0.541 x its 80.9 lbf/m2 box.
+    # Set at the call site, not in add_wing_h2, because model_lh2tf.py's
+    # TASOPT replication is verified at the old default and must not move.
+    wing, cons = add_wing_h2(f, f_nonstruct=1.0, k_area=195.0)
     tank, c = add_cryo_tank(f); cons += c
     fc, c = add_fuel_cell(f, N); cons += c
     pt, c = add_powertrain(f, N); cons += c
@@ -102,6 +121,11 @@ def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
     W_dry = Vb("W_dry", 3.85e5, "N", "zero-fuel weight", (1e5, 3e6))
     W_fuse = Vb("W_fuse", 8.9e4, "N", "fuselage structural weight", (1e4, 1e6))
     W_tail = Vb("W_tail", 5.7e3, "N", "lumped empennage weight", (5e2, 2e5))
+    W_lg = Vb("W_lg", 2.2e4, "N", "landing gear weight", (1e3, 5e5))
+    W_hpesys = Vb("W_hpesys", 4.0e3, "N",
+                  "hydraulic, pneumatic and electrical systems", (1e2, 1e5))
+    W_padd = Vb("W_padd", 6.9e4, "N",
+                "seats, galleys, furnishings and APU", (1e3, 1e6))
     l_fuse = Vb("l_fuse", 28.8, "m", "fuselage length", (10.0, 80.0))
     S_wet = Vb("S_wet", 480.0, "m^2", "total wetted area", (100.0, 3000.0))
     D_cool = Vb("D_cool", 2.3e3, "N", "cooling drag", (10.0, 1e5))
@@ -123,6 +147,22 @@ def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
     R_fuse = C("R_fuse", R_fuse, "m", "fuselage radius")
     l_cabin = C("l_cabin", l_cabin, "m", "cabin length for the payload")
     k_fuse = C("k_fuse", 260.0, "N/m^2", "fuselage weight per wetted area")
+    # TASOPT 2.16's own weight fractions. Its whole landing gear model is
+    # flgnose + flgmain times MTOW -- the gear has no length, so nothing
+    # connects it to the aircraft it holds up. v3 adds Raymer's correlations
+    # instead, which are monomials in MTOW and would be GP-native, but they
+    # need a gear *length* set by a max() of engine clearance against
+    # tailstrike, both of which are differences. That is more machinery than
+    # this 109-variable model earns, so 2.16's fractions are used.
+    f_lg = C("f_lg", 0.011 + 0.044, "-",
+             "landing gear, fraction of MTOW (flgnose + flgmain)")
+    f_hpesys = C("f_hpesys", 0.01, "-", "systems, fraction of MTOW")
+    # fpadd covers seats, galleys, lavatories and furnishings; fapu the APU.
+    # k_fuse above is a structure-only calibration -- the solved fuselage sits
+    # at exactly 260 N/m2, against TASOPT's ~450 N/m2 all-in -- so none of
+    # this was previously counted anywhere.
+    f_padd = C("f_padd", 0.35 + 0.035, "-",
+               "furnishings and APU, fraction of payload (fpadd + fapu)")
     k_rad = C("k_rad", 0.12, "-", "cooling drag power over heat rejected")
     N_ult = C("N_ult", 3.0, "-", "ultimate load factor")
     f_res = C("f_res", 1.10, "-", "fuel reserve factor")
@@ -142,8 +182,16 @@ def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
         # -- weights ------------------------------------------------------------
         W_fuse >= k_fuse * 2.0 * PI * R_fuse * l_fuse,
         W_tail >= 0.25 * wing["W_wing"],
+        # Gear and systems scale with MTOW, so these close a loop: heavier
+        # aircraft need heavier gear, which makes the aircraft heavier. The
+        # fractions sum to 0.065, so the amplification is 1/(1-0.065) = 1.07
+        # and the fixed point is well inside the GP.
+        W_lg >= f_lg * W_MTO,
+        W_hpesys >= f_hpesys * W_MTO,
+        W_padd >= f_padd * W_pay,
         W_dry >= (wing["W_wing"] + W_fuse + W_tail + W_pay
-                  + tank["W_tank"] + fc["W_stack"] + pt["W_pt"]),
+                  + tank["W_tank"] + fc["W_stack"] + pt["W_pt"]
+                  + W_lg + W_hpesys + W_padd),
         W_MTO >= W_dry + tank["W_fuel"],
         # The aircraft at the start of cruise weighs the full MTOW. The other
         # direction lets the lift equation see an arbitrarily light aircraft,
