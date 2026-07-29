@@ -35,7 +35,8 @@ than silently dropped.
 import numpy as np
 
 from edi.solvers.ipopt.slcp import (Constraint, Options, Posynomial,
-                                    PosynomialRatio, Problem, solve as _slcp_solve)
+                                    PosynomialRatio, Problem, Signomial,
+                                    solve as _slcp_solve)
 
 
 def _group(rows):
@@ -51,8 +52,25 @@ def _group(rows):
     return numerator, denominator
 
 
-def build_problem(structures):
-    """Translate a detected structure into an SLCP :class:`Problem`."""
+def build_problem(structures, sp_form=True):
+    """Translate a detected structure into an SLCP :class:`Problem`.
+
+    ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
+
+    ``True`` (default)
+        Build a :class:`~edi.solvers.ipopt.slcp.PosynomialRatio`, which keeps
+        ``p`` exact in log space and condenses only ``q`` by the AGM
+        inequality. Less approximation, and conservative.
+    ``False``
+        Build a plain :class:`~edi.solvers.ipopt.slcp.Signomial` -- a
+        value/gradient callback over the same ratio -- which SLCP then
+        linearizes whole, discarding ``p``'s log-convexity along with ``q``'s
+        curvature. This is stock SLCP as the paper describes it, and is the
+        setting to use when comparing against it.
+
+    Turning it off also loses sub-problem caching for those constraints: a
+    linearization moves every iteration, so there is nothing to cache.
+    """
     key = ('Signomial_Program' if structures['Signomial_Program'][0]
            else 'Geometric_Program')
     if not structures[key][0]:
@@ -84,9 +102,17 @@ def build_problem(structures):
         num = numerator[idx]
         den = denominator.get(idx)
         if den:
-            body = PosynomialRatio(posynomial(num, f'constraint {idx} numerator'),
-                                   posynomial(den, f'constraint {idx} denominator'),
-                                   n)
+            ratio = PosynomialRatio(
+                posynomial(num, f'constraint {idx} numerator'),
+                posynomial(den, f'constraint {idx} denominator'), n)
+            if sp_form:
+                body = ratio
+            else:
+                # Hand the same ratio over as an opaque value/gradient
+                # callback, so SLCP linearizes the whole body instead of
+                # keeping the numerator exact.
+                body = Signomial(
+                    lambda x, r=ratio: (r(x), r.grad(x)), n)
             # An equality over a ratio is not representable: the AGM
             # condensation is one-sided, so it is only conservative for '<='.
             constraints.append(Constraint(body, '<='))
@@ -100,7 +126,8 @@ def build_problem(structures):
     return Problem(n, objective, constraints)
 
 
-def solve_slcp(structures, x0=None, method='slcp', options=None):
+def solve_slcp(structures, x0=None, method='slcp', options=None,
+               sp_form=True):
     """Solve a detected GP/SP with SLCP.
 
     ``x0`` is in the natural (not log) variables and must be strictly
@@ -109,7 +136,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None):
     """
     import pyomo.environ as pyo
 
-    problem = build_problem(structures)
+    problem = build_problem(structures, sp_form=sp_form)
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
     x0 = np.asarray(x0, dtype=float)
