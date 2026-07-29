@@ -173,3 +173,113 @@ def test_core_loss_sums_the_two_mechanisms():
     hi_e = eddy_loss(m, 2000.0, B, KE)
     assert lo_h > lo_e
     assert hi_e > hi_h
+
+
+# --- geometric sizing ------------------------------------------------------
+
+def _reference_design():
+    """TASOPT.jl's own PMSM defaults, read off a constructed object."""
+    from tasopt_py.propsys.motor import MotorDesign
+    return MotorDesign(U_max=200.0, J_max=5.0e6, N_pole_pairs=8,
+                       N_slots=48, N_slots_per_phase=16,
+                       N_energized_slots=32, airgap_thickness=0.002,
+                       magnet_thickness=0.02, magnet_M=860400.0,
+                       teeth_thickness=0.02, winding_kpf=0.35)
+
+
+#: What ``size_PMSM!(PMSM{Motor}(), 8000.0, 1e6)`` produces.
+REF_MOTOR = dict(radius_gap=0.23873241463784303, length=0.24827400601201793,
+                 mass=256.6153902181946, B_gap=0.9829186613788256,
+                 A_slot=0.000365875345018842, I=640.2818537829736,
+                 R=0.0008394188164472384)
+REF_MASSES = dict(rotor=64.94563517235221, stator=86.45575348301549,
+                  magnet=53.528860202473076, teeth=26.833726758615875,
+                  windings=24.819879933423234, shaft=0.031534668314668224)
+
+
+def test_the_sized_motor_matches_tasopt_jl():
+    """All thirteen outputs -- the geometry, the six component masses, the
+    slot current and the phase resistance -- to machine precision."""
+    from tasopt_py.propsys.motor import size_motor
+
+    m = size_motor(_reference_design(), 8000.0, 1.0e6)
+    got = dict(radius_gap=m.radius_gap, length=m.length, mass=m.mass,
+               B_gap=m.B_gap, A_slot=m.A_slot, I=m.I,
+               R=m.phase_resistance)
+    for k, want in REF_MOTOR.items():
+        assert got[k] == pytest.approx(want, rel=1e-13), k
+    for k, want in REF_MASSES.items():
+        assert m.masses[k] == pytest.approx(want, rel=1e-13), k
+
+
+def test_faster_motors_are_smaller():
+    """radius_gap = U_max / Omega, so the tip-speed limit alone sets the
+    diameter. That is the entire argument for high-speed machines, and it is
+    why they need gearboxes."""
+    from tasopt_py.propsys.motor import size_motor
+
+    d = _reference_design()
+    slow = size_motor(d, 4000.0, 1.0e6)
+    fast = size_motor(d, 12000.0, 1.0e6)
+    assert fast.radius_gap == pytest.approx(slow.radius_gap / 3.0, rel=1e-12)
+    assert fast.mass < slow.mass
+
+
+def test_the_windings_are_at_cooling_air_temperature_not_ambient():
+    """363.15 K, tied to the cooling air. Worth 28% on the phase resistance
+    against a 20 C assumption, and therefore 28% on the ohmic loss."""
+    from tasopt_py.propsys.motor import MotorDesign, size_motor
+
+    d = _reference_design()
+    assert d.winding_T == pytest.approx(363.15)
+    hot = size_motor(d, 8000.0, 1.0e6)
+    cold = size_motor(MotorDesign(**{**d.__dict__, "winding_T": 293.15}),
+                      8000.0, 1.0e6)
+    assert hot.phase_resistance / cold.phase_resistance == pytest.approx(
+        1.0 + 0.00404 * 70.0, rel=1e-12)
+
+
+def test_the_three_sizing_failures_are_reported():
+    """The reference errors on each of these too; this raises with a reason.
+    They are the real limits of the machine, not numerical accidents."""
+    from tasopt_py.propsys.motor import MotorDesign, size_motor
+
+    d = _reference_design()
+
+    # The shaft binds at high speed *and* high power, which is not the
+    # obvious direction. A slow machine is not shaft-limited -- the radius
+    # goes as 1/Omega, so slowing it down makes the bore bigger faster than
+    # it makes the torque bigger. The binding group is P * Omega^2.
+    assert size_motor(d, 400.0, 5.0e6).radius_gap > 4.0    # huge, but fine
+    with pytest.raises(ValueError, match="shaft too thin"):
+        size_motor(d, 50000.0, 2.0e7)
+
+    # Push the tip-speed limit far enough down and the rotor bore closes
+    # up -- but not before the shaft binds. At U_max = 25 it is the shaft
+    # that fails; the bore only goes negative below about 19 m/s, where the
+    # 20 mm magnet plus the yoke exceed the whole radius.
+    with pytest.raises(ValueError, match="shaft too thin"):
+        size_motor(MotorDesign(**{**d.__dict__, "U_max": 25.0}),
+                   8000.0, 1.0e6)
+    with pytest.raises(ValueError, match="rotor bore closes up"):
+        size_motor(MotorDesign(**{**d.__dict__, "U_max": 15.0}),
+                   8000.0, 1.0e6)
+
+    # A thick tooth at high current density makes the winding's own field
+    # exceed saturation, and the tooth-area expression goes imaginary.
+    with pytest.raises(ValueError, match="winding's own field"):
+        size_motor(MotorDesign(**{**d.__dict__, "J_max": 1.0e9}),
+                   8000.0, 1.0e6)
+
+
+def test_the_stator_and_rotor_dominate_the_mass():
+    """Back iron, not copper. The windings are under 10% of the machine,
+    which is why the flux limits matter more than the current limit."""
+    from tasopt_py.propsys.motor import size_motor
+
+    m = size_motor(_reference_design(), 8000.0, 1.0e6)
+    iron = m.masses["rotor"] + m.masses["stator"] + m.masses["teeth"]
+    assert iron / m.mass > 0.65
+    assert m.masses["windings"] / m.mass < 0.10
+    # And the specific power that falls out.
+    assert 1.0e6 / m.mass / 1000.0 == pytest.approx(3.9, abs=0.2)
