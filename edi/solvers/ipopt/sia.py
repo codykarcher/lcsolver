@@ -606,9 +606,20 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
         # update(). A cacheable problem has no black box, so no trust region.
         phase = cache.update(cache.get(minimize_violation, use_slacks),
                              x_k, tau)
-        return _solve_and_extract(phase.model, problem, options,
-                                  minimize_violation, use_slacks,
-                                  phase.obj_expr)
+        try:
+            return _solve_and_extract(phase.model, problem, options,
+                                      minimize_violation, use_slacks,
+                                      phase.obj_expr)
+        except RuntimeError:
+            # A cache must never change WHETHER something solves, only how
+            # fast. The Param-formulated model is numerically identical on
+            # paper but not to IPOPT at tol = 1e-12, and on the hydrogen
+            # aircraft the cached Phase I burned its whole iteration budget
+            # where the inlined-float build below solves in a handful --
+            # which then read as "phase 1 could not find a feasible point
+            # after 1 iterations" with no hint that a cache was involved.
+            # Fall through and build this one iteration fresh.
+            pass
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
