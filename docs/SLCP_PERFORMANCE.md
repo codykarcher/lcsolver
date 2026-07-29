@@ -1,5 +1,39 @@
 # Why SLCP is slow on SPaircraft
 
+> **RETRACTION (read first).** Every SPaircraft measurement below was taken
+> through `edi/solvers/ipopt/slcp_bridge.py`, which at the time **relaxed
+> equality constraints** — a ratio equality `p/q == 1` became only `p/q <= 1`,
+> and a multi-term posynomial equality `p == 1` became only `p <= 1`. Both drop
+> the lower direction, so the solver was free to push the body below 1.
+>
+> That is a strict relaxation of the problem, and its symptom is an objective
+> *better* than the true optimum. SLCP's 85,264 N is 8% **below** the known
+> optimum of 92,788.8 N; the SIA runs reached 77,251 N, 16.7% below. Both were
+> optimizing a weaker problem than the one PCCP solved, so **the 4x objective
+> gap this document sets out to explain was not real**, and the comparison
+> against PCCP's 146 s / 92,788.8 N is not like-for-like.
+>
+> Fixed in `slcp_bridge`, with regression tests in `tests/test_slcp_bridge.py`.
+> On the corrected problem SLCP has not been re-measured.
+>
+> **What survives.** The mechanical measurements are real and were taken
+> correctly; only the conclusion drawn from them is withdrawn:
+>
+> * the timing split (sub-problem solve 96% of wall clock, everything SLCP adds
+>   over PCCP under 3%);
+> * the curvature-condition finding — `s.z > 0` fails on essentially every
+>   update, Powell damping makes the rank-two correction cancel itself, and `B`
+>   stays at the identity for the whole run, so SLCP is running as a
+>   proximal-point method with a fixed trust radius rather than a quasi-Newton
+>   one. That is a property of the Reduced Lagrangian on a mostly-exact problem
+>   and does not depend on the bug;
+> * the `sp_form` experiment (`s.z > 0` on 0 of 40 updates with the signomial
+>   approximation off), for the same reason.
+>
+> **What does not survive:** any claim that these mechanics explain the
+> objective gap, the "200 iterations and still descending" framing, and the
+> PCCP-versus-SLCP timing comparison.
+
 Measured, not guessed. SPaircraft D8.2: 1173 variables, 6077 constraints.
 PCCP solves it in 146 s to an objective of 20939.1. SLCP ran 200 sub-problems
 in 1365 s and stopped at 85264, still descending.
