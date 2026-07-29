@@ -77,6 +77,8 @@ GAMMAS = dict(fgamma=1.401, lpcgamma=1.398, hpcgamma=1.354, ccgamma=1.313,
 # Polytropic efficiencies: fan, LPC, HPC, HPT, LPT.
 ETAS = {
     "D82_SPaircraft": (0.9300, 0.9200, 0.8900, 0.9100, 0.9200),
+    # Same turbomachinery as D82_SPaircraft -- only the fuel differs.
+    "D82_LH2":       (0.9300, 0.9200, 0.8900, 0.9100, 0.9200),
     "CFM56":         (0.9005, 0.9306, 0.9030, 0.8731, 0.8851),
     "TASOPT_737800": (0.8948, 0.8800, 0.8700, 0.8990, 0.8890),
     "GE90":          (0.9153, 0.9037, 0.9247, 0.9121, 0.9228),
@@ -154,6 +156,27 @@ SUBS = {
                            # by a factor of 0.1025/0.2 in u_{4a}. Reproduced,
                            # because the reference solution depends on it.
                            M_4a=0.1025, M_4a_for_hold=0.2),
+    # The same machine burning liquid hydrogen. Only the heat of
+    # combustion changes: 120 MJ/kg against Jet-A's 43.003, which is
+    # the entire fuel switch as far as the cycle is concerned -- the
+    # burner solves for a fuel-air ratio 2.79x smaller for the same
+    # turbine inlet temperature.
+    "D82_LH2": dict(pi_f_D=None, pi_lc_D=None, pi_hc_D=None,
+                           alpha_OD=None, alpha_max=None, hf=120.0,
+                           OPR_max=35.0, eta_B=0.985, r_uc=0.01,
+                           alpha_c=0.16, M_takeoff=0.9556,
+                           pi_tn=0.995, pi_d=0.995, pi_fn=0.985,
+                           eta_HPshaft=0.978, eta_LPshaft=0.99,
+                           Cp_c=1257.9, Cp_t1=1236.5, Cp_t2=1200.4,
+                           # subs/optimalD8.py sets hold_{4a} from a local
+                           # M4a = 0.2 but never substitutes M_{4a} itself,
+                           # which therefore keeps the Combustor's declared
+                           # default of 0.1025. The two are supposed to be the
+                           # same number -- hold_{4a} IS 1+(g-1)/2 M_4a^2 --
+                           # so the shipped model is internally inconsistent
+                           # by a factor of 0.1025/0.2 in u_{4a}. Reproduced,
+                           # because the reference solution depends on it.
+                           M_4a=0.1025, M_4a_for_hold=0.2),
 }
 
 # On-design mass flow anchors, from the `onDest` blocks of Engine.setup().
@@ -163,6 +186,11 @@ ONDESIGN = {
     # The BLI branch of eng==3, which is the one optimalD8 takes. Using the
     # non-BLI numbers instead leaves the LPC mass-flow bracket ~12% out.
     "D82_SPaircraft": (1400.0, 1433.49, 1121.85, 706.84, 289.77, 65.79434,
+                       481.386, 327.66, 0.7, 1.3, 41.0),
+    # Same on-design point as D82_SPaircraft. These are the sizing-point
+    # temperatures, pressures and mass flows of the MACHINE; hydrogen changes
+    # the fuel-air ratio needed to reach T_t4, not the turbomachinery.
+    "D82_LH2":        (1400.0, 1433.49, 1121.85, 706.84, 289.77, 65.79434,
                        481.386, 327.66, 0.7, 1.3, 41.0),
     "CFM56":         (1400.0, 1527.0, 1038.8, 589.2, 292.57, 84.25,
                       362.47, 163.02, 0.7, 1.3, 50.0),
