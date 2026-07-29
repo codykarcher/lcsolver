@@ -72,7 +72,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
-           "diagnose",
+           "diagnose", "floor_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -158,6 +158,7 @@ class PresolveReport:
     fixed_columns: list = field(default_factory=list)
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
+    at_floor: list = field(default_factory=list)
     cancelling: list = field(default_factory=list)
     bounds: dict = field(default_factory=dict)
     unbounded_above: list = field(default_factory=list)
@@ -226,6 +227,14 @@ class PresolveReport:
     def post_solve_text(self):
         """The checks that need a solution, if one was supplied."""
         L = []
+        if self.at_floor:
+            L.append(f"  {len(self.at_floor)} variables are resting on the "
+                     "solver's positivity floor, which is not a constraint you "
+                     "wrote -- they are pinned by the algorithm, not the model:")
+            for nm, val in self.at_floor[:12]:
+                L.append(f"    {nm} = {val:.3g}")
+            if len(self.at_floor) > 12:
+                L.append(f"    ... and {len(self.at_floor) - 12} more")
         if self.degenerate:
             L.append(f"  {len(self.degenerate)} variables the optimum does not "
                      "determine (moving them changes neither the objective nor "
@@ -900,8 +909,14 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
                 and (hi is None or hi >= VACUOUS_HI))
 
     # Column occupancy, for the Markowitz estimate.
+    # The OBJECTIVE is indexed 0 and must be in here. Without it a pivot that
+    # appears in the objective is substituted everywhere except there, and the
+    # rebuild then drops its exponent as a column that no longer exists --
+    # silently changing the objective. Measured on turbofan: 0.269 became
+    # 0.060, both runs reporting convergence, the better number being the
+    # symptom.
     col = collections.defaultdict(set)
-    for i in con_idx:
+    for i in [0] + list(con_idx):
         for _c, e, _d in terms[i]:
             for j in e:
                 col[j].add(i)
@@ -944,7 +959,9 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
             m = {j: -v / ap for j, v in a.items() if j != pj}
 
             for k in list(col[pj]):
-                if k == i or k not in alive:
+                # k == 0 is the objective, which is never in `alive` because
+                # `alive` tracks constraints. It still needs substituting.
+                if k == i or (k != 0 and k not in alive):
                     continue
                 for t in terms[k]:
                     ep = t[1].pop(pj, None)
@@ -1473,7 +1490,29 @@ class PresolveLog:
         return "\n".join(L)
 
 
-def diagnose(structures, x=None, problem=None, names=None, quiet=False):
+def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
+    """Variables resting on the solver's positivity floor.
+
+    The log-space solvers clamp every variable at ``x_min`` to stay in the
+    positive orthant. That floor is a property of the ALGORITHM, not of the
+    model -- nobody wrote it, it appears in no report, and a variable sitting
+    on it looks settled while actually being held there by machinery.
+
+    It matters because it is easy to misread. A quantity at 1e-9 is usually a
+    quantity the model never determined, and reads at a glance as "essentially
+    zero, fine" rather than "nothing in this model has an opinion about this".
+
+    Returns ``[(name, value), ...]``.
+    """
+    out = []
+    for j, v in enumerate(x):
+        if v is not None and 0 < v <= x_min * (1.0 + rtol):
+            out.append((nm_at(list(names or []), j), float(v)))
+    return out
+
+
+def diagnose(structures, x=None, problem=None, names=None, quiet=False,
+             x_min=1e-9):
     """Every structural check, in one call, as one report.
 
     The individual checks are expert tools: each needs the structure detected a
@@ -1509,6 +1548,8 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False):
             rep.cancelling = cancellation_report(st, x, names=names)
         except Exception:
             rep.cancelling = []
+        rep.at_floor = floor_report(
+            x, names or [str(v) for v in st.variables], x_min=x_min)
     if not quiet:
         text = str(rep)
         extra = rep.post_solve_text()

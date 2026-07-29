@@ -293,6 +293,45 @@ class Detected(dict):
         idx = i - 1 if self.space == "log" else i
         return ops[idx] if 0 <= idx < len(ops) else "<="
 
+    # -- resolving onto a model -------------------------------------------
+    def values_from(self, model, as_array=False):
+        """The current values of these variables, read off ``model``.
+
+        ``unit_corrector`` clones the model before detection, because unit
+        conversion rewrites constants and the user's own formulation should not
+        be mutated. The consequence is a trap: ``structures['variables']`` look
+        like the model's variables and are not -- they belong to the clone. Read
+        values off them after a solve and you silently get the initial guess,
+        with no error and no clue, because the clone was never solved.
+
+        That is a wrong number rather than a failure, so it does not announce
+        itself. This resolves each variable onto whichever model you hand it,
+        by ``ComponentUID`` rather than by name -- the same route
+        ``write_solution`` uses, and for the same reason: a name round-trip
+        mangles indexed variables and fails outright on one whose parent
+        component has been collected.
+
+        Returns ``{name: value}``, or a list in column order with
+        ``as_array=True``, which is the form the solvers want.
+        """
+        from edi.solvers.writeback import _name_of, _resolve_on
+
+        import pyomo.environ as pyo
+
+        out, ordered = {}, []
+        for v in self.variables:
+            target = _resolve_on(model, v)
+            if target is None:
+                raise ValueError(
+                    f"{_name_of(v)} has no counterpart on the model given. "
+                    "These variables belong to the unit-corrected clone the "
+                    "structure was detected from; pass the model that clone "
+                    "was made of.")
+            val = float(pyo.value(target))
+            out[_name_of(v)] = val
+            ordered.append(val)
+        return ordered if as_array else out
+
     # -- writing ----------------------------------------------------------
     def rebuild(self, objective, constraints, operators, n=None, **overrides):
         """A new :class:`Detected` carrying these terms.
