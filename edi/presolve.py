@@ -69,6 +69,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "reduce_columns", "restore_columns", "Removed",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
+           "evaluate", "equivalence_error", "assert_equivalent",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -1225,6 +1226,115 @@ def cancellation_report(structures, x, tol=1e-6, names=None):
 
     out.sort(key=lambda t: t[2])
     return out
+
+
+def evaluate(structures, x):
+    """``(objective, worst_violation)`` for a detected structure at ``x``.
+
+    The violation is in log space for a GP or SP and natural for an LP or QP,
+    matching the space each is linear in. An equality contributes the magnitude
+    of its residual; an inequality only its positive part. Variable bounds
+    count, since presolve turns rows into bounds and a bound violation would
+    otherwise become invisible.
+
+    Written to be independent of any solver, so it can compare two structures
+    that no solver has seen.
+    """
+    import math
+
+    x = list(x)
+    lp = (structures.get("Linear_Program", (False,))[0]
+          or structures.get("Quadratic_Program", (False,))[0])
+    worst = -math.inf
+
+    if lp:
+        key = ("Linear_Program" if structures["Linear_Program"][0]
+               else "Quadratic_Program")
+        c, shift, AG, bh = structures[key][1][:4]
+        operators = structures[key][2]
+        obj = float(shift or 0.0) + sum(float(ci) * x[i]
+                                        for i, ci in enumerate(c) if i < len(x))
+        for i, row in enumerate(AG or []):
+            lhs = sum(float(v) * x[j] for j, v in enumerate(row) if j < len(x))
+            r = lhs + float(bh[i])
+            op = operators[i] if i < len(operators) else "<="
+            worst = max(worst, abs(r) if op == "==" else r)
+    else:
+        rows, operators, _key = _rows_of(structures)
+        numer, denom = (collections.defaultdict(list),
+                        collections.defaultdict(list))
+        for r in rows:
+            idx = int(r[0])
+            (numer if idx >= 0 else denom)[
+                idx if idx >= 0 else -idx - 1].append(
+                    (float(r[1]), [float(e) for e in r[2:]]))
+        obj = _eval_terms(numer.get(0, []), x)
+        for i in sorted(k for k in set(numer) | set(denom) if k != 0):
+            p_ = _eval_terms(numer.get(i, []), x)
+            q_ = _eval_terms(denom.get(i, []), x) if denom.get(i) else 1.0
+            if p_ <= 0 or q_ <= 0:
+                continue
+            lg = math.log(p_) - math.log(q_)
+            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+            worst = max(worst, abs(lg) if op == "==" else lg)
+
+    for j, pair in enumerate(structures.get("bounds") or []):
+        if j >= len(x) or not pair:
+            continue
+        lo, hi = pair
+        if lp:
+            if lo is not None:
+                worst = max(worst, lo - x[j])
+            if hi is not None:
+                worst = max(worst, x[j] - hi)
+        elif x[j] > 0:
+            if lo is not None and lo > 0:
+                worst = max(worst, math.log(lo) - math.log(x[j]))
+            if hi is not None and hi > 0:
+                worst = max(worst, math.log(x[j]) - math.log(hi))
+    return obj, worst
+
+
+def equivalence_error(before, after, x, log=None, x_after=None):
+    """How far a transform moved the problem, measured at a known point.
+
+    Every transform in this module claims to preserve the problem. This is the
+    claim, checked: map ``x`` through the transform and compare the objective
+    and the worst violation on both sides. Returns
+    ``(objective_relative_error, violation_absolute_error)``.
+
+    ``log`` is a :class:`PresolveLog`, used to drop the columns the transform
+    removed; pass ``x_after`` instead if the mapping is something else. With
+    neither, ``x`` is assumed to survive unchanged.
+
+    This is the check that caught the elimination bug -- a reduced problem
+    exact to twelve figures whose recovered values were out by 4.3e+03 -- and
+    it would have caught the propagation bug on sight. It costs one evaluation
+    per side and works on any model, which is most of the value of a full
+    integration test at a fraction of the price.
+    """
+    if x_after is None:
+        x_after = list(x)
+        if log is not None:
+            for _label, removed, _counts in log.steps:
+                if removed:
+                    gone = {r.index for r in removed}
+                    x_after = [v for j, v in enumerate(x_after)
+                               if j not in gone]
+    f0, v0 = evaluate(before, x)
+    f1, v1 = evaluate(after, x_after)
+    return (abs(f1 - f0) / max(abs(f0), 1e-300), abs(v1 - v0))
+
+
+def assert_equivalent(before, after, x, log=None, x_after=None,
+                      rtol=1e-8, atol=1e-8):
+    """Raise unless a transform preserved the problem at ``x``."""
+    df, dv = equivalence_error(before, after, x, log=log, x_after=x_after)
+    if df > rtol or dv > atol:
+        raise AssertionError(
+            f"transform changed the problem: objective differs by {df:.3e} "
+            f"(tolerance {rtol:g}), worst violation by {dv:.3e} "
+            f"(tolerance {atol:g})")
 
 
 class PresolveLog:

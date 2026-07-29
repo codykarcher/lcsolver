@@ -24,6 +24,8 @@ pytest.importorskip("edi.solvers.ipopt.sia")
 from edi import Formulation
 from edi.presolve import (
     InfeasibleProblem,
+    PresolveLog,
+    assert_equivalent,
     cancellation_report,
     degeneracy_report,
     eliminate_monomial_equalities,
@@ -1077,3 +1079,83 @@ def test_the_log_records_infeasibility():
     f.Constraint(x * y >= 1.0)
     with pytest.raises(InfeasibleProblem):
         presolve(_detect(f, bounds_as_rows=False))
+
+
+# ---------------------------------------------------------------------------
+# every transform, checked against the property it claims
+# ---------------------------------------------------------------------------
+def _rich_model():
+    """One model carrying something for each pass to act on."""
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 2.0, '', 'y', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])   # eliminable
+    k = f.Variable('k', 3.0, '', 'k', bounds=[3.0, 3.0])      # fixed
+    q = f.Variable('q', 1.0, '', 'q', bounds=[1e-30, 1e30])   # disconnected
+    f.Objective(x + y)
+    f.Constraint(z == 3.0 * x)
+    f.Constraint(x * z >= 12.0)
+    f.Constraint(x * y >= 4.0)
+    f.Constraint(y >= k * 0.5)
+    f.Constraint(q >= 1.0)
+    f.Constraint(x <= 40.0)
+    return f
+
+
+def _solved_point(f):
+    """A genuine solution, so the check is made where it matters."""
+    st = _detect(f)
+    res = solve_sia(st)
+    return st, np.asarray(res.x, dtype=float)
+
+
+@pytest.mark.parametrize('transform', ['fold', 'reduce', 'eliminate',
+                                       'propagate', 'pipeline'])
+def test_each_transform_preserves_the_problem(transform):
+    """The claim every pass makes, checked at a solved point.
+
+    This is the generic form of the check that caught the elimination bug --
+    a reduced problem exact to twelve figures whose recovered values were out
+    by 4.3e+03 -- and that would have caught the propagation bug on sight.
+    """
+    _st_full, x = _solved_point(_rich_model())
+    before = _detect(_rich_model(), bounds_as_rows=False)
+
+    if transform == 'fold':
+        after, log = fold_singleton_rows(before), None
+    elif transform == 'reduce':
+        base = fold_singleton_rows(before)
+        after, removed = reduce_columns(base)
+        before = base
+        log = PresolveLog(); log.record('reduce', removed=removed)
+    elif transform == 'eliminate':
+        base = fold_singleton_rows(before)
+        after, removed = eliminate_monomial_equalities(base)
+        before = base
+        log = PresolveLog(); log.record('elim', removed=removed)
+    elif transform == 'propagate':
+        base = fold_singleton_rows(before)
+        after, _n = propagate_bounds(base)
+        before, log = base, None
+    else:
+        after, log = presolve(before)
+
+    assert_equivalent(before, after, x, log=log, rtol=1e-6, atol=1e-6)
+
+
+def test_the_checker_notices_a_transform_that_lies():
+    """A guard on the guard: it must fail when the problem really changed."""
+    st = fold_singleton_rows(_detect(_rich_model(), bounds_as_rows=False))
+    _st_full, x = _solved_point(_rich_model())
+
+    key = ('Signomial_Program' if st['Signomial_Program'][0]
+           else 'Geometric_Program')
+    broken = dict(st)
+    rows = [list(r) for r in st[key][1]]
+    for r in rows:                      # relax every constraint by 20%
+        if int(r[0]) > 0:
+            r[1] = float(r[1]) * 0.8
+    broken[key] = [st[key][0], rows, list(st[key][2])]
+
+    with pytest.raises(AssertionError, match='changed the problem'):
+        assert_equivalent(st, broken, x, rtol=1e-6, atol=1e-6)
