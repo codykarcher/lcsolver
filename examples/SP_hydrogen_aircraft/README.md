@@ -209,58 +209,56 @@ What the sequence taught:
 * **`k_fuse = 260 N/m²` was never wrong.** Their hull works out to
   259 N/m²; the earlier fuselage gap was missing nose/tailcone geometry.
 
-**The free-wing experiment** (`build(mode="free")`, now the default): CL,
-tau, AR *and sweep* are all optimised, with the physics that makes each
-trade real — York's transonic airfoil fit (wave drag prices CL, thickness
-and sweep), the structural span factor `1/cos²Λ` (prices sweep the other
-way), and Nita-Scholz span efficiency (prices AR). Sweep is carried as
-`cos Λ` itself, so every appearance is monomial and the trig-of-a-variable
-obstruction never arises. It converges, and sweep lands at an **interior**
-optimum — the trade is genuinely live:
+**Freeing the wing: what the three "causes" actually were.** The earlier
+draft named three reasons the free optimum was not TASOPT's wing. Measuring
+them changed the story, and two of the three were wrong.
 
-| | free SP | TASOPT |
+*Cause 1, "the Hoburg box over-prices span" — refuted, backwards.* Sweeping
+the port's own `surfw` and the Hoburg box over AR at fixed everything else:
+
+| | AR exponent | S exponent |
 |---|---:|---:|
-| AR | 6.0 (bound) | 10.1 |
-| sweep | 6.9° | 26.0° |
-| CL | 0.416 | 0.570 |
-| tau | 0.150 (bound) | ~0.126 |
-| S | 141.7 m² | 121.5 m² |
-| MTOW | 139,656 lb | 167,711 lb |
+| Hoburg box | **1.56** | 0.50 |
+| TASOPT `surfw` | **1.74** | 0.37 |
 
-The free optimum is an internally consistent *different* aircraft: a big,
-thick, lightly-swept, lightly-loaded wing — dodging the wave-drag wall by
-flying low CL instead of buying sweep and span. Three named reasons it is
-not TASOPT's design, in decreasing confidence:
+Hoburg is the *shallower* of the two in AR, so swapping in a `surfw`-derived
+box would push AR *down*, not up. The claim was asserted from algebra and
+never checked; the measurement took ten minutes and reversed it.
 
-1. **Wing-structure curvature.** The Hoburg box grows ≈ AR^1.5 against
-   TASOPT's nearer-linear beam, so span is over-priced; `k_beam` fixes the
-   point, not the slope.
-2. **Cruise-only mission.** TASOPT's climb segments fly high CL where
-   induced drag argues for span; this model never sees them.
-3. **Frozen flight condition.** rho and V are constants, so the optimiser
-   answers low CL with a big wing at low loading — where a real aircraft
-   (and TASOPT, which sizes the cruise altitude) would fly higher instead.
+*Cause 4, the one that was actually there.* Induced drag depends on **span**,
+not aspect ratio: `D_i = W^2 / (q pi b^2 e)`. So once a span limit binds, a
+bigger, lower-AR wing costs nothing in induced drag — and box weight goes as
+`b^3/S`, which *falls* as area grows. Both structural models are weak in area
+(S^0.37 and S^0.50), so a free-planform problem is degenerate in both. Neither
+source model has to care, because **neither ever lets S float**: TASOPT sets
+wing area from a specified cruise C_L. The fix is secondary structure that
+scales with **area** rather than with box weight — skins, ribs, flaps,
+systems — calibrated from TASOPT's own buildup (box 16,456 lb, wing 26,988 lb
+at 121.5 m^2 → 386 N/m^2). Same weight at their wing, different derivative,
+and the derivative is the whole point once S is free.
 
-Closing those is the real frontier: a `surfw`-derived wing (the MAIDAS map
-in `../tasopt/MAIDAS_REPORT.md` already classified it), a climb segment,
-and altitude as a variable.
+*And the framing itself was wrong.* TASOPT's `cryo_input.toml` **specifies**
+`cruise_CL = 0.57`, `cruise_mach = 0.80`, `AR = 10.1`, `sweep = 26.0`. It is a
+sizing code: it never optimises any of them. "Would the SP choose TASOPT's
+wing?" is therefore not a question TASOPT answers, and the free mode is
+exploring a space the reference never visits.
 
-**Point-validated is not curvature-validated.** The replication pins
-AR = 10.1 and their CL policy — it evaluates the SP *at their design point*.
-Asking whether the SP would *choose* their wing (`build(fix_AR=False)`)
-answers no: even with every policy set, the optimiser runs to AR 6.0 with a
-half-weight wing (11,248 lb), L/D 11.9, and a "better" MTOW of 148,268 lb.
-The trade is not close — going 6 → 10.1 costs +15,300 lb of wing against
-roughly −4,000 lb of fuel-and-cascade — so the model's *derivative* of wing
-weight with AR is far steeper than TASOPT's, plausibly because the Hoburg
-box scales ≈ AR^1.5 where TASOPT's spanwise beam integration is nearer
-linear, and because a cruise-only mission never weights the high-CL climb
-segments where induced drag argues for span. The declared `k_beam` corrects
-the point, not the slope. This caveat applies to the fuel-cell models'
-free-AR optima (8.7–10.5) too: same box, same suspect curvature. The
-forward fix is to derive the SP wing from the port's own `surfw` relations
-— which the MAIDAS structure map in `../tasopt/MAIDAS_REPORT.md` already
-classified constraint by constraint — rather than adopting Hoburg's box.
+**What the mission fixes bought.** Causes 2 and 3 were real and are now
+addressed: SPaircraft's `add_flight_state` (self-contained, unlike its
+`wing.py`) makes altitude, density, Mach and viscosity variables tied by the
+standard atmosphere; three climb segments carry an excess-thrust row; thrust
+lapses as `rho^0.7`; and TASOPT's own `maxSpan = 117.5 ft` and 1.5%
+top-of-climb gradient are enforced. Freeing altitude immediately exposed that
+it is *also* part of their specified design point — left free, `mode="point"`
+cruised 2 km higher than they do and took a 17% fuel credit for it. Pinning
+their altitude and Mach as well is what a faithful replication means.
+
+`mode="point"` after all of it: **MTOW −3.2%** (was −1.7% on the cruise-only
+model), wing −4.3%, fuselage −0.8%, engines −3.3%, fuel −5.7%, tank −22%.
+The replication is slightly *worse* than the cruise-only version, and
+honestly so: the climb phase is a real mission segment modelled crudely (a
+constant-TSFC engine at climb thrust), where before it was simply absent and
+its cost hidden in a calibration.
 
 On "did you port all of SPaircraft": no — only `wingbox.py`, because
 `wing.py`/`fuselage.py`/tails/gear close through the trim block and cannot

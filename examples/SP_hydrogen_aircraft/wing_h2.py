@@ -50,7 +50,7 @@ P_TAPER, Q_TAPER = 1.6, 1.3
 
 def add_wing_h2(f, *, prefix: str = "Wing_", f_nonstruct: float = 1.2,
                 tau_max: float = 0.15, p_taper: float = P_TAPER,
-                q_taper: float = Q_TAPER):
+                q_taper: float = Q_TAPER, k_area: float = 0.0):
     """Planform + structural box. Returns ``(vars, constraints)``.
 
     The caller supplies the load case by constraining ``L_max`` (ultimate
@@ -82,13 +82,24 @@ def add_wing_h2(f, *, prefix: str = "Wing_", f_nonstruct: float = 1.2,
 
     f_ns = wg.Constant("f_nonstruct", f_nonstruct, "-",
                        "LE/TE devices, ribs, controls over box weight")
+    # Area-proportional secondary structure. Skins, ribs, flaps and systems
+    # scale with WETTED AREA, not with box weight -- and that distinction is
+    # what makes a free-planform optimisation well posed. Both the Hoburg box
+    # (S^0.5) and TASOPT's surfw (measured S^0.37) are weak in area, so with
+    # span limited and area free the optimiser grows chord without limit:
+    # induced drag depends on SPAN, so at fixed b a bigger, lower-AR wing
+    # costs nothing and box weight actually FALLS as b^3/S. Neither source
+    # model has to care, because neither ever lets S float -- TASOPT sets it
+    # from a specified cruise C_L. k_area = 0 reproduces the old behaviour.
+    k_ar = wg.Constant("k_area", k_area, "N/m^2",
+                       "secondary structure per unit wing area")
 
     cons += [
         # Root moment per root chord for triangular-ish spanwise loading --
         # the same form SPaircraft's vertical tail uses with its own L_max.
         # No fuel-relief subtraction: a hydrogen wing is dry.
         Mr >= Lmax * AR * p_taper / 24.0,
-        W_wing >= f_ns * box_vars.W_struct,
+        W_wing >= f_ns * box_vars.W_struct + k_ar * S,
     ]
 
     out = dict(AR=AR, S=S, b=b, tau=tau, L_max=Lmax, M_r=Mr,
