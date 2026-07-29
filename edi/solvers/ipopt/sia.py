@@ -210,6 +210,19 @@ def _violation(problem, x):
     return max((_log_g(c, x) for c in problem.constraints), default=0.0)
 
 
+def _agm(posy, x_k, weight_params, n):
+    """Set the AGM weight Params for ``posy`` at ``x_k``; return (coeff, expo)."""
+    v = posy(x_k)
+    coeff, expo = 1.0, np.zeros(n)
+    for k, (c, a) in enumerate(posy.terms):
+        w = c * np.prod(x_k ** a) / v
+        weight_params[k].value = float(w)
+        if w > 0:
+            coeff *= (c / w) ** w
+            expo = expo + w * a
+    return coeff, expo
+
+
 def _violation_structured(problem, x):
     """Worst ``log g_i(x)`` over the constraints that cost nothing to evaluate.
 
@@ -298,10 +311,8 @@ class SubproblemCache:
     def _is_cacheable(self):
         """Only the shapes the bridge produces; a black box needs a rebuild."""
         for con in self.problem.constraints:
-            if not isinstance(con.body, (Posynomial, PosynomialRatio)):
-                # A CondensedEquality re-condenses BOTH sides every iteration,
-                # so it is not yet expressible with the fixed-projection trick
-                # the cache relies on. Falls back to rebuilding.
+            if not isinstance(con.body, (Posynomial, PosynomialRatio,
+                                        CondensedEquality)):
                 return False
         return isinstance(self.problem.objective, Posynomial)
 
@@ -386,6 +397,22 @@ class SubproblemCache:
                     m.cons.add(e == rhs(i))
                 else:
                     m.cons.add(e <= rhs(i))
+            elif isinstance(body, CondensedEquality):
+                # (a_p - a_q).d = sum_k w^p_k (a^p_k.d) - sum_k w^q_k (a^q_k.d),
+                # so the same fixed projections serve, with one mutable weight
+                # per term on each side and a single constant.
+                ps = [scalar() for _ in body.p.terms]
+                ws = [scalar() for _ in body.q.terms]
+                qc = scalar()
+                b_params.append(ps)
+                q_weights.append(ws)
+                q_consts.append(qc)
+                p_consts.append('eq')
+                expr = qc + sum(ps[k] * projection(a)
+                                for k, (_c, a) in enumerate(body.p.terms)) \
+                          - sum(ws[k] * projection(a)
+                                for k, (_c, a) in enumerate(body.q.terms))
+                m.cons.add(expr == rhs(i))
             else:                                     # PosynomialRatio
                 ps = [scalar() for _ in body.p.terms]
                 ws = [scalar() for _ in body.q.terms]
@@ -430,6 +457,12 @@ class SubproblemCache:
 
         for i, con in enumerate(self.problem.constraints):
             body = con.body
+            if phase.p_consts[i] == 'eq':
+                cp, ap = _agm(body.p, x_k, phase.b_params[i], n)
+                cq, aq = _agm(body.q, x_k, phase.q_weights[i], n)
+                phase.q_consts[i].value = float(
+                    math.log(cp) - math.log(cq) + (ap - aq) @ log_xk)
+                continue
             terms = (body.terms if isinstance(body, Posynomial)
                      else body.p.terms)
             if phase.p_consts[i] is not None:
