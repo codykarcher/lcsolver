@@ -127,6 +127,93 @@ class TestElementwiseConstraints(unittest.TestCase):
 
 
 @unittest.skipIf(not available, 'EDI import failed')
+class TestElementwiseArithmetic(unittest.TestCase):
+    """Building the expressions, not just comparing them.
+
+    Comparisons alone were not enough to retire a single loop: a model writes
+    `V == M * a`, and with arithmetic missing from the component that raised,
+    so `for i in range(N)` had to stay to do the multiplying.
+    """
+
+    def _f(self):
+        f = Formulation()
+        T = f.Variable('T', 300.0, 'K', 'temperature', size=3)
+        M = f.Variable('M', 0.8, '-', 'mach', size=3)
+        R = f.Constant('R', 287.0, 'J/kg/K', 'gas constant')
+        return f, T, M, R
+
+    def test_vector_times_vector(self):
+        f, T, M, R = self._f()
+        self.assertEqual(str((M * T)[0]), 'M[0]*T[0]')
+
+    def test_scalar_constant_times_vector_either_way_round(self):
+        f, T, M, R = self._f()
+        self.assertEqual(str((R * T)[0]), 'R*T[0]')
+        # Pyomo normalises the operand order, so this is the same expression.
+        self.assertEqual(str((T * R)[0]), 'R*T[0]')
+
+    def test_plain_numbers(self):
+        f, T, M, R = self._f()
+        self.assertEqual(str((2 * T)[0]), '2*T[0]')
+        self.assertEqual(str((T / 2.0)[0]), '0.5*T[0]')
+
+    def test_powers(self):
+        f, T, M, R = self._f()
+        self.assertEqual(str((T ** 1.5)[0]), 'T[0]**1.5')
+
+    def test_addition_and_subtraction_and_negation(self):
+        f, T, M, R = self._f()
+        self.assertEqual(str((T + T)[0]), 'T[0] + T[0]')
+        self.assertIn('T[0]', str((T - T)[0]))
+        self.assertIn('T[0]', str((-T)[0]))
+
+    def test_a_whole_physical_relation(self):
+        """The flight-state constraint that motivated this."""
+        f, T, M, R = self._f()
+        a = f.Variable('a', 300.0, 'm/s', 'speed of sound', size=3)
+        cons = a == (R * T) ** 0.5
+        self.assertEqual(str(cons[0]), 'a[0]  ==  (R*T[0])**0.5')
+
+    def test_arithmetic_respects_the_shape_rule(self):
+        f, T, M, R = self._f()
+        M2 = f.Variable('M2', 1.0, 'm', 'M2', size=[2, 3])
+        with self.assertRaises(ShapeMismatch):
+            M2 == T * 2
+
+
+@unittest.skipIf(not available, 'EDI import failed')
+class TestKeywordNamedQuantity(unittest.TestCase):
+    """A quantity may be named for a Python keyword.
+
+    A wing taper ratio is `lambda` in every reference this repository checks
+    against, and the flat name is load-bearing -- the gpkit cross-check maps
+    `\\lambda` onto it. `wing.lambda` is a syntax error, so the trailing
+    underscore PEP 8 prescribes for the collision is accepted instead.
+    """
+
+    def test_a_keyword_name_is_reachable_with_a_trailing_underscore(self):
+        f = Formulation()
+        wing = f.group('wing')
+        taper = wing.Variable('lambda', 0.25, '-', 'taper ratio')
+        self.assertIs(f.wing.lambda_, taper)
+        self.assertEqual(taper.name, 'wing_lambda')
+
+    def test_ordinary_names_are_unaffected(self):
+        f = Formulation()
+        wing = f.group('wing')
+        ar = wing.Variable('AR', 11.0, '-', 'aspect ratio')
+        self.assertIs(f.wing.AR, ar)
+
+    def test_a_typo_still_raises(self):
+        """The rule is narrow: only an actual keyword loses its underscore."""
+        f = Formulation()
+        wing = f.group('wing')
+        wing.Variable('AR', 11.0, '-', 'aspect ratio')
+        with self.assertRaises(AttributeError):
+            f.wing.nonexistent_
+
+
+@unittest.skipIf(not available, 'EDI import failed')
 class TestSlicingAndSequences(unittest.TestCase):
 
     def _f(self, n=4):

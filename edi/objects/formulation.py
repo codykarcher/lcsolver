@@ -15,6 +15,8 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
+import keyword
+
 import numpy as _np
 import pyomo
 import pyomo.environ as pyo
@@ -243,6 +245,14 @@ class Group:
         groups = object.__getattribute__(self, '_groups')
         if item in groups:
             return groups[item]
+        # A quantity may legitimately be named for a Python keyword -- a wing
+        # taper ratio is `lambda` in every reference this repository is
+        # checked against, and the name is load-bearing because the gpkit
+        # cross-check maps `\lambda` onto it. `wing.lambda` is a syntax
+        # error, so the trailing underscore PEP 8 prescribes for exactly this
+        # collision is accepted: `wing.lambda_`.
+        if item.endswith('_') and keyword.iskeyword(item[:-1]):
+            item = item[:-1]
         # Otherwise fall through to the component this group named.
         return getattr(self._formulation, f'{self._prefix}{item}')
 

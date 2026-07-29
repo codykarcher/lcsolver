@@ -217,6 +217,17 @@ def broadcast_cols(vector, n):
     return out.view(VectorArray)
 
 
+def _rhs(other):
+    """The other operand of an arithmetic expression, as numpy can use it.
+
+    A vector becomes its array; a single quantity is left alone so numpy
+    applies it to every element.
+    """
+    if isinstance(other, VectorComponent):
+        return other.as_array()
+    return other
+
+
 class VectorComponent:
     """Mixed into an indexed Pyomo component to make it read like a vector.
 
@@ -296,6 +307,47 @@ class VectorComponent:
         raise TypeError(
             "'>' is a strict inequality, which an optimizer cannot enforce. "
             "Use '>='.")
+
+    # -- arithmetic -------------------------------------------------------
+    # Elementwise, by handing the work to the array. Without these a vector
+    # could be compared but not used: `V == M * a` failed, so a model still
+    # had to spell out `for i in range(N)` to write the very expressions the
+    # comparisons were meant to free it from.
+    def _arith(self, other, op):
+        return op(self.as_array(), _rhs(other))
+
+    def __mul__(self, other):
+        return self._arith(other, lambda a, b: a * b)
+
+    def __rmul__(self, other):
+        return _rhs(other) * self.as_array()
+
+    def __add__(self, other):
+        return self._arith(other, lambda a, b: a + b)
+
+    def __radd__(self, other):
+        return _rhs(other) + self.as_array()
+
+    def __sub__(self, other):
+        return self._arith(other, lambda a, b: a - b)
+
+    def __rsub__(self, other):
+        return _rhs(other) - self.as_array()
+
+    def __truediv__(self, other):
+        return self._arith(other, lambda a, b: a / b)
+
+    def __rtruediv__(self, other):
+        return _rhs(other) / self.as_array()
+
+    def __pow__(self, other):
+        return self._arith(other, lambda a, b: a ** b)
+
+    def __rpow__(self, other):
+        return _rhs(other) ** self.as_array()
+
+    def __neg__(self):
+        return -self.as_array()
 
     # Pyomo keeps components in ComponentMap/ComponentSet, which hash by
     # identity. Defining __eq__ above would otherwise drop __hash__ to None and
