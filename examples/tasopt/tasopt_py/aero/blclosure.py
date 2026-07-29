@@ -1,0 +1,143 @@
+"""Boundary-layer closure relations -- the correlations inside ``blsys.f``.
+
+The functions an integral BL method needs to close its two (or three)
+equations: kinematic shape parameter, energy shape parameter, skin friction
+and dissipation, laminar and turbulent. These are XFOIL's correlations, and
+TASOPT carries them unchanged.
+
+``hkin``
+    Whitfield's kinematic shape parameter, ``Hk`` from ``H`` and ``M^2``.
+``hsl`` / ``hst``
+    Energy shape parameter ``H*``, laminar (Falkner-Skan) and turbulent.
+``cfl`` / ``cft``
+    Skin friction, Falkner-Skan and Coles.
+``dil`` / ``dilw`` / ``dit``
+    Dissipation ``2 C_D/H*``: laminar, laminar-wake, turbulent.
+``hct``
+    Density shape parameter.
+
+Branches worth knowing about
+----------------------------
+``hst`` has an attached branch and a separated one, meeting at
+``Ho = 3 + 400/Rt`` (floored at ``Ho = 4`` below ``Rt = 400``), and it clamps
+the Reynolds number at ``Rtz >= 200`` — a note in the source dates that limit
+to 12/4/94. It also carries an older Swafford-profile correlation, commented
+out, replaced in November 1991; only the newer arctan-plus-Schlichting form is
+live.
+
+``dilw`` is the wake form: it calls ``hsl`` with ``Msq`` forced to **zero**
+regardless of the actual Mach number, then builds the dissipation from a
+different constant (1.10) than the attached-flow laminar branch.
+
+``cft`` clamps ``log(Rt/Fc)`` at 3.0 and the exponential argument at -20,
+which is what keeps it finite at very low Reynolds number and very high shape
+parameter.
+
+Only values are returned. The Fortran returns each derivative alongside, for
+its analytic Jacobian; this port differentiates numerically where it needs to,
+as in :mod:`tasopt_py.engine.tfoper`.
+
+Verified against the compiled Fortran; see ``tests/test_blclosure.py``.
+"""
+from __future__ import annotations
+
+import math
+
+__all__ = ["hkin", "hsl", "hst", "cfl", "cft", "dil", "dilw", "dit", "hct",
+           "HSMIN", "DHSINF"]
+
+HSMIN = 1.500
+DHSINF = 0.015
+GAM = 1.4
+
+
+def hkin(h: float, msq: float) -> float:
+    """Kinematic shape parameter, from Whitfield. Assumes air."""
+    return (h - 0.29 * msq) / (1.0 + 0.113 * msq)
+
+
+def dil(hk: float, rt: float) -> float:
+    """Laminar dissipation ``2 C_D/H*``, from Falkner-Skan."""
+    if hk < 4.0:
+        return (0.00205 * (4.0 - hk) ** 5.5 + 0.207) / rt
+    hkb = hk - 4.0
+    den = 1.0 + 0.02 * hkb ** 2
+    return (-0.0016 * hkb ** 2 / den + 0.207) / rt
+
+
+def dilw(hk: float, rt: float) -> float:
+    """Laminar *wake* dissipation.
+
+    Note it evaluates ``hsl`` at ``Msq = 0`` whatever the real Mach number --
+    the source sets ``MSQ = 0.`` explicitly before the call.
+    """
+    hs = hsl(hk, rt, 0.0)
+    rcd = 1.10 * (1.0 - 1.0 / hk) ** 2 / hk
+    return 2.0 * rcd / (hs * rt)
+
+
+def hsl(hk: float, rt: float, msq: float) -> float:
+    """Laminar energy shape parameter ``H*``."""
+    if hk < 4.35:
+        tmp = hk - 4.35
+        return (0.0111 * tmp ** 2 / (hk + 1.0)
+                - 0.0278 * tmp ** 3 / (hk + 1.0) + 1.528
+                - 0.0002 * (tmp * hk) ** 2)
+    return 0.015 * (hk - 4.35) ** 2 / hk + 1.528
+
+
+def cfl(hk: float, rt: float, msq: float) -> float:
+    """Laminar skin friction, from Falkner-Skan."""
+    if hk < 5.5:
+        tmp = (5.5 - hk) ** 3 / (hk + 1.0)
+        return (0.0727 * tmp - 0.07) / rt
+    tmp = 1.0 - 1.0 / (hk - 4.5)
+    return (0.015 * tmp ** 2 - 0.07) / rt
+
+
+def dit(hs: float, us: float, cf: float, st: float) -> float:
+    """Turbulent dissipation ``2 C_D/H*``."""
+    return (0.5 * cf * us + st * st * (1.0 - us)) * 2.0 / hs
+
+
+def hst(hk: float, rt: float, msq: float) -> float:
+    """Turbulent energy shape parameter ``H*``.
+
+    Two branches meeting at ``Ho``, with the Reynolds number floored at 200.
+    """
+    ho = 3.0 + 400.0 / rt if rt > 400.0 else 4.0
+    # Rtheta dependence limited below 200 -- source note dated 12/4/94.
+    rtz = rt if rt > 200.0 else 200.0
+
+    if hk < ho:
+        # Attached: arctan(y+) plus Schlichting profiles, Nov 1991. The older
+        # Swafford correlation is still in the source, commented out.
+        hr = (ho - hk) / (ho - 1.0)
+        hs = ((2.0 - HSMIN - 4.0 / rtz) * hr ** 2 * 1.5 / (hk + 0.5)
+              + HSMIN + 4.0 / rtz)
+    else:
+        grt = math.log(rtz)
+        hdif = hk - ho
+        rtmp = hk - ho + 4.0 / grt
+        htmp = 0.007 * grt / rtmp ** 2 + DHSINF / hk
+        hs = hdif ** 2 * htmp + HSMIN + 4.0 / rtz
+
+    fm = 1.0 + 0.014 * msq
+    return (hs + 0.028 * msq) / fm
+
+
+def cft(hk: float, rt: float, msq: float, cffac: float = 1.0) -> float:
+    """Turbulent skin friction, from Coles."""
+    gmi = GAM - 1.0
+    fc = math.sqrt(1.0 + 0.5 * gmi * msq)
+    grt = max(math.log(rt / fc), 3.0)
+    gex = -1.74 - 0.31 * hk
+    arg = max(-20.0, -1.33 * hk)
+    thk = math.tanh(4.0 - hk / 0.875)
+    cfo = cffac * 0.3 * math.exp(arg) * (grt / 2.3026) ** gex
+    return (cfo + 1.1e-4 * (thk - 1.0)) / fc
+
+
+def hct(hk: float, msq: float) -> float:
+    """Density shape parameter."""
+    return msq * (0.064 / (hk - 0.8) + 0.251)
