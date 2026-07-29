@@ -137,6 +137,19 @@ class SIAOptions:
         self.ratio_expand = 0.75
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
+        self.condense_numerator = False
+        # Condense the NUMERATOR of p/q <= 1 as well, making the constraint a
+        # monomial -- linear in log space. This is what PCCP does for an
+        # equality, and it is the whole reason PCCP takes larger steps: since
+        # p_hat <= p, the condensed constraint is EASIER than the true one, so
+        # the sub-problem's feasible set is no longer a SUBSET of the true one
+        # and an iterate may leave it. The feasible-iterate and monotone-descent
+        # guarantees go with it.
+        #
+        # What survives is tangency: p_hat matches p in value and gradient at
+        # x_k, so the sub-problem's duals still certify the ORIGINAL problem and
+        # the KKT termination test remains honest. That is the trade this flag
+        # offers -- PCCP's step length with SIA's stopping rule.
         self.cache_subproblem = True   # build each phase's Pyomo model once and
                                        # re-point it; see SubproblemCache. Only
                                        # applies when every body is a Posynomial
@@ -335,7 +348,8 @@ class SubproblemCache:
 
         # --- constraints ---------------------------------------------------
         m.cons = pyo.ConstraintList()
-        b_params, q_weights, q_consts = [], [], []
+        b_params, q_weights, q_consts, p_consts = [], [], [], []
+        condense_num = getattr(self.options, 'condense_numerator', False)
         for i, con in enumerate(cons):
             body, op = con.body, con.operator
             if isinstance(body, Posynomial):
@@ -343,6 +357,7 @@ class SubproblemCache:
                 b_params.append(ps)
                 q_weights.append(None)
                 q_consts.append(None)
+                p_consts.append(None)
                 e = logsumexp(body.terms, ps)
                 if body.is_monomial and op == '==':
                     m.cons.add(e == rhs(i))
@@ -359,11 +374,23 @@ class SubproblemCache:
                 log_qhat = qc + sum(
                     ws[k] * projection(a)
                     for k, (_c, a) in enumerate(body.q.terms))
-                m.cons.add(logsumexp(body.p.terms, ps) - log_qhat <= rhs(i))
+                if condense_num:
+                    # The numerator condenses by the identical device, so it
+                    # reuses the same fixed projections with its own weights.
+                    pc = scalar()
+                    p_consts.append(pc)
+                    log_phat = pc + sum(
+                        ps[k] * projection(a)
+                        for k, (_c, a) in enumerate(body.p.terms))
+                    m.cons.add(log_phat - log_qhat <= rhs(i))
+                else:
+                    p_consts.append(None)
+                    m.cons.add(logsumexp(body.p.terms, ps) - log_qhat <= rhs(i))
 
         return _CachedPhase(model=m, obj_expr=obj_expr, obj_b=obj_b,
                             b_params=b_params, q_weights=q_weights,
-                            q_consts=q_consts, slacked=slacked,
+                            q_consts=q_consts, p_consts=p_consts,
+                            slacked=slacked,
                             minimize_violation=minimize_violation)
 
     # -- per-iteration update ----------------------------------------------
@@ -382,8 +409,22 @@ class SubproblemCache:
             body = con.body
             terms = (body.terms if isinstance(body, Posynomial)
                      else body.p.terms)
-            for k, (c, a) in enumerate(terms):
-                phase.b_params[i][k].value = float(math.log(c) + a @ log_xk)
+            if phase.p_consts[i] is not None:
+                # Condensed numerator: b_params hold AGM WEIGHTS, not the
+                # log-constants they hold in the exact case.
+                pv = body.p(x_k)
+                const, ap = 0.0, np.zeros(n)
+                for k, (c, a) in enumerate(terms):
+                    w = c * np.prod(x_k ** a) / pv
+                    phase.b_params[i][k].value = float(w)
+                    if w > 0:
+                        const += w * math.log(c / w)
+                        ap = ap + w * a
+                phase.p_consts[i].value = float(const + ap @ log_xk)
+            else:
+                for k, (c, a) in enumerate(terms):
+                    phase.b_params[i][k].value = float(
+                        math.log(c) + a @ log_xk)
             if phase.q_weights[i] is None:
                 continue
             # AGM weights, and the constant part of the condensed monomial.
@@ -425,7 +466,7 @@ class _CachedPhase:
     """Handles into one built phase model."""
 
     __slots__ = ('model', 'obj_expr', 'obj_b', 'b_params', 'q_weights',
-                 'q_consts', 'slacked', 'minimize_violation')
+                 'q_consts', 'p_consts', 'slacked', 'minimize_violation')
 
     def __init__(self, **kw):
         for k, v in kw.items():
@@ -534,7 +575,13 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             cq, aq = body.condensed_q(x_k)
             log_qhat = math.log(cq) + sum(aq[j] * (m.d[j] + log_xk[j])
                                           for j in range(n))
-            m.cons.add(lse(body.p.terms) - log_qhat <= rhs(i))
+            if options.condense_numerator:
+                cp, ap = body.condensed_p(x_k)
+                log_phat = math.log(cp) + sum(ap[j] * (m.d[j] + log_xk[j])
+                                              for j in range(n))
+                m.cons.add(log_phat - log_qhat <= rhs(i))
+            else:
+                m.cons.add(lse(body.p.terms) - log_qhat <= rhs(i))
         else:
             # Black box: value and gradient only, so no conservative model
             # exists. Linearize, and let the trust region below carry it.

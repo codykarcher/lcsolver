@@ -265,16 +265,44 @@ class PosynomialRatio:
 
     def condensed_q(self, x_k):
         """AGM monomial under-estimator of q at x_k, as ``(coeff, exponents)``."""
-        x_k = np.asarray(x_k, dtype=float)
-        qv = self.q(x_k)
-        coeff, expo = 1.0, np.zeros(self.n)
-        for c, a in self.q.terms:
-            w = c * np.prod(x_k ** a) / qv          # AGM weight, sums to 1
-            if w <= 0:
-                continue
-            coeff *= (c / w) ** w
-            expo = expo + w * a
-        return coeff, expo
+        return condense(self.q, x_k, self.n)
+
+    def condensed_p(self, x_k):
+        """AGM monomial under-estimator of the NUMERATOR.
+
+        Condensing ``p`` as well turns ``p/q <= 1`` into a monomial inequality,
+        linear in log space. It is what PCCP does for an equality constraint,
+        and it is **not** conservative: since ``p_hat <= p``, the condensed
+        constraint is EASIER than the true one, so the sub-problem's feasible
+        set is no longer a subset of the true one and an iterate can leave it.
+
+        What survives is tangency -- ``p_hat`` matches ``p`` in value and
+        gradient at ``x_k`` -- which is what licenses a KKT certificate built
+        from the sub-problem's duals. So this trades the feasible-iterate
+        guarantee for a larger step while keeping the termination test honest.
+        """
+        return condense(self.p, x_k, self.n)
+
+
+def condense(posy, x_k, n=None):
+    """AGM monomial under-estimator of a posynomial at ``x_k``.
+
+    ``q_hat(x) = prod_i (u_i(x)/w_i)**w_i`` with ``w_i = u_i(x_k)/q(x_k)``.
+    By the arithmetic-geometric-mean inequality ``q_hat <= q`` everywhere, with
+    equality **and matching gradient** at ``x_k``. Returned as
+    ``(coeff, exponents)``.
+    """
+    x_k = np.asarray(x_k, dtype=float)
+    n = n if n is not None else posy.n
+    qv = posy(x_k)
+    coeff, expo = 1.0, np.zeros(n)
+    for c, a in posy.terms:
+        w = c * np.prod(x_k ** a) / qv              # AGM weight, sums to 1
+        if w <= 0:
+            continue
+        coeff *= (c / w) ** w
+        expo = expo + w * a
+    return coeff, expo
 
 
 class Constraint:
