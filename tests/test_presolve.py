@@ -1354,3 +1354,27 @@ def test_presolve_report_agrees_with_reduce_columns():
     _small, removed = reduce_columns(st)
     acted_on = {r.name for r in removed if r.reason == 'output'}
     assert reported == acted_on
+
+
+def test_a_disconnected_variable_keeps_the_guess_it_was_given():
+    """Nothing constrains it, so the author's guess is the only information.
+
+    EDI requires a guess so that it means something. A variable in no
+    constraint is where it means the most -- there is nothing else to go on --
+    and reporting a default of 1.0 instead throws away the one number supplied.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    orphan = f.Variable('orphan', 5.0, '', 'in no constraint',
+                        bounds=[1e-30, 1e30])
+    f.Objective(x)
+    f.Constraint(x >= 2.0)
+
+    st = _detect(f)
+    names = [str(v) for v in st['variables']]
+    res = solve_sia(st)
+
+    assert [r.reason for r in res.removed if r.name == 'orphan'] == \
+        ['disconnected']
+    assert res.x[names.index('orphan')] == pytest.approx(5.0, rel=1e-9)
+    assert res.x[names.index('x')] == pytest.approx(2.0, rel=1e-5)

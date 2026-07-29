@@ -1076,6 +1076,20 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
             "reduce_columns needs structures['bounds']; run structure_detector "
             "with bounds_as_rows=False (and fold_singleton_rows) first")
 
+    if guess is None:
+        # The variables' current values ARE the author's guesses. For a
+        # DISCONNECTED variable that is the only information anyone has about
+        # it -- nothing in the model constrains it, so the guess is the answer
+        # -- and reporting 1.0 instead silently discards the one number the
+        # author supplied. EDI requires a guess precisely so it means
+        # something; this is where it means the most.
+        try:
+            import pyomo.environ as pyo
+            guess = [float(pyo.value(v)) for v in structures.get("variables")
+                     or []]
+        except Exception:
+            guess = None
+
     rows, operators, key = _rows_of(structures)
     names = [str(v) for v in structures.get("variables", [])]
     bounds = list(structures["bounds"])

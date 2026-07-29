@@ -214,6 +214,16 @@ class Formulation(ConcreteModel):
         a builder can stop threading a prefix string through its signature.
         """
         if name not in self._groups:
+            # A component of the same name wins attribute lookup, since Pyomo
+            # resolves it before __getattr__ is ever reached -- the group would
+            # be created, then be permanently unreachable as `f.<name>`. Say so
+            # rather than leaving a shadowed object behind.
+            if self.component(name) is not None:
+                raise ValueError(
+                    f"cannot create a group named {name!r}: this formulation "
+                    f"already has a component called {name!r}, and it would "
+                    f"shadow the group -- `f.{name}` would return the "
+                    "component. Choose a different group name.")
             self._groups[name] = Group(self, name, f'{name}_')
         return self._groups[name]
 

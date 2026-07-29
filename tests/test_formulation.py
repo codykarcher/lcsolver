@@ -1020,3 +1020,25 @@ class TestGroupsAndGuesses(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             f.Variable('x', description='no units')
         self.assertIn('units', str(ctx.exception))
+
+    def test_a_group_may_not_shadow_a_component(self):
+        """Pyomo resolves components before __getattr__, so the group would be
+        created and then be permanently unreachable as `f.<name>`."""
+        f = Formulation()
+        f.Variable('wing', 1.0, '-', 'a variable called wing')
+        with self.assertRaises(ValueError) as ctx:
+            f.group('wing')
+        self.assertIn('shadow', str(ctx.exception))
+
+    def test_plain_variables_are_unaffected_by_groups(self):
+        """Groups are additive: the old way keeps working, and a grouped
+        variable is an ordinary flat component reachable either way."""
+        f = Formulation()
+        plain = f.Variable('plain', 2.0, '-', 'made the old way')
+        ar = f.group('wing').Variable('AR', 11.0, '-', 'made via a group')
+
+        self.assertIs(f.plain, plain)
+        self.assertIs(f.wing_AR, ar)          # flat component name
+        self.assertIs(f.wing.AR, ar)          # and through the group
+        self.assertEqual({v.name for v in f.get_variables()},
+                         {'plain', 'wing_AR'})
