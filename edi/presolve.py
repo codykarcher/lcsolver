@@ -68,6 +68,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "cancellation_report", "fold_singleton_rows",
            "reduce_columns", "restore_columns", "Removed",
            "propagate_bounds", "eliminate_monomial_equalities",
+           "presolve", "PresolveLog",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -1224,6 +1225,125 @@ def cancellation_report(structures, x, tol=1e-6, names=None):
 
     out.sort(key=lambda t: t[2])
     return out
+
+
+class PresolveLog:
+    """A record of what presolve did, and the means to undo it.
+
+    Passes compose awkwardly on their own: each one renumbers the columns it
+    leaves behind, so a ``Removed.index`` is relative to the structure as it
+    stood when that pass ran, and concatenating two passes' lists silently
+    mixes two index spaces. This keeps them separate and unwinds them in
+    reverse, which needs no remapping at all -- each list is applied in exactly
+    the space it was recorded in.
+
+    ``print(log)`` gives a human-readable account. It is off by default: the
+    reductions are exact, so most of the time there is nothing an engineer
+    needs to do about them.
+    """
+
+    __slots__ = ('steps', 'names', 'infeasible')
+
+    def __init__(self, names=None):
+        self.steps = []          # (label, removed | None, counts dict)
+        self.names = list(names or [])
+        self.infeasible = None
+
+    def record(self, label, removed=None, **counts):
+        self.steps.append((label, removed, counts))
+
+    @property
+    def removed_variables(self):
+        """Every variable taken out, innermost pass last."""
+        return [r for _l, rem, _c in self.steps for r in (rem or [])]
+
+    def restore(self, x):
+        """Rebuild the full-length solution, undoing each pass in reverse."""
+        for _label, removed, _counts in reversed(self.steps):
+            if removed:
+                x = restore_columns(removed, x)
+        return x
+
+    def __str__(self):
+        if self.infeasible:
+            return f"presolve: INFEASIBLE -- {self.infeasible}"
+        if not self.steps:
+            return "presolve: nothing to do"
+        L = ["presolve:"]
+        total_vars = 0
+        for label, removed, counts in self.steps:
+            bits = [f"{k.replace('_', ' ')} {v}"
+                    for k, v in counts.items() if v]
+            if removed:
+                by = collections.Counter(r.reason for r in removed)
+                bits.append("removed " + ", ".join(
+                    f"{n} {reason}" for reason, n in sorted(by.items())))
+                total_vars += len(removed)
+            if bits:
+                L.append(f"  {label}: " + "; ".join(bits))
+        if total_vars:
+            L.append(f"  {total_vars} variables removed in total; each is "
+                     "recovered exactly and reported with the solution")
+        return "\n".join(L)
+
+    def detail(self, limit=40):
+        """The per-variable account, for when the summary is not enough."""
+        L = [str(self)]
+        for label, removed, _c in self.steps:
+            if not removed:
+                continue
+            L.append(f"  {label}:")
+            for r in removed[:limit]:
+                v = "" if r.value is None else f" = {r.value:.6g}"
+                L.append(f"    {r.name}{v}   [{r.reason}]")
+            if len(removed) > limit:
+                L.append(f"    ... and {len(removed) - limit} more")
+        return "\n".join(L)
+
+
+def presolve(structures, fold=True, eliminate=True, propagate=False,
+             reduce=True, verbose=False):
+    """Run the presolve passes in an order that is safe to compose.
+
+    The order is not a preference, it is a constraint, and two interactions
+    force it:
+
+    * **reduce before propagate.** Output-only detection requires a *vacuous*
+      bound in the relaxing direction, and propagation fills exactly those in.
+      Propagating first costs real reductions -- 40 variables on SPaircraft.
+    * **eliminate before propagate**, for the same reason: elimination only
+      takes variables whose declared bounds are vacuous.
+
+    ``propagate`` is therefore off by default. It tightens bounds, which is
+    useful as a diagnostic and for a solver that exploits them, but on
+    SPaircraft it buys no time once elimination has run and it blocks other
+    reductions if run early.
+
+    Returns ``(structures, log)``. ``log.restore(x)`` rebuilds the full-length
+    solution and ``print(log)`` says what happened.
+    """
+    log = PresolveLog([str(v) for v in structures.get("variables", [])])
+    try:
+        if fold:
+            before = (structures.get("info") or {}).get("N_cons_total")
+            structures = fold_singleton_rows(structures)
+            after = structures["info"]["N_cons_total"]
+            log.record("bounds", rows_folded=(before - after) if before else 0)
+        if reduce:
+            structures, removed = reduce_columns(structures)
+            log.record("columns", removed=removed)
+        if eliminate:
+            structures, removed = eliminate_monomial_equalities(structures)
+            log.record("monomial equalities", removed=removed)
+        if propagate:
+            structures, n = propagate_bounds(structures)
+            log.record("bound propagation", bounds_tightened=n)
+    except InfeasibleProblem as exc:
+        log.infeasible = str(exc)
+        raise
+    if verbose:
+        print(log)
+    return structures, log
 
 
 def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,

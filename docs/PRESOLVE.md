@@ -368,6 +368,53 @@ the reduced problem exactly right — objective correct to 12 figures — while
 returning recovered values off by 4.3e+03 relative. A single elimination cannot
 expose it; it takes a chain.
 
+## Running it: `presolve()` and the log
+
+```python
+from edi.presolve import presolve
+
+reduced, log = presolve(structures)      # order is fixed and safe
+print(log)                               # optional; off by default
+x_full = log.restore(x_reduced)          # every variable back, exactly
+```
+
+On SPaircraft:
+
+```
+presolve:
+  bounds: rows folded 2511
+  columns: removed 52 fixed, 52 output
+  monomial equalities: removed 562 substituted
+  666 variables removed in total; each is recovered exactly and reported with the solution
+```
+
+`log.detail()` gives the per-variable account when the summary is not enough.
+Nothing prints unless asked: the reductions are exact and every removed
+variable comes back in the solution, so there is usually nothing for an
+engineer to act on. The exception is infeasibility, which raises.
+
+**The pass order is a constraint, not a preference.** Two interactions force
+it:
+
+* **reduce before propagate** — output-only detection needs a *vacuous* bound
+  in the relaxing direction, and propagation fills exactly those in.
+  Propagating first costs 40 variables on SPaircraft.
+* **eliminate before propagate** — for the same reason: elimination only takes
+  variables whose declared bounds are vacuous.
+
+`propagate` is therefore off by default. It is valuable as a diagnostic and for
+a solver that exploits bounds, but it buys no time once elimination has run and
+blocks other reductions if run early.
+
+Each pass renumbers the columns it leaves, so a `Removed.index` is meaningful
+only in the space where it was recorded. `PresolveLog` keeps the passes
+separate and unwinds them in reverse, which needs no index remapping at all.
+Concatenating two passes' lists would silently mix two index spaces.
+
+Measured end to end on SPaircraft: 1172 variables and 3728 constraints down to
+**506 and 603**, solve time **14.8 s to 9.1 s**, 143 iterations to 122, at an
+identical objective of 95559.91 and a full-pipeline round-trip of 6.0e-10.
+
 ## Sensitivities across a reduction
 
 Sensitivities to `Constant`s survive every reduction here, including monomial

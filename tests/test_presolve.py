@@ -28,6 +28,7 @@ from edi.presolve import (
     degeneracy_report,
     eliminate_monomial_equalities,
     fold_singleton_rows,
+    presolve,
     presolve_report,
     propagate_bounds,
     reduce_columns,
@@ -1003,3 +1004,76 @@ def test_sensitivities_survive_monomial_elimination():
 
     assert plain == pytest.approx(-0.5, abs=1e-4)
     assert reduced == pytest.approx(plain, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# the composed pipeline and its log
+# ---------------------------------------------------------------------------
+def _pipeline_model():
+    """A model with something for each pass to find."""
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])   # eliminable
+    k = f.Variable('k', 3.0, '', 'k', bounds=[3.0, 3.0])      # fixed
+    q = f.Variable('q', 1.0, '', 'q', bounds=[1e-30, 1e30])   # disconnected
+    f.Objective(x)
+    f.Constraint(z == 3.0 * x)
+    f.Constraint(x * z >= 12.0)
+    f.Constraint(x >= k * 0.5)
+    f.Constraint(q >= 1.0)
+    return f
+
+
+def test_the_pipeline_composes_and_round_trips():
+    """Each pass renumbers, so restore must unwind them in reverse."""
+    st = _detect(_pipeline_model(), bounds_as_rows=False)
+    names = [str(v) for v in st['variables']]
+    small, log = presolve(st)
+
+    assert len(small['variables']) < len(names)
+    removed = log.removed_variables
+    assert {r.name for r in removed} >= {'z', 'k', 'q'}
+
+    res = solve_sia(small, presolve=False)
+    full = log.restore(res.x)
+    assert len(full) == len(names)
+    assert res.objective == pytest.approx(2.0, rel=1e-5)
+
+    xv = full[names.index('x')]
+    assert xv == pytest.approx(2.0, rel=1e-4)
+    assert full[names.index('z')] == pytest.approx(3.0 * xv, rel=1e-4)
+    assert full[names.index('k')] == pytest.approx(3.0, rel=1e-9)
+
+
+def test_the_log_reports_what_it_did():
+    st = _detect(_pipeline_model(), bounds_as_rows=False)
+    _small, log = presolve(st)
+    text = str(log)
+
+    assert 'presolve:' in text
+    assert 'removed' in text
+    assert 'variables removed in total' in text
+    # the per-variable account names names
+    assert 'z' in log.detail()
+
+
+def test_the_log_is_quiet_when_there_is_nothing_to_do():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(x + y)
+    f.Constraint(x * y >= 1.0)
+    _small, log = presolve(_detect(f, bounds_as_rows=False))
+    assert 'INFEASIBLE' not in str(log)
+
+
+def test_the_log_records_infeasibility():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(y)
+    f.Constraint(x >= 5.0)
+    f.Constraint(x <= 2.0)
+    f.Constraint(x * y >= 1.0)
+    with pytest.raises(InfeasibleProblem):
+        presolve(_detect(f, bounds_as_rows=False))
