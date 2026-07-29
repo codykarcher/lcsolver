@@ -500,6 +500,33 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             res.iterations = k
             break
 
+        # --- KKT test on the ORIGINAL problem, AT THE POINT THE MULTIPLIERS
+        # --- BELONG TO -------------------------------------------------------
+        # The multipliers just returned are the sub-problem's at x, so the
+        # residual has to be evaluated at x too. Testing at x_new instead
+        # pairs gradients from one point with multipliers from another. That
+        # is asymptotically harmless when the step is small, and badly wrong
+        # when it is not -- SPaircraft carries degenerate variables (a
+        # structural path that sizes nothing in the converged design, pinned
+        # only by the 1e-30..1e30 box) which move tens of log-units per
+        # iteration while contributing nothing. Pairing across that gap left
+        # stationarity stuck near 0.57 no matter how converged the meaningful
+        # variables were.
+        stat, viol, comp = _kkt(problem, x, mults)
+        if options.verbose:
+            print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
+                  f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
+                  f"viol={viol:.3e}  comp={comp:.3e}  tau={tau:.1e}")
+        if (viol <= options.feasibility_tolerance
+                and stat <= options.stationarity_tolerance
+                and comp <= options.complementarity_tolerance):
+            res.converged = True
+            res.status = ("converged: KKT residual on the original problem "
+                          "within tolerance")
+            res.x, res.objective = x, problem.objective_value(x)
+            res.iterations = k + 1
+            break
+
         f_old = problem.objective_value(x)
         x_new = x * np.exp(d)
 
@@ -554,22 +581,6 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                       max(tau * options.tau_factor,
                           options.tau_factor * lam_max))
 
-        # --- KKT test on the ORIGINAL problem -----------------------------
-        stat, viol, comp = _kkt(problem, x, mults)
-        if options.verbose:
-            print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
-                  f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
-                  f"viol={viol:.3e}  comp={comp:.3e}  tau={tau:.1e}")
-
-        if (viol <= options.feasibility_tolerance
-                and stat <= options.stationarity_tolerance
-                and comp <= options.complementarity_tolerance):
-            res.converged = True
-            res.status = ("converged: KKT residual on the original problem "
-                          "within tolerance")
-            res.x, res.objective = x, problem.objective_value(x)
-            res.iterations = k + 1
-            break
     else:
         res.status = (f"did not converge within {options.max_iterations} "
                       "iterations")
