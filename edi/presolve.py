@@ -103,6 +103,25 @@ def _check_width(structures, n, who):
             "renumbered rows and variables differently.")
 
 
+def _bound_from_term(term, j, op):
+    """The numeric bound a single-variable monomial term imposes on ``x_j``.
+
+    The term is ``c * x_j**a`` compared against 1, so ``x_j**a <= 1/c`` and the
+    bound is ``(1/c)**(1/a)`` -- an upper bound when ``a > 0``, a lower one when
+    ``a < 0``, and both when the operator is an equality.
+    """
+    a = term.exponents.get(j, 0.0)
+    if term.coeff <= 0.0 or a == 0.0:
+        return None, None
+    try:
+        val = (1.0 / term.coeff) ** (1.0 / a)
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return None, None
+    if op == "==":
+        return val, val
+    return (None, val) if a > 0 else (val, None)
+
+
 def _bound_from_row(coeff, expo, j, op):
     """Recover the numeric bound a single-variable monomial row imposes.
 
@@ -226,23 +245,15 @@ def _rows_of(structures):
 def presolve_report(structures, names=None) -> PresolveReport:
     """Run the structural checks. Nothing is solved and nothing is modified."""
     rows, operators, _ = _rows_of(structures)
+    st = as_detected(structures)
     if names is None:
         names = [str(v) for v in structures.get("variables", [])]
 
-    # Group rows by constraint, splitting numerator from denominator. Index 0
-    # is the objective and is excluded -- being in the objective is not a
-    # constraint, though it does mean the variable is not free.
-    numer, denom = collections.defaultdict(list), collections.defaultdict(list)
-    width = 0
-    for r in rows:
-        idx = int(r[0])
-        coeff, expo = float(r[1]), [float(e) for e in r[2:]]
-        width = max(width, len(expo))
-        (numer if idx >= 0 else denom)[
-            idx if idx >= 0 else -idx - 1].append((coeff, expo))
-
-    n = max(width, len(names))
-    con_idx = sorted(k for k in set(numer) | set(denom) if k != 0)
+    # Index 0 is the objective and is excluded from the constraint scan --
+    # being in the objective is not a constraint, though it does mean the
+    # variable is not free.
+    n = max([len(r) - 2 for r in rows] + [len(names)])
+    con_idx = st.constraint_indices
 
     rep = PresolveReport(n_variables=n, n_rows=len(con_idx),
                          names=list(names))
@@ -273,38 +284,35 @@ def presolve_report(structures, names=None) -> PresolveReport:
 
     # Minimising c * prod x^a pushes a positive-exponent variable down, so the
     # objective bounds it above just as a constraint would.
-    for _, expo in numer.get(0, []):
-        for j, e in enumerate(expo):
+    for t in st.terms(0):
+        for j, e in t.exponents.items():
             if e > 1e-12:
                 upper[j] = True
             elif e < -1e-12:
                 lower[j] = True
 
     for i in con_idx:
-        op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+        op = st.operator(i)
+        terms = st.terms(i)
         # numerator counts as written; denominator counts negated, since
         # growing the denominator relaxes p/q <= 1
-        signed = ([(c, expo, +1.0) for c, expo in numer.get(i, [])]
-                  + [(c, expo, -1.0) for c, expo in denom.get(i, [])])
+        has_den = any(t.denominator for t in terms)
         touched = set()
-        for _, expo, _s in signed:
-            touched |= {j for j, e in enumerate(expo) if abs(e) > 1e-12}
+        for t in terms:
+            touched |= t.variables
 
-        n_terms = len(signed)
-        is_bound = (len(touched) == 1 and n_terms == 1 and not denom.get(i))
+        is_bound = (len(touched) == 1 and len(terms) == 1 and not has_den)
 
         if is_bound:
             # Record the value rather than the fact. Whether it bounds anything
             # is decided below, once we can see how big it is.
             j = next(iter(touched))
-            coeff, expo = numer[i][0]
-            note_bound(j, *_bound_from_row(coeff, expo, j, op))
+            note_bound(j, *_bound_from_term(terms[0], j, op))
             rep.singleton_rows.append(i)
         else:
-            for coeff, expo, sgn in signed:
-                for j, e in enumerate(expo):
-                    if abs(e) <= 1e-12:
-                        continue
+            for t in terms:
+                sgn = -1.0 if t.denominator else 1.0
+                for j, e in t.exponents.items():
                     if op == "==":
                         upper[j] = lower[j] = True
                     elif sgn * e > 0:
@@ -356,14 +364,9 @@ def presolve_report(structures, names=None) -> PresolveReport:
     # Output-only variables need the terms grouped per constraint, and the
     # bounds separated, so they are only reported when that is available.
     if structures.get("bounds") is not None:
-        obj_vars = {j for _c, expo in numer.get(0, [])
-                    for j, e in enumerate(expo) if abs(e) > 1e-12}
-        try:
-            outs = _output_only(numer, denom, con_idx, operators,
-                                structures["bounds"], obj_vars, n)
-            rep.output_columns = [nm(j) for j, _i in outs]
-        except Exception:
-            pass
+        obj_vars = {j for t in st.terms(0) for j in t.variables}
+        outs = _output_only(st, con_idx, structures["bounds"], obj_vars, n)
+        rep.output_columns = [nm(j) for j, _i in outs]
     return rep
 
 
@@ -535,7 +538,7 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
     return math.exp(0.5 * (a + b))
 
 
-def _output_only(numer, denom, con_idx, operators, bounds, in_objective, n):
+def _output_only(st, con_idx, bounds, in_objective, n):
     """Variables that are computed but never fed back, peeled in rounds.
 
     A variable is **output-only** when it appears in exactly one constraint,
@@ -559,29 +562,26 @@ def _output_only(numer, denom, con_idx, operators, bounds, in_objective, n):
     while True:
         rows = collections.defaultdict(set)
         for i in alive:
-            for terms in (numer.get(i, []), denom.get(i, [])):
-                for _c, a in terms:
-                    for j, e in enumerate(a):
-                        if abs(e) > 1e-12:
-                            rows[j].add(i)
+            for t in st.terms(i):
+                for j in t.variables:
+                    rows[j].add(i)
 
         progress = False
         for j in range(n):
             if j in taken or j in in_objective or len(rows.get(j, ())) != 1:
                 continue
             i = next(iter(rows[j]))
-            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+            op = st.operator(i)
 
             # Monotone in x_j? Numerator exponents one sign, denominator the
             # other. Mixed signs mean moving x_j can tighten and loosen, so the
             # constraint really does pin it.
             signs = set()
-            for _c, a in numer.get(i, []):
-                if abs(a[j] if j < len(a) else 0.0) > 1e-12:
-                    signs.add(a[j] > 0)
-            for _c, a in denom.get(i, []):
-                if abs(a[j] if j < len(a) else 0.0) > 1e-12:
-                    signs.add(not (a[j] > 0))
+            for t in st.terms(i):
+                e = t.exponents.get(j)
+                if e is None or abs(e) <= 1e-12:
+                    continue
+                signs.add((e > 0) != t.denominator)
             if len(signs) != 1:
                 continue
             grows_tighter = signs.pop()
@@ -1042,7 +1042,7 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
             idx if idx >= 0 else -idx - 1].append((float(r[1]), expo))
     con_idx = sorted(k for k in set(numer) | set(denom) if k != 0)
 
-    outputs = (_output_only(numer, denom, con_idx, operators, bounds,
+    outputs = (_output_only(as_detected(structures), con_idx, bounds,
                             in_objective, n)
                if eliminate_outputs else [])
     out_vars = {j for j, _i in outputs}
@@ -1209,42 +1209,32 @@ def cancellation_report(structures, x, tol=1e-6, names=None):
     import numpy as np
 
     x = np.asarray(x, dtype=float)
-    rows, _operators, _key = _rows_of(structures)
+    st = as_detected(structures)
     if names is None:
         names = [str(v) for v in structures.get("variables", [])]
-
-    numer, denom = collections.defaultdict(list), collections.defaultdict(list)
-    for r in rows:
-        idx = int(r[0])
-        (numer if idx >= 0 else denom)[
-            idx if idx >= 0 else -idx - 1].append(
-                (float(r[1]), [float(e) for e in r[2:]]))
-
-    def value(coeff, expo):
-        acc = math.log(coeff) if coeff > 0 else -math.inf
-        for j, e in enumerate(expo):
-            if abs(e) > 1e-12 and j < len(x) and x[j] > 0:
-                acc += e * math.log(x[j])
-        return math.exp(acc) if acc > -700 else 0.0
 
     out = []
     # Only constraints that actually have a denominator -- i.e. the signomial
     # ones. A small term in a plain posynomial is ordinary and not a defect.
-    for i in sorted(k for k in denom if k != 0):
-        for side, terms in (("numerator", numer.get(i, [])),
-                            ("denominator", denom.get(i, []))):
-            if len(terms) < 2:
+    for i in st.constraint_indices:
+        terms = st.terms(i)
+        if not any(t.denominator for t in terms):
+            continue
+        for side, group in (("numerator",
+                             [t for t in terms if not t.denominator]),
+                            ("denominator",
+                             [t for t in terms if t.denominator])):
+            if len(group) < 2:
                 continue                      # nothing to be crowded out by
-            vals = [value(c, a) for c, a in terms]
+            vals = [t.value(x) for t in group]
             total = sum(vals)
             if total <= 0:
                 continue
-            for (c, a), v in zip(terms, vals):
+            for t, v in zip(group, vals):
                 share = v / total
                 if share < tol:
-                    involved = [nm_at(names, j) for j, e in enumerate(a)
-                                if abs(e) > 1e-12]
-                    out.append((i, side, share, involved))
+                    out.append((i, side, share,
+                                [nm_at(names, j) for j in sorted(t.variables)]))
 
     out.sort(key=lambda t: t[2])
     return out

@@ -1331,3 +1331,26 @@ def test_equivalence_check_works_on_a_linear_program():
     broken[key] = [st[key][0], payload, list(st[key][2])]
     with pytest.raises(AssertionError, match='changed the problem'):
         assert_equivalent(st, broken, [3.0, -1.0])
+
+
+def test_presolve_report_lists_output_only_variables():
+    """`output_columns` had no test, so it broke silently during migration.
+
+    `_output_only` was called inside a bare `except Exception: pass`. When the
+    migration removed the names it read, it raised NameError on every call, the
+    except swallowed it, and the field went quietly empty while 270 tests
+    passed. The bare except is gone; this makes sure the field is populated.
+    """
+    st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
+    rep = presolve_report(st)
+    assert set(rep.output_columns) == {'A', 'T'}
+    assert 'OUTPUT ONLY' in str(rep)
+
+
+def test_presolve_report_agrees_with_reduce_columns():
+    """The report and the reduction must not disagree about what is inert."""
+    st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
+    reported = set(presolve_report(st).output_columns)
+    _small, removed = reduce_columns(st)
+    acted_on = {r.name for r in removed if r.reason == 'output'}
+    assert reported == acted_on
