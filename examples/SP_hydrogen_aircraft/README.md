@@ -209,6 +209,23 @@ What the sequence taught:
 * **`k_fuse = 260 N/m²` was never wrong.** Their hull works out to
   259 N/m²; the earlier fuselage gap was missing nose/tailcone geometry.
 
+**Point-validated is not curvature-validated.** The replication pins
+AR = 10.1 and their CL policy — it evaluates the SP *at their design point*.
+Asking whether the SP would *choose* their wing (`build(fix_AR=False)`)
+answers no: even with every policy set, the optimiser runs to AR 6.0 with a
+half-weight wing (11,248 lb), L/D 11.9, and a "better" MTOW of 148,268 lb.
+The trade is not close — going 6 → 10.1 costs +15,300 lb of wing against
+roughly −4,000 lb of fuel-and-cascade — so the model's *derivative* of wing
+weight with AR is far steeper than TASOPT's, plausibly because the Hoburg
+box scales ≈ AR^1.5 where TASOPT's spanwise beam integration is nearer
+linear, and because a cruise-only mission never weights the high-CL climb
+segments where induced drag argues for span. The declared `k_beam` corrects
+the point, not the slope. This caveat applies to the fuel-cell models'
+free-AR optima (8.7–10.5) too: same box, same suspect curvature. The
+forward fix is to derive the SP wing from the port's own `surfw` relations
+— which the MAIDAS structure map in `../tasopt/MAIDAS_REPORT.md` already
+classified constraint by constraint — rather than adopting Hoburg's box.
+
 On "did you port all of SPaircraft": no — only `wingbox.py`, because
 `wing.py`/`fuselage.py`/tails/gear close through the trim block and cannot
 be taken piecewise (documented above). The sweep block that `wing.py` would

@@ -50,7 +50,7 @@ N_CRUISE = 4
 PI = 3.141592653589793
 
 
-def build(N: int = N_CRUISE) -> Formulation:
+def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
     f = Formulation()
     Vb = lambda n, g, u, d, bd: f.Variable(name=n, guess=g, units=u,
                                            description=d, bounds=bd)
@@ -123,8 +123,14 @@ def build(N: int = N_CRUISE) -> Formulation:
     r_boil = C("r_boil", 0.004 / 3600.0, "1/s", "their boil-off rate limit")
 
     cons += [
-        wing["AR"] == AR_fix,
         wing["L_max"] >= k_sweep * N_ult * W_MTO,
+    ]
+    if fix_AR:
+        # Replication evaluates the SP at THEIR design point. Freeing AR is
+        # the test of whether the SP would also CHOOSE their wing -- run
+        # build(fix_AR=False) to ask it; see the README for what it says.
+        cons += [wing["AR"] == AR_fix]
+    cons += [
         l_fuse >= l_fixed + tank["l_tank"],
         S_wet >= 2.0 * wing["S"] + 2.0 * PI * R_fuse * l_fuse + S_nace,
         R_fuse >= tank["R_o"] + tank["t_insul"] + clear,
