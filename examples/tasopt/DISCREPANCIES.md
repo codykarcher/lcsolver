@@ -502,3 +502,112 @@ picture and the model disagree about where the surfaces are pinned.
 `airpic` also computes `clp` and `cmp` from a hard-wired `CL = 0.70` and
 `cm = -0.1` and then never uses either, and a block that would walk the tail
 root back along the fuselage contour sits inside `if(.false.)`.
+
+## §45 — two output files cannot be reached from a `.tas` file
+
+`Ltfwrite` (the compressor-map file `tfan_MMM.dat`, written by `mapwrt`) and
+`Lpfwrite` (the mission-profile file `prof_MMM.dat`, written by `prfwrt`) are
+both set in `tasopt.f` as
+
+```fortran
+      Ltfwrite = .false.
+c     Ltfwrite = .true.
+```
+
+with the `.true.` line commented out directly beneath, and their `getLval`
+reads are commented out of `getparm.f` as well:
+
+```fortran
+cc    call getLval(lu,iline,Ltfwrite)
+cc    call getLval(lu,iline,Lpfwrite)
+```
+
+So no input file can switch either on; reaching them means editing the source
+and recompiling. Both are ported, and the reference files they are checked
+against (`tests/data/tfan_800.dat`, `prof_800.dat`) were produced by doing
+exactly that and then restoring the source.
+
+`prfwrt` also appears inside the `.out` report, so only `mapwrt` is otherwise
+unreachable — and `mapwrt` is the only place TASOPT reports where each
+compressor sits *on its map*.
+
+## §46 — the ASWING fuselage drag column is evaluated at the wrong station
+
+`aswout.f`'s fuselage aero loop interpolates the BL dissipation coefficient
+onto each output station **inside** a test for which BL interval contains the
+station, which is right. But the interpolation weight `fi` and the edge
+velocity `ue` are updated *outside* that test:
+
+```fortran
+        do ibl = 1, iblte-1
+          if(x .ge. xbl(ibl) .and. x .le. xbl(ibl+1)) then
+            fi = (x-xbl(ibl))/(xbl(ibl+1)-xbl(ibl))
+            ...
+            Cdiss = Cdisso*(1.0-fi) + Cdissp*fi
+          endif
+          ue = uebl(ibl)*(1.0-fi) + uebl(ibl+1)*fi     ! <- outside the if
+        enddo
+        QB(IB,JCDF,IS) = 2.0*Cdiss*ue**3
+```
+
+After the loop `ue` holds the value at the **last** interval before the
+trailing edge, whatever `x` was, so `Cdf` is wrong at every station by the
+cube of a velocity ratio.
+
+`fi` is a subroutine local rather than a loop variable, so it also survives
+from one output station to the next — and on the first station, if no interval
+matches, it is read before it has ever been written. That does not happen on
+the shipped 737, whose first output station sits exactly on the first BL
+station. The port raises rather than inventing a value if it ever does.
+
+## §47 — the ASWING wing tip is given the break section's aerodynamics
+
+In the outer-panel loop of `aswout.f`:
+
+```fortran
+        cm    = cms *(1.0-frac) + cms *frac
+        cdf   = cdfs*(1.0-frac) + cdfs*frac
+        cdp   = cdps*(1.0-frac) + cdps*frac
+```
+
+All three collapse to their break values and never reach the tip. `cmt`,
+`cdft` and `cdpt` are computed twenty lines above and never used.
+
+**Latent.** `cdf` and `cdp` are hard-wired to 0.006 and 0.003 at all three
+stations anyway, and the 737's section moment is uniform across the span, so
+no shipped deck differs by a digit. It would start to matter the moment a case
+gave its tip its own airfoil.
+
+## §48 — three ASWING wing variables are assigned from themselves
+
+Same loop:
+
+```fortran
+        Csh   = Csho *(1.0-frac) + Csh *frac
+        Nsh   = Nsho *(1.0-frac) + Nsh *frac
+        Atsh  = Atsho*(1.0-frac) + Atsh*frac
+```
+
+The right-hand side is the loop variable, carrying whatever the previous
+station left, not the break values `Cshs`/`Nshs`/`Atshs`. The inner panel
+therefore never reaches the break values, while the outer panel starts from
+them, so all three columns step discontinuously at the break. Unlike §47 this
+one does change the deck.
+
+## §49 — the ASWING wing fuel inertia is interpolated between an inertia and a mass
+
+```fortran
+        mgf   = mgofuel  *(1.0-frac) + mgsfuel*frac
+        mgnnf = mgnnofuel*(1.0-frac) + mgsfuel*frac
+```
+
+The inboard end of the second line is the fuel *inertia* and the outboard end
+the fuel *mass*; `mgnnsfuel` is computed just above and never used. On the 737
+that is a factor of 3.5 at the break, and it shows in the deck as a step in
+the `Dmgnn` column across the doubled station, from 0.60510 to 0.17277.
+
+## §50 — the ASWING Pi-tail cross-member's shell width is assigned from itself
+
+`Csh = Csh` in the vertical tail's cross-connect loop, which only executes on
+a Pi-tail (`nvtail > 1`). `Cshv` was meant. No shipped case has a Pi-tail, so
+this never fires; ported as written.

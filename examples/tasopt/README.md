@@ -50,17 +50,25 @@ python -m pytest tests/ -q
 Fortran source, and to what agreement. It is the one place that list is kept,
 so it does not go stale in two files at once.
 
-In short: 41 modules, 338 tests, and **the port runs**:
+In short: 44 modules, 389 tests, and **the port runs**:
 
 ```bash
-python -m tasopt_py /path/to/Tasopt2.16/runs/737/737.tas --out port.out
+python -m tasopt_py /path/to/Tasopt2.16/runs/737/737.tas \
+    --out port.out --deck port.oute --aswing port.asw
 python -m tasopt_py 737.tas --optimise      # Nelder-Mead over the design vars
 ```
 
 reads the case file, sizes the aircraft, flies the off-design mission, runs
-the certification-noise points and writes the report. It reproduces both
-convergence tables the shipped program prints, and its `.out` file **byte for
-byte — all 4565 lines, same MD5**. It also optimises: given the 737 case with
+the certification-noise points and writes every file the shipped program
+writes. It reproduces both convergence tables, and:
+
+* the `.out` report **byte for byte — all 4565 lines, same MD5**;
+* the `.asw` ASWING beam deck **byte for byte — all 320 lines**;
+* the `.oute` off-design engine deck to 4322 of its 4323 lines, the one
+  exception being a printed rounding boundary;
+* the `.sav` restart file and the Matlab and gnuplot plot files exactly.
+
+It also optimises: given the 737 case with
 `Lopt = T`, it reproduces the Fortran's Nelder-Mead search evaluation for
 evaluation, at the same simplex vertices to machine precision.
 It converges in the same 18 iterations to WTO = 174979.1500 lbf against the
@@ -68,10 +76,21 @@ program's 174979.1499, with the whole converged aircraft agreeing to 1.5e-9,
 and PFEI = 7.849124 against the 7.8491 in `737.out`. `DISCREPANCIES.md`
 records what was found in the source along the way.
 
-The gas tables (11 gases, ~600 numbers each) are **generated**, not
-transcribed — `fortran_ref/extract_gas_tables.py` parses them out of the
-Fortran `DATA` blocks. Hand-copying 6600 numbers would have been a reliable
-source of exactly the kind of typo this project is trying to find.
+And it **draws**. TASOPT itself never plots anything — it emits gnuplot,
+idraw and Matlab instructions for other programs to draw. `tasopt_py.plot`
+takes the same data and draws it with matplotlib: the plan view, the mission
+profile, the fuselage boundary layer, the compressor maps and the engine
+deck. The plan view is checked against `picwrt`'s own polylines, so it is the
+reference program's picture rather than a redrawing of it. matplotlib is
+imported lazily and is not a dependency of the rest of the port.
+
+Every table is **generated**, not transcribed. The gas tables (11 gases, ~600
+numbers each) come out of the Fortran `DATA` blocks via
+`fortran_ref/extract_gas_tables.py`; the 611 array indices out of `index.inc`
+via `tools/gen_indices.py`; the 103 ASWING beam variables out of `INDEXB.INC`
+via `tools/gen_beam_indices.py`; the third-octave band table out of
+`freq.inc`. Hand-copying those numbers would have been a reliable source of
+exactly the kind of typo this project is trying to find.
 
 ## Notes on the original
 

@@ -43,10 +43,14 @@ precision; the reference drivers use the same flag.
 | `acoustics` | `tfnoise.f`, `freq.inc` | three dB values, exact |
 | `savefile` | `getsave.f` | header and body, exact |
 | `planview` | `airpic.f`, `pltwrt` | both .plt files, exact |
+| `plot` | `picwrt`, `picidr` | picwrt's 12 polylines, exact |
+| `enginedeck` | `eopwrt` in `tasopt.f` | **737.oute, 4322/4323 lines** |
+| `output.mapwrt` | `mapwrt` in `output.f` | `tfan_800.dat` byte-identical |
+| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw byte-identical** |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
-| `model` | `index.inc` | 611 constants, generated |
+| `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
 
-338 tests. Reference CSVs are committed, so the suite runs without a Fortran
+389 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -103,6 +107,23 @@ whole `.out` file and it is **byte-identical to the reference program's own
 in its printed column, including the acoustic model's three certification
 decibel levels.
 
+And so is the **ASWING export**. `python -m tasopt_py 737.tas --aswing
+port.asw` writes the beam deck — fuselage, wing and both tails as spanwise
+distributions of stiffness, mass, inertia and section aerodynamics, plus the
+point weights, engines, joints and ground attachments — and it is
+**byte-identical to the reference program's `737.asw`, all 320 lines**. That
+is a harder file to reproduce than it looks: which variables share a table
+depends on comparing station positions to a tolerance, each column carries a
+scale factor chosen by a `log10(2*max)` rule, and the deck embeds five of the
+source's own mistranslations (§46–§50).
+
+And the **engine deck**. The shipped 737 ships a `737.tase` asking for three
+altitudes, three Mach numbers and five throttle settings, so the reference
+program writes a 4323-line `737.oute` — 45 converged `tfoper` solves at
+conditions the design mission never flies. The port reproduces **4322 of the
+4323 lines**; the one that differs is a printed rounding boundary straddled by
+a 4e-9 relative difference, which is the `tfoper` floor.
+
 And so is the optimiser. Instrumenting `fobj.f` and running the 737 with
 `Lopt = T` gives 18 objective evaluations over four Nelder-Mead steps; the
 port reproduces **all 18, in order, at the same simplex vertices** — to
@@ -111,17 +132,22 @@ objective.
 
 ## Still to port
 
-| source | lines | what it is |
-|---|---|---|
-| `aswout.f`, `aswio.f` | 2795 | ASWING input-file export |
-| `picwrt`, `picidr` | ~190 | gnuplot and idraw drawing commands |
-| `blfwrt2`, `trpwrt`, `trpwrt2` | 154 | Trefftz and BL plot files |
-| `gradop.f` | 40 | an empty shell — see `DISCREPANCIES.md` §34 |
+Nothing that TASOPT can be made to do is missing. Every routine in the
+Makefile's link list is ported except these, and none of them runs:
 
-Everything that computes, optimises or reports on an aircraft is ported, and
-so are the optimiser's restart files and the plan-view geometry. What is left
-is the ASWING export and three plotting-syntax emitters — none of them
-physics.
+| source | lines | why not |
+|---|---|---|
+| `blfwrt2`, `trpwrt`, `trpwrt2` | 154 | Trefftz and BL plot *file syntaxes*; `tasopt_py.plot` draws the same data |
+| `gradop.f` | 40 | an empty shell — `DISCREPANCIES.md` §34 |
+| `gppre.f` | 47 | the GP surrogate behind `iengwgt` 3 and 4, whose training data (`crddc.inc`) is not shipped in usable form; no case selects it |
+| `tails.f` | 29 | in the link list, called from nowhere |
+| `interp2`, `spln2d` | 206 | used only by `airfun1.f`/`airfun2.f`, neither of which is linked |
+| `seconds.f` | 25 | a wall-clock timer |
+| `BINPUT` in `aswio.f` | 1265 | *reads* `.asw` decks; nothing in TASOPT calls it |
+
+The full output path is now covered: the `.out` report, the `.oute` engine
+deck, the `.asw` ASWING deck, the `.sav` restart file, the three Matlab
+`.plt` files and the gnuplot stick figure.
 
 ## Accuracy of the boundary-layer chain
 

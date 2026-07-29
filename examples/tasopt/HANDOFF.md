@@ -27,10 +27,11 @@ Inside the port:
 ```
 tasopt_py/          the port, by subsystem (gas, aero, engine, structures,
                     sizing, model)
-tests/              pytest suite, 338 tests
+tests/              pytest suite, 389 tests
 tests/data/         committed reference CSVs — the suite runs with no compiler
 fortran_ref/        the Fortran drivers that regenerate those CSVs
 tools/gen_indices.py  generates tasopt_py/model/indices.py from index.inc
+tools/gen_beam_indices.py  the same for INDEXB.INC (the ASWING variables)
 STATUS.md           module table + findings about the source
 DISCREPANCIES.md    numbered findings (continues the sequence in
                     ../convexengineering/DISCREPANCIES.md, which ends at §21)
@@ -69,10 +70,12 @@ See `fortran_ref/mission_instrumented.f` and `tests/test_mission.py`.
 **Restore the source file afterwards** (`cp` a saved copy back and rebuild).
 
 Tolerances achieved are 1e-13..1e-16 for closed-form modules. The exceptions,
-all understood and documented: `tfoper` at 9e-10 (numerical vs analytic
-Jacobian), `mission` at 5.7e-6 (an ill-conditioned fixed point at `ipclimb1`
-amplifying a 1e-9 engine difference), and the BL chain at 1e-14 (`blax`'s
-capped Newton amplifies its inputs by ~3000; see `STATUS.md`).
+both understood and documented: `tfoper` at 9e-10 (numerical vs analytic
+Jacobian), and the BL chain at 1e-14 (`blax`'s capped Newton amplifies its
+inputs by ~3000; see `STATUS.md`). `mission` is at 9.8e-11 — an earlier
+version of this file blamed its then-5.7e-6 on an ill-conditioned fixed point
+at `ipclimb1`; that was wrong, it was three porting bugs, and the retraction
+is under "Mistakes I made" below.
 
 **Dump the driver's inputs alongside its outputs** when the module sits
 downstream of another one. `drv_blax.f` does this, and feeding those exact
@@ -82,7 +85,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 41 modules, 338 tests
+## Done — 44 modules, 389 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -122,8 +125,11 @@ and you cannot tell which module to look at.
 | `acoustics` | `tfnoise.f`, `freq.inc` | three dB values, exact |
 | `savefile` | `getsave.f` | header and body, exact |
 | `planview` | `airpic.f`, `pltwrt` | both .plt files, exact |
+| `plot` | `picwrt`, `picidr` | picwrt's 12 polylines, exact |
+| `enginedeck` | `eopwrt` in `tasopt.f` | **737.oute, 4322/4323 lines** |
+| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw byte-identical** |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
-| `model` | `index.inc` | 611 constants, generated |
+| `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
 
 ---
 
@@ -131,7 +137,7 @@ and you cannot tell which module to look at.
 
 ```
 $ python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas \
-      --out /tmp/port.out
+      --out /tmp/port.out --deck /tmp/port.oute --aswing /tmp/port.asw
 diff /tmp/port.out /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.out
 ...
 737-800: Baseline technology (Aluminum, CFM56 engine)
@@ -149,60 +155,46 @@ state the program hands to `wsize` — every array entry, no tolerance),
 `test_wsize.py` (that state sizes to the same aircraft, 1.5e-9) and
 `test_woper.py` (the off-design loop, 1.2e-10).
 
-## What is left, and why none of it is on the sizing path
+## What is left
 
-| source | what it is |
-|---|---|
-| `fobj.f`, `gradop.f`, `simpop.f` | the optimiser wrapper around `wsize` |
-| `noise.f` | noise estimate |
-| `output.f` (`engwrt`) | output formatting |
-| `aswout.f`, `aswio.f` | ASWING export, 2795 lines |
-| `picwrt`, `picidr` | gnuplot and idraw drawing commands, ~190 lines |
+**Nothing that TASOPT can be made to do.** Every routine in the Makefile's
+link list is ported except the following, and none of them runs:
 
-Nothing that computes a number remains. What is left is output formats:
-
-* **ASWING export** (`aswout`/`aswio`, 2795 lines) -- write the aircraft as an
-  ASWING `.asw` input deck. Behind `Laswwrite`, which `737.tas` sets to F.
-  Much the largest of these, and the one real gap if the port is meant to be a
-  drop-in replacement. Scoped in detail below.
-* **gnuplot and idraw drawing commands** (`picwrt`/`picidr`, ~190 lines).
-  `tasopt_py.planview.airpic` already gives the geometry these draw, so this
-  is emitting a plotting syntax rather than computing anything -- in Python
-  you would reach for matplotlib against `airpic` instead.
-* **Trefftz and BL plot files** (`blfwrt2`, `trpwrt`, `trpwrt2`, 154 lines),
-  behind `Ltrpwrite`.
-
-### Scoping the ASWING export
-
-Measured, so the next session does not have to:
-
-| piece | code lines | what it does |
+| source | lines | why not |
 |---|---|---|
-| `aswout.f` | 1443 | build ASWING's beam/joint/weight arrays from `parg` |
-| `BOUTPUT` in `aswio.f` | 678 | write those arrays as an `.asw` deck |
-| `INDEXB.INC` | 133 | names and indices of the 102 spanwise variables |
-| `BINPUT` in `aswio.f` | 1265 | **reads** `.asw` files; nothing calls it — skip |
+| `blfwrt2`, `trpwrt`, `trpwrt2` | 154 | Trefftz and BL plot *file syntaxes*; `tasopt_py.plot` draws the same data |
+| `gradop.f` | 40 | an empty shell — `DISCREPANCIES.md` §34 |
+| `gppre.f` | 47 | the GP surrogate behind `iengwgt` 3/4; no shipped case selects it |
+| `tails.f` | 29 | in the link list, called from nowhere |
+| `interp2`, `spln2d` | 206 | used only by `airfun1.f`/`airfun2.f`, neither linked |
+| `seconds.f` | 25 | a wall-clock timer |
+| `BINPUT` in `aswio.f` | 1265 | *reads* `.asw` decks; nothing in TASOPT calls it |
 
-So the export path is about 2100 code lines, comparable to `wsize` plus the
-report. `aswout` splits cleanly into aircraft-level blocks (reference,
-ground, joints, weights, engines -- `aswout.f` lines 60-445) and four beam
-blocks (fuselage 446-791, wing 792-1254, htail 1255-1523, vtail 1524-1748,
-plus a strut block 1750-1940 that only fires on a strut-braced case).
+The output path is complete: `.out`, `.oute`, `.asw`, `.sav`, the three
+Matlab `.plt` files and the gnuplot stick figure.
 
-**It is verifiable byte-for-byte.** `tests/data/737.asw` is the 320-line deck
-the shipped program writes for the 737, produced by flipping `Laswwrite` to T
-in a copy of `737.tas`. The deck is sectioned -- `Name`, `Unit`, `Constant`,
-`Reference`, `Weight`, `Engine`, `Joint`, `Ground`, then one `Beam` block per
-surface -- so the work can be done and checked a section at a time, exactly
-as the `.out` report was.
+```bash
+python -m tasopt_py runs/737/737.tas \
+    --out port.out --deck port.oute --aswing port.asw
+```
 
-`INDEXB.INC` is the same shape as `index.inc` and should be *generated*, not
-transcribed -- extend `tools/gen_indices.py` rather than typing 102 names and
-indices out.
+`port.out` and `port.asw` are byte-identical to the reference program's;
+`port.oute` differs on one line of 4323, a printed rounding boundary.
 
-Worth weighing before starting: an ASWING deck serves neither of this port's
-stated goals -- an independent Python TASOPT, and a baseline for the
-signomial formulation. It is completeness for its own sake.
+### If you are looking for something to do
+
+The port reproduces the reference program. The open questions are now about
+*using* it, not finishing it:
+
+* **The signomial baseline.** That was goal 3 in the README and nothing here
+  has been pointed at it yet. `engine_deck()` returning operating points as
+  data is the obvious surrogate-fitting input.
+* **A case that is not the 737.** Every verification here is against one
+  aircraft. `runs/` has others; sizing one would exercise paths the 737 never
+  takes — a Pi-tail (§50), a strut-braced wing, `iengloc = 2`.
+* **The five ASWING mistranslations** (§46–§50) are reproduced, not fixed.
+  If anyone means to *use* a deck rather than diff it, §48 and §49 change the
+  structure and should probably be corrected behind a flag.
 
 ## Conventions to keep
 
@@ -374,12 +366,12 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 338 tests, ~110 s
+python -m pytest tests/ -q            # 389 tests, ~4 min
 TASOPT_SLOW=1 python -m pytest tests/  # + the 18-evaluation optimiser check
 
 # run the port itself
 python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas \
-      --out /tmp/port.out
+      --out /tmp/port.out --deck /tmp/port.oute --aswing /tmp/port.asw
 diff /tmp/port.out /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.out
 
 # build the reference program
