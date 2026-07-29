@@ -23,6 +23,7 @@ from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
 # from edi.structure.structureWalker import _StructureVisitor
+from edi.structure.detected import Detected, Term, as_detected
 from edi.structure.structureWalker import _StructureVisitor
 
 from pyomo.common.dependencies import numpy, numpy_available
@@ -631,8 +632,10 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # with it and every VarData in `variables` reports its name as
     # '[Unattached VarData]', breaking name-based write-back.
     structures['model'] = pyomo_component
-    # print(structures)
-    return structures
+    # A dict subclass with named fields. Every existing consumer indexes it
+    # exactly as before; new code can read `.kind`, `.space`, `.terms(i)`
+    # instead of learning the positional row format.
+    return as_detected(structures)
 
 
 

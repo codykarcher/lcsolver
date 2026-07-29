@@ -1183,3 +1183,67 @@ def test_a_backend_refuses_a_structure_it_cannot_read():
 def test_an_unknown_consumer_is_not_second_guessed():
     from edi.structure.structureDetector import require
     require(_detect(_active_bound_model(), bounds_as_rows=False), 'something_new')
+
+
+# ---------------------------------------------------------------------------
+# the typed view
+# ---------------------------------------------------------------------------
+def test_detected_names_what_the_dict_only_implied():
+    from edi.structure.detected import Detected
+
+    gp = _detect(_active_bound_model(), bounds_as_rows=False)
+    assert isinstance(gp, Detected)
+    assert gp.kind in ('GP', 'SP')
+    assert gp.space == 'log'
+    assert gp.bounds is not None
+    assert gp.n_variables == len(gp.variables)
+    assert 'variables' in repr(gp)
+
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[-10.0, 10.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[-10.0, 10.0])
+    f.Objective(x + y)
+    f.Constraint(x - y >= 2.0)
+    lp = _detect(f, bounds_as_rows=False)
+    assert lp.kind == 'LP'
+    assert lp.space == 'natural'
+
+
+def test_terms_reproduce_the_positional_row_format():
+    """The typed view must be the same data, not a second opinion."""
+    st = _detect(_rich_model(), bounds_as_rows=False)
+    key = st.key
+    raw = st[key][1]
+
+    # every row appears exactly once across the parsed terms
+    n_raw = len(raw)
+    n_terms = sum(len(st.terms(i)) for i in [0] + st.constraint_indices)
+    assert n_terms == n_raw
+
+    # and a denominator row is flagged rather than encoded in the sign
+    for i in st.constraint_indices:
+        for t in st.terms(i):
+            assert isinstance(t.coeff, float)
+            assert all(abs(e) > 1e-12 for e in t.exponents.values())
+
+
+def test_term_values_match_direct_evaluation():
+    from edi.presolve import _eval_terms
+
+    st = _detect(_rich_model(), bounds_as_rows=False)
+    x = np.linspace(1.5, 4.0, st.n_variables)
+    for i in [0] + st.constraint_indices[:6]:
+        terms = [t for t in st.terms(i) if not t.denominator]
+        if not terms:
+            continue
+        dense = [(t.coeff, [t.exponents.get(j, 0.0)
+                            for j in range(st.n_variables)]) for t in terms]
+        assert sum(t.value(x) for t in terms) == pytest.approx(
+            _eval_terms(dense, x), rel=1e-9)
+
+
+def test_the_typed_view_is_idempotent():
+    from edi.structure.detected import as_detected
+
+    st = _detect(_active_bound_model(), bounds_as_rows=False)
+    assert as_detected(st) is st
