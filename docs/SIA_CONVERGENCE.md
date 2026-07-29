@@ -105,7 +105,40 @@ against it -- by sign, by magnitude, or by correlation -- is not diagnostic,
 and an attempt to do so here produced numbers that looked damning and meant
 nothing. The only sound statement is that SIA's multipliers fail stationarity.
 
-**Five hypotheses tested and refuted**, each by measurement:
+### Resolved: it is the bound multipliers
+
+Stationarity must be the **projected** gradient. Every variable carrying the
+residual sat at a bound, each with the sign its bound admits:
+
+```
+FS_hft[2]     +0.5388  AT LOWER BOUND     (positive -- admissible)
+Eng_OPR[2]    -0.1217  AT UPPER BOUND     (negative -- admissible)
+Wing_tau      -0.1039  AT UPPER BOUND
+Wing_b        -0.0853  AT UPPER BOUND
+Wing_lambda   +0.0793  AT LOWER BOUND
+```
+
+At a lower bound only a negative gradient is a violation; at an upper bound
+only a positive one. The rest is held by the bound's own multiplier. Measured
+after the change:
+
+| | objective | violation | stationarity | complementarity |
+|---|---|---|---|---|
+| split pair | 110,787.40 | 1.5e-07 | 0.389 | 1.2e-04 |
+| **one equality** | **95,559.98** | **1.6e-07** | **0.001963** | **5.2e-07** |
+
+A factor of 274 on stationarity, and complementarity inside tolerance. SIA now
+beats the NNLS estimate of the best achievable residual (0.0120) at the same
+point, because that estimate was computed against the unprojected measure.
+
+**Why this took so long to find.** The hypothesis was tested early and
+rejected, and the rejection was correct then: under the split-equality path
+only 5 of 1121 variables ever reached a bound, so projecting changed nothing.
+Fixing the step is what exposed it -- SIA can now move, and it moves onto the
+design limits the model exists to express. The two defects were sequential, not
+independent, which is why the hypotheses below all died first.
+
+**Five hypotheses tested and refuted** before that, each by measurement:
 
 1. *Sign convention.* All six conventions tried on the raw duals; the one in
    use is already the best (0.502 against 3.88 for the alternatives).
