@@ -87,18 +87,25 @@ Ruled out along the way, both by measurement:
   Phase I succeeds in 4 iterations, `use_slacks` correctly becomes `False`, and
   `tau` is printed but unused.
 
-## The PCCP baseline is not currently reproducible
+## The PCCP baseline: use the IPOPT backend
 
-Attempting to measure PCCP on the same model for comparison, cvxopt returns
-`status='unknown'` and `solve_GP` raises. So the **146 s / 20939.1** figure
-quoted in `SLCP_PERFORMANCE.md` and elsewhere cannot presently be reproduced,
-and should not be cited as a baseline until it can.
+PCCP's *inner* solve is a geometric program, and which GP solver runs it
+matters. Through **cvxopt** it fails on this model — `status='unknown'`, and
+`solve_GP` raises. Through **IPOPT** it works, and that is the path to use:
 
-This is not caused by the presolve work — the only change to the cvxopt
-backends is an additive `require_bounds_as_rows` guard, which fires only when
-bounds are split out, and the PCCP path never splits them.
+```python
+solve(m, solver='ipopt-convex')      # PCCP loop, IPOPT GP solve underneath
+```
 
-cvxopt's own error message points at the same place the presolve checks do:
+`_convex_ipopt` routes a detected signomial program into the same
+`solve_SP` penalty convex-concave loop with `gp_solver=solve_gp_rows_ipopt`, so
+the algorithm is identical and only the convex sub-solver changes.
+
+The cvxopt failure is not caused by the presolve work — the only change to the
+cvxopt backends is an additive `require_bounds_as_rows` guard, which fires only
+when bounds are split out, and the PCCP path never splits them. But it is worth
+noting where cvxopt's error points, because it is the same place the presolve
+checks do:
 
 > *a large negative value here means the geometric program is unbounded below,
 > which usually means a variable has no lower bound*
@@ -107,5 +114,12 @@ The two variables the boundedness check reports as unbounded above are
 `Wing_A_tri` and `M_r_out` — both also on the degenerate list, and both among
 the variables gpkit itself flags on the upstream model. Upstream `wing.py`
 carries `Atri <= 1e10*units('m**2')` on the line after `A_tri`'s definition,
-which this port does not. Whether restoring that bound is what PCCP needs is
-the obvious next experiment.
+which this port does not.
+
+An interior-point method in log space can tolerate a variable running off to
+1e30 far better than cvxopt's solver does here, which is a plausible reason the
+IPOPT backend succeeds where cvxopt does not — the unboundedness is real in
+both cases, and only one solver is upset by it. Restoring the upstream bound
+would be the way to test that, but it is a workaround for a modelling defect
+rather than a fix: `A_tri` is consumed by nothing at all (see
+`docs/PRESOLVE.md`), and the honest repair is to connect it or delete it.
