@@ -98,7 +98,8 @@ import pyomo.environ as pyo
 from edi.solvers.ipopt.slcp import (Posynomial, PosynomialRatio, Problem,
                                     Signomial)
 
-__all__ = ["SIAOptions", "SIAResult", "solve_sia", "classify"]
+__all__ = ["SIAOptions", "SIAResult", "solve_sia", "classify",
+           "SubproblemCache"]
 
 
 class SIAOptions:
@@ -136,6 +137,10 @@ class SIAOptions:
         self.ratio_expand = 0.75
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
+        self.cache_subproblem = True   # build each phase's Pyomo model once and
+                                       # re-point it; see SubproblemCache. Only
+                                       # applies when every body is a Posynomial
+                                       # or PosynomialRatio.
         self.verbose = False
         self.tee = False
         self.ipopt_options = {"print_level": 0, "sb": "yes"}
@@ -209,8 +214,226 @@ def _kkt(problem, x, mults):
     return float(np.max(np.abs(g))), viol, comp
 
 
+class SubproblemCache:
+    """Build each phase's Pyomo model once and re-point it every iteration.
+
+    The uncached path rebuilds every constraint symbolically on every
+    iteration. On SPaircraft that is thousands of log-sum-exp expressions over
+    a thousand variables, reconstructed from scratch once per iteration, and it
+    dominates the run -- IPOPT itself is a small fraction of the wall clock.
+
+    Almost none of that structure moves. Each exact term is
+
+        exp( log c_k + a_k . (d + log x_k) )
+            = exp( [log c_k + a_k . log x_k]  +  [a_k . d] )
+
+    where ``a_k . d`` is FIXED and only the bracketed constant follows the
+    iterate. So the projections are built once as Pyomo expressions and the
+    constants become mutable Params.
+
+    The AGM-condensed denominator of a ``PosynomialRatio`` looks like it breaks
+    this, since its exponent vector ``aq`` is recomputed every iteration -- but
+    ``aq = sum_i w_i a_i``, so
+
+        aq . d = sum_i w_i (a_i . d)
+
+    reuses the same fixed projections and needs one mutable weight per term
+    instead of a full-length coefficient vector. That is the difference between
+    a handful of scalars per constraint and an n-term expression per constraint.
+
+    This is the same device as :class:`~edi.solvers.ipopt.slcp.SubproblemCache`,
+    but the SIA sub-problem is easier to cache than SLCP's for two reasons.
+    There is no BFGS quadratic, which is the one part SLCP has to rebuild every
+    iteration; and a problem that is cacheable at all has no black-box
+    constraint, hence no trust region -- so nothing but variable bounds and a
+    few scalars changes between iterations.
+
+    A model is built per ``(minimize_violation, use_slacks)`` phase, because the
+    right-hand side differs structurally between them (``t``, ``s_i``, or
+    nothing at all). Each phase builds once and is then reused for all of its
+    iterations.
+    """
+
+    def __init__(self, problem, options):
+        self.problem = problem
+        self.options = options
+        self.n = problem.n
+        self.usable = self._is_cacheable()
+        self._phases = {}
+        self.builds = 0          # for tests and instrumentation
+
+    def _is_cacheable(self):
+        """Only the shapes the bridge produces; a black box needs a rebuild."""
+        for con in self.problem.constraints:
+            if not isinstance(con.body, (Posynomial, PosynomialRatio)):
+                return False
+        return isinstance(self.problem.objective, Posynomial)
+
+    def get(self, minimize_violation, use_slacks):
+        key = (bool(minimize_violation), bool(use_slacks))
+        if key not in self._phases:
+            self._phases[key] = self._build(*key)
+            self.builds += 1
+        return self._phases[key]
+
+    # -- construction -------------------------------------------------------
+    def _build(self, minimize_violation, use_slacks):
+        n = self.n
+        cons = self.problem.constraints
+
+        m = pyo.ConcreteModel()
+        m.J = pyo.RangeSet(0, n - 1)
+        m.I = pyo.RangeSet(0, len(cons) - 1)
+        m.d = pyo.Var(m.J, initialize=0.0)
+        m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+        m.params = pyo.Block()
+        if minimize_violation:
+            m.t = pyo.Var(initialize=0.0)
+        slacked = use_slacks and not minimize_violation
+        if slacked:
+            m.s = pyo.Var(m.I, domain=pyo.NonNegativeReals, initialize=0.0)
+            m.tau = pyo.Param(mutable=True, initialize=0.0, within=pyo.Reals)
+
+        counter = [0]
+
+        def scalar():
+            """A fresh mutable Param, since Pyomo needs each one named."""
+            name = f'p{counter[0]}'
+            counter[0] += 1
+            setattr(m.params, name,
+                    pyo.Param(mutable=True, initialize=0.0, within=pyo.Reals))
+            return getattr(m.params, name)
+
+        def projection(a):
+            """a . d -- fixed for the life of the model."""
+            nz = [j for j in range(min(len(a), n)) if a[j] != 0.0]
+            return sum(float(a[j]) * m.d[j] for j in nz) if nz else 0.0
+
+        def logsumexp(terms, params):
+            if len(terms) == 1:
+                return params[0] + projection(terms[0][1])
+            return pyo.log(sum(pyo.exp(params[k] + projection(a))
+                               for k, (_c, a) in enumerate(terms)))
+
+        # --- objective -----------------------------------------------------
+        obj_expr = None
+        obj_b = []
+        if not minimize_violation:
+            terms = self.problem.objective.terms
+            obj_b = [scalar() for _ in terms]
+            obj_expr = logsumexp(terms, obj_b)
+            penalty = (m.tau * sum(m.s[i] for i in range(len(cons)))
+                       if slacked else 0.0)
+            m.obj = pyo.Objective(expr=obj_expr + penalty, sense=pyo.minimize)
+        else:
+            m.obj = pyo.Objective(expr=m.t, sense=pyo.minimize)
+
+        def rhs(i):
+            if minimize_violation:
+                return m.t
+            return m.s[i] if slacked else 0.0
+
+        # --- constraints ---------------------------------------------------
+        m.cons = pyo.ConstraintList()
+        b_params, q_weights, q_consts = [], [], []
+        for i, con in enumerate(cons):
+            body, op = con.body, con.operator
+            if isinstance(body, Posynomial):
+                ps = [scalar() for _ in body.terms]
+                b_params.append(ps)
+                q_weights.append(None)
+                q_consts.append(None)
+                e = logsumexp(body.terms, ps)
+                if body.is_monomial and op == '==':
+                    m.cons.add(e == rhs(i))
+                else:
+                    m.cons.add(e <= rhs(i))
+            else:                                     # PosynomialRatio
+                ps = [scalar() for _ in body.p.terms]
+                ws = [scalar() for _ in body.q.terms]
+                qc = scalar()
+                b_params.append(ps)
+                q_weights.append(ws)
+                q_consts.append(qc)
+                # log q_hat = [log cq + aq . log x_k] + sum_k w_k (a_k . d)
+                log_qhat = qc + sum(
+                    ws[k] * projection(a)
+                    for k, (_c, a) in enumerate(body.q.terms))
+                m.cons.add(logsumexp(body.p.terms, ps) - log_qhat <= rhs(i))
+
+        return _CachedPhase(model=m, obj_expr=obj_expr, obj_b=obj_b,
+                            b_params=b_params, q_weights=q_weights,
+                            q_consts=q_consts, slacked=slacked,
+                            minimize_violation=minimize_violation)
+
+    # -- per-iteration update ----------------------------------------------
+    def update(self, phase, x_k, tau):
+        """Re-point a built phase at a new iterate. No symbolic work."""
+        m, n = phase.model, self.n
+        log_xk = np.log(x_k)
+
+        if not phase.minimize_violation:
+            for k, (c, a) in enumerate(self.problem.objective.terms):
+                phase.obj_b[k].value = float(math.log(c) + a @ log_xk)
+        if phase.slacked:
+            m.tau.value = float(tau)
+
+        for i, con in enumerate(self.problem.constraints):
+            body = con.body
+            terms = (body.terms if isinstance(body, Posynomial)
+                     else body.p.terms)
+            for k, (c, a) in enumerate(terms):
+                phase.b_params[i][k].value = float(math.log(c) + a @ log_xk)
+            if phase.q_weights[i] is None:
+                continue
+            # AGM weights, and the constant part of the condensed monomial.
+            qv = body.q(x_k)
+            const, aq = 0.0, np.zeros(n)
+            for k, (c, a) in enumerate(body.q.terms):
+                w = c * np.prod(x_k ** a) / qv
+                phase.q_weights[i][k].value = float(w)
+                if w > 0:
+                    const += w * math.log(c / w)
+                    aq = aq + w * a
+            phase.q_consts[i].value = float(const + aq @ log_xk)
+
+        # The positivity floor and any model bounds move with the iterate, but
+        # they are bounds, so re-pointing them is free.
+        floor = math.log(self.options.x_min)
+        lo = floor - log_xk
+        hi = np.full(n, np.inf)
+        if self.problem.bounds is not None:
+            for j, (blo, bhi) in enumerate(self.problem.bounds[:n]):
+                if blo is not None and blo > 0:
+                    lo[j] = max(lo[j], math.log(blo) - log_xk[j])
+                if bhi is not None and bhi > 0:
+                    hi[j] = min(hi[j], math.log(bhi) - log_xk[j])
+        for j in range(n):
+            ub = None if not np.isfinite(hi[j]) else float(hi[j])
+            m.d[j].setlb(float(lo[j]))
+            m.d[j].setub(ub)
+            # Start from d = 0 (the current iterate), but inside the box: a
+            # variable already at its bound has 0 outside, and Pyomo warns.
+            start = min(max(0.0, float(lo[j])), ub if ub is not None else 0.0)
+            m.d[j].set_value(start)
+        if phase.minimize_violation:
+            m.t.set_value(float(_violation(self.problem, x_k)))
+        return phase
+
+
+class _CachedPhase:
+    """Handles into one built phase model."""
+
+    __slots__ = ('model', 'obj_expr', 'obj_b', 'b_params', 'q_weights',
+                 'q_consts', 'slacked', 'minimize_violation')
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
 def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
-                minimize_violation=False, use_slacks=True):
+                minimize_violation=False, use_slacks=True, cache=None):
     """Assemble and solve the inner-approximation sub-problem in log space.
 
     ``minimize_violation`` selects PHASE I: the objective becomes the worst
@@ -229,6 +452,17 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     n = problem.n
     cons = problem.constraints
     log_xk = np.log(x_k)
+
+    if cache is not None and cache.usable:
+        # Everything below is symbolic construction that does not change
+        # between iterations; the cache does it once and only moves the
+        # numbers. Bounds, including the positivity floor, are re-pointed in
+        # update(). A cacheable problem has no black box, so no trust region.
+        phase = cache.update(cache.get(minimize_violation, use_slacks),
+                             x_k, tau)
+        return _solve_and_extract(phase.model, problem, options,
+                                  minimize_violation, use_slacks,
+                                  phase.obj_expr)
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
@@ -334,6 +568,20 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
         for j in range(n):
             tighten(j, lo=-radius, hi=radius)
 
+    return _solve_and_extract(m, problem, options, minimize_violation,
+                              use_slacks, obj if not minimize_violation else None)
+
+
+def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
+                       obj):
+    """Solve an assembled sub-problem and read off the step and multipliers.
+
+    Shared by the rebuild path and the cached one, so both report failures
+    identically and both use the same multiplier sign convention.
+    """
+    n = problem.n
+    cons = problem.constraints
+
     opt = pyo.SolverFactory("ipopt")
     if not opt.available(exception_flag=False):
         raise RuntimeError(
@@ -377,7 +625,7 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     return d, s, mults, float(pyo.value(obj))
 
 
-def _phase1(problem, x, options, has_blackbox):
+def _phase1(problem, x, options, has_blackbox, cache=None):
     """Find a feasible point by minimizing the worst constraint violation.
 
     Solves ``min t  s.t.  log g_i(x) <= t`` by the same inner approximation.
@@ -406,7 +654,8 @@ def _phase1(problem, x, options, has_blackbox):
             return x, it - 1, True
         try:
             d, _, _, t = _subproblem(problem, x, 0.0, radius, options,
-                                     has_blackbox, minimize_violation=True)
+                                     has_blackbox, minimize_violation=True,
+                                     cache=cache)
         except RuntimeError:
             # Unreachable rather than bad: widen, as in Phase II.
             if has_blackbox and radius < options.trust_max:
@@ -461,6 +710,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     radius = options.trust_radius
     mults = np.zeros(len(problem.constraints))
 
+    # Build the sub-problem once per phase and re-point it thereafter. The
+    # symbolic structure does not change between iterations; only a few scalars
+    # per constraint do. Falls back to rebuilding for anything with a black-box
+    # body, whose gradient has to be re-linearized every time anyway.
+    cache = SubproblemCache(problem, options) if options.cache_subproblem \
+        else None
+    if cache is not None and not cache.usable:
+        cache = None
+
     if options.verbose:
         print(f"  SIA: {n_exact} exact, {n_cons} conservative, "
               f"{n_lin} linearized"
@@ -474,7 +732,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # then optimize with the guarantees switched on and no penalty at all.
     if options.phase1 and _violation(problem, x) > options.feasibility_tolerance:
         x, res.phase1_iterations, feasible = _phase1(
-            problem, x, options, has_blackbox)
+            problem, x, options, has_blackbox, cache=cache)
         res.history.append(x.copy())
         res.phase1_feasible = feasible
         if options.verbose:
@@ -500,7 +758,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         try:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, radius, options, has_blackbox,
-                use_slacks=use_slacks)
+                use_slacks=use_slacks, cache=cache)
         except RuntimeError as exc:
             # An INFEASIBLE sub-problem is not a bad step -- it means the
             # trust region is too tight for the relaxed feasible set to be

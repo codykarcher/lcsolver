@@ -452,6 +452,80 @@ def test_cancellation_ignores_plain_posynomials():
 
 
 # ---------------------------------------------------------------------------
+# sub-problem caching
+# ---------------------------------------------------------------------------
+def test_cached_and_rebuilt_subproblems_agree():
+    """Caching is a performance change and must not be a numerical one.
+
+    The objective and every constraint value must match. Individual variables
+    are checked only where the problem determines them -- a flat direction can
+    land anywhere without either answer being wrong, which is exactly what a
+    degenerate variable is.
+    """
+    from edi.solvers.ipopt.sia import SIAOptions
+
+    def model():
+        f = Formulation()
+        x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
+        y = f.Variable('y', 2.0, '', 'y', bounds=[0.1, 10.0])
+        z = f.Variable('z', 2.0, '', 'z', bounds=[0.1, 10.0])
+        f.Objective(x + y)
+        f.Constraint(x * y >= 4.0)
+        f.Constraint(z * x >= 0.5)
+        f.Constraint(x + z >= 1.0)
+        return f
+
+    out = {}
+    for flag in (False, True):
+        st = _detect(model())
+        out[flag] = solve_sia(st, options=SIAOptions(cache_subproblem=flag))
+
+    assert out[True].objective == pytest.approx(out[False].objective, rel=1e-8)
+    assert out[True].max_violation == pytest.approx(
+        out[False].max_violation, abs=1e-6)
+
+    st = _detect(model())
+    names = [str(v) for v in st['variables']]
+    problem = build_problem(st)
+    free = {nm for nm, _v in degeneracy_report(problem, out[False].x,
+                                               names=names)}
+    for j, nm in enumerate(names):
+        if nm not in free:
+            assert out[True].x[j] == pytest.approx(out[False].x[j], rel=1e-5), \
+                f"{nm} moved and is not degenerate"
+
+
+def test_cache_builds_one_model_per_phase():
+    """The point of the cache: build once, then only re-point."""
+    from edi.solvers.ipopt.sia import SIAOptions, SubproblemCache
+
+    st = _detect(_singleton_row_model())
+    problem = build_problem(st)
+    cache = SubproblemCache(problem, SIAOptions())
+    assert cache.usable
+
+    cache.get(False, False)
+    cache.get(False, False)
+    cache.get(False, False)
+    assert cache.builds == 1                 # reused, not rebuilt
+    cache.get(True, False)                   # a different phase does build
+    assert cache.builds == 2
+
+
+def test_a_black_box_body_is_not_cacheable():
+    """No conservative model exists for it, so it must be re-linearized."""
+    from edi.solvers.ipopt.sia import SIAOptions, SubproblemCache
+    from edi.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
+
+    n = 2
+    obj = Posynomial([(1.0, [1.0, 0.0])], n)
+    box = Signomial(lambda x: (float(x[0]), np.array([1.0, 0.0])), n)
+    problem = build_problem(_detect(_singleton_row_model()))
+    problem.constraints.append(Constraint(box, '<='))
+    assert not SubproblemCache(problem, SIAOptions()).usable
+
+
+# ---------------------------------------------------------------------------
 # post-solve degeneracy
 # ---------------------------------------------------------------------------
 def test_degeneracy_finds_a_variable_the_optimum_does_not_determine():
