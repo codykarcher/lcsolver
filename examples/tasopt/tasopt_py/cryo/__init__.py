@@ -14,7 +14,8 @@ from .fuel_thermo import (SaturatedPhase, gas_properties,  # noqa: F401
 from .geometry import CrossSection, scaled_cross_section  # noqa: F401
 from .material_data import MATERIALS  # noqa: F401
 from .tank import (FuselageTank, InnerTank, OuterTank,  # noqa: F401
-                   material, size_inner_tank, size_outer_tank)
+                   material, optimize_outer_tank,
+                   size_inner_tank, size_outer_tank)
 from .stiffeners import (find_K1_head, stiffener_weight,  # noqa: F401
                          stiffeners_bending_moment,
                          stiffeners_bending_moment_outer)
@@ -25,4 +26,5 @@ __all__ = ["gas_properties", "liquid_properties", "SaturatedPhase",
            "stiffener_weight", "find_K1_head",
            "FuselageTank", "InnerTank", "OuterTank", "material",
            "size_inner_tank", "size_outer_tank",
+           "optimize_outer_tank",
            "MATERIALS"]

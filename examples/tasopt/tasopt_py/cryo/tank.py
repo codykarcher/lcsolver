@@ -339,3 +339,52 @@ def size_outer_tank(Rfuse: float, cross_section: CrossSection,
     return OuterTank(Wtank=Wtank, Wcyl=Wcyl, Whead=Whead, Wstiff=Wstiff,
                      Souter=Souter, Shead=Shead, Scyl=Scyl, t_cyl=t_cyl,
                      t_head=t_head, l_outer=l_outer)
+
+
+def optimize_outer_tank(Rfuse: float, cross_section: CrossSection,
+                        tank: FuselageTank, Winnertank: float, l_cyl: float,
+                        Ninterm0: float = 1.0, *, lower: float = 0.0,
+                        upper: float = 50.0, tol: float = 1.0e-9,
+                        maxeval: int = 100) -> float:
+    """The number of intermediate stiffener rings that minimises tank weight.
+
+    There is a real trade here. Each ring costs its own weight, but shortens
+    the unsupported span, which lets the wall be thinner over the whole
+    cylinder. Below the optimum the wall dominates; above it the rings do.
+
+    The reference minimises with NLopt's Nelder-Mead over a **continuous**
+    ``Ninterm`` bounded to [0, 50] -- so the answer is a fractional number of
+    rings, which is then used as one. That is reproduced rather than rounded:
+    rounding would change every outer-vessel weight, and the fractional count
+    is what the reference's own tank weights are built on.
+
+    This uses a golden-section search rather than a simplex, because a
+    one-dimensional bounded minimisation is what this is; the reference
+    reaches for a general-purpose simplex because NLopt was already a
+    dependency. Both converge to the same interior minimum -- see
+    ``tests/test_tank.py`` -- and golden section cannot wander outside the
+    bounds, which Nelder-Mead on a boxed problem can.
+    """
+    def weight(N):
+        return size_outer_tank(Rfuse, cross_section, tank, Winnertank,
+                               l_cyl, N).Wtank
+
+    invphi = (math.sqrt(5.0) - 1.0) / 2.0
+    a, b = lower, upper
+    c = b - invphi * (b - a)
+    d = a + invphi * (b - a)
+    fc, fd = weight(c), weight(d)
+
+    for _ in range(maxeval):
+        if abs(b - a) < tol * max(1.0, abs(a) + abs(b)):
+            break
+        if fc < fd:
+            b, d, fd = d, c, fc
+            c = b - invphi * (b - a)
+            fc = weight(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + invphi * (b - a)
+            fd = weight(d)
+
+    return 0.5 * (a + b)

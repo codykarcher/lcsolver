@@ -21,7 +21,8 @@ import pytest
 
 from tasopt_py.cryo.geometry import CrossSection
 from tasopt_py.cryo.material_data import MATERIALS
-from tasopt_py.cryo.tank import (FuselageTank, material, size_inner_tank,
+from tasopt_py.cryo.tank import (FuselageTank, material,
+                                 optimize_outer_tank, size_inner_tank,
                                  size_outer_tank)
 
 REF = Path(__file__).parent / "data" / "inner_tank_ref.csv"
@@ -269,3 +270,69 @@ def test_the_buckling_residual_has_a_pole_that_must_be_bracketed_below():
         return 1.0 / (L_Do - 0.45 * math.sqrt(t_D)) - 1.0e6
     with pytest.raises(ValueError, match="does not change sign"):
         _solve_thickness_ratio(bad, 1e-9, 1.0)
+
+
+# --- optimising the number of intermediate rings ---------------------------
+
+OPT_REF = Path(__file__).parent / "data" / "opt_outer_ref.csv"
+
+
+@pytest.mark.skipif(not OPT_REF.exists(), reason="optimiser reference absent")
+def test_the_optimum_ring_count_reproduces_the_references_weight():
+    """The reference minimises with NLopt's Nelder-Mead; this port uses a
+    golden-section search, because a one-dimensional bounded minimisation is
+    what this is.
+
+    They agree on the *weight* to 4e-10 but on the *ring count* only to 4e-4.
+    That is not a defect in either -- it is what a flat minimum looks like.
+    The objective is quadratic near its minimum, so an error of 6e-4 in
+    position shows up as ~4e-10 in value. The weight is what every downstream
+    number uses, so that is what the tolerance is set on; asserting the ring
+    count tightly would be asserting the stopping rule of a particular
+    optimiser.
+    """
+    n = 0
+    for r in csv.DictReader(OPT_REF.open()):
+        Rfuse = float(r["Rfuse"])
+        cs = CrossSection(Rfuse)
+        tank = FuselageTank(clearance_fuse=0.1, ARtank=2.0, ftankadd=0.1,
+                            theta_outer=(1.0, 2.2),
+                            outer_material="Al-2219-T87")
+        N = optimize_outer_tank(Rfuse, cs, tank, float(r["Winner"]),
+                                float(r["l_cyl"]))
+        W = size_outer_tank(Rfuse, cs, tank, float(r["Winner"]),
+                            float(r["l_cyl"]), N).Wtank
+
+        assert W == pytest.approx(float(r["Wtank_opt"]), rel=1e-8)
+        assert N == pytest.approx(float(r["Ninterm"]), abs=2e-3)
+        n += 1
+    assert n == 3
+
+
+def test_the_optimum_is_a_real_interior_minimum():
+    """Worth checking rather than trusting: perturbing the ring count either
+    way must increase the weight, or the 'optimum' is a bound or a flat."""
+    cs = CrossSection(1.9)
+    tank = FuselageTank(clearance_fuse=0.1, ARtank=2.0, ftankadd=0.1,
+                        theta_outer=(1.0, 2.2), outer_material="Al-2219-T87")
+
+    def W(N):
+        return size_outer_tank(1.9, cs, tank, 3.0e5, 6.0, N).Wtank
+
+    N = optimize_outer_tank(1.9, cs, tank, 3.0e5, 6.0)
+    assert 0.0 < N < 50.0                       # interior, not on a bound
+    best = W(N)
+    for step in (0.5, 2.0, 5.0):
+        assert W(N - step) > best
+        assert W(N + step) > best
+
+
+def test_the_reference_optimises_over_a_continuous_ring_count():
+    """And the answer is fractional -- 10.06 rings. Reproduced rather than
+    rounded: rounding would move every outer-vessel weight away from the
+    reference's, and the fractional count is what its tank weights are built
+    on."""
+    for r in csv.DictReader(OPT_REF.open()):
+        N = float(r["Ninterm"])
+        assert N != round(N)
+        assert 5.0 < N < 25.0
