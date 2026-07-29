@@ -137,6 +137,10 @@ class SIAOptions:
         self.ratio_expand = 0.75
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
+        self.step_expansion = 2.0      # >1 enables the feasibility-verified
+        self.step_expansion_max = 1e4  # step extension described in solve_sia.
+                                       # Set to 1.0 to take the sub-problem's
+                                       # step exactly as returned.
         self.condense_numerator = False
         # Condense the NUMERATOR of p/q <= 1 as well, making the constraint a
         # monomial -- linear in log space. This is what PCCP does for an
@@ -855,6 +859,33 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
         f_old = problem.objective_value(x)
         x_new = x * np.exp(d)
+
+        # Extend the step while it stays feasible for the TRUE problem.
+        #
+        # The sub-problem is a conservative inner approximation, so its optimum
+        # is feasible but PESSIMISTIC -- it stops at the edge of the condensed
+        # set, which is strictly inside the real one. Walking further along the
+        # same direction usually stays feasible and keeps reducing the
+        # objective, and it costs one constraint evaluation to find out, against
+        # a whole sub-problem solve to take another step.
+        #
+        # This is what lets the conservative form keep its guarantee and still
+        # move: every candidate is CHECKED against the true constraints, so an
+        # accepted iterate is feasible by verification rather than by
+        # construction. Nothing is assumed.
+        if options.step_expansion > 1.0 and not has_blackbox:
+            budget = max(viol, options.feasibility_tolerance)
+            f_best = problem.objective_value(x_new)
+            alpha = options.step_expansion
+            while alpha <= options.step_expansion_max:
+                trial = x * np.exp(alpha * d)
+                if not np.all(np.isfinite(trial)) or np.any(trial <= 0):
+                    break
+                f_trial = problem.objective_value(trial)
+                if f_trial >= f_best or _violation(problem, trial) > budget:
+                    break
+                x_new, f_best = trial, f_trial
+                alpha *= options.step_expansion
 
         if has_blackbox:
             # Globalize the linearized block only: compare the true objective
