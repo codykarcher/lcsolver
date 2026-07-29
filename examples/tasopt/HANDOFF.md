@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 30 modules, 236 tests
+## Done — 31 modules, 244 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -115,6 +115,7 @@ and you cannot tell which module to look at.
 | `aero.fusebl` | `fusebl.f` | 2.8e-14 (real 737 call: 1.4e-15) |
 | `linalg` | `gaussn.f` | literal port |
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
+| `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
@@ -130,17 +131,19 @@ converged aircraft agrees to 1.5e-9. `tests/test_wsize.py`.
 
 | source | what it is |
 |---|---|
-| `woper.f` | off-design operation — flies a *given* aircraft on another mission |
-| `fobj.f`, `gradop.f` | the optimiser wrapper around `wsize` |
+| `fobj.f`, `gradop.f`, `simpop.f` | the optimiser wrapper around `wsize` |
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
+| `getparm.f`, `getsave.f` | reading `.tas` input files |
 
-`woper` is the natural next piece if the port is to do anything beyond
-sizing: it is what evaluates off-design missions, and it needs `pralt`
-(already ported, in `sizing/wsize.py`) and nothing else that is missing.
+The optimiser is the natural next piece: `fobj` is a thin wrapper that
+perturbs design variables, calls `wsize` then `woper` for each mission, and
+returns a fuel-burn objective, and `simpop`/`gradop` drive it. It reads
+`pare(ieu8)` for a jet-velocity-ratio constraint, which `tfcalc` now stores.
 
-Note `fobj` reads `pare(ieu8)` for its jet-velocity-ratio constraint, which
-`tfcalc` now stores; before this session it did not.
+`getparm` is what would let the port read `737.tas` directly rather than
+being handed a dumped state — worth doing before the optimiser if the point is
+to run new cases rather than to reproduce this one.
 
 ## Conventions to keep
 
@@ -312,7 +315,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 236 tests, ~30 s (wsize sizes a 737)
+python -m pytest tests/ -q            # 244 tests, ~40 s (wsize sizes a 737)
 
 # build the reference program
 cd /Users/codykarcher/Desktop/Tasopt2.16/src && make tasopt

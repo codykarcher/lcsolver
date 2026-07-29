@@ -36,9 +36,10 @@ precision; the reference drivers use the same flag.
 | `aero.fusebl` | `fusebl.f` | 28 values, 2.8e-14 |
 | `linalg` | `gaussn.f` | literal port |
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
+| `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `model` | `index.inc` | 611 constants, generated |
 
-236 tests. Reference CSVs are committed, so the suite runs without a Fortran
+244 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -73,12 +74,13 @@ agrees to **1.5e-9** across `parg`, 1.0e-7 across `para` and 5.2e-8 across
 
 | source | lines | what it is |
 |---|---|---|
-| `woper.f` | — | off-design operation (not on the sizing path) |
-| `fobj.f`, `gradop.f` | — | the optimiser wrapper |
-| `noise.f` | 460 | noise estimate (not on the sizing path) |
-| `engwrt`, `output.f` | — | output formatting only |
+| `fobj.f`, `gradop.f`, `simpop.f` | ~600 | the optimiser wrapper around `wsize` |
+| `noise.f` | 460 | noise estimate |
+| `output.f` (`engwrt`) | — | output formatting only |
 
-Nothing on the design-mission sizing path remains.
+Nothing that computes an aircraft remains: both the design-mission sizing loop
+and the off-design mission loop are ported and checked against the shipped
+737 run.
 
 ## Accuracy of the boundary-layer chain
 

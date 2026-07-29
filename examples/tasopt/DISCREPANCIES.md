@@ -247,3 +247,29 @@ parts) has its only call site, at the top of `Wupdate`, commented out.
 and would not agree with the atmosphere if it were: it takes its reference
 temperature as 288.0 K where `atmos` uses 288.2, a 0.07% shift in viscosity.
 `cfturb` also lives here and *is* used, by `cdsum`.
+
+## §32 — `woper.f` has an unused relaxation factor and two dead blocks
+
+```fortran
+      rlx = 1.0
+      if(iterw .gt. iterfmax-5) then
+        rlx = 0.5
+      endif
+```
+
+is the first thing in the weight loop, and `rlx` is never read again. Unlike
+`wsize`, `woper` applies no under-relaxation at all — its weight update is
+whatever `mission` returns.
+
+Two blocks cannot have an effect:
+
+* `pare` is copied from `pared` for every point and every index at the top of
+  the routine, and then copied again inside `if(initeng.eq.0)`. The second
+  copy can only reproduce the first, so the `initeng` branch is decorative
+  here; `initeng` does still reach `mission` and `tfcalc`, where it means
+  something.
+* `para(iaCfnace)` is copied from the design mission over
+  `ipstatic..ipdescentn`, and then overwritten with a flat `0.003` at *every*
+  point about eighty lines later.
+
+All three are ported as written, the last with a test pinning the order.
