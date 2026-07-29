@@ -440,27 +440,17 @@ def fold_singleton_rows(structures):
     # because the operator list is positional.
     keep = [i for i in sorted(set(numer) | set(denom)) if i != 0
             and i not in folded]
-    renum = {old: new for new, old in enumerate(keep, start=1)}
 
-    new_rows = [list(r) for r in numer.get(0, [])]
-    new_ops = []
-    for old in keep:
-        new = renum[old]
-        for r in numer.get(old, []):
-            new_rows.append([new] + list(r[1:]))
-        for r in denom.get(old, []):
-            new_rows.append([-new - 1] + list(r[1:]))
-        new_ops.append(operators[old - 1]
-                       if 0 <= old - 1 < len(operators) else "<=")
-
-    out = dict(structures)
-    out[key] = [structures[key][0], new_rows, new_ops]
-    out["bounds"] = bounds
+    st = as_detected(structures)
+    n = max([len(r) - 2 for r in rows] + [len(bounds)])
     info = dict(structures.get("info") or {})
     info["N_cons_total"] = len(keep)
     info["N_cons_folded"] = len(folded)
-    out["info"] = info
-    return out
+    return st.rebuild(
+        st.terms(0),
+        [st.terms(i) for i in keep],
+        [st.operator(i) for i in keep],
+        n=n, bounds=bounds, info=info)
 
 
 class Removed:

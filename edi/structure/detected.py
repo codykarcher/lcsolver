@@ -255,6 +255,47 @@ class Detected(dict):
         idx = i - 1 if self.space == "log" else i
         return ops[idx] if 0 <= idx < len(ops) else "<="
 
+    # -- writing ----------------------------------------------------------
+    def rebuild(self, objective, constraints, operators, n=None, **overrides):
+        """A new :class:`Detected` carrying these terms.
+
+        The counterpart to :meth:`terms`. Three presolve passes each grew their
+        own row-emitting loop -- reconstructing the ``[index, coefficient,
+        *exponents]`` layout and the ``-i - 1`` denominator convention by hand
+        -- which is three places to get the convention wrong and three places
+        that must change together if it ever moves.
+
+        ``objective`` is a list of :class:`Term`; ``constraints`` a list of
+        term-lists, numbered from 1 in order. ``n`` is the dense column count,
+        defaulting to the widest column any term touches. Pass it explicitly
+        when trailing columns are all-zero but must be kept: narrowing silently
+        renumbers every variable after the first empty column.
+
+        Any other keyword replaces a top-level entry -- ``variables``,
+        ``bounds``, ``info``.
+        """
+        if n is None:
+            n = max([j + 1 for terms in [objective] + list(constraints)
+                     for t in terms for j in t.exponents] + [0])
+
+        def emit(idx, terms, out):
+            for t in terms:
+                row = [(-idx - 1) if t.denominator else idx, float(t.coeff)]
+                row += [t.exponents.get(j, 0.0) for j in range(n)]
+                out.append(row)
+
+        rows = []
+        emit(0, objective, rows)
+        for i, terms in enumerate(constraints, start=1):
+            emit(i, terms, rows)
+
+        out = Detected(self)
+        key = self.key
+        out[key] = [self[key][0], rows, list(operators)]
+        for k, v in overrides.items():
+            out[k] = v
+        return out
+
     # -- presentation -----------------------------------------------------
     def __repr__(self):
         if self.kind is None:
