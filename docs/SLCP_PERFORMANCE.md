@@ -103,6 +103,40 @@ order of magnitude better early on. It then crawls again in the tail
 (0.3%/iteration from iteration 18), so a single fixed weight is not the answer
 either; but it demonstrates the mechanism directly.
 
+## Ruling out the signomial approximation
+
+`PosynomialRatio` -- keeping `p` exact and AGM-condensing only `q` -- is a
+recent and still-speculative addition, so it is a natural suspect. It is not
+the cause. Re-running with `sp_form=False`, which hands the same ratio over as
+an opaque value/gradient callback so SLCP linearizes the whole body:
+
+```
+                      40 iterations    wall     s.z > 0 on
+  sp_form=True           104384        282 s    ~1 update in 6
+  sp_form=False          101259       1345 s    0 of 40 updates
+```
+
+**The curvature condition never once holds with the approximation turned off.**
+So `B` is the identity in both configurations, for the same underlying reason,
+and the asymptotic behaviour is identical -- the same ~2.5%/iteration linear
+crawl. The 3% better objective costs 4.8x the wall time, because turning off
+the SP form also loses sub-problem caching (a linearization moves every
+iteration, so there is nothing to cache).
+
+The transient does differ, interestingly. Linearizing everything gives BFGS
+something real to chase early on -- it is ahead at every one of the first six
+iterations and `|gradL|` genuinely falls, to 0.59 by iteration 4, which it
+never does with the SP form. Then the line search collapses (`alpha` 1.000 ->
+0.168 -> 0.044 -> 0.014 by iteration 14) as the linearization stops being
+accurate enough for the merit function, it grinds through iterations 9-17
+making almost no progress, recovers at iteration 21, and settles back into the
+same linear rate.
+
+So the two treatments fail in opposite ways -- accurate sub-problem with no
+curvature, versus real curvature with an inaccurate sub-problem -- and neither
+converges. That is further evidence the problem is the missing trust-region
+management rather than the constraint representation.
+
 ## What would actually fix it
 
 Not a better Hessian. On a problem where nearly everything is already exact
