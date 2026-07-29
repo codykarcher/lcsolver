@@ -80,7 +80,39 @@ than PCCP and 2.8x faster than the old SIA path -- the extra speed coming from
 both the smaller constraint count and the cache, which now handles the
 condensed equality.
 
-The **certificate** problem is not solved. Stationarity is unchanged at ~0.5
+### The certificate is a separate bug
+
+Not solved by the equality fix, and the new data says why the earlier account
+was incomplete. With the pairs gone the conditioning is fully repaired -- the
+largest multiplier falls from 4047 to **3.34**, with none above 10 -- and yet
+stationarity is unchanged. Measured at SIA's own point:
+
+```
+SIA's multipliers          : 0.538787
+best any-sign multipliers  : 1.1e-14     <- the point IS stationary
+best sign-valid (NNLS)     : 0.0120
+```
+
+The objective gradient lies *exactly* in the span of the constraint gradients,
+so SIA is landing on what is essentially a KKT point and mis-reporting it by a
+factor of ~45. The multipliers are no longer large; they are simply wrong.
+
+One methodological caution, recorded because it cost time here: with 1165
+constraints against 1068 variables the system ``G lam = -g0`` is
+**underdetermined**, so the multipliers are not unique and ``lstsq`` returns
+the minimum-norm member of a family. Comparing SIA's duals element-wise
+against it -- by sign, by magnitude, or by correlation -- is not diagnostic,
+and an attempt to do so here produced numbers that looked damning and meant
+nothing. The only sound statement is that SIA's multipliers fail stationarity.
+
+The live candidate is that IPOPT rescales the problem by default
+(``nlp_scaling_method=gradient-based``) and reports duals for the *scaled*
+problem, which would corrupt them by a per-constraint factor while leaving the
+primal solution untouched -- exactly the pattern seen. Test it by passing
+``nlp_scaling_method=none``.
+
+The old text below is retained for the record: stationarity is unchanged at
+~0.5
 even though the degenerate pairs are gone. So the dual-degeneracy account
 explains the step collapse, and it is confirmed on a three-variable
 reproduction where multipliers fall from 3611 to 2 -- but on SPaircraft
