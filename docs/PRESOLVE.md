@@ -107,6 +107,7 @@ only what is provably inert:
 * **fixed** — equal bounds make it a constant wearing a variable's clothing.
   Its value is folded into the coefficient of every term it appears in,
   `c * v**a`, and the column goes.
+* **output-only** — computed from the design and read by nothing. See below.
 
 Both are exact: the optimal objective is unchanged and every removed variable
 gets a value feasible for the original problem.
@@ -121,6 +122,55 @@ On SPaircraft this removes 52 variables, all `fixed` constants
 either in a real constraint or a constant. Verified exact at the reference
 solution: objective identical to 15 digits, worst violation identical, and the
 restored vector round-trips bit-for-bit.
+
+### Output-only variables
+
+Common in engineering models and bad for the optimizer: a quantity computed
+*from* the design so a human can read it, which nothing downstream consumes.
+Lift-to-drag ratio is the canonical example — you want it in the report, but
+no constraint depends on it, so every iteration spends effort solving for a
+number that could have been worked out once at the end.
+
+A variable is output-only when
+
+* it appears in exactly **one** constraint,
+* it is **absent from the objective**, and
+* that constraint cannot restrict anything else through it — which needs both
+  that the constraint is monotone in the variable (so it can always be
+  satisfied by moving it) **and** that the bound in the relaxing direction is
+  vacuous (so moving it is actually allowed).
+
+That last clause is the one that is easy to get wrong. `A >= 3*x` with `A`
+unbounded above says nothing whatever about `x`. Add `A <= 4` and it suddenly
+forces `x <= 4/3` — a real restriction on a real variable, and eliminating `A`
+would silently drop it. There is a test for exactly this.
+
+Detection is **iterative**, because removing one output can expose another
+behind it: a reporting quantity computed from a reporting quantity. Peel order
+then matters for the reverse reason — a variable peeled in round 1 may sit in
+the constraint defining a variable peeled in round 2, so recovery runs in
+**reverse** peel order.
+
+`eliminate_outputs=True` is the default. After the core solve,
+`restore_columns` post-computes each one by solving its defining constraint at
+the solved values of everything else (bisection in log space, which is safe
+because monotonicity is exactly what qualified the variable). The caller gets a
+full-length solution vector and cannot tell which quantities took part in the
+optimization and which were worked out afterwards.
+
+On SPaircraft this finds **52**, and the list reads like a report page:
+
+```
+LoD[0..4]            lift-to-drag ratio
+C_D[0..4]            drag coefficient
+Re_nacelle[1..4]     nacelle Reynolds number
+C_f_nacelle[1..4]    nacelle skin friction coefficient
+L_fuse[0..4]         fuselage lift
+Eng_h_25[...]        engine station enthalpy
+```
+
+Combined with the fixed columns that is 1172 variables down to 1068 and 1217
+constraints to 1165.
 
 ### Why degenerate variables are *not* removed
 

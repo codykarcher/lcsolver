@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 
 __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "cancellation_report", "fold_singleton_rows",
-           "reduce_columns", "restore_columns",
+           "reduce_columns", "restore_columns", "Removed",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -105,6 +105,7 @@ class PresolveReport:
     singleton_columns: list = field(default_factory=list)
     bound_only_columns: list = field(default_factory=list)
     fixed_columns: list = field(default_factory=list)
+    output_columns: list = field(default_factory=list)
     bounds: dict = field(default_factory=dict)
     unbounded_above: list = field(default_factory=list)
     unbounded_below: list = field(default_factory=list)
@@ -132,6 +133,14 @@ class PresolveReport:
         if self.fixed_columns:
             L.append(f"  {len(self.fixed_columns)} variables are fixed by "
                      "equal bounds and could be substituted out")
+        if self.output_columns:
+            L.append(f"  {len(self.output_columns)} variables are OUTPUT ONLY "
+                     "-- computed from the design and read by nothing; they "
+                     "can be post-computed instead of solved for")
+            for nm in self.output_columns[:12]:
+                L.append(f"    {nm}")
+            if len(self.output_columns) > 12:
+                L.append(f"    ... and {len(self.output_columns) - 12} more")
 
         for label, names in (("appears in no constraint", self.empty_columns),
                              ("appears in only one constraint",
@@ -303,6 +312,18 @@ def presolve_report(structures, names=None) -> PresolveReport:
 
     hist = collections.Counter(len(s) for s in in_real)
     rep.row_counts = dict(sorted(hist.items()))
+
+    # Output-only variables need the terms grouped per constraint, and the
+    # bounds separated, so they are only reported when that is available.
+    if structures.get("bounds") is not None:
+        obj_vars = {j for _c, expo in numer.get(0, [])
+                    for j, e in enumerate(expo) if abs(e) > 1e-12}
+        try:
+            outs = _output_only(numer, denom, con_idx, operators,
+                                structures["bounds"], obj_vars, n)
+            rep.output_columns = [nm(j) for j, _i in outs]
+        except Exception:
+            pass
     return rep
 
 
@@ -392,7 +413,167 @@ def fold_singleton_rows(structures):
     return out
 
 
-def reduce_columns(structures, guess=None):
+class Removed:
+    """One variable taken out of the solve, and how to get its value back.
+
+    Unpacks as ``(index, name, value, reason)`` so existing callers keep
+    working; ``recover`` carries the extra data needed for an output-only
+    variable, whose value is not known until the core solve has finished.
+    """
+
+    __slots__ = ('index', 'name', 'value', 'reason', 'recover')
+
+    def __init__(self, index, name, value, reason, recover=None):
+        self.index, self.name = index, name
+        self.value, self.reason = value, reason
+        self.recover = recover
+
+    def __iter__(self):
+        return iter((self.index, self.name, self.value, self.reason))
+
+    def __repr__(self):
+        return (f"Removed({self.name!r}, {self.reason}, "
+                f"value={self.value!r})")
+
+
+def _eval_terms(terms, x, j=None, tj=None):
+    """``sum_k c_k prod_i x_i**a_ik``, optionally overriding ``log x_j``."""
+    import math
+
+    total = 0.0
+    for c, a in terms:
+        acc = math.log(c) if c > 0 else -math.inf
+        for i, e in enumerate(a):
+            if abs(e) <= 1e-12:
+                continue
+            lx = tj if (j is not None and i == j) else (
+                math.log(x[i]) if i < len(x) and x[i] > 0 else -math.inf)
+            acc += e * lx
+        total += math.exp(acc) if acc > -700 else 0.0
+    return total
+
+
+def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
+    """Solve ``num/den == 1`` for ``x_j``, holding everything else at ``x``.
+
+    Bisection on ``log x_j``. The caller has already established that the
+    constraint is monotone in ``x_j`` -- that is what made the variable
+    output-only in the first place -- so a sign change is bracketed and
+    bisection is both safe and enough. This runs once per variable after the
+    solve, so its cost is irrelevant.
+    """
+    import math
+
+    def f(t):
+        n = _eval_terms(num, x, j, t)
+        d = _eval_terms(den, x, j, t) if den else 1.0
+        if n <= 0:
+            return -math.inf
+        if d <= 0:
+            return math.inf
+        return math.log(n) - math.log(d)
+
+    a, b = math.log(lo), math.log(hi)
+    fa, fb = f(a), f(b)
+    if not (math.isfinite(fa) or math.isfinite(fb)):
+        return None
+    if fa == 0.0:
+        return math.exp(a)
+    if fb == 0.0:
+        return math.exp(b)
+    if (fa > 0) == (fb > 0):
+        return None                    # no sign change: not recoverable here
+    for _ in range(200):
+        m = 0.5 * (a + b)
+        fm = f(m)
+        if fm == 0.0:
+            return math.exp(m)
+        if (fm > 0) == (fa > 0):
+            a, fa = m, fm
+        else:
+            b, fb = m, fm
+    return math.exp(0.5 * (a + b))
+
+
+def _output_only(numer, denom, con_idx, operators, bounds, in_objective, n):
+    """Variables that are computed but never fed back, peeled in rounds.
+
+    A variable is **output-only** when it appears in exactly one constraint,
+    is absent from the objective, and that constraint cannot restrict anything
+    else through it -- which needs two things:
+
+    * the constraint is monotone in the variable, so it can always be satisfied
+      by moving the variable; and
+    * the bound in the direction that relaxes it is vacuous, so moving it is
+      actually allowed. This is the part that is easy to get wrong. Given
+      ``A_tri >= f(...)`` with ``A_tri`` unbounded above, the constraint says
+      nothing about ``f``; add ``A_tri <= 100`` and it suddenly forces
+      ``f <= 100``, which is a real restriction on real variables.
+
+    Peeling is iterative because removing one output variable can expose
+    another behind it -- a reporting quantity computed from another reporting
+    quantity. Returns ``[(j, constraint_index), ...]`` in peel order.
+    """
+    alive = set(con_idx)
+    taken, order = {}, []
+    while True:
+        rows = collections.defaultdict(set)
+        for i in alive:
+            for terms in (numer.get(i, []), denom.get(i, [])):
+                for _c, a in terms:
+                    for j, e in enumerate(a):
+                        if abs(e) > 1e-12:
+                            rows[j].add(i)
+
+        progress = False
+        for j in range(n):
+            if j in taken or j in in_objective or len(rows.get(j, ())) != 1:
+                continue
+            i = next(iter(rows[j]))
+            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+
+            # Monotone in x_j? Numerator exponents one sign, denominator the
+            # other. Mixed signs mean moving x_j can tighten and loosen, so the
+            # constraint really does pin it.
+            signs = set()
+            for _c, a in numer.get(i, []):
+                if abs(a[j] if j < len(a) else 0.0) > 1e-12:
+                    signs.add(a[j] > 0)
+            for _c, a in denom.get(i, []):
+                if abs(a[j] if j < len(a) else 0.0) > 1e-12:
+                    signs.add(not (a[j] > 0))
+            if len(signs) != 1:
+                continue
+            grows_tighter = signs.pop()
+
+            lo, hi = (bounds[j] if j < len(bounds) else (None, None)) \
+                or (None, None)
+            if op == "==":
+                # An equality pins x_j exactly; it restricts others only via
+                # x_j's own bounds, so both must be vacuous.
+                free = ((lo is None or lo <= VACUOUS_LO)
+                        and (hi is None or hi >= VACUOUS_HI))
+            elif grows_tighter:
+                # Raising x_j tightens, so the constraint is escaped downward.
+                free = lo is None or lo <= VACUOUS_LO
+            else:
+                free = hi is None or hi >= VACUOUS_HI
+            if not free:
+                continue
+
+            taken[j] = i
+            order.append((j, i))
+            alive.discard(i)
+            progress = True
+        if not progress:
+            # Peel order matters: a variable peeled in round 1 may sit in the
+            # constraint that defines a variable peeled in round 2, so it can
+            # only be recovered once that one is known. Callers recover in
+            # REVERSE of this order.
+            return order
+
+
+def reduce_columns(structures, guess=None, eliminate_outputs=True):
     """Remove variables the model does not connect to anything.
 
     Two reductions, both exact -- the optimal objective is unchanged and the
@@ -442,14 +623,32 @@ def reduce_columns(structures, guess=None):
             if abs(float(e)) > 1e-12:
                 target.add(j)
 
+    # Group once; the output-only scan needs terms per constraint.
+    numer, denom = collections.defaultdict(list), collections.defaultdict(list)
+    for r in rows:
+        idx = int(r[0])
+        expo = [float(e) for e in r[2:]] + [0.0] * (n - (len(r) - 2))
+        (numer if idx >= 0 else denom)[
+            idx if idx >= 0 else -idx - 1].append((float(r[1]), expo))
+    con_idx = sorted(k for k in set(numer) | set(denom) if k != 0)
+
+    outputs = (_output_only(numer, denom, con_idx, operators, bounds,
+                            in_objective, n)
+               if eliminate_outputs else [])
+    out_vars = {j for j, _i in outputs}
+    out_cons = {i for _j, i in outputs}
+
     removed = []
     for j in range(n):
         lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
 
         if (lo is not None and hi is not None and lo > 0
                 and hi <= lo * (1.0 + 1e-9)):
-            removed.append((j, nm_at(names, j), float(lo), "fixed"))
+            removed.append(Removed(j, nm_at(names, j), float(lo), "fixed"))
             continue
+
+        if j in out_vars:
+            continue                    # handled below, in peel order
 
         if j in in_constraint or j in in_objective:
             continue
@@ -463,26 +662,46 @@ def reduce_columns(structures, guess=None):
             val = float(guess[j])
         else:
             val = 1.0
-        removed.append((j, nm_at(names, j), val, "disconnected"))
+        removed.append(Removed(j, nm_at(names, j), val, "disconnected"))
+
+    # Output-only variables carry their defining constraint rather than a
+    # value, since the value is not known until the core solve has finished.
+    # Recorded in REVERSE peel order, which is the order they can be evaluated.
+    for j, i in reversed(outputs):
+        removed.append(Removed(
+            j, nm_at(names, j), None, "output",
+            recover=(numer.get(i, []), denom.get(i, []), j)))
 
     if not removed:
         return structures, []
 
-    drop = {j: v for j, _nm, v, _why in removed}
-    keep = [j for j in range(n) if j not in drop]
+    drop = {r.index: r.value for r in removed if r.reason != "output"}
+    gone = {r.index for r in removed}
+    keep = [j for j in range(n) if j not in gone]
 
-    new_rows = []
-    for r in rows:
-        coeff = float(r[1])
-        expo = [float(e) for e in r[2:]] + [0.0] * (n - (len(r) - 2))
-        # Fold each removed variable's constant value into the coefficient.
-        for j, val in drop.items():
-            if abs(expo[j]) > 1e-12:
-                coeff *= val ** expo[j]
-        new_rows.append([r[0], coeff] + [expo[j] for j in keep])
+    new_rows, new_ops = [], []
+    surviving = [i for i in con_idx if i not in out_cons]
+    renum = {old: new for new, old in enumerate(surviving, start=1)}
+
+    def emit(idx, terms, negate):
+        for coeff, expo in terms:
+            c = float(coeff)
+            for j, val in drop.items():
+                if abs(expo[j]) > 1e-12:
+                    c *= val ** expo[j]
+            new_rows.append([-idx - 1 if negate else idx, c]
+                            + [expo[j] for j in keep])
+
+    emit(0, numer.get(0, []), False)
+    for old in surviving:
+        new = renum[old]
+        emit(new, numer.get(old, []), False)
+        emit(new, denom.get(old, []), True)
+        new_ops.append(operators[old - 1]
+                       if 0 <= old - 1 < len(operators) else "<=")
 
     out = dict(structures)
-    out[key] = [structures[key][0], new_rows, list(operators)]
+    out[key] = [structures[key][0], new_rows, new_ops]
     out["bounds"] = [bounds[j] if j < len(bounds) else (None, None)
                      for j in keep]
     if structures.get("variables"):
@@ -490,22 +709,50 @@ def reduce_columns(structures, guess=None):
                             if j < len(structures["variables"])]
     info = dict(structures.get("info") or {})
     info["N_vars_removed"] = len(removed)
+    info["N_vars_output"] = len(outputs)
+    info["N_cons_total"] = len(surviving)
     out["info"] = info
     return out, removed
 
 
 def restore_columns(removed, x_reduced, n_original=None):
-    """Put removed variables back into a reduced solution vector."""
+    """Put removed variables back into a reduced solution vector.
+
+    Constants go straight back. **Output-only** variables are post-computed
+    from the constraint that defined them, evaluated at the solved values of
+    everything else -- so a caller sees a full solution vector and cannot tell
+    which quantities took part in the optimization and which were worked out
+    afterwards.
+
+    ``removed`` already holds the output entries in the order they can be
+    evaluated, so this walks them as given.
+    """
     import numpy as np
 
     x_reduced = np.asarray(x_reduced, dtype=float)
     if n_original is None:
         n_original = len(x_reduced) + len(removed)
-    dropped = {j: v for j, _nm, v, _why in removed}
-    out = np.empty(n_original, dtype=float)
+
+    constants = {r.index: r.value for r in removed
+                 if getattr(r, 'reason', None) != 'output'
+                 and getattr(r, 'recover', None) is None}
+    outputs = [r for r in removed if getattr(r, 'recover', None) is not None]
+    placed = set(constants) | {r.index for r in outputs}
+
+    out = np.ones(n_original, dtype=float)
     it = iter(x_reduced)
     for j in range(n_original):
-        out[j] = dropped[j] if j in dropped else next(it)
+        if j in placed:
+            out[j] = constants.get(j, 1.0)
+        else:
+            out[j] = next(it)
+
+    for r in outputs:
+        num, den, j = r.recover
+        val = _solve_for(num, den, j, out)
+        if val is not None:
+            out[j] = val
+            r.value = float(val)
     return out
 
 

@@ -7,10 +7,9 @@ Kirschen's thesis wing model), plus ``wingbox.py`` for the structure.
 
 Signomial content
 -----------------
-Four constraints here are not GP-compatible, and each is signomial for a
+Three constraints here are not GP-compatible, and each is signomial for a
 different reason:
 
-* ``A_tri >= 0.5*(1-taper)*c_root*b`` — a *subtraction* inside the bound.
 * ``S == b*(c_root + c_tip)/2`` — a ``SignomialEquality``: written as an
   equality because area must be exact, and posynomial on both sides.
 * the DATCOM swept-wing lift-curve-slope relation, also a
@@ -19,6 +18,11 @@ different reason:
   rather than merely the geometry.
 * ``0.5 rho V^2 S C_L >= L_w + dLo + 2 dLt`` — the centre-section and tip lift
   losses appear as a sum on the greater side.
+
+The source has a fourth, ``A_tri >= 0.5*(1-taper)*c_root*b``, a subtraction
+inside the bound. It is deleted here: nothing read ``A_tri``, and nothing
+bounded it above, so the constraint could always be met by raising it and
+restricted nothing. See the note at the declaration below.
 
 Drag
 ----
@@ -65,7 +69,19 @@ def add_wing(f, N, state, *, sweep_deg, prefix="Wing_"):
     tau = V("tau", 0.12, "-", "wing thickness/chord ratio")
     e = V("e", 0.85, "-", "Oswald efficiency factor")
     fl = V("f_lambda_w", 0.02, "-", "empirical efficiency function of taper")
-    Atri = V("A_tri", 60.0, "m^2", "triangular wing area")
+    # A_tri, the triangular half of the source model's area decomposition, is
+    # deleted here. Nothing consumed it -- it was defined by one constraint and
+    # read by none -- and because nothing bounded it above, that constraint
+    # (`A_tri >= 0.5*(1-taper)*c_root*b`) could always be satisfied by raising
+    # A_tri, so it restricted taper, c_root and b not at all. Removing the pair
+    # is therefore exact.
+    #
+    # It was not harmless. It was one of the wing's four signomial constraints,
+    # it was degenerate at every solution, and it was the only variable in the
+    # model with no upper bound -- which is why the source carries
+    # `Atri <= 1e10*units('m**2')` on the next line purely to quiet gpkit's
+    # bounded check, and why gpkit reports it sitting at 1e+30. See
+    # docs/PRESOLVE.md.
     Arect = V("A_rect", 55.0, "m^2", "rectangular wing area")
     xw = V("x_w", 18.0, "m", "position of wing aerodynamic centre")
     dxACwing = V("dx_AC_wing", 1.0, "m", "wing aerodynamic centre shift")
@@ -88,11 +104,10 @@ def add_wing(f, N, state, *, sweep_deg, prefix="Wing_"):
     out = dict(AR=AR, S=S, b=b, c_root=croot, c_tip=ctip, mac=mac, y_mac=ymac,
                taper=taper, p=p, q=q, tau=tau, e=e, x_w=xw,
                dx_AC_wing=dxACwing, L_max=Lmax, V_fuel_max=Vfuel,
-               W_fuel_wing=WfuelWing, W_wing=Wwing, A_tri=Atri, A_rect=Arect)
+               W_fuel_wing=WfuelWing, W_wing=Wwing, A_rect=Arect)
 
     cons = [
         Arect == ctip * b,
-        Atri >= 0.5 * (1 - taper) * croot * b,                      # [SP]
         p >= 1 + 2 * taper,
         2 * q >= 1 + p,
         ymac == (b / 3) * q / p,

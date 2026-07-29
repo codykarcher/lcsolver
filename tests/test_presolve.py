@@ -288,7 +288,7 @@ def test_disconnected_variable_is_identified_and_removed():
     st, (small, removed) = _reduced(_disconnected_model())
 
     assert [(nm, why) for _j, nm, _v, why in removed] == [('y', 'disconnected')]
-    assert removed[0][2] == pytest.approx(4.0, rel=1e-9)   # its tightest bound
+    assert removed[0].value == pytest.approx(4.0, rel=1e-9)  # tightest bound
     assert len(small['variables']) == len(st['variables']) - 1
     assert 'y' not in [str(v) for v in small['variables']]
 
@@ -449,6 +449,101 @@ def test_cancellation_ignores_plain_posynomials():
 
     assert cancellation_report(st, res.x,
                                names=[str(v) for v in st['variables']]) == []
+
+
+# ---------------------------------------------------------------------------
+# output-only variables
+# ---------------------------------------------------------------------------
+def _output_model():
+    """min x + 1/x  s.t.  x >= 0.5,  A == 3*x,  T >= 2*A.
+
+    `A` and `T` are reporting quantities: computed from the design, read by
+    nothing. `T` sits behind `A`, so peeling `A` is what exposes it -- the
+    second round of the scan.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
+    A = f.Variable('A', 1.0, '', 'A', bounds=[1e-30, 1e30])
+    T = f.Variable('T', 1.0, '', 'T', bounds=[1e-30, 1e30])
+    f.Objective(x + 1.0 / x)
+    f.Constraint(x >= 0.5)
+    f.Constraint(A == 3.0 * x)
+    f.Constraint(T >= 2.0 * A)
+    return f
+
+
+def test_output_only_variables_are_found_behind_each_other():
+    st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
+    _small, removed = reduce_columns(st)
+    out = {r.name for r in removed if r.reason == 'output'}
+    assert out == {'A', 'T'}
+
+
+def test_output_values_are_post_computed_correctly():
+    """The reported value must be the one the optimizer would have produced."""
+    st = _detect(_output_model())
+    names = [str(v) for v in st['variables']]
+
+    on = solve_sia(st)                                    # default: eliminated
+    off = solve_sia(_detect(_output_model()), presolve=False)
+
+    assert on.objective == pytest.approx(off.objective, rel=1e-6)
+    assert len(on.x) == len(names)                        # full vector back
+
+    xv = on.x[names.index('x')]
+    assert on.x[names.index('A')] == pytest.approx(3.0 * xv, rel=1e-6)
+    assert on.x[names.index('T')] == pytest.approx(6.0 * xv, rel=1e-6)
+    # and it agrees with solving them inside the optimization
+    assert on.x[names.index('A')] == pytest.approx(off.x[names.index('A')],
+                                                   rel=1e-4)
+
+
+def test_eliminating_outputs_shrinks_the_solved_problem():
+    st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
+    small, removed = reduce_columns(st)
+    kept, _ = reduce_columns(st, eliminate_outputs=False)
+
+    assert len(small['variables']) == len(st['variables']) - 2
+    assert small['info']['N_cons_total'] == st['info']['N_cons_total'] - 2
+    assert small['info']['N_vars_output'] == 2
+    # with the mode off, nothing is removed and the constraints stay
+    assert len(kept['variables']) == len(st['variables'])
+
+
+def test_a_bounded_output_is_not_eliminated():
+    """A real bound turns the defining constraint into a genuine restriction.
+
+    With `A` capped at 4, `A >= 3*x` forces `x <= 4/3` -- a restriction on a
+    variable that IS in the objective. Eliminating `A` would silently drop it.
+    """
+    def model(hi):
+        f = Formulation()
+        x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+        A = f.Variable('A', 1.0, '', 'A', bounds=[1e-30, hi])
+        f.Objective(1.0 / x)             # pushes x UP, so the cap binds
+        f.Constraint(A >= 3.0 * x)
+        return f
+
+    st = fold_singleton_rows(_detect(model(4.0), bounds_as_rows=False))
+    _small, removed = reduce_columns(st)
+    assert [r.name for r in removed if r.reason == 'output'] == []
+
+    # ... whereas with a vacuous cap it is a pure output again
+    st2 = fold_singleton_rows(_detect(model(1e30), bounds_as_rows=False))
+    _s2, removed2 = reduce_columns(st2)
+    assert [r.name for r in removed2 if r.reason == 'output'] == ['A']
+
+
+def test_a_variable_the_objective_uses_is_never_an_output():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+    A = f.Variable('A', 1.0, '', 'A', bounds=[1e-30, 1e30])
+    f.Objective(A)                       # A is the thing being minimised
+    f.Constraint(A >= 3.0 * x)
+    f.Constraint(x >= 2.0)
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    _small, removed = reduce_columns(st)
+    assert [r.name for r in removed if r.reason == 'output'] == []
 
 
 # ---------------------------------------------------------------------------
