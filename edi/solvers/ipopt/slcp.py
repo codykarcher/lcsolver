@@ -574,6 +574,35 @@ def _fully_log_convex(problem):
             and all(c.exact_in_logspace for c in problem.constraints))
 
 
+def _apply_variable_bounds(m, problem, log_xk):
+    """Put the model's variable bounds on the sub-problem step.
+
+    The sub-problem works in log space about x_k -- x = x_k * exp(d) -- so
+    `lo <= x <= hi` is `log(lo/x_k) <= d <= log(hi/x_k)`, exact and free.
+
+    This is not optional once presolve is in play. `fold_singleton_rows` turns
+    a row like `x >= 1` into a BOUND, so a sub-problem that reads only rows no
+    longer sees that constraint at all -- it solves an unbounded relaxation and
+    drives the variable to the positivity floor. Measured before this existed:
+    `min x*y s.t. x >= 1, y >= 2` returned 1e-18 instead of 2, and reported
+    itself converged on the step magnitude.
+    """
+    import math
+
+    if problem.bounds is None:
+        return
+    for j, pair in enumerate(problem.bounds[:problem.n]):
+        lo, hi = pair or (None, None)
+        if lo is not None and lo > 0:
+            cur = m.d[j].lb
+            v = math.log(lo) - log_xk[j]
+            m.d[j].setlb(v if cur is None else max(cur, v))
+        if hi is not None and hi > 0:
+            cur = m.d[j].ub
+            v = math.log(hi) - log_xk[j]
+            m.d[j].setub(v if cur is None else min(cur, v))
+
+
 class SubproblemCache:
     """Build the sub-problem's Pyomo model once and re-point it each iteration.
 
@@ -760,6 +789,16 @@ class SubproblemCache:
         floor = math.log(self.options.x_min)
         lo = floor - log_xk
         hi = np.full(n, np.inf)
+        # The model's own bounds, which presolve may have folded rows into.
+        # Without these the cached sub-problem solves an unbounded relaxation
+        # exactly as the rebuild path did -- see _apply_variable_bounds.
+        if self.problem.bounds is not None:
+            for j, pair in enumerate(self.problem.bounds[:n]):
+                blo, bhi = pair or (None, None)
+                if blo is not None and blo > 0:
+                    lo[j] = max(lo[j], math.log(blo) - log_xk[j])
+                if bhi is not None and bhi > 0:
+                    hi[j] = min(hi[j], math.log(bhi) - log_xk[j])
         mls = self.options.max_log_step
         if mls is not None:
             mls = np.asarray(mls, dtype=float)
@@ -845,6 +884,7 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
     m.d = pyo.Var(m.J, initialize=0.0)
 
     log_xk = np.log(x_k)
+    _apply_variable_bounds(m, problem, log_xk)
     f_k = problem.objective_value(x_k)
 
     # --- objective ---------------------------------------------------------

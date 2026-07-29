@@ -1,0 +1,241 @@
+"""One model, every path, the same answer.
+
+The property this file asserts is the one no unit test here can: that the
+several routes from a Formulation to a number agree. EDI carries four
+representations of a problem -- the Pyomo model, the detected structure, the
+cvxopt backends' own matrices, and the SLCP ``Problem`` -- and every conversion
+between them is somewhere a transformation can quietly change the problem while
+still returning a plausible answer.
+
+That failure mode is this repository's characteristic bug, and it is invisible
+to a test built from imagination: the shapes that expose it are an equality
+sharing variables, a chain of eliminations, a variable sitting at a bound, a
+model that is simultaneously linear and signomial. None of those occur in a
+three-variable model written to check one function.
+
+So this file is deliberately about *agreement between paths* rather than about
+any particular number. A backend that silently drops a bound, a presolve pass
+that relaxes an equality, or a reader that parses the wrong encoding all show
+up the same way: two paths that should agree, disagreeing.
+
+Marked ``slow``. Run with ``pytest -m slow`` or ``pytest tests/test_integration.py``;
+excluded from a plain ``pytest`` run by the marker configuration.
+"""
+import importlib
+import sys
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+pyo = pytest.importorskip('pyomo.environ')
+
+from edi import Formulation  # noqa: E402
+from edi.solvers import solver as solver_module  # noqa: E402
+from edi.structure.structureDetector import structure_detector  # noqa: E402
+from edi.units.unitCorrector import unit_corrector  # noqa: E402
+
+pytestmark = pytest.mark.slow
+
+_EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'convexengineering'
+
+
+# ---------------------------------------------------------------------------
+# small models, one per structure kind
+# ---------------------------------------------------------------------------
+def _gp():
+    """min x*y  s.t.  x >= 1, y >= 2.  Optimum 2 at (1, 2)."""
+    f = Formulation()
+    x = f.Variable('x', 3.0, '', 'x', bounds=[0.01, 100.0])
+    y = f.Variable('y', 3.0, '', 'y', bounds=[0.01, 100.0])
+    f.Objective(x * y)
+    f.Constraint(x >= 1.0)
+    f.Constraint(y >= 2.0)
+    return f, 2.0
+
+
+def _gp_with_equality():
+    """A monomial equality plus a posynomial one -- both presolve targets."""
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 2.0, '', 'y', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
+    f.Objective(x + y)
+    f.Constraint(z == 3.0 * x)          # eliminable
+    f.Constraint(x * z >= 12.0)         # 3x^2 >= 12 -> x >= 2
+    f.Constraint(x * y >= 6.0)          # y >= 6/x
+    # min x + 6/x subject to x >= 2 is interior at x = sqrt(6), not at the
+    # bound, giving 2*sqrt(6). Worth stating: the first version of this test
+    # asserted 5.0 by assuming x sat on its constraint, and every solver
+    # disagreed with it in unison -- which is what agreement across paths is
+    # for.
+    return f, 2.0 * 6.0 ** 0.5
+
+
+def _sp():
+    """A signomial equality: `z == x - y` normalizes to a ratio."""
+    f = Formulation()
+    x = f.Variable('x', 5.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 1.5, '', 'y', bounds=[1.0, 2.0])
+    z = f.Variable('z', 3.0, '', 'z', bounds=[0.1, 100.0])
+    f.Objective(z)
+    f.Constraint(z == x - y)
+    f.Constraint(x >= 4.0)
+    return f, 2.0                        # x=4, y=2
+
+
+def _at_bounds():
+    """The optimum sits ON a bound -- the case that needs a projected gradient."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 3.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(1.0 / x)                 # pushes x UP into its cap
+    f.Constraint(x * y >= 1.0)
+    return f, 1.0 / 3.0
+
+
+SMALL = [
+    ('gp', _gp),
+    ('gp_equality', _gp_with_equality),
+    ('sp', _sp),
+    ('at_bounds', _at_bounds),
+]
+
+
+def _objective_of(f):
+    obj = [o for o in f.component_data_objects(pyo.Objective, active=True)]
+    return float(pyo.value(obj[0]))
+
+
+# ---------------------------------------------------------------------------
+# the paths
+# ---------------------------------------------------------------------------
+def _solve_via(make, path):
+    f, _expected = make()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        if path in ('cvxopt', 'ipopt-convex', 'ipopt'):
+            solver_module.solve(f, solver=path)
+            return _objective_of(f)
+        st = structure_detector(unit_corrector(f))
+        if path == 'sia':
+            from edi.solvers.ipopt.slcp_bridge import solve_sia
+            return float(solve_sia(st).objective)
+        if path == 'slcp':
+            from edi.solvers.ipopt.slcp_bridge import solve_slcp
+            return float(solve_slcp(st).objective)
+        raise AssertionError(f'unknown path {path}')
+
+
+PATHS = ['cvxopt', 'ipopt-convex', 'ipopt', 'sia', 'slcp']
+
+
+@pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
+def test_every_path_finds_the_same_optimum(name, make):
+    """Agreement is the assertion; the known value is only a sanity anchor."""
+    _f, expected = make()
+    results = {}
+    for path in PATHS:
+        try:
+            results[path] = _solve_via(make, path)
+        except Exception as exc:                      # noqa: BLE001
+            results[path] = f'FAILED: {type(exc).__name__}: {exc}'
+
+    ok = {p: v for p, v in results.items() if isinstance(v, float)}
+    assert ok, f'every path failed on {name}: {results}'
+
+    for path, value in ok.items():
+        assert value == pytest.approx(expected, rel=1e-4), (
+            f'{path} disagrees on {name}: got {value}, expected {expected}. '
+            f'All paths: {results}')
+
+
+@pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
+def test_presolve_does_not_change_the_answer(name, make):
+    """SIA with the presolve pipeline on and off must agree."""
+    from edi.solvers.ipopt.slcp_bridge import solve_sia
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        f1, expected = make()
+        on = solve_sia(structure_detector(unit_corrector(f1)), presolve=True)
+        f2, _ = make()
+        off = solve_sia(structure_detector(unit_corrector(f2)), presolve=False)
+
+    assert on.objective == pytest.approx(off.objective, rel=1e-6)
+    assert on.objective == pytest.approx(expected, rel=1e-4)
+    # and presolve must hand back a full-length solution either way
+    assert len(on.x) == len(off.x)
+
+
+@pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
+def test_split_bounds_do_not_change_the_answer(name, make):
+    """bounds_as_rows on and off describe the same problem."""
+    from edi.solvers.ipopt.slcp_bridge import solve_sia
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        f1, expected = make()
+        rows = solve_sia(structure_detector(unit_corrector(f1),
+                                            bounds_as_rows=True))
+        f2, _ = make()
+        split = solve_sia(structure_detector(unit_corrector(f2),
+                                             bounds_as_rows=False))
+
+    assert rows.objective == pytest.approx(split.objective, rel=1e-6)
+    assert rows.objective == pytest.approx(expected, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# the real models
+# ---------------------------------------------------------------------------
+def _example(name):
+    if str(_EXAMPLES) not in sys.path:
+        sys.path.insert(0, str(_EXAMPLES))
+    try:
+        return getattr(importlib.import_module(f'{name}.model'), 'build')
+    except Exception:                                  # noqa: BLE001
+        pytest.skip(f'example {name} unavailable')
+
+
+@pytest.mark.parametrize('name', ['simpleac', 'propeller', 'windturbine'])
+def test_example_models_agree_across_paths(name):
+    """Real models, which carry the shapes a written-from-scratch test lacks."""
+    build = _example(name)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from edi.solvers.ipopt.slcp_bridge import solve_sia
+        base = solve_sia(structure_detector(unit_corrector(build())))
+        plain = solve_sia(structure_detector(unit_corrector(build())),
+                          presolve=False)
+
+    assert base.objective == pytest.approx(plain.objective, rel=1e-5), (
+        f'{name}: presolve changed the objective')
+
+
+@pytest.mark.veryslow
+def test_spaircraft_end_to_end():
+    """The flagship model, and the only one carrying every shape at once.
+
+    Every defect found while building the presolve pipeline was found by
+    running this and nothing else: an equality sharing variables, a chain of
+    eliminations, variables reaching their bounds, a model that is both linear
+    and signomial. It takes about half a minute, which is why it carries its
+    own marker.
+    """
+    build = _example('spaircraft')
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from edi.solvers.ipopt.slcp_bridge import solve_sia
+        st = structure_detector(unit_corrector(build()))
+        n_vars = len(st['variables'])
+        res = solve_sia(st)
+
+    assert res.converged, f'did not converge: {res.status}'
+    assert res.max_violation <= 1e-6
+    assert res.stationarity <= 1e-5
+    assert len(res.x) == n_vars, 'presolve must restore the full solution'
+    assert res.objective == pytest.approx(95559.91, rel=1e-3)
