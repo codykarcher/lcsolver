@@ -143,8 +143,20 @@ def handle_num_node(visitor, node):
 def handle_negation_node(visitor,node,arg1):
     # WARNING: PYOMO CONVERTS 1 and -1 TO UNITS (replaces value with a unary sign)
     if isinstance(node.args[0],_PyomoUnit): #checks to see if node is a Pyomo unit (for cases like -1*units and 1*units)
-        nodeunits=units.get_units(node.expr)
-        return unitsPack(expr = value(node)*nodeunits, units = nodeunits)
+        # Read the child, not `node.expr` -- a negation node carries `args` and
+        # has no `expr`, so this raised AttributeError for every expression it
+        # was meant to handle. It is reached whenever a term's coefficient is
+        # exactly 1, because Pyomo folds `1.0*units.m` down to the bare unit
+        # and negates that: `a*m - 1.0*m` hits it and `a*m - 1.5*m` does not,
+        # which is why the failure looked like it depended on the numbers.
+        #
+        # Converted to base units like every other leaf, rather than returned
+        # in its declared units. `units` here is a pint unit throughout the
+        # walker, and the sum node compares those for equality -- handing back
+        # a Pyomo units container made every sum containing a negated unit
+        # report mismatching units instead.
+        K = as_quantity(1.0 * node.args[0]).to_base_units()
+        return unitsPack(expr = value(node) * K.magnitude, units = K.units)
     else:
         # Negate the *rebuilt* child, not the original node. Returning `node`
         # here silently discarded every unit conversion performed inside a

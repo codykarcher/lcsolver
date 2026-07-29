@@ -117,3 +117,79 @@ class TestUnitMessages(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipIf(not available, 'EDI import failed')
+class TestUnitMismatchIsFatal(unittest.TestCase):
+    """A dimensional error is a modelling error, not a routing decision.
+
+    `solve` falls back to plain IPOPT when structure detection fails, which is
+    right for a model it cannot classify and wrong for one that does not
+    balance dimensionally: IPOPT returns numbers for it either way. Observed on
+    an example whose coordinate arrays were bare floats standing for metres --
+    the fallback reported lengths of 1e5 m with nothing to say anything was
+    amiss.
+    """
+
+    def test_solve_raises_rather_than_falling_back(self):
+        from edi.solvers.solver import solve
+
+        f = Formulation()
+        length = f.Variable('L', 1.0, 'm', 'length')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(length)
+        f.Constraint(length >= time)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            solve(f)
+        self.assertIn('Error in units', str(ctx.exception))
+
+    def test_a_sound_model_is_unaffected(self):
+        from edi.solvers.solver import solve
+        import pyomo.environ as pyo
+
+        f = Formulation()
+        x = f.Variable('x', 5.0, 'm', 'x')
+        f.Objective(x)
+        f.Constraint(x >= 2.0 * units.m)
+        solve(f, sensitivities=False)
+        self.assertAlmostEqual(pyo.value(f.x), 2.0, places=5)
+
+
+@unittest.skipIf(not available, 'EDI import failed')
+class TestNegatedUnitLeaf(unittest.TestCase):
+    """Subtracting a quantity whose coefficient is exactly 1.
+
+    Pyomo folds `1.0*units.m` down to the bare unit, so `a*m - 1.0*m` negates
+    a `_PyomoUnit` while `a*m - 1.5*m` negates a product. The walker's branch
+    for the first case read `node.expr`, which a negation node does not have,
+    and raised AttributeError -- so the failure appeared to depend on the
+    numbers in the model rather than on their form.
+    """
+
+    def _rebuilt(self, expr):
+        f = Formulation()
+        d = f.Variable('d', 1.0, 'm', 'd')
+        f.Objective(d)
+        f.Constraint(d >= expr)
+        corrected = unit_corrector(f)
+        cons = list(corrected.component_data_objects(pyo.Constraint, active=True))
+        return cons[0].expr
+
+    def test_a_unit_coefficient_of_one_is_handled(self):
+        for expr in (1.5 * units.m - 1.0 * units.m,
+                     2.0 * units.m - units.m,
+                     units.m - units.m):
+            self._rebuilt(expr)          # must not raise
+
+    def test_the_arithmetic_is_right(self):
+        self.assertIn('0.5', str(self._rebuilt(1.5 * units.m - 1.0 * units.m)))
+
+    def test_a_conversion_under_the_negation_is_applied(self):
+        """The foot must become 0.3048 m, not be read as a metre."""
+        text = str(self._rebuilt(2.0 * units.m - units.ft))
+        self.assertIn('1.695', text)     # 2.0 - 0.3048
+
+    def test_a_variable_minus_a_bare_unit_converts(self):
+        text = str(self._rebuilt(units.ft * 0 + 3.0 * units.m - units.ft))
+        self.assertIn('2.695', text)     # 3.0 - 0.3048

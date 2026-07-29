@@ -156,8 +156,37 @@ def _run_diagnostics(structures, level):
     return rep
 
 
+def _attach_sensitivities(m, res, wanted):
+    """Compute sensitivities onto the model, so `f.solution` carries them.
+
+    Default-on because they are the reason to state a quantity as a Constant
+    rather than a literal, and as an opt-in nobody ran them. They cost one SVD
+    and one walk per active constraint on top of a solve that already
+    happened: 2.1s against 18.0s on SPaircraft, and unmeasurable on a model of
+    ordinary size.
+
+    Never fatal. A solve that produced an answer must return it even if the
+    duals cannot be recovered from it.
+    """
+    if not wanted or not isinstance(res, dict):
+        return res
+    try:
+        from edi.solvers.sensitivity import sensitivities as _sens
+        out = _sens(m)
+    except Exception:
+        return res
+    res['sensitivities'] = out['sensitivities']
+    res['sensitivity_detail'] = out
+    try:
+        m._sensitivity_cache = out['sensitivities']
+        m._ambiguous_cache = out.get('ambiguous')
+    except Exception:
+        pass
+    return res
+
+
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
-          **kwargs):
+          sensitivities=True, **kwargs):
     """Solve an EDI Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -183,6 +212,13 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     a fraction of a second and catch the modelling errors that otherwise
     present as a strange answer rather than as an error.
 
+    ``sensitivities`` computes the sensitivity of the optimum to every Constant
+    and attaches it to the result and to ``f.solution``. It is on by default --
+    the numbers are the reason to declare a Constant rather than write a
+    literal, and the cost is a small fraction of the solve. Pass ``False`` to
+    skip it, which is worth doing in a loop that solves the same model many
+    times and never reads them.
+
     In every case the solution is written back onto the model, so
     ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
@@ -190,6 +226,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
 
     from edi.presolve import InfeasibleProblem
     from edi.solvers.ipopt import ipopt_solve
+    from edi.units.unitCorrector import UnitMismatch
 
     # Detect once and use the result for both the checks and the solve. These
     # used to be two separate walks of the model, because `diagnose` needs
@@ -215,6 +252,15 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
             # is false as written" with whatever a general NLP solver says
             # about a problem that has no solution.
             raise
+        except UnitMismatch:
+            # Nor is a dimensional error. A model whose constraints do not
+            # balance dimensionally has no meaning to solve for, and IPOPT
+            # will happily return numbers for it -- observed on an example
+            # whose coordinate arrays were bare floats standing for metres:
+            # the fallback reported lengths of 1e5 m with no indication that
+            # anything was wrong. The unit report says which constraints and
+            # what the correction is; that is the answer here.
+            raise
         except Exception as e:
             detection_failed = e
 
@@ -227,11 +273,11 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
             pass                         # a check must never block a solve
 
     if solver == 'cvxopt':
-        return cvxopt_solve(m, **kwargs)
+        return _attach_sensitivities(m, cvxopt_solve(m, **kwargs), sensitivities)
     if solver == 'ipopt-convex':
-        return _convex_ipopt(m, **kwargs)
+        return _attach_sensitivities(m, _convex_ipopt(m, **kwargs), sensitivities)
     if solver == 'ipopt':
-        return ipopt_solve(m, **kwargs)
+        return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
@@ -249,8 +295,11 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     if structured:
         try:
             if convex_backend == 'ipopt':
-                return _convex_ipopt(m, structures=structures, **kwargs)
-            return cvxopt_solve(m, **kwargs)
+                return _attach_sensitivities(
+                    m, _convex_ipopt(m, structures=structures, **kwargs),
+                    sensitivities)
+            return _attach_sensitivities(m, cvxopt_solve(m, **kwargs),
+                                         sensitivities)
         except Exception as e:
             # Fall through to plain IPOPT, but say why: a silent fallback turns
             # a bug in the structured path into a confusing IPOPT failure.
@@ -258,7 +307,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
                 f"the structured backend failed ({type(e).__name__}: {e}); "
                 f"falling back to IPOPT on the raw model.",
                 RuntimeWarning, stacklevel=2)
-    return ipopt_solve(m, **kwargs)
+    return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
 
 
 def _solve_sp(structures, m, sp_method='sia', **kwargs):
