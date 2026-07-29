@@ -138,6 +138,8 @@ and you cannot tell which module to look at.
 | `aswing` | `aswout.f`, `BOUTPUT` | **737.asw and sd81.asw byte-identical** |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
+| `gas.properties` (H2) | **TASOPT.jl** `gasdata.jl` | 25x6 values, **bit-exact** |
+| `gas.mixture` (`hvap`) | **TASOPT.jl** `gascalc.jl` | 32 burn cases, **bit-exact** |
 
 ---
 

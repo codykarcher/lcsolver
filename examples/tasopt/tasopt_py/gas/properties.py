@@ -36,6 +36,11 @@ IGAS = {
     1: "N2", 2: "O2", 3: "CO2", 4: "H2O", 5: "AR",
     11: "CH4", 12: "C2H6", 13: "C3H8", 14: "C4H10",
     18: "C8H18", 24: "C14H30",
+    # Hydrogen is *not* in TASOPT 2.16 -- `gasfun.f` has eleven species and
+    # `gaschem` calls `stop` on anything past 24, so the Fortran cannot burn
+    # H2 at all. Index 40 and the table are TASOPT.jl's; see
+    # `tools/gen_h2_table.py` and DISCREPANCIES.md 54.
+    40: "H2",
 }
 
 # number of C,H,O,N atoms per molecule (gaschem in gasfun.f)
@@ -44,6 +49,7 @@ NCHON = {
     "H2O": (0, 2, 1, 0), "AR": (0, 0, 0, 0),
     "CH4": (1, 4, 0, 0), "C2H6": (2, 6, 0, 0), "C3H8": (3, 8, 0, 0),
     "C4H10": (4, 10, 0, 0), "C8H18": (8, 18, 0, 0), "C14H30": (14, 30, 0, 0),
+    "H2": (0, 2, 0, 0),
 }
 
 

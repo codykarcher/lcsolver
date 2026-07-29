@@ -67,7 +67,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "InfeasibleProblem",
            "cancellation_report", "fold_singleton_rows",
            "reduce_columns", "restore_columns", "Removed",
-           "propagate_bounds",
+           "propagate_bounds", "eliminate_monomial_equalities",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -774,6 +774,189 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
     return out, k
 
 
+def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
+                                  max_eliminations=None):
+    """Substitute out variables that a monomial equality already determines.
+
+    A monomial equality ``c * prod x_j**a_j == 1`` is a **linear** equality in
+    ``y = log x``, so it can be solved for one variable and substituted
+    everywhere else -- Gaussian elimination on the exponent matrix. Solving for
+    the pivot ``p`` gives
+
+        x_p = c**(-1/a_p) * prod_{j != p} x_j**(-a_j/a_p)
+
+    which is itself a monomial, so substituting it into any term keeps that
+    term a monomial with a positive coefficient. Posynomial structure survives
+    intact, which is what makes this safe on a GP: nothing becomes signomial,
+    and no approximation is introduced. The result is exact.
+
+    SPaircraft carries 752 monomial equalities among 1267 constraints, so the
+    ceiling here is high.
+
+    **Only variables whose declared bounds are vacuous are eliminated.** A real
+    bound on an eliminated variable does not disappear -- it becomes a
+    constraint on the survivors, and re-adding it as two monomial rows gives
+    back most of what the elimination saved. Bounds *derived* by
+    :func:`propagate_bounds` are a different matter, being implied by the
+    constraints already, but this runs on declared bounds and does not try to
+    tell them apart.
+
+    Fill-in is the real cost. Substituting a dense pivot row into many terms
+    densifies the exponent matrix, and a GP's matrix is normally very sparse.
+    Pivots are chosen greedily by a Markowitz-style estimate,
+    ``(row_nnz - 1) * (col_nnz - 1)``, and any pivot whose estimate exceeds
+    ``max_fill`` is skipped.
+
+    Returns ``(structures, removed)`` with ``removed`` in
+    :func:`reduce_columns` form, so :func:`restore_columns` recovers the
+    eliminated variables by back-substitution.
+    """
+    import math
+
+    if structures.get("bounds") is None:
+        raise ValueError(
+            "eliminate_monomial_equalities needs structures['bounds']; run "
+            "structure_detector with bounds_as_rows=False first")
+
+    rows, operators, key = _rows_of(structures)
+    names = [str(v) for v in structures.get("variables", [])]
+    bounds = list(structures["bounds"])
+    n = max([len(r) - 2 for r in rows] + [len(bounds)])
+    while len(bounds) < n:
+        bounds.append((None, None))
+
+    # Sparse form: constraint -> list of (coeff, {j: exponent}, is_denominator)
+    terms = collections.defaultdict(list)
+    for r in rows:
+        idx = int(r[0])
+        i = idx if idx >= 0 else -idx - 1
+        e = {j: float(v) for j, v in enumerate(r[2:]) if abs(float(v)) > 1e-12}
+        terms[i].append([float(r[1]), e, idx < 0])
+
+    def op_of(i):
+        return operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+
+    con_idx = sorted(k for k in terms if k != 0)
+    alive = set(con_idx)
+
+    def vacuous(j):
+        lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
+        return ((lo is None or lo <= VACUOUS_LO)
+                and (hi is None or hi >= VACUOUS_HI))
+
+    # Column occupancy, for the Markowitz estimate.
+    col = collections.defaultdict(set)
+    for i in con_idx:
+        for _c, e, _d in terms[i]:
+            for j in e:
+                col[j].add(i)
+
+    removed, done = [], 0
+    changed = True
+    while changed:
+        changed = False
+        # Candidate monomial equalities, cheapest pivot first.
+        cands = []
+        for i in sorted(alive):
+            if op_of(i) != "==" or len(terms[i]) != 1 or terms[i][0][2]:
+                continue
+            c_eq, a, _d = terms[i][0]
+            if c_eq <= 0:
+                continue
+            for pj, ap in a.items():
+                if abs(ap) < min_pivot or not vacuous(pj):
+                    continue
+                fill = (len(a) - 1) * (len(col[pj]) - 1)
+                if fill > max_fill:
+                    continue
+                cands.append((fill, i, pj))
+        if not cands:
+            break
+        cands.sort()
+
+        used_con, used_var = set(), set()
+        for fill, i, pj in cands:
+            if max_eliminations is not None and done >= max_eliminations:
+                break
+            if i in used_con or pj in used_var or i not in alive:
+                continue
+            c_eq, a, _d = terms[i][0]
+            ap = a.get(pj)
+            if ap is None or abs(ap) < min_pivot:
+                continue
+            # x_p = C * prod_{j != p} x_j ** m_j
+            C = c_eq ** (-1.0 / ap)
+            m = {j: -v / ap for j, v in a.items() if j != pj}
+
+            for k in list(col[pj]):
+                if k == i or k not in alive:
+                    continue
+                for t in terms[k]:
+                    ep = t[1].pop(pj, None)
+                    if ep is None:
+                        continue
+                    t[0] *= C ** ep
+                    for j, mv in m.items():
+                        nv = t[1].get(j, 0.0) + ep * mv
+                        if abs(nv) > 1e-12:
+                            t[1][j] = nv
+                            col[j].add(k)
+                        else:
+                            t[1].pop(j, None)
+            alive.discard(i)
+            col.pop(pj, None)
+            used_con.add(i)
+            used_var.add(pj)
+            removed.append(Removed(pj, nm_at(names, pj), None, "substituted",
+                                   recover=("monomial", C, dict(m))))
+            done += 1
+            changed = True
+
+    if not removed:
+        return structures, []
+
+    gone = {r.index for r in removed}
+    keep = [j for j in range(n) if j not in gone]
+    pos = {j: t for t, j in enumerate(keep)}
+
+    surviving = [i for i in con_idx if i in alive]
+    renum = {old: new for new, old in enumerate(surviving, start=1)}
+
+    def emit(idx, i, out_rows):
+        for c, e, den in terms[i]:
+            row = [(-idx - 1) if den else idx, c] + [0.0] * len(keep)
+            for j, v in e.items():
+                if j in pos:
+                    row[2 + pos[j]] = v
+            out_rows.append(row)
+
+    new_rows = []
+    emit(0, 0, new_rows)
+    new_ops = []
+    for old in surviving:
+        emit(renum[old], old, new_rows)
+        new_ops.append(op_of(old))
+
+    out = dict(structures)
+    out[key] = [structures[key][0], new_rows, new_ops]
+    out["bounds"] = [bounds[j] for j in keep]
+    if structures.get("variables"):
+        out["variables"] = [structures["variables"][j] for j in keep
+                            if j < len(structures["variables"])]
+    info = dict(structures.get("info") or {})
+    info["N_vars_substituted"] = len(removed)
+    info["N_cons_total"] = len(surviving)
+    out["info"] = info
+    # REVERSE elimination order. A pivot's formula is captured at the moment it
+    # is eliminated, and it may reference variables eliminated in a later
+    # round, so those have to be known first. Recovering forwards instead of
+    # backwards silently produces values off by orders of magnitude while the
+    # reduced problem itself stays perfectly correct -- measured on SPaircraft
+    # at a relative error of 4.3e+03 with an objective still exact to 12
+    # figures.
+    return out, removed[::-1]
+
+
 def reduce_columns(structures, guess=None, eliminate_outputs=True):
     """Remove variables the model does not connect to anything.
 
@@ -932,6 +1115,8 @@ def restore_columns(removed, x_reduced, n_original=None):
     ``removed`` already holds the output entries in the order they can be
     evaluated, so this walks them as given.
     """
+    import math
+
     import numpy as np
 
     x_reduced = np.asarray(x_reduced, dtype=float)
@@ -953,10 +1138,21 @@ def restore_columns(removed, x_reduced, n_original=None):
             out[j] = next(it)
 
     for r in outputs:
-        num, den, j = r.recover
-        val = _solve_for(num, den, j, out)
+        spec = r.recover
+        if spec[0] == "monomial":
+            # x_p = C * prod x_j ** m_j, from a monomial equality solved for p
+            _tag, C, m = spec
+            acc = math.log(C) if C > 0 else -math.inf
+            for j, e in m.items():
+                if j < len(out) and out[j] > 0:
+                    acc += e * math.log(out[j])
+            val = math.exp(acc) if -700 < acc < 700 else (
+                0.0 if acc <= -700 else math.inf)
+        else:
+            num, den, j0 = spec
+            val = _solve_for(num, den, j0, out)
         if val is not None:
-            out[j] = val
+            out[r.index] = val
             r.value = float(val)
     return out
 

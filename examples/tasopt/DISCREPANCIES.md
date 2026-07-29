@@ -700,3 +700,47 @@ identically zero at every point.
 reading `case.settings.Lfblwrite`. The 737 sets the flag, so nothing showed;
 `sd81` clears it, and the port's report came out 54 lines too long with a table
 of zeros in it. Fixed to read the case.
+
+## §54 — TASOPT 2.16 cannot burn hydrogen, and does not fail gracefully
+
+Not a matter of accuracy. `gasfun.f` defines eleven species — N2, O2, Ar,
+CO2, H2O and the hydrocarbons CH4 through C14H30 — and there is no `gas_H2`.
+More decisively, `gaschem`, which supplies the atom counts that let `gasfuel`
+balance a combustion reaction, ends with
+
+```fortran
+      else
+        write(*,*) 'GASCHEM: undefined gas index:', igas
+        stop
+      endif
+```
+
+so a hydrogen case does not produce a wrong answer, it halts the program. The
+`.tas` files document `ifuel` values 11 through 24 and no others.
+
+TASOPT.jl adds exactly one species, `H2` at `igas = 40`, and that is the
+entire thermodynamic difference between the two on this point. This port now
+carries it, generated from `gasdata.jl` by `tools/gen_h2_table.py` and
+verified bit-for-bit against the running Julia package.
+
+Worth being clear about what that does and does not buy. The engine can now
+burn hydrogen; the *aircraft* still cannot fly on it, because there is no fuel
+tank model anywhere in 2.16 — fuel is a weight and a volume in the wing box.
+That is what `TASOPT.jl/src/cryo_tank` (1971 lines) exists for, and it is the
+real hydrogen enabler.
+
+## §55 — `gas_burn` gains a ninth argument in v3
+
+TASOPT.jl's `gas_burn` takes `hvap`, the fuel's heat of vaporisation:
+
+```julia
+      hf = hf + (hi - hvap) * beta[n]
+```
+
+2.16's takes eight arguments and assumes the fuel arrives as a gas — fine for
+kerosene, wrong for anything stored as a cryogenic liquid, which has to be
+boiled before it burns. This port takes `hvap` with a default of zero, which
+reproduces the Fortran exactly (and is what keeps `737.out` byte-identical).
+
+For liquid hydrogen it is about 446 kJ/kg, roughly 0.4% of the lower heating
+value: small, but a real charge that scales with fuel flow.

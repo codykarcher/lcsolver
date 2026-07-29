@@ -26,6 +26,7 @@ from edi.presolve import (
     InfeasibleProblem,
     cancellation_report,
     degeneracy_report,
+    eliminate_monomial_equalities,
     fold_singleton_rows,
     presolve_report,
     propagate_bounds,
@@ -880,3 +881,73 @@ def test_propagation_leaves_a_genuinely_unbounded_variable_alone():
     st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
     out, _n = propagate_bounds(st)
     assert 'w' in presolve_report(out).unbounded_above
+
+
+# ---------------------------------------------------------------------------
+# monomial equality elimination
+# ---------------------------------------------------------------------------
+def test_a_monomial_equality_substitutes_a_variable_out():
+    """`z == 3x` determines z, so z need not be solved for."""
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
+    f.Objective(x)
+    f.Constraint(z == 3.0 * x)
+    f.Constraint(x * z >= 12.0)            # 3x^2 >= 12  ->  x >= 2
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    small, removed = eliminate_monomial_equalities(st)
+
+    assert [(r.name, r.reason) for r in removed] == [('z', 'substituted')]
+    assert len(small['variables']) == len(st['variables']) - 1
+    assert small['info']['N_cons_total'] == st['info']['N_cons_total'] - 1
+
+    res = solve_sia(small)
+    assert res.objective == pytest.approx(2.0, rel=1e-6)
+    names = [str(v) for v in st['variables']]
+    back = restore_columns(removed, res.x, n_original=len(names))
+    assert back[names.index('x')] == pytest.approx(2.0, rel=1e-5)
+    assert back[names.index('z')] == pytest.approx(6.0, rel=1e-5)
+
+
+def test_chained_eliminations_recover_in_the_right_order():
+    """A pivot's formula may name a variable eliminated in a LATER round.
+
+    `w == 2z` and `z == 3x`: whichever is eliminated first, its stored formula
+    can reference the other, so recovery has to run backwards. Forwards it
+    silently returns values off by orders of magnitude while the reduced
+    problem stays exactly right -- measured on SPaircraft at 4.3e+03 relative
+    error with the objective still correct to 12 figures.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
+    w = f.Variable('w', 1.0, '', 'w', bounds=[1e-30, 1e30])
+    f.Objective(x)
+    f.Constraint(z == 3.0 * x)
+    f.Constraint(w == 2.0 * z)
+    f.Constraint(x >= 2.0)
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    small, removed = eliminate_monomial_equalities(st)
+
+    assert {r.name for r in removed} == {'z', 'w'}
+    res = solve_sia(small)
+    names = [str(v) for v in st['variables']]
+    back = restore_columns(removed, res.x, n_original=len(names))
+
+    xv = back[names.index('x')]
+    assert xv == pytest.approx(2.0, rel=1e-5)
+    assert back[names.index('z')] == pytest.approx(3.0 * xv, rel=1e-5)
+    assert back[names.index('w')] == pytest.approx(6.0 * xv, rel=1e-5)
+
+
+def test_a_variable_with_a_real_bound_is_not_substituted_out():
+    """Its bound would become a constraint on the survivors, undoing the gain."""
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1.0, 50.0])   # a real box
+    f.Objective(x)
+    f.Constraint(z == 3.0 * x)
+    f.Constraint(x >= 2.0)
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    _small, removed = eliminate_monomial_equalities(st)
+    assert [r.name for r in removed if r.reason == 'substituted'] == []

@@ -217,7 +217,7 @@ def gas_delh(alpha, n: int, po, to, ho, so, cpo, ro,
 
 
 def gas_burn(alpha, beta, gamma, n: int, ifuel: int,
-             to: float, tf: float, t: float) -> tuple:
+             to: float, tf: float, t: float, hvap: float = 0.0) -> tuple:
     """Fuel/air mass fraction and product composition for combustion.
 
     Air enters at ``to``, fuel at ``tf``, products leave at ``t``. Returns
@@ -226,6 +226,15 @@ def gas_burn(alpha, beta, gamma, n: int, ifuel: int,
 
     The energy balance is ``f = (ha - ho)/(hf - hc)``: enthalpy needed to heat
     the air from to to t, over the enthalpy released per unit fuel.
+
+    ``hvap`` is the fuel's heat of vaporisation, subtracted from the fuel
+    enthalpy because a fuel stored as a liquid has to be boiled before it can
+    burn. **This argument does not exist in TASOPT 2.16** -- its ``gas_burn``
+    takes eight arguments and assumes the fuel arrives as a gas, which is fine
+    for kerosene and wrong for anything cryogenic. It is TASOPT.jl's, and the
+    default of zero reproduces the Fortran exactly. For liquid hydrogen it is
+    around 446 kJ/kg, which is about 0.4% of the lower heating value -- small,
+    but it is a real charge against the fuel and it scales with fuel flow.
     """
     nm = n - 1
     ho = gassum(alpha, nm, to).h
@@ -235,7 +244,7 @@ def gas_burn(alpha, beta, gamma, n: int, ifuel: int,
 
     # The fuel itself is constituent n, which gassum cannot reach by index --
     # it only sums 1..nm -- so its contribution is added explicitly.
-    hf += gasfun(ifuel, tf).h * beta[n - 1]
+    hf += (gasfun(ifuel, tf).h - hvap) * beta[n - 1]
 
     f = (ha - ho) / (hf - hc)
     lam = [(alpha[i] + f * gamma[i]) / (1.0 + f) for i in range(n)]
