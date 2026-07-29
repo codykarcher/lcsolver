@@ -137,7 +137,8 @@ class SIAOptions:
         self.ratio_expand = 0.75
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
-        self.step_expansion = 2.0      # >1 enables the feasibility-verified
+        self.expand_past_blackbox = False
+        self.step_expansion = 1.0      # >1 enables the feasibility-verified
         self.step_expansion_max = 1e4  # step extension described in solve_sia.
                                        # Set to 1.0 to take the sub-problem's
                                        # step exactly as returned.
@@ -207,6 +208,21 @@ def _log_g(con, x):
 
 def _violation(problem, x):
     return max((_log_g(c, x) for c in problem.constraints), default=0.0)
+
+
+def _violation_structured(problem, x):
+    """Worst ``log g_i(x)`` over the constraints that cost nothing to evaluate.
+
+    Skips black-box bodies. Used only to steer the step extension, where
+    spending a black-box call per trial would defeat the purpose.
+    """
+    worst = -math.inf
+    for con in problem.constraints:
+        if isinstance(con.body, Signomial) and not isinstance(
+                con.body, (Posynomial, PosynomialRatio)):
+            continue
+        worst = max(worst, _log_g(con, x))
+    return worst
 
 
 def _kkt(problem, x, mults):
@@ -873,8 +889,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # move: every candidate is CHECKED against the true constraints, so an
         # accepted iterate is feasible by verification rather than by
         # construction. Nothing is assumed.
-        if options.step_expansion > 1.0 and not has_blackbox:
+        if options.step_expansion > 1.0 and (not has_blackbox
+                                             or options.expand_past_blackbox):
             budget = max(viol, options.feasibility_tolerance)
+            # With a black box present, judge the extension on the STRUCTURED
+            # constraints alone. Evaluating the black box at each trial alpha
+            # would spend the one resource this solver family exists to save --
+            # a five-step expansion would cost five calls per iteration. The
+            # structured constraints are posynomials and cost nothing.
+            #
+            # The black-box block is then policed where it already was, by the
+            # trust-region ratio test, whose evaluation at the accepted point is
+            # needed for the next linearization anyway. So the extension is free
+            # in calls; what it risks is a step the ratio test then rejects,
+            # throwing away the sub-problem solve that produced it. Off by
+            # default for that reason.
+            checker = _violation_structured if has_blackbox else _violation
             f_best = problem.objective_value(x_new)
             alpha = options.step_expansion
             while alpha <= options.step_expansion_max:
@@ -882,7 +912,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 if not np.all(np.isfinite(trial)) or np.any(trial <= 0):
                     break
                 f_trial = problem.objective_value(trial)
-                if f_trial >= f_best or _violation(problem, trial) > budget:
+                if f_trial >= f_best or checker(problem, trial) > budget:
                     break
                 x_new, f_best = trial, f_trial
                 alpha *= options.step_expansion
