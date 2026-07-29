@@ -305,3 +305,39 @@ def tfcalc(pari, parg, para, pare, ip: int, icall: int, icool: int,
             val = getattr(s, attr)
             if idx is not None and val is not None:
                 pare[idx] = val
+
+    # Static state at the stations that have one, plus the nozzle areas and
+    # jet speeds. Nothing on the sizing path reads these -- ``output.f``'s
+    # ``engwrt`` prints them, and ``fobj`` reads ``u8`` for the jet-velocity
+    # ratio constraint -- but they are part of the engine state the Fortran
+    # leaves behind, so leaving them at the caller's fill value would hand a
+    # later port of either routine a sentinel.
+    for stn, prefix in ((2, "2"), (25, "25"), (5, "5"), (6, "6"),
+                        (7, "7"), (8, "8")):
+        s = stations.get(stn)
+        if s is None:
+            continue
+        for attr, name in (("p", "P"), ("T", "T"), ("R", "R"),
+                           ("cp", "CP"), ("u", "U")):
+            idx = getattr(I, f"IE{name}{prefix}", None)
+            val = getattr(s, attr)
+            if idx is not None and val is not None:
+                pare[idx] = val
+
+    for stn, idx in ((6, I.IEA6), (8, I.IEA8), (9, I.IEA9)):
+        s = stations.get(stn)
+        if s is not None and s.A is not None:
+            pare[idx] = s.A
+    s9 = stations.get(9)
+    if s9 is not None and s9.u is not None:
+        pare[I.IEU9] = s9.u
+
+    # Polytropic and isentropic component efficiencies, as achieved.
+    for attr, idx in (("epf", I.IEEPF), ("eplc", I.IEEPLC),
+                      ("ephc", I.IEEPHC), ("epht", I.IEEPHT),
+                      ("eplt", I.IEEPLT), ("etaf", I.IEETAF),
+                      ("etalc", I.IEETALC), ("etahc", I.IEETAHC),
+                      ("etaht", I.IEETAHT), ("etalt", I.IEETALT)):
+        val = getattr(r, attr, None)
+        if val is not None:
+            pare[idx] = val

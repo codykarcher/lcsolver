@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 29 modules, 227 tests
+## Done — 30 modules, 236 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -109,36 +109,38 @@ and you cannot tell which module to look at.
 | `engine.weight` | `tfweight.f` | 2.6e-16 |
 | `sizing.balance` | `balance.f` (+`htsize`,`cglpay`) | 3.4e-16 |
 | `sizing.takeoff` | `takeoff.f` | 2.8e-16 |
-| `sizing.mission` | `mission.f` | **5.7e-6** |
+| `sizing.mission` | `mission.f` | 9.8e-11 |
 | `aero.blsys` | `blvar`, `blsys` in `blsys.f` | 1e-14 |
 | `aero.blax` | `blax.f` | 3e-14 |
 | `aero.fusebl` | `fusebl.f` | 2.8e-14 (real 737 call: 1.4e-15) |
 | `linalg` | `gaussn.f` | literal port |
+| `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
 
-## Left to do
+## The job is done
 
-**`wsize.f` (1727 lines) — the outer sizing loop.** This is the only thing
-left on the sizing path. Everything it calls is ported and verified.
+The port sizes a 737 end to end. Handed `wsize.f`'s own dumped input state
+from the real `runs/737/737.tas` run, it converges in the same 18 iterations
+to WTO = 174979.1500 lbf against the program's 174979.1499, and the whole
+converged aircraft agrees to 1.5e-9. `tests/test_wsize.py`.
 
-Verify it the `mission.f` way: instrument it to dump state and compare against
-the real 737 run. It also contains `Wupdate`/`Wupdate0`/`Wupdate1` (the
-weight-fraction update) and `cfturb` (already ported, in `aero.cdsum`).
+## What is left, and why none of it is on the sizing path
 
-One thing that will save time: `fusebl` is called **once** per sizing, not
-once per iteration — the fuselage geometry does not change over the loop, so
-the BL solve is hoisted out. Confirmed by instrumenting it (two calls in a
-full 737 run, identical inputs). So `wsize` can treat `PAfinf`, `DAfsurf`,
-`DAfwake` and `KAfTE` as fixed after the first pass.
+| source | what it is |
+|---|---|
+| `woper.f` | off-design operation — flies a *given* aircraft on another mission |
+| `fobj.f`, `gradop.f` | the optimiser wrapper around `wsize` |
+| `noise.f` | noise estimate |
+| `output.f` (`engwrt`) | output formatting |
 
-**Not needed:** `noise.f` (not on the sizing path), `engwrt` (output
-formatting only, lives in `output.f`).
+`woper` is the natural next piece if the port is to do anything beyond
+sizing: it is what evaluates off-design missions, and it needs `pralt`
+(already ported, in `sizing/wsize.py`) and nothing else that is missing.
 
-**Then:** size a 737 end to end in Python and diff against `runs/737/737.out`.
-
----
+Note `fobj` reads `pare(ieu8)` for its jet-velocity-ratio constraint, which
+`tfcalc` now stores; before this session it did not.
 
 ## Conventions to keep
 
@@ -242,6 +244,25 @@ because its convergence test is on step size, not residual — is
 **The lesson:** before claiming the reference implementation is wrong, run it.
 It builds.
 
+**I explained three porting bugs as ill-conditioning.** `mission` agreed with
+the real 737 only to 5.7e-6, and I wrote that down as amplification through a
+badly conditioned flight-path-angle fixed point at `ipclimb1`, with a
+supporting test showing the engine reproduced the Fortran's thrust from the
+Fortran's own state. The mechanism was real; it was not what was happening.
+The 5.7e-6 was three omissions — `pare(ieM0)` never set in the climb loop, no
+`tfcalc` call at end-of-cruise, no descent-CL interpolation — and fixing them
+took `mission` to 9.8e-11.
+
+**Why the test could not see them:** it hands the port a *converged* 737
+state, so every value the port failed to compute was already sitting in the
+array with the right number in it. All three appeared the moment `wsize` ran a
+sizing from unset arrays.
+
+**The lesson:** a module test that replays a converged state cannot
+distinguish "computed it correctly" from "did not compute it". Where a routine
+*writes* state, check that it writes it, not only that the state is right
+afterwards.
+
 **I also claimed `compare` existed in no source file.** It's in `compare.f`;
 my grep was case-sensitive.
 
@@ -291,7 +312,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 227 tests, no compiler needed
+python -m pytest tests/ -q            # 236 tests, ~30 s (wsize sizes a 737)
 
 # build the reference program
 cd /Users/codykarcher/Desktop/Tasopt2.16/src && make tasopt

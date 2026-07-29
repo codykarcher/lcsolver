@@ -13,14 +13,33 @@ only possible because the reference program builds and runs. See
 
 Agreement
 ---------
-Takeoff weight to 5.7e-6 and fuel to 2.1e-5, rather than the 1e-13 the
-closed-form modules reach, and the reason is localised and understood: at
-``ipclimb1`` -- low speed, near-takeoff thrust -- the flight-path-angle fixed
-point is badly conditioned, and a 1e-9 difference in the engine solve is
-amplified into 1.2e-3 in thrust and 1.7e-3 in the angle. Handed the Fortran's
-own converged flight state at that point, this port's engine reproduces its
-thrust to 2.7e-9 (``test_engine_reproduces_fortran_at_climb1``), which is what
-separates amplification from a porting error.
+Takeoff weight to 9.8e-11, fuel to 3.6e-10, and the whole trajectory to 2e-9.
+
+**A retraction.** An earlier version of this file reported 5.7e-6 and 2.1e-5
+and explained them as amplification: "at ``ipclimb1`` -- low speed,
+near-takeoff thrust -- the flight-path-angle fixed point is badly conditioned,
+and a 1e-9 difference in the engine solve is amplified into 1.7e-3 in the
+angle." **That was wrong.** The residual was three porting omissions, and this
+test could not see any of them, because it hands the port the *converged*
+737 state and every one of the three is invisible when the answer is already
+in the array:
+
+* the climb loop set ``para(iaMach)`` but not ``pare(ieM0)`` beside it, so the
+  engine ran on a stale Mach number -- one that was already correct here;
+* the end-of-cruise point never called ``tfcalc``, so it read a stale ``TSFC``
+  and thrust -- again already correct here;
+* the descent CL profile (``0.96`` down to ``0.50`` of the end-of-cruise CL,
+  quadratic in the remaining fraction) was not interpolated at all, and the
+  climb one was linear where the source is quadratic. Both were overwritten
+  by the pre-loaded values.
+
+All three were found by ``tests/test_wsize.py``, which starts from unset
+arrays and so has to compute what this test was handed. That is the argument
+for end-to-end tests in one paragraph.
+
+``test_engine_reproduces_fortran_at_climb1`` below is still a useful check --
+the engine does reproduce the Fortran's thrust from its own state -- but it
+was never evidence for the amplification story it was written to support.
 """
 from __future__ import annotations
 
@@ -114,22 +133,16 @@ def reference():
 def test_takeoff_weight_and_fuel(flown, reference):
     _, r = flown
     _, _, WTO, Wfuel, _ = reference
-    assert r.WTO == pytest.approx(WTO, rel=1e-5)
-    assert r.Wfuel == pytest.approx(Wfuel, rel=5e-5)
+    assert r.WTO == pytest.approx(WTO, rel=1e-9)
+    assert r.Wfuel == pytest.approx(Wfuel, rel=1e-8)
     assert r.gamV_converged
 
 
 def test_trajectory_matches_through_cruise(flown, reference):
-    """State agrees to 1e-4; integrated range and time to 3e-3.
-
-    The looser bound on range and time is the climb1 sensitivity again: they
-    are integrals of ``FoW``, which carries the flight-path angle, so they
-    inherit its 1.7e-3. Altitude, weight fraction and the aerodynamic
-    coefficients do not.
-    """
+    """The whole state, including the integrated range and time, to 1e-8."""
     ac, _ = flown
     pa, _, _, _, _ = reference
-    tol = {I.IARANGE: 3e-3, I.IATIME: 3e-3}
+    tol = {}
     for idx in (I.IAALT, I.IARANGE, I.IATIME, I.IAFRACW, I.IACL, I.IACD,
                 I.IAMACH):
         for ip in range(I.IPCLIMB1, I.IPCRUISEN + 1):
@@ -145,7 +158,7 @@ def test_descent_weights_match(flown, reference):
     pa, _, _, _, _ = reference
     for ip in range(I.IPDESCENT1, I.IPDESCENTN + 1):
         assert ac.para[I.IAFRACW, ip] == pytest.approx(
-            pa[I.IAFRACW, ip], rel=1e-4)
+            pa[I.IAFRACW, ip], rel=1e-8)
 
 
 def test_engine_reproduces_fortran_at_climb1(table, reference):

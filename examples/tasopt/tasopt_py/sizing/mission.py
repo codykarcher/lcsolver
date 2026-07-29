@@ -119,9 +119,16 @@ def _set_atmosphere(pare, para, parg, ip, alt, Mach=None, ground_T=None):
 
 
 def _buoyancy(parg, p0):
-    """Weight of cabin air over the ambient air it displaces."""
-    T_sl, _, _ = _sea_level()
-    R_sl = 287.0
+    """Weight of cabin air over the ambient air it displaces.
+
+    ``RSL`` is not 287. ``tasopt.f`` fills ``constants.inc`` with
+    ``RSL = pSL/(rhoSL*TSL)``, and TASOPT's atmosphere sets
+    ``rho = gam p/((gam-1) cp T)``, so it comes out at
+    ``(gam-1) cp/gam = 286.857``. Using 287 shifts the cabin density, and
+    hence the buoyancy weight, by 5e-4.
+    """
+    T_sl, p_sl, rho_sl = _sea_level()
+    R_sl = p_sl / (rho_sl * T_sl)
     rhocab = max(parg[I.IGPCABIN], p0) / (R_sl * T_sl)
     return rhocab, R_sl
 
@@ -169,11 +176,29 @@ def mission(pari, parg, parm, para, pare, table, initeng: int = 0,
     para[I.IAWBUOY, I.IPDESCENTN] = 0.0
 
     # --- interpolate CL over the climb ------------------------------------
+    # Between the specified values at ipclimb1+1 and *ipcruise1*, quadratic
+    # in the fraction so the profile leaves the first climb point flat.
     CLa = para[I.IACL, I.IPCLIMB1 + 1]
-    CLb = para[I.IACL, I.IPCLIMBN]
+    CLb = para[I.IACL, I.IPCRUISE1]
     for ip in range(I.IPCLIMB1 + 1, I.IPCLIMBN + 1):
-        frac = float(ip - (I.IPCLIMB1 + 1)) / float(I.IPCLIMBN - I.IPCLIMB1 - 1)
-        para[I.IACL, ip] = CLa * (1.0 - frac) + CLb * frac
+        frac = (float(ip - (I.IPCLIMB1 + 1))
+                / float(I.IPCLIMBN - (I.IPCLIMB1 + 1)))
+        para[I.IACL, ip] = CLa * (1.0 - frac ** 2) + CLb * frac ** 2
+
+    # --- interpolate CL over the descent ----------------------------------
+    # Not from the specified descent values: the source multiplies the
+    # end-of-cruise CL by 0.96 at the top of descent and 0.50 at the bottom,
+    # and interpolates quadratically in the *remaining* fraction. Two
+    # commented-out lines above it set both ends to the cruise CL, i.e. no
+    # variation, which is not what ships. Note the loop runs to
+    # ipdescentn - 1: the last descent point keeps its own approach CL.
+    CLd = para[I.IACL, I.IPCRUISEN] * 0.96
+    CLe = para[I.IACL, I.IPCRUISEN] * 0.50
+    for ip in range(I.IPDESCENT1, I.IPDESCENTN):
+        frac = (float(ip - I.IPDESCENT1)
+                / float((I.IPDESCENTN - 1) - I.IPDESCENT1))
+        fb = 1.0 - frac
+        para[I.IACL, ip] = CLd * fb ** 2 + CLe * (1.0 - fb ** 2)
 
     # --- takeoff speeds ---------------------------------------------------
     ip = I.IPROTATE
@@ -263,9 +288,11 @@ def mission(pari, parg, parm, para, pare, table, initeng: int = 0,
         for _ in range(ITERGMAX):
             cosg = math.cos(para[I.IAGAMV, ip])
             V = math.sqrt(2.0 * BW * cosg / (rho * S * CL))
-            pare[I.IEU0, ip] = V
-            para[I.IAMACH, ip] = V / pare[I.IEA0, ip]
+            Mach = V / pare[I.IEA0, ip]
+            para[I.IAMACH, ip] = Mach
             para[I.IAREUNIT, ip] = V * rho / pare[I.IEMU0, ip]
+            pare[I.IEU0, ip] = V
+            pare[I.IEM0, ip] = Mach
 
             acol = para.column(ip)
             balance(pari, parg, acol, (W - Wzero) / parg[I.IGWFUEL],
@@ -395,18 +422,22 @@ def mission(pari, parg, parm, para, pare, table, initeng: int = 0,
             rpay, xipay, 1)
     ecol = pare.column(ip)
     cdsum(pari, parg, acol, ecol, 1, table)
+
+    DoL = acol[I.IACD] / acol[I.IACL]
+    W = para[I.IAFRACW, ip] * WMTO
+    BW = W + para[I.IAWBUOY, ip]
+    # Thrust to hold the drift-up angle carried in from the previous pass.
+    F = BW * (DoL + acol[I.IAGAMV])
+    ecol[I.IEFE] = F / parg[I.IGNENG]
+    tfcalc(pari, parg, acol, ecol, ip, 2, 1, initeng)
     para.set_column(ip, acol)
     pare.set_column(ip, ecol)
 
-    W = para[I.IAFRACW, ip] * WMTO
-    BW = W + para[I.IAWBUOY, ip]
-    DoL = para[I.IACD, ip] / para[I.IACL, ip]
     TSFC = pare[I.IETSFC, ip]
     V = pare[I.IEU0, ip]
     p0 = pare[I.IEP0, ip]
     rho0 = pare[I.IERHO0, ip]
     gamVcr2 = DoL * p0 * TSFC / (rho0 * GEE * V - p0 * TSFC)
-    F = pare[I.IEFE, ip] * parg[I.IGNENG]
     cosg = math.cos(gamVcr2)
     FoW[ip] = F / (BW * cosg) - DoL
     FFC[ip] = F / (W * V * cosg) * TSFC

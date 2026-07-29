@@ -205,3 +205,45 @@ the Makefile does not compile.
 
 They are XFOIL's, and correct — this port keeps and tests them — but nothing
 in a TASOPT result depends on them.
+
+## §29 — `Wupdate0`'s weight-explosion guard cannot fire
+
+`wsize.f` calls its weight update and then tests the fraction sum:
+
+```fortran
+       call Wupdate0(parg,rlx,fsum)
+       if(fsum .ge. 1.0) go to 110
+```
+
+but `Wupdate0` sets `fsum = 0.0` on entry and never touches it again — the
+`ftotadd` it computes just above goes into the `WMTO` division, not into
+`fsum`. So the guard after the *first* update in each iteration is dead. The
+`Wupdate` at the bottom of the loop does maintain `fsum` properly, so a
+diverging weight is still caught, one call later.
+
+Ported as written, with the dead branch kept and commented, because removing
+it would hide the asymmetry between the two updates.
+
+## §30 — a non-converged sizing is not an error
+
+At the bottom of the weight loop `wsize.f` prints
+
+```
+WSIZE: Weight iteration not converged.  dWrel = ...
+```
+
+and then falls through — its `return` is commented out (`cc      return`). So
+the takeoff run, the CG limits and the neutral point are all computed from a
+state that did not converge, and `Lconv` is the only signal that anything was
+wrong. A caller that ignores `Lconv` gets numbers that look ordinary.
+
+This port does the same, and returns `converged` on the result.
+
+## §31 — three routines in `wsize.f` are not called from it
+
+`Wupdate1` (an alternative weight update that splits the fuselage into its
+parts) has its only call site, at the top of `Wupdate`, commented out.
+`pralt` is called only from `woper.f`. `muair` is called from nowhere at all,
+and would not agree with the atmosphere if it were: it takes its reference
+temperature as 288.0 K where `atmos` uses 288.2, a 0.07% shift in viscosity.
+`cfturb` also lives here and *is* used, by `cdsum`.

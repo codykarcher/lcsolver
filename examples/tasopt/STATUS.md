@@ -28,16 +28,17 @@ precision; the reference drivers use the same flag.
 | `engine.weight` | `tfweight.f` | 72 values, 2.6e-16 |
 | `sizing.balance` | `balance.f` | 56 values, 3.4e-16 |
 | `sizing.takeoff` | `takeoff.f` | 36 values, 2.8e-16 |
-| `sizing.mission` | `mission.f` | real 737 state, 5.7e-6 |
+| `sizing.mission` | `mission.f` | real 737 state, 9.8e-11 |
 | `aero.axisol` | `axisol.f` | 873 values, 4.4e-16 |
 | `aero.blclosure` | closure routines in `blsys.f` | 360 values, 4.9e-16 |
 | `aero.blsys` | `blvar`, `blsys` in `blsys.f` | 2200 values, 1e-14 |
 | `aero.blax` | `blax.f` | 2350 values, 3e-14 |
 | `aero.fusebl` | `fusebl.f` | 28 values, 2.8e-14 |
 | `linalg` | `gaussn.f` | literal port |
+| `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `model` | `index.inc` | 611 constants, generated |
 
-227 tests. Reference CSVs are committed, so the suite runs without a Fortran
+236 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -48,18 +49,36 @@ The reference program itself builds and runs: `runs/737/737.tas` sizes in 18
 iterations to WTO = 174979 lbf. That is the check every claim below is held
 against.
 
+## The port sizes a 737
+
+```
+  iterw     errW          WMTO        Wfuel        Wfuse        Wwing         Weng        span     area     HTarea   xwbox
+    18 -0.0000000001  174979.1500   47487.2555   37025.2291   23717.2688   12280.0283  116.427  1342.101   456.859    53.68101
+```
+
+Against the shipped program's
+
+```
+    18 -0.0000000001  174979.1499   47487.2555   37025.2291   23717.2688   12280.0282  116.427  1342.101   456.859    53.68101
+```
+
+Same 18 iterations, same aircraft. `wsize.f` was instrumented to dump its
+complete input and output state on the real `runs/737/737.tas` run; the port
+is handed those inputs and sizes from them, running its own fuselage boundary
+layer, structures, engine and mission the whole way. The converged aircraft
+agrees to **1.5e-9** across `parg`, 1.0e-7 across `para` and 5.2e-8 across
+`pare`. The floor is `tfoper`'s numerical Jacobian (see below).
+
 ## Still to port
 
 | source | lines | what it is |
 |---|---|---|
-| `wsize.f` | 1727 | the outer sizing loop — the last piece |
+| `woper.f` | — | off-design operation (not on the sizing path) |
+| `fobj.f`, `gradop.f` | — | the optimiser wrapper |
 | `noise.f` | 460 | noise estimate (not on the sizing path) |
-| `engwrt` | — | output formatting only |
+| `engwrt`, `output.f` | — | output formatting only |
 
-Everything `wsize` calls is now ported and verified: the drag buildup, the
-fuselage boundary layer, trim, takeoff, the mission march and the engine.
-What remains is the loop that drives them, plus `Wupdate`/`Wupdate0`/
-`Wupdate1`, which live inside `wsize.f`.
+Nothing on the design-mission sizing path remains.
 
 ## Accuracy of the boundary-layer chain
 
@@ -88,6 +107,17 @@ solve to **1.4e-15**. `tests/test_fusebl.py` pins the four numbers.
 
 Recorded because they change what the results mean, and none is visible from
 a call site.
+
+**Three bugs a converged-state test could not see.** Writing the end-to-end
+`wsize` test found three omissions in `mission` — a missing `pare(ieM0)`
+assignment in the climb loop, a missing `tfcalc` call at end-of-cruise, and a
+missing descent-CL interpolation. All three are invisible when the port is
+handed a *converged* 737 state, because the value it should have computed is
+already sitting in the array; they only appear when the arrays start unset, as
+they do in a real sizing. `mission`'s agreement went from 5.7e-6 to 9.8e-11
+once they were fixed, which retracts the "ill-conditioned fixed point at
+`ipclimb1`" explanation this file used to carry for that 5.7e-6. There was no
+ill-conditioning; there were three bugs. See `tests/test_mission.py`.
 
 **`tfoper.f` is not robust off the shipped engine envelope.** On the shipped
 737 it is fine — 552 converged calls in one sizing, worst residual 1.8e-10,
@@ -148,9 +178,14 @@ array being a zeroed `COMMON` block. Its `phi` initialisation writes
 `phi(n+1)` rather than `phi(1)`, an off-by-one on a leftover loop variable.
 Both harmless in the shipped program, neither harmless in general. §27.
 
+**`Wupdate0`'s weight-explosion guard cannot fire** — it hardwires `fsum = 0`
+— and a **non-converged sizing is not an error**: `wsize.f` prints a warning
+and carries on into the takeoff and balance calculations, its `return` being
+commented out. §29, §30.
+
 **Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
 in `trefftz.f`, whose only call site is commented out); `bodycd`; `blax1.f`
-and `axisol1.f` (neither is in the Makefile). **Dead but ported anyway,**
+and `axisol1.f` (neither is in the Makefile); `muair` in `wsize.f`, which nothing calls and which would disagree with `atmos` if it did (§31). **Dead but ported anyway,**
 because they are XFOIL's and a reader will look for them: `dilw`, `dit` and
 `hct` in `blsys.f` are called from nowhere — `blvar` computes the density
 shape parameter and the turbulent dissipation inline instead. §28.
