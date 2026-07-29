@@ -114,7 +114,7 @@ from dataclasses import dataclass, field
 from .atmosphere import atmos
 from .model import beam_indices as B
 from .model import indices as I
-from .output import _efmt, _gfmt
+from .output import _gfmt
 
 __all__ = ["aswout", "boutput", "Deck", "Beam", "Pylon", "Joint", "Ground"]
 

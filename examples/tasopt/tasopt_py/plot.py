@@ -34,8 +34,6 @@ picture is the reference program's picture and not a redrawing of it.
 """
 from __future__ import annotations
 
-import math
-
 from .model import indices as I
 from .output import FT_M, HR_S, KFT_M, LB_N, NMI_M, map_point
 from .planview import airpic
