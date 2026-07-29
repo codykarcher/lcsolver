@@ -161,3 +161,65 @@ def test_rejects_a_nonpositive_start():
 def test_unknown_option_is_refused():
     with pytest.raises(AttributeError, match="unknown SIA option"):
         SIAOptions(trust_radius_typo=1.0)
+
+
+def test_cached_signomial_evaluates_once_per_point():
+    """Value and gradient come from one call; revisits are free."""
+    from edi.solvers.ipopt.slcp import CachedSignomial
+    calls = {"n": 0}
+
+    def fn(x):
+        calls["n"] += 1
+        return _blackbox(x)
+
+    s = CachedSignomial(fn, N)
+    x = np.array([2.0, 0.5])
+    s(x), s.grad(x), s.log_grad(x), s(x)
+    assert calls["n"] == 1
+    assert s.evaluations == 1
+    s(np.array([1.0, 1.0]))
+    assert s.evaluations == 2
+
+
+def test_caching_cuts_black_box_calls_without_changing_the_answer():
+    """The reason it exists: a black box costing hours must not be called
+    four times per iteration when once will do."""
+    from edi.solvers.ipopt.slcp import CachedSignomial
+    counts = {}
+
+    def build(wrapper, tag):
+        counts[tag] = 0
+
+        def fn(x):
+            counts[tag] += 1
+            return _blackbox(x)
+
+        body = wrapper(fn, N)
+        return Problem(N, _objective(),
+                       _bounds() + [_signomial_constraint(),
+                                    Constraint(body)])
+
+    plain = solve_sia(build(Signomial, "plain"), X0,
+                      SIAOptions(max_iterations=80))
+    cached = solve_sia(build(CachedSignomial, "cached"), X0,
+                       SIAOptions(max_iterations=80))
+
+    assert cached.objective == pytest.approx(plain.objective, rel=1e-9)
+    assert cached.iterations == plain.iterations
+    assert counts["cached"] < counts["plain"] / 3
+    assert counts["cached"] <= cached.iterations + 2
+
+
+def test_cache_is_exact_not_interpolating():
+    """A nearby-but-different point must trigger a real evaluation."""
+    from edi.solvers.ipopt.slcp import CachedSignomial
+    calls = {"n": 0}
+
+    def fn(x):
+        calls["n"] += 1
+        return _blackbox(x)
+
+    s = CachedSignomial(fn, N)
+    s(np.array([1.0, 1.0]))
+    s(np.array([1.0 + 1e-15, 1.0]))
+    assert calls["n"] == 2
