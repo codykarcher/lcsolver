@@ -60,6 +60,7 @@ import collections
 from dataclasses import dataclass, field
 
 __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
+           "fold_singleton_rows",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -302,6 +303,92 @@ def presolve_report(structures, names=None) -> PresolveReport:
     hist = collections.Counter(len(s) for s in in_real)
     rep.row_counts = dict(sorted(hist.items()))
     return rep
+
+
+def fold_singleton_rows(structures):
+    """Move single-variable rows into the bounds, and drop them.
+
+    A row like ``x <= 3`` states a bound and nothing else, so a solver that
+    takes bounds natively should be given it as one. This is the classical
+    singleton-row reduction, and it is worth a lot here: SPaircraft writes
+    about 2500 of its constraints this way, on top of the 2346 that come from
+    variable declarations.
+
+    Requires ``structures['bounds']`` -- run ``structure_detector`` with
+    ``bounds_as_rows=False`` first, since otherwise there is nowhere to put
+    them. Returns a **new** structures dict; the input is untouched.
+
+    Bounds are intersected, never loosened: several rows bounding the same
+    variable all apply, and the tightest wins. An equality row fixes the
+    variable, giving an equal pair. Nothing is rounded or clipped -- SPaircraft
+    needs its full 1e-30..1e30 box for the reference solution to lie inside it,
+    and a reduction that "tidied" those limits would cut off the answer.
+    """
+    if structures.get("bounds") is None:
+        raise ValueError(
+            "fold_singleton_rows needs structures['bounds'] to fold into; "
+            "run structure_detector with bounds_as_rows=False")
+
+    rows, operators, key = _rows_of(structures)
+    numer, denom = collections.defaultdict(list), collections.defaultdict(list)
+    for r in rows:
+        idx = int(r[0])
+        (numer if idx >= 0 else denom)[
+            idx if idx >= 0 else -idx - 1].append(r)
+
+    bounds = [tuple(b) if b is not None else (None, None)
+              for b in structures["bounds"]]
+
+    def tighten(j, lo, hi):
+        cur_lo, cur_hi = bounds[j]
+        if lo is not None:
+            cur_lo = lo if cur_lo is None else max(cur_lo, lo)
+        if hi is not None:
+            cur_hi = hi if cur_hi is None else min(cur_hi, hi)
+        bounds[j] = (cur_lo, cur_hi)
+
+    folded = set()
+    for i in sorted(k for k in set(numer) | set(denom) if k != 0):
+        if denom.get(i) or len(numer.get(i, [])) != 1:
+            continue
+        row = numer[i][0]
+        expo = [float(e) for e in row[2:]]
+        nz = [j for j, e in enumerate(expo) if abs(e) > 1e-12]
+        if len(nz) != 1 or nz[0] >= len(bounds):
+            continue
+        j = nz[0]
+        op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+        lo, hi = _bound_from_row(float(row[1]), expo, j, op)
+        if lo is None and hi is None:
+            continue
+        tighten(j, lo, hi)
+        folded.add(i)
+
+    # Renumber what survives; constraint indices must stay contiguous from 1
+    # because the operator list is positional.
+    keep = [i for i in sorted(set(numer) | set(denom)) if i != 0
+            and i not in folded]
+    renum = {old: new for new, old in enumerate(keep, start=1)}
+
+    new_rows = [list(r) for r in numer.get(0, [])]
+    new_ops = []
+    for old in keep:
+        new = renum[old]
+        for r in numer.get(old, []):
+            new_rows.append([new] + list(r[1:]))
+        for r in denom.get(old, []):
+            new_rows.append([-new - 1] + list(r[1:]))
+        new_ops.append(operators[old - 1]
+                       if 0 <= old - 1 < len(operators) else "<=")
+
+    out = dict(structures)
+    out[key] = [structures[key][0], new_rows, new_ops]
+    out["bounds"] = bounds
+    info = dict(structures.get("info") or {})
+    info["N_cons_total"] = len(keep)
+    info["N_cons_folded"] = len(folded)
+    out["info"] = info
+    return out
 
 
 def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,

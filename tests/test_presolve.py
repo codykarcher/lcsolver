@@ -18,7 +18,11 @@ import numpy as np
 import pytest
 
 from edi import Formulation
-from edi.presolve import degeneracy_report, presolve_report
+from edi.presolve import (
+    degeneracy_report,
+    fold_singleton_rows,
+    presolve_report,
+)
 from edi.solvers.ipopt.slcp_bridge import build_problem, solve_sia
 from edi.structure.structureDetector import (
     require_bounds_as_rows,
@@ -177,6 +181,76 @@ def test_singleton_rows_are_counted_not_confused_with_real_ones():
 def test_report_is_printable():
     rep = presolve_report(_detect(_active_bound_model()))
     assert 'presolve:' in str(rep)
+
+
+# ---------------------------------------------------------------------------
+# folding singleton rows into bounds
+# ---------------------------------------------------------------------------
+def _singleton_row_model():
+    """min 1/x  s.t.  x*y >= 1,  x <= 3  -- the cap written as a constraint.
+
+    Same problem as `_active_bound_model`, except the binding limit is a
+    hand-written row rather than a declared bound. Folding it must not lose
+    it: the optimum is 1/3 with the row and 0 without.
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    y = f.Variable('y', 1.0, '', 'y')
+    f.Objective(1.0 / x)
+    f.Constraint(x * y >= 1.0)
+    f.Constraint(x <= 3.0)
+    f.Constraint(y <= 10.0)
+    f.Constraint(x >= 0.1)
+    return f
+
+
+def test_folding_keeps_an_active_row():
+    """The folded row is binding, so losing it would show up as a 0 objective."""
+    st = _detect(_singleton_row_model(), bounds_as_rows=False)
+    folded = fold_singleton_rows(st)
+
+    before = solve_sia(st, x0=np.array([1.0, 1.0]))
+    after = solve_sia(folded, x0=np.array([1.0, 1.0]))
+
+    assert before.objective == pytest.approx(1.0 / 3.0, rel=1e-6)
+    assert after.objective == pytest.approx(before.objective, rel=1e-8)
+
+
+def test_folding_removes_the_rows_and_tightens_the_bounds():
+    st = _detect(_singleton_row_model(), bounds_as_rows=False)
+    folded = fold_singleton_rows(st)
+
+    assert folded['info']['N_cons_folded'] == 3       # x<=3, y<=10, x>=0.1
+    assert folded['info']['N_cons_total'] == 1        # only x*y >= 1 survives
+    assert st['info']['N_cons_total'] == 4            # input left alone
+
+    names = [str(v) for v in folded['variables']]
+    lo, hi = folded['bounds'][names.index('x')]
+    assert hi == pytest.approx(3.0, rel=1e-9)
+    assert lo == pytest.approx(0.1, rel=1e-9)
+
+
+def test_folding_takes_the_tightest_of_several_rows():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    y = f.Variable('y', 1.0, '', 'y')
+    f.Objective(1.0 / x)
+    f.Constraint(x * y >= 1.0)
+    f.Constraint(x <= 8.0)
+    f.Constraint(x <= 2.0)        # tighter, and the one that must win
+    f.Constraint(x <= 5.0)
+    f.Constraint(y <= 10.0)       # keeps y from running off; not under test
+    folded = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+
+    names = [str(v) for v in folded['variables']]
+    assert folded['bounds'][names.index('x')][1] == pytest.approx(2.0, rel=1e-9)
+    assert solve_sia(folded, x0=np.array([1.0, 1.0])).objective == \
+        pytest.approx(0.5, rel=1e-6)
+
+
+def test_folding_needs_split_bounds():
+    with pytest.raises(ValueError, match='bounds_as_rows'):
+        fold_singleton_rows(_detect(_singleton_row_model(), bounds_as_rows=True))
 
 
 # ---------------------------------------------------------------------------
