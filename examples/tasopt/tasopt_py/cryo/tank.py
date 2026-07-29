@@ -79,6 +79,8 @@ class FuselageTank:
     rhofuelgas: float = 0.0
     #: Fraction of the tank volume occupied by vapour.
     ullage_frac: float = 0.0
+    #: Liquid fuel temperature in the tank, K.
+    Tfuel: float = 0.0
     #: Vent pressure, Pa -- what the vessel is sized to hold.
     pvent: float = 0.0
     #: Radial gap between the fuselage inner wall and the tank, m.

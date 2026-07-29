@@ -131,6 +131,13 @@ def freestream_heat_coeff(z: float, TSL: float, M: float, xftank: float,
         Nu = 0.13 * Ra ** 0.333
         h = Nu * k_s / L
     else:
+        if xftank <= 0.0:
+            raise ValueError(
+                f"forced convection needs a running length, got xftank = "
+                f"{xftank}. The Reynolds number is zero there and the "
+                "Meador-Smart skin-friction correlation divides by it; the "
+                "reference does not check, so this fails as a division by "
+                "zero somewhere less obvious.")
         Re = rho_s * u * xftank / mu_s
         cf = 0.02296 / Re ** 0.139           # Meador-Smart
         St = cf / (2.0 * Pr_s ** (2.0 / 3.0))   # Chilton-Colburn
@@ -263,8 +270,14 @@ class ThermalParams:
         return perim / self.r_tank
 
 
-def residuals_Q(x, p: ThermalParams) -> list:
-    """The heat-path residual. ``x = [Q, T_w, T_ins...]``.
+def residuals_Q(x, p: ThermalParams, Q_known: float = None) -> list:
+    """The heat-path residual.
+
+    With ``Q_known`` unset the unknowns are ``[Q, T_w, T_ins...]`` and the
+    heat rate is solved for. With it set -- which is how the insulation
+    sizing runs, where the boil-off rate fixes the heat -- the unknowns are
+    ``[T_w, T_ins...]`` and the first residual instead constrains the
+    *resistance* to deliver that heat.
 
     The circuit is air, then each insulation layer, then the liquid film, in
     series. The first residual sets the total heat rate against the driving
@@ -273,9 +286,14 @@ def residuals_Q(x, p: ThermalParams) -> list:
     every interface temperature is consistent with the heat passing through
     it.
     """
-    Q = x[0]
-    T_w = x[1]
-    T_ins = list(x[2:])
+    if Q_known is None:
+        Q = x[0]
+        T_w = x[1]
+        T_ins = list(x[2:])
+    else:
+        Q = Q_known
+        T_w = x[0]
+        T_ins = list(x[1:])
     Tfuse = x[-1]                # the outermost interface is the fuselage
 
     Rfuse = p.cross_section.radius

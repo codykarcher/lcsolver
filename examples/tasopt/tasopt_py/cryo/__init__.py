@@ -16,6 +16,8 @@ from .mixture import (SaturatedMixture, convert_beta_same_rho,  # noqa: F401
                       from_p_beta)
 from .pressure import (dbeta_dt, dp_dt, mdot_boiloff,  # noqa: F401
                        venting_mass_flow)
+from .sizing import (SizedTank, insulation_increment,  # noqa: F401
+                     size_tank, tank_stations)
 from .thermal import (freestream_heat_coeff, gas_Pr,  # noqa: F401
                       tank_heat_coeff, vacuum_resistance)
 from .material_data import MATERIALS  # noqa: F401
@@ -37,4 +39,5 @@ __all__ = ["gas_properties", "liquid_properties", "SaturatedPhase",
            "vacuum_resistance",
            "SaturatedMixture", "from_p_beta", "convert_beta_same_rho",
            "dp_dt", "dbeta_dt", "venting_mass_flow", "mdot_boiloff",
+           "SizedTank", "size_tank", "insulation_increment", "tank_stations",
            "MATERIALS"]

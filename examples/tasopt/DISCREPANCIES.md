@@ -910,3 +910,27 @@ of exactly.
 `tasopt_py.structures.landing_gear` uses v3's, and `tasopt_py.output` keeps
 2.16's, because each has to match the reference it is verified against. Both
 are pinned by tests so neither gets "tidied" into the other.
+
+## §63 — two unguarded singularities in the tank thermal path
+
+Both are in code that runs during the insulation-sizing solve, where the
+iterate can visit states a converged design never would.
+
+**Zero running length.** `freestream_heat_coeff`'s forced-convection branch
+computes `Re = ρ u xftank / μ` and then `cf = 0.02296 / Re^0.139`. At
+`xftank = 0` — a tank at the nose, or simply a caller that has not placed it
+yet — that is a division by zero. Nothing checks.
+
+**Negative tank radius.** `size_inner_tank` sets
+`Rtank_outer = Rfuse - Σt_insul - clearance` and carries on whatever the sign.
+When the insulation is being *solved for* against a boil-off target, the
+iterate can and does drive the total thickness past the fuselage radius: a
+0.15%/hr target on a 1.9 m fuselage with polyurethane is simply unreachable,
+and the reference answers with a negative radius and whatever weight follows
+from it rather than saying so.
+
+This port refuses both — the first in `freestream_heat_coeff`, the second in
+`CrossSection`, which will not accept a non-positive radius. Neither guard
+changes any reachable answer: all the verified cases agree with the reference
+to 4e-13. What they change is that an impossible request fails where it
+becomes impossible instead of returning a number.
