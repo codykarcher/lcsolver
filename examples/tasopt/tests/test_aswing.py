@@ -269,6 +269,23 @@ def test_a_sensor_block_cannot_be_produced(built):
         deck.pylons.pop()
 
 
+def test_the_strut_and_pi_tail_paths_have_no_reference():
+    """Said out loud rather than left implicit: none of the eleven cases in
+    ``runs/`` has ``iwplan = 2`` or ``nvtail > 1``, so the strut beam and
+    the Pi-tail cross-member are ported from the source with nothing to diff
+    them against. They are unverified, not verified-and-passing."""
+    runs = Path("/Users/codykarcher/Desktop/Tasopt2.16/runs")
+    if not runs.exists():
+        pytest.skip("run cases not present")
+    cases = sorted(runs.glob("*/*.tas"))
+    assert len(cases) >= 11
+    for tas in cases:
+        for line in tas.read_text().splitlines():
+            if "iwplan" in line and not line.lstrip().startswith("!"):
+                assert line.split()[0] == "0", tas.name
+                break
+
+
 def test_the_beam_indices_are_generated_and_zero_based(built):
     """Unlike index.inc's, ASWING's VARS is declared (0:JBTOT)."""
     assert B.JSA == 0 and B.JXA == 1

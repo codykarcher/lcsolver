@@ -63,6 +63,7 @@ NCLIMB, NCRUISE = 3, 2
 
 
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
+          pi_tail_supports: str = "pinned",
           seed: str | None = None) -> Formulation:
     """Build the D8.2. Returns an EDI ``Formulation``.
 
@@ -316,24 +317,80 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
     # ---- pi-tail horizontal tail ---------------------------------------------
     hb = ht["box"]
-    Mrout = V("M_r_out", 1e5, "N", "HT moment at the pin joint")
+    Mrout = V("M_r_out", 1e5, "N", "HT moment at the VT attachment")
     cons += [
-        # Pin VT constraint: zero moment at the wingtip.
-        ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
-            == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                     # [SP] SigEq
         hb["b_ht_out"] == 0.5 * ht["b_ht"] - fu["w_fuse"],               # [SP] SigEq
-        hb["M_r"] * ht["c_root_ht"] >= (hb["L_ht_rect"] * (ht["b_ht"] / 4.)
-                                        + hb["L_ht_tri"] * (ht["b_ht"] / 6.)
-                                        - fu["w_fuse"] * ht["L_ht_max"] / 2.),
         Mrout * ht["c_attach"] >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
                                    + hb["L_ht_tri_out"] * (1. / 3. * hb["b_ht_out"])),
         hb["L_shear"] >= hb["L_ht_rect_out"] + hb["L_ht_tri_out"],
         ht["c_tip_ht"] + (1. - ht["lambda_ht"]) * 2. * hb["b_ht_out"] / ht["b_ht"]
             * ht["c_root_ht"] == ht["c_attach"],                         # [SP] SigEq
-        hb["pi_M_fac"] >= ((0.5 * (Mrout * ht["c_attach"] + hb["M_r"] * ht["c_root_ht"])
-                            * fu["w_fuse"] / (0.5 * Mrout * ht["c_attach"] * hb["b_ht_out"])
-                            + 1.0) * hb["b_ht_out"] / (0.5 * ht["b_ht"])),
     ]
+
+    if pi_tail_supports == "pinned":
+        # SOURCE BEHAVIOUR. The verticals are treated as pin joints carrying
+        # no moment, so the inboard span is simply supported and the
+        # centreline moment is the applied moment MINUS the support reaction.
+        # That subtraction is what makes M_r degenerate: the two terms can
+        # very nearly cancel, the constraint stops binding, and M_r collapses
+        # onto the 1e-30 box floor along with I_cap and t_cap. Reproduced
+        # because the gpkit reference depends on it -- see DISCREPANCIES.md.
+        cons += [
+            ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
+                == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                 # [SP] SigEq
+            hb["M_r"] * ht["c_root_ht"] >= (hb["L_ht_rect"] * (ht["b_ht"] / 4.)
+                                            + hb["L_ht_tri"] * (ht["b_ht"] / 6.)
+                                            - fu["w_fuse"] * ht["L_ht_max"] / 2.),
+            hb["pi_M_fac"] >= ((0.5 * (Mrout * ht["c_attach"]
+                                       + hb["M_r"] * ht["c_root_ht"])
+                                * fu["w_fuse"]
+                                / (0.5 * Mrout * ht["c_attach"] * hb["b_ht_out"])
+                                + 1.0) * hb["b_ht_out"] / (0.5 * ht["b_ht"])),
+        ]
+    else:
+        # FIXED SUPPORTS. A pi-tail horizontal joins two verticals rigidly, so
+        # the inboard span is a beam BUILT IN at both ends, not pin-jointed.
+        # For span L under load W the standard results are
+        #
+        #     hogging at each support   W*L/12
+        #     sagging at midspan        W*L/24
+        #
+        # against W*L/8 at midspan and zero at the supports if pinned. Two
+        # consequences, and they are the point of the change:
+        #
+        # 1. The sizing station moves to the ATTACHMENT, where the fixed-end
+        #    moment adds to the overhang moment. A root moment never sizes a
+        #    pi-tail horizontal -- there is no root, only two supports.
+        # 2. Every moment is now a SUM of positive terms. Nothing can cancel,
+        #    so M_r cannot collapse, and the constraint is posynomial rather
+        #    than signomial -- strictly easier for the solver as well as more
+        #    physical.
+        #
+        # The verticals sit at +/- w_fuse, so the built-in span is 2*w_fuse.
+        Lin = V("L_ht_in", 1e5, "N", "HT load inboard of the VT attachments")
+        Mfe = V("M_fe", 1e4, "N", "fixed-end moment per attachment chord")
+        cons += [
+            # Load inboard of the attachments. The section is untapered over
+            # this span, so its share of the load is its share of the span.
+            Lin >= ht["L_ht_max"] * (2. * fu["w_fuse"]) / ht["b_ht"],
+            # Fixed-end (hogging) moment at each support, W*L/12.
+            Mfe * ht["c_attach"] >= Lin * (2. * fu["w_fuse"]) / 12.,
+            # The attachment carries the overhang AND the fixed-end moment;
+            # both hog the beam over the support, so they add.
+            Mrout * ht["c_attach"] >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
+                                       + hb["L_ht_tri_out"] * (1. / 3. * hb["b_ht_out"])
+                                       + Mfe * ht["c_attach"]),
+            # Sagging at the centreline, W*L/24 -- half the fixed-end value
+            # and a third of what a pinned span would carry.
+            hb["M_r"] * ht["c_root_ht"] >= Lin * (2. * fu["w_fuse"]) / 24.,
+            # Load split, unchanged in form but now with no cancellation.
+            ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
+                == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                 # [SP] SigEq
+            # The cap must carry the larger of the two stations.
+            hb["pi_M_fac"] >= 1.0,
+            hb["pi_M_fac"] >= Mrout * ht["c_attach"]
+                              / (hb["M_r"] * ht["c_root_ht"]),
+        ]
 
     # ---- per-segment performance -----------------------------------------------
     for i in range(N):

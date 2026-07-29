@@ -29,10 +29,19 @@ What is exported
 ``Beam 1..4``     fuselage, wing, horizontal tail, vertical tail
 ================  =========================================================
 
-A fifth beam, the strut, is written only for a strut-braced wing
-(``iwplan = 2``). ``Strut``, ``Sensor`` and ``Jangle`` blocks exist in
-``BOUTPUT`` but nothing in ``aswout`` ever creates one, so they are ported
-for completeness and never fire.
+What is *not* checked against anything
+--------------------------------------
+A fifth beam, the strut, is written for a strut-braced wing
+(``iwplan = 2``), and the vertical tail grows a horizontal cross-member on a
+Pi-tail (``nvtail > 1``). **None of the eleven cases shipped in ``runs/``
+selects either** -- every one of them has ``iwplan = 0`` and a single fin --
+so those two paths are ported from the source but have no reference deck to
+diff against, and should be treated as unverified until one exists. The four
+beams above, and everything else in this module, are checked byte for byte.
+
+``Strut``, ``Sensor`` and ``Jangle`` *blocks* exist in ``BOUTPUT`` but
+nothing in ``aswout`` ever creates one -- the strut is a beam, not a strut
+pylon -- so writing one raises rather than emitting an untested format.
 
 How the file gets its shape
 ---------------------------
