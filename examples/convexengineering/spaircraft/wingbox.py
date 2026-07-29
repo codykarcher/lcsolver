@@ -34,20 +34,19 @@ lines; they are reproduced as written.
 from __future__ import annotations
 
 
-def add_wingbox(f, surfacetype, *, AR, b, S, p, q, tau, Lmax, prefix,
+def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
                 Mr=None, taper=None, tau_max=None):
-    """Add a wing box to ``f`` and return its variables as a dict.
+    """Add a wing box to the group's formulation, and return its variables.
 
     Parameters are the *linked* quantities owned by the surface model: aspect
     ratio, span, area, the taper substitutions ``p`` and ``q``, thickness
     ratio, and maximum load. ``Mr`` is supplied for the wing (whose root
     moment comes from the aircraft load case) and created here otherwise.
+
+    ``group`` is the surface's own group; the box nests inside it, so a cap
+    thickness reads ``wing.box.t_cap``.
     """
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    V, C = group.Variable, group.Constant
 
     # ---- box variables ----------------------------------------------------
     Icap = V("I_cap", 1e-5, "-", "non-dim spar cap area moment of inertia")

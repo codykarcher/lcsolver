@@ -31,13 +31,9 @@ from .wingbox import add_wingbox
 
 def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_"):
     """Add the vertical tail. Returns ``(vars, constraints)``."""
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                       description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    vt = f.group("vt", prefix=prefix)
+    V, C = vt.Variable, vt.Constant
+    Vn = lambda n, g, u, d: vt.Variable(n, g, u, d, size=N)
 
     # ---- planform ---------------------------------------------------------
     Avt = V("A_vt", 1.7, "-", "vertical tail aspect ratio")
@@ -86,12 +82,9 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_"):
                I_z_max=Iz, V_vt=Vvt, W_vt=Wvt, C_L_vt_yaw=CLvyaw, e_vt=e,
                c_l_vt_EO=clvtEO, AR_vt=ARvt)
 
-    rho0 = f.Variable(name=f"{P}rho_TO", guess=1.225, units="kg/m^3",
-                      description="air density at sea level")
-    CLvmax = f.Constant(name=f"{P}C_L_vt_max", value=2.6, units="-",
-                        description="max VT lift coefficient")
-    Vvtmin = f.Constant(name=f"{P}V_vt_min", value=0.001, units="-",
-                        description="minimum VT volume coefficient")
+    rho0 = V("rho_TO", 1.225, "kg/m^3", "air density at sea level")
+    CLvmax = C("C_L_vt_max", 2.6, "-", "max VT lift coefficient")
+    Vvtmin = C("V_vt_min", 0.001, "-", "minimum VT volume coefficient")
     out.update(rho_TO=rho0, C_L_vt_max=CLvmax, V_vt_min=Vvtmin)
 
     cons = [
@@ -114,9 +107,10 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_"):
     ]
 
     # ---- structure, on the doubled span -----------------------------------
-    wb, wbcons = add_wingbox(f, "vertical_tail", AR=ARvt, b=2. * bvt,
+    box = vt.group("box", prefix=f"{vt.prefix}box_")
+    wb, wbcons = add_wingbox("vertical_tail", AR=ARvt, b=2. * bvt,
                              S=2. * Svt, p=p, q=q, tau=tau, Lmax=2. * Lvmax,
-                             prefix=f"{P}box_")
+                             group=box)
     cons += wbcons
     out["box"] = wb
 

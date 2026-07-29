@@ -38,13 +38,9 @@ BOX_TAPER = 0.3
 
 def add_horizontal_tail(f, N, state, *, sweep_deg, prefix="HT_"):
     """Add the horizontal tail. Returns ``(vars, constraints)``."""
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                       description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    ht = f.group("ht", prefix=prefix)
+    V, C = ht.Variable, ht.Constant
+    Vn = lambda n, g, u, d: ht.Variable(n, g, u, d, size=N)
 
     # ---- planform ---------------------------------------------------------
     ARht = V("AR_ht", 6.0, "-", "horizontal tail aspect ratio")
@@ -109,8 +105,9 @@ def add_horizontal_tail(f, N, state, *, sweep_deg, prefix="HT_"):
     ]
 
     # ---- structure ---------------------------------------------------------
-    wb, wbcons = add_wingbox(f, "horizontal_tail", AR=ARht, b=bht, S=Sh, p=p,
-                             q=q, tau=tau, Lmax=Lmax, prefix=f"{P}box_")
+    box = ht.group("box", prefix=f"{ht.prefix}box_")
+    wb, wbcons = add_wingbox("horizontal_tail", AR=ARht, b=bht, S=Sh, p=p,
+                             q=q, tau=tau, Lmax=Lmax, group=box)
     cons += wbcons
     out["box"] = wb
 

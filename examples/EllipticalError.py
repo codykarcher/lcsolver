@@ -36,8 +36,15 @@ y_mid          = f.Variable(name="y_mid",          guess=1.0,    units="m",   si
 z_mid          = f.Variable(name="z_mid",          guess=1.0,    units="m",   size = N,     description="vertical coordinate at panel center")
 
 # Panel coordinate setup  
-y     = np.array([0, 3, 6, 9, 12, 15])  # array of y-coordinates, preselected, panel edgepoints
-z     = np.array([1.5, 1, 1, 1, 1, 1.5])    # numpy array of z-coordinates, preselected for example
+# These are lengths, so they carry length units. Written as bare numbers they
+# made every constraint they appear in dimensionally inconsistent -- `y_mid`
+# is in metres, so `y_mid[i] >= (y[i+1] + y[i])/2` compared metres against a
+# number, and the gradient term compared m**2 against m against 1. The unit
+# checker rejects the model outright now; before, it reported one constraint
+# and stopped, which was easy to read as a single typo rather than a
+# convention that was wrong everywhere.
+y     = np.array([0, 3, 6, 9, 12, 15]) * units.m   # panel edge y-coordinates
+z     = np.array([1.5, 1, 1, 1, 1, 1.5]) * units.m # panel edge z-coordinates
 
 # =================
 # Declare Constants
@@ -66,7 +73,10 @@ for i in range(N):
                     ]
     
 Constraints += [
-                L_dist_sum == sum(L_dist),
+                # Iterating an IndexedVar yields its index KEYS, so the
+                # original `sum(L_dist)` was 0+1+2+3+4 = 10 -- a bare number,
+                # not the lift. The unit checker caught it as [N] =/= [-].
+                L_dist_sum == sum(L_dist[i] for i in range(N)),
                 L_dist_sum == W
                 ]
 
@@ -118,55 +128,13 @@ for i in range(N):
 
 f.ConstraintList(Constraints)
 
-var_list = f.get_variables()
-    
-f.pprint()
-from edi.solvers.solver import cvxopt_solve
-res = cvxopt_solve(f)
-print(res)
+from edi.solvers.solver import solve
 
+solve(f)
 
-# ================
-# Printing Results
-# ================
-
-#Using pandas library to print res as a dataframe
-import pandas as pd
-
-# Initialize lists to store variable details
-variable_names = []
-variable_values = []
-variable_units = []
-variable_descriptions = []
-
-ctr = 0  # Counter for results array index
-
-for var in var_list:
-    if isinstance(var, pyomo.core.base.var.IndexedVar):
-        # Handle indexed variables with multiple entries
-        for ix in var.index_set():
-            lbls = ["1", "2", "3", "4", "5", "6"]
-            variable_names.append(f"{var.name}[{lbls[ix]}]") # setting labels to index values
-            variable_values.append(res['x'][ctr])            # listing values, units, descriptions
-            variable_units.append(var._units)
-            variable_descriptions.append(var.doc) 
-            ctr += 1
-    else:
-        # Handle non-indexed variables
-        variable_names.append(var.name)
-        variable_values.append(res['x'][ctr]) # listing values, units, descriptions
-        variable_units.append(var._units)
-        variable_descriptions.append(var.doc)  
-        ctr += 1
-
-# Create dataframe with the details
-pd.set_option('display.max_rows', None)           # display all variable rows
-pd.options.display.float_format = '{:.4f}'.format # set output to 4 decimal places
-df = pd.DataFrame({
-    "Variable Name": variable_names,
-    "Value": variable_values,
-    "Units": variable_units,
-    "Description": variable_descriptions
-})
-
-print(df)
+# The solution prints itself, so the result table is no longer assembled by
+# hand. The loop this replaces walked `get_variables()` alongside a counter
+# into `res['x']`, which only agrees with the variable order as long as
+# nothing in the detector reorders columns -- and presolve now does exactly
+# that. `f.solution` reads the values back off the model instead.
+print(f.solution)

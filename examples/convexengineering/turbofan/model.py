@@ -273,13 +273,9 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     """
     exp = exponents(engine)
     sub = SUBS[engine]
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                       description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    eng = f.group("eng", prefix=prefix)
+    V, C = eng.Variable, eng.Constant
+    Vn = lambda n, g, u, d: eng.Variable(n, g, u, d, size=N)
 
     def CV(n, key, guess, u, d):
         """Constant if the substitution set defines it, free variable if not."""

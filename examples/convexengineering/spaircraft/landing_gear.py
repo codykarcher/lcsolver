@@ -43,11 +43,8 @@ from pyomo.environ import units
 
 def add_landing_gear(f, *, prefix="LG_"):
     """Add the landing gear. Returns ``(vars, constraints)``."""
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    lg = f.group("lg", prefix=prefix)
+    V, C = lg.Variable, lg.Constant
 
     # ---- geometry ---------------------------------------------------------
     B = V("B", 15.0, "m", "landing gear base")

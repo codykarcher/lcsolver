@@ -30,11 +30,9 @@ from __future__ import annotations
 
 def add_flight_state(f, N, *, prefix="FS_"):
     """Add an N-segment flight state. Returns ``(vars, constraints)``."""
-    P = prefix
-    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                       description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    fs = f.group("fs", prefix=prefix)
+    C = fs.Constant
+    Vn = lambda n, g, u, d: fs.Variable(n, g, u, d, size=N)
 
     h = Vn("h", 9000.0, "m", "segment altitude")
     hft = Vn("hft", 30000.0, "ft", "segment altitude in feet")

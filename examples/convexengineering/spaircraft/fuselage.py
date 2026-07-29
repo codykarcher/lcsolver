@@ -47,11 +47,8 @@ from numpy import pi
 
 def add_fuselage(f, *, prefix="Fuse_"):
     """Add the fuselage. Returns ``(vars, constraints)``."""
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    fuse = f.group("fuse", prefix=prefix)
+    V, C = fuse.Variable, fuse.Constant
     out = {}
 
     def var(n, g, u, d):

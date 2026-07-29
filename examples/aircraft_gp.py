@@ -88,17 +88,15 @@ f.ConstraintList(
 # =======================
 # f.pprint()
 
-from pyomo.environ import SolverFactory
-opt = SolverFactory('ipopt')
-opt.solve(f)
-# print('The drag of the aircraft is %f N'%(f.D.value))
+from edi.solvers.solver import solve
 
-import pyomo
-var_list = f.get_variables()
-for var in var_list:
-    if isinstance(var,pyomo.core.base.var.IndexedVar):
-        for ix in var.index_set():
-            lbls = ["out","ret","sprint"]
-            print('%s[%s]:  %.4f  %s'%(var.name,lbls[ix],var[ix].value,var._units))
-    else:
-        print('%s:  %.4f  %s'%(var.name,var.value,var._units))
+# `solve` detects that this is a geometric program and solves it in log space,
+# where it is convex, so the answer is a global optimum rather than a local
+# one. It also runs the structural checks and computes the sensitivity of the
+# optimum to every Constant.
+solve(f)
+
+# The solution prints itself: objective, every variable with its units and
+# description, then the sensitivities. An indexed variable prints one row per
+# element.
+print(f.solution)

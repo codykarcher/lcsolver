@@ -47,13 +47,9 @@ def add_wing(f, N, state, *, sweep_deg, prefix="Wing_"):
     keeps the geometry monomial.
     Returns ``(vars, constraints)``.
     """
-    P = prefix
-    V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                      description=d)
-    Vn = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
-                                       description=d, size=N)
-    C = lambda n, v, u, d: f.Constant(name=f"{P}{n}", value=v, units=u,
-                                      description=d)
+    wing = f.group("wing", prefix=prefix)
+    V, C = wing.Variable, wing.Constant
+    Vn = lambda n, g, u, d: wing.Variable(n, g, u, d, size=N)
 
     # ---- planform ---------------------------------------------------------
     AR = V("AR", 11.0, "-", "wing aspect ratio")
@@ -126,8 +122,9 @@ def add_wing(f, N, state, *, sweep_deg, prefix="Wing_"):
     ]
 
     # ---- structure --------------------------------------------------------
-    wb, wbcons = add_wingbox(f, "wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
-                             Lmax=Lmax, tau_max=tau_max, prefix=f"{P}box_")
+    box = wing.group("box", prefix=f"{wing.prefix}box_")
+    wb, wbcons = add_wingbox("wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
+                             Lmax=Lmax, tau_max=tau_max, group=box)
     cons += wbcons
     out["box"] = wb
 
