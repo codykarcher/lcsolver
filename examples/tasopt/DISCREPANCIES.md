@@ -883,3 +883,30 @@ a vacuum-jacketed tank with insulation outboard of the gap. It is reproduced
 as written (the vacuum reference case agrees to 2e-14, which could not happen
 otherwise) and pinned by `tests/test_thermal.py` so it is visible rather than
 buried in a branch.
+
+## §62 — v3 and 2.16 disagree about how many inches are in a metre
+
+`TASOPT 2.16`'s `constants.inc`:
+
+```fortran
+      in_m = 39.37
+```
+
+`TASOPT.jl`'s `constants.jl`:
+
+```julia
+const in_to_m = 0.0254
+```
+
+The exact reciprocal of 0.0254 is 39.37007874..., so the Fortran's constant is
+truncated at four significant figures and the two differ by 2e-6 relative.
+
+It does not matter in 2.16, where `in_m` only ever formats a fan diameter for
+the `.out` report. It matters in v3, where the Raymer landing-gear
+correlations raise a length in inches to the 0.4 and 0.5 power — using the
+wrong one makes the correlation agree with the reference only to 1e-6 instead
+of exactly.
+
+`tasopt_py.structures.landing_gear` uses v3's, and `tasopt_py.output` keeps
+2.16's, because each has to match the reference it is verified against. Both
+are pinned by tests so neither gets "tidied" into the other.
