@@ -368,6 +368,45 @@ the reduced problem exactly right — objective correct to 12 figures — while
 returning recovered values off by 4.3e+03 relative. A single elimination cannot
 expose it; it takes a chain.
 
+## Sensitivities across a reduction
+
+Sensitivities to `Constant`s survive every reduction here, including monomial
+elimination, and the reason is architectural rather than lucky.
+
+**Presolve transforms the detected structure, never the model.** The `structures`
+dict is what gets folded, reduced and eliminated; the Pyomo `Formulation` the
+user holds is untouched. `sensitivities()` obtains duals via
+`constraint_duals`, which prefers a populated `dual` Suffix and otherwise
+recovers them from the primal solution by KKT — and the SLCP/SIA path solves a
+separate `Problem` object, so it never populates a Suffix on the user's model.
+Sensitivity recovery therefore always runs against the *original* constraints,
+needing only `x`.
+
+So the requirement reduces to one thing: **the full primal vector must be
+restored**, which `restore_columns` does, verified at 6.0e-10 on SPaircraft.
+
+Tested on the hardest case — a constant appearing *only* in the equality that
+elimination consumes, so that after the reduction it survives nowhere but in
+the coefficients it was folded into:
+
+```
+analytic   dlog(f*)/dlog(K) = -0.5
+normal     sens(K) = -0.500000   (method=kkt)
+eliminated sens(K) = -0.500000   (method=kkt, 1 substituted)
+```
+
+The one thing that would break this is a backend that reported duals for the
+*reduced* problem onto the user's model. Nothing does today: the cvxopt
+backends refuse split-bound structures outright, and the plain IPOPT route does
+not presolve. A future backend that presolved *and* wrote back duals would need
+a dual postsolve to match — for an eliminated equality the multiplier is
+recoverable from stationarity with respect to the eliminated variable,
+
+    lam_eq = -(dlog f/dy_p + sum_i lam_i dlog g_i/dy_p) / a_p
+
+which is the dual mirror of the primal back-substitution, but it is not
+implemented because nothing currently needs it.
+
 ## Signomial cancellation
 
 `cancellation_report` looks for the pi-tail failure directly, rather than

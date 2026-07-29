@@ -951,3 +951,55 @@ def test_a_variable_with_a_real_bound_is_not_substituted_out():
     st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
     _small, removed = eliminate_monomial_equalities(st)
     assert [r.name for r in removed if r.reason == 'substituted'] == []
+
+
+# ---------------------------------------------------------------------------
+# sensitivities across a structural reduction
+# ---------------------------------------------------------------------------
+def _constant_model(k=3.0):
+    """min x  s.t.  z == K*x,  x*z >= 12.   So x* = sqrt(12/K).
+
+    `K` appears ONLY in the monomial equality that elimination consumes, which
+    is the hardest case for sensitivity recovery: after the reduction that
+    constraint is gone and `K` survives only inside the coefficients it was
+    folded into.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
+    z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
+    K = f.Constant('K', k, '', 'fitting constant')
+    f.Objective(x)
+    f.Constraint(z == K * x)
+    f.Constraint(x * z >= 12.0)
+    return f
+
+
+def test_sensitivities_survive_monomial_elimination():
+    """d log f* / d log K is -1/2 analytically, with or without the reduction.
+
+    This works because presolve transforms the detected *structure*, never the
+    model, and `sensitivities` recovers duals from the primal solution on the
+    original model. So long as the full primal vector is restored, the
+    reduction is invisible to it.
+    """
+    from edi.solvers.sensitivity import sensitivities
+    from edi.solvers.writeback import write_solution
+
+    fm = _constant_model()
+    st = _detect(fm)
+    res = solve_sia(st)
+    write_solution(st, {'x': list(res.x)}, model=fm)
+    plain = sensitivities(fm)['sensitivities']['K']
+
+    fm2 = _constant_model()
+    st2 = fold_singleton_rows(_detect(fm2, bounds_as_rows=False))
+    small, removed = eliminate_monomial_equalities(st2)
+    assert removed, "the equality should have been eliminated"
+    res2 = solve_sia(small, presolve=False)
+    names = [str(v) for v in st2['variables']]
+    x_full = restore_columns(removed, res2.x, n_original=len(names))
+    write_solution(st2, {'x': list(x_full)}, model=fm2)
+    reduced = sensitivities(fm2)['sensitivities']['K']
+
+    assert plain == pytest.approx(-0.5, abs=1e-4)
+    assert reduced == pytest.approx(plain, abs=1e-6)

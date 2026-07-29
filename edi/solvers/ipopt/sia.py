@@ -853,6 +853,24 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     if np.any(x <= 0):
         raise ValueError("SIA works in log space, so x0 must be strictly positive")
 
+    # Project the start into its box. The bounds are imposed on the sub-problem
+    # variable, so a start outside them is not merely a poor guess -- Phase I
+    # measures feasibility with `_violation`, which reads the constraints and
+    # not the bounds, so it can call a bound-violating point feasible while the
+    # sub-problem cannot move to it, and the run stops at iteration 0.
+    #
+    # This costs nothing when the guess is already inside, and it is what makes
+    # a model usable after `propagate_bounds`: propagation derives tight bounds
+    # from the constraints, and a hand-written initial guess has no reason to
+    # respect bounds nobody had computed yet.
+    if problem.bounds is not None:
+        for j, pair in enumerate(problem.bounds[:problem.n]):
+            lo, hi = pair or (None, None)
+            if lo is not None and lo > 0 and x[j] < lo:
+                x[j] = lo
+            if hi is not None and hi > 0 and x[j] > hi:
+                x[j] = hi
+
     n_exact, n_cons, n_lin = classify(problem)
     has_blackbox = n_lin > 0
 
