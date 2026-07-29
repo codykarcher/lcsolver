@@ -43,8 +43,10 @@ collapses to the *partial* derivatives at fixed :math:`x^*`:
 
 Every partial derivative here is taken symbolically with Pyomo's reverse-mode
 differentiation, so the result carries no truncation error whatsoever: it is the
-exact derivative of the model, not a difference quotient. The cost is one solve
-plus a handful of expression walks, independent of the number of constants.
+exact derivative of the model, not a difference quotient. One reverse sweep
+gives the derivatives with respect to every constant in an expression at once,
+so the cost is one solve plus one walk per active constraint -- independent of
+how many constants the model has.
 
 Where the duals come from
 -------------------------
@@ -81,6 +83,7 @@ import warnings
 import pyomo.environ as pyo
 from pyomo.common.collections import ComponentMap
 from pyomo.core.expr.calculus.derivatives import differentiate, Modes
+from pyomo.core.expr import identify_mutable_parameters
 from pyomo.common.dependencies import numpy as np
 
 
@@ -204,6 +207,44 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
         scale = (_residual_scale(con, variables) if variables is not None
                  else max(1.0, abs(bd)))
     return abs(b - bd) <= rtol * max(1.0, scale)
+
+
+def _param_gradient(expr, index):
+    """``{name: d expr / d constant}`` for every Constant appearing in ``expr``.
+
+    One reverse sweep answers for every constant at once, so this is called
+    once per constraint rather than once per (constraint, constant) pair. The
+    difference is the whole cost of the routine: an aircraft model has a couple
+    of hundred constants and a couple of hundred active constraints, and the
+    pairwise form walks the same expressions tens of thousands of times to
+    learn -- for nearly all of them -- that the constant does not appear.
+    Restricting each walk to the constants actually present is the other half:
+    a constraint typically mentions two or three.
+    """
+    out = {}
+    if expr is None or not hasattr(expr, 'is_expression_type'):
+        return out                                  # a plain number
+    try:
+        seen, present = set(), []
+        for p in identify_mutable_parameters(expr):
+            if id(p) in index and id(p) not in seen:
+                seen.add(id(p))
+                present.append(p)
+    except Exception:
+        present = []
+    if not present:
+        return out
+    try:
+        derivs = differentiate(expr, wrt_list=present,
+                               mode=Modes.reverse_symbolic)
+    except Exception:
+        return out
+    for p, dv in zip(present, derivs):
+        try:
+            out[index[id(p)]] = float(pyo.value(dv))
+        except Exception:
+            pass
+    return out
 
 
 def _constants(model):
@@ -521,14 +562,24 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             RuntimeWarning, stacklevel=2)
 
     constants = _constants(model)
+    index = {id(pd): name for name, pd in constants.items()}
+
+    # partial of the objective, at fixed x*
+    totals = dict.fromkeys(constants, 0.0)
+    for name, dv in _param_gradient(obj.expr, index).items():
+        totals[name] += dv
+    # minus the duals times the partial of each active constraint residual
+    for con, lam in duals.items():
+        bound, _ = _bound_of(con)
+        g = _param_gradient(con.body, index)
+        for name, dv in _param_gradient(bound, index).items():
+            g[name] = g.get(name, 0.0) - dv
+        for name, dv in g.items():
+            totals[name] -= lam * dv
+
     out = {}
     for name, pd in constants.items():
-        # partial of the objective, at fixed x*
-        total = _d(obj.expr, pd)
-        # minus the duals times the partial of each active constraint residual
-        for con, lam in duals.items():
-            bound, _ = _bound_of(con)
-            total -= lam * (_d(con.body, pd) - _d(bound, pd))
+        total = totals[name]
 
         if normalized:
             try:

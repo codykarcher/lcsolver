@@ -30,7 +30,7 @@ class TestUnitMessages(unittest.TestCase):
         self.assertIn('S*AR', msg)                # what it says
         self.assertIn('dimensionless', msg)       # left units
         self.assertIn('m**2', msg)                # right units
-        self.assertIn('multiply the left', msg)   # what to do about it
+        self.assertIn('multiply the left side', msg)   # what to do about it
 
     def test_unrelated_units_report_the_ratio(self):
         f = Formulation()
@@ -80,6 +80,39 @@ class TestUnitMessages(unittest.TestCase):
         self.assertNotIn('0x', msg)               # no object addresses
         for line in msg.splitlines():
             self.assertLess(len(line), 180)
+
+
+    def test_every_mismatch_is_reported_not_just_the_first(self):
+        """One round trip per bad constraint is a bad way to fix a model."""
+        f = Formulation()
+        area = f.Variable('S', 100.0, 'm^2', 'wing area')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(area)
+        f.Constraint(50.0 <= area)          # bad
+        f.Constraint(area >= time)          # bad
+        f.Constraint(area >= 1.0 * units.m ** 2)   # fine
+        f.Constraint(area >= time * time)   # bad
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+
+        self.assertIn('3 unit errors', msg)
+        for name in ('constraint_1', 'constraint_2', 'constraint_4'):
+            self.assertIn(name, msg)
+        self.assertNotIn('constraint_3', msg)      # the good one
+
+    def test_a_lone_mismatch_is_not_dressed_up_as_a_list(self):
+        f = Formulation()
+        area = f.Variable('S', 100.0, 'm^2', 'wing area')
+        f.Objective(area)
+        f.Constraint(50.0 <= area)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+        self.assertTrue(msg.startswith('Error in units for'))
+        self.assertNotIn('unit errors:', msg)
 
 
 if __name__ == '__main__':

@@ -237,20 +237,49 @@ class Detected(dict):
 
     # -- terms ------------------------------------------------------------
     def _grouped(self):
+        """Every row parsed into :class:`Term` objects, grouped by constraint.
+
+        Memoised, because this walks the whole problem and ``terms(i)`` asks
+        for one constraint out of it. Callers naturally write
+        ``[st.terms(i) for i in keep]``, which without a cache re-parses every
+        row of the model once per constraint -- quadratic in the constraint
+        count and, on a model with a thousand columns, quadratic against a
+        dense row width too. On SPaircraft that one comprehension in
+        ``fold_singleton_rows`` ran for over four minutes; cached it is
+        instant.
+
+        A :class:`Detected` is treated as immutable: presolve passes build a
+        new one through :meth:`rebuild` rather than editing rows in place. The
+        stamp guards the case anyway, so a swapped or resized row list is
+        re-parsed rather than silently answered from the cache.
+        """
         import collections
+        import itertools
 
         k = self.key
         if k is None or self.space != "log":
             return {}
+        rows = self[k][1]
+        stamp = (k, id(rows), len(rows))
+        cached = self.__dict__.get("_grouped_cache")
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+
         groups = collections.defaultdict(list)
-        for r in self[k][1]:
+        for r in rows:
             idx = int(r[0])
             i = idx if idx >= 0 else -idx - 1
-            groups[i].append(Term(
-                coeff=float(r[1]),
-                exponents={j: float(v) for j, v in enumerate(r[2:])
-                           if abs(float(v)) > 1e-12},
-                denominator=idx < 0))
+            # islice rather than `r[2:]`: slicing copies the row, and the row
+            # is as wide as the model has variables.
+            exponents = {}
+            for j, v in enumerate(itertools.islice(r, 2, None)):
+                v = float(v)
+                if v > 1e-12 or v < -1e-12:
+                    exponents[j] = v
+            groups[i].append(Term(coeff=float(r[1]), exponents=exponents,
+                                  denominator=idx < 0))
+
+        self.__dict__["_grouped_cache"] = (stamp, groups)
         return groups
 
     @property

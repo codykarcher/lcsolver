@@ -69,7 +69,7 @@ def _describe_mismatch(name, cexpr, exc):
     was wrong and by how much. Almost always the answer is a single missing
     factor, and the checker already knows what it is.
     """
-    lines = [f"Unit mismatch in {name}:", '', f'    {cexpr}', '']
+    lines = [f'Error in units for {name}:', '', f'    {cexpr}', '']
 
     left = right = None
     try:
@@ -80,16 +80,19 @@ def _describe_mismatch(name, cexpr, exc):
         pass
 
     if left is None and right is None:
-        lines.append('  The two sides could not be reduced to units at all, '
-                     'which usually means')
-        lines.append('  something in the expression is not a quantity -- a '
-                     'bare Python float where')
-        lines.append('  a Constant was meant, say.')
+        lines.append('    the two sides do not reduce to units at all')
+        lines.append('')
+        lines.append('  Usually something in the expression is not a quantity '
+                     '-- a bare Python')
+        lines.append('  float where a Constant was meant, say.')
     else:
-        lines.append(f'  left  side : {left if left else "?"}')
-        lines.append(f'  right side : {right if right else "?"}')
+        lines.append(f'    [{left or "?"}]  =/=  [{right or "?"}]')
         lines.append('')
         if left and right and left != right:
+            # Pyomo converts freely between units of the same dimension, so
+            # reaching here means the two sides are not the same dimension at
+            # all and no conversion between them exists. The ratio is still
+            # worth printing: it is exactly what the short side is missing.
             factor = None
             try:
                 a, b = pyo.units.get_units(cexpr.args[0]), \
@@ -97,19 +100,20 @@ def _describe_mismatch(name, cexpr, exc):
                 factor = str(pyo.units.get_units(b / a))
             except Exception:
                 factor = None
+            lines.append('  These are different dimensions, so no conversion '
+                         'between them exists.')
             if factor and factor not in ('None', ''):
-                lines.append(f'  The two differ by a factor of [{factor}]. '
-                             'Either multiply the left')
-                lines.append(f'  side by [{factor}], or divide the right side '
-                             'by it.')
+                lines.append(f'  The left side is short by [{factor}]: either '
+                             f'multiply the left side')
+                lines.append(f'  by [{factor}], or divide the right side by it.')
             else:
                 lines.append(f'  The left side is [{left}] and the right is '
                              f'[{right}]; they must match.')
         elif left == right:
-            lines.append('  The two sides agree, so the failure is elsewhere '
-                         'in the expression --')
-            lines.append('  most often a term inside it that is itself '
-                         'inconsistent.')
+            lines.append('  The two sides agree, so the failure is inside the '
+                         'expression rather')
+            lines.append('  than between its sides -- most often a sum whose '
+                         'terms disagree.')
 
     # The raw error carries object reprs and is several hundred characters of
     # pointer addresses; keep the head of it for anyone debugging the walker
@@ -119,11 +123,33 @@ def _describe_mismatch(name, cexpr, exc):
     # and nothing a modeller can act on. The sentence before them is the part
     # worth keeping.
     if '<' in detail:
-        detail = detail.split('<', 1)[0].rstrip(' :,(')
+        detail = detail.split('<', 1)[0]
+    # Cutting at the repr can land mid-argument-list; back up to the end of the
+    # sentence before it, which is the part that names the failing node.
+    if detail.count('(') > detail.count(')'):
+        detail = (detail.rsplit(':', 1)[0] if ':' in detail
+                  else detail.split('(', 1)[0])
+    detail = detail.rstrip(' :,(')
     if len(detail) > 140:
         detail = detail[:140] + '...'
     lines += ['', f'  (underlying: {type(exc).__name__}: {detail})']
     return '\n'.join(lines)
+
+
+def _join_failures(failures):
+    """Every mismatch in one message, in the order they were written.
+
+    Checking stops at the first failure only if the checker raises there, and
+    a model whose units are wrong in one place is usually wrong in several --
+    the same missing conversion repeated. Reporting them one solve at a time
+    makes the author pay a full round trip per constraint, so the walk carries
+    on past a failure and reports the lot, as the preconditioner does.
+    """
+    if len(failures) == 1:
+        return failures[0]
+    rule = '\n' + '-' * 70 + '\n'
+    return (f'{len(failures)} unit errors:\n' + rule.join(failures)
+            + '\n' + '-' * 70)
 
 
 def unit_corrector(pyomo_component):
@@ -150,6 +176,9 @@ def unit_corrector(pyomo_component):
     #corrected_model.clear() #clears out corrected_model
     visitor = _UnitVisitor()
 
+    #: Every mismatch found, reported together at the end.
+    failures = []
+
 
 
     for obj in objectives:
@@ -157,8 +186,9 @@ def unit_corrector(pyomo_component):
         try:
             rv = visitor.walk_expression(obj.sense * obj).expr
         except Exception as exc:
-            raise UnitMismatch(_describe_mismatch(
-                f"objective {obj.name!r}", obj.expr, exc)) from exc
+            failures.append(_describe_mismatch(
+                f"objective {obj.name!r}", obj.expr, exc))
+            continue
 
 ########################## Delete Old and Add Corrected Objective ##########################
 
@@ -185,8 +215,9 @@ def unit_corrector(pyomo_component):
                 try:
                     rv = visitor.walk_expression(cexpr)
                 except Exception as exc:
-                    raise UnitMismatch(_describe_mismatch(
-                        f"constraint {con.name!r}", cexpr, exc)) from exc
+                    failures.append(_describe_mismatch(
+                        f"constraint {con.name!r}", cexpr, exc))
+                    continue
 
 ######################## Delete Old and Add Corrected Constraint ########################
 
@@ -206,5 +237,8 @@ def unit_corrector(pyomo_component):
 
     # print('\n\n\nUnit Corrected Pyomo Objective:\n\n\n')
     # corrected_model.pprint()
-    
+
+    if failures:
+        raise UnitMismatch(_join_failures(failures))
+
     return corrected_model

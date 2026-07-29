@@ -1255,6 +1255,53 @@ def test_terms_reproduce_the_positional_row_format():
             assert all(abs(e) > 1e-12 for e in t.exponents.values())
 
 
+def test_terms_parses_each_row_once_however_often_it_is_asked():
+    """The natural caller is `[st.terms(i) for i in keep]`.
+
+    `terms(i)` returns one constraint out of a structure that describes the
+    whole problem, so parsing on every call is quadratic in the constraint
+    count -- and the rows are as wide as the model has variables, so the
+    constant is large. It is a silent failure: the answers stay correct and
+    the solve just stops finishing. On SPaircraft it cost four minutes inside
+    `fold_singleton_rows` against an eleven-second solve.
+    """
+    import edi.structure.detected as detected
+
+    st = _detect(_rich_model(), bounds_as_rows=False)
+    indices = [0] + st.constraint_indices
+    assert len(indices) > 3, 'need several constraints for this to mean anything'
+
+    built = []
+    real_term = detected.Term
+
+    def counting_term(*a, **kw):
+        built.append(1)
+        return real_term(*a, **kw)
+
+    detected.Term = counting_term
+    try:
+        st_fresh = _detect(_rich_model(), bounds_as_rows=False)
+        for i in [0] + st_fresh.constraint_indices:
+            st_fresh.terms(i)
+        for i in [0] + st_fresh.constraint_indices:
+            st_fresh.terms(i)                     # again, from the cache
+        n_rows = len(st_fresh[st_fresh.key][1])
+    finally:
+        detected.Term = real_term
+
+    assert sum(built) == n_rows, (
+        f'parsed {sum(built)} terms for {n_rows} rows over '
+        f'{2 * len(indices)} terms() calls -- the parse is not being reused')
+
+
+def test_a_rebuilt_structure_does_not_answer_from_the_old_cache():
+    st = _detect(_rich_model(), bounds_as_rows=False)
+    before = st.terms(0)                          # populate the cache
+    dropped = st.rebuild(st.terms(0), [], [], n=st.n_variables)
+    assert dropped.constraint_indices == []
+    assert len(dropped.terms(0)) == len(before)
+
+
 def test_term_values_match_direct_evaluation():
     from edi.presolve import _eval_terms
 

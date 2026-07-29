@@ -289,5 +289,64 @@ class TestSensitivityInterface(unittest.TestCase):
             sensitivities(f, method='nonsense')
 
 
+class TestParameterGradient(unittest.TestCase):
+    """The one-walk-per-expression gradient the envelope sum is built on.
+
+    Its predecessor asked for one constant at a time, which cost a full walk
+    per (constraint, constant) pair -- almost all of them returning zero
+    because the constant was not in that constraint. These are the cases where
+    the batched form could differ from the pairwise one.
+    """
+
+    def _index(self, f):
+        from edi.solvers.sensitivity import _constants
+        return {id(pd): n for n, pd in _constants(f).items()}
+
+    def test_a_constant_appearing_twice_is_not_counted_twice(self):
+        """The walker yields a repeated Param once per occurrence."""
+        from edi.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 1.0, '')
+        a = f.Constant('a', 3.0, '')
+        f.Objective(x)
+        g = _param_gradient(a * x + a * x, self._index(f))
+        self.assertAlmostEqual(g['a'], 2.0, places=12)     # d(2ax)/da = 2x
+
+    def test_constants_absent_from_an_expression_are_omitted(self):
+        from edi.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 2.0, '')
+        a = f.Constant('a', 3.0, '')
+        b = f.Constant('b', 5.0, '')
+        f.Objective(x)
+        g = _param_gradient(a * x, self._index(f))
+        self.assertIn('a', g)
+        self.assertNotIn('b', g)                # contributes nothing, not zero
+
+    def test_a_plain_number_has_no_gradient(self):
+        """Bounds are often literals, and were reaching the walker as floats."""
+        from edi.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 1.0, '')
+        f.Constant('a', 3.0, '')
+        f.Objective(x)
+        self.assertEqual(_param_gradient(4.0, self._index(f)), {})
+        self.assertEqual(_param_gradient(None, self._index(f)), {})
+
+    def test_it_agrees_with_differentiating_one_at_a_time(self):
+        from edi.solvers.sensitivity import _param_gradient, _d, _constants
+        f = Formulation()
+        x = f.Variable('x', 2.0, '')
+        y = f.Variable('y', 3.0, '')
+        a = f.Constant('a', 3.0, '')
+        b = f.Constant('b', 5.0, '')
+        f.Objective(x)
+        expr = a * x ** 2 + b * y + a * b * x * y
+        constants = _constants(f)
+        batched = _param_gradient(expr, {id(pd): n for n, pd in constants.items()})
+        for name, pd in constants.items():
+            self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
+
+
 if __name__ == '__main__':
     unittest.main()
