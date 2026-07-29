@@ -121,6 +121,35 @@ any speed (the shaft binds at 8.6 kW/kg near 60 krpm), so the flat constant
 silently assumes several smaller machines per fan. A corrected powertrain
 would add roughly 1–2 t to the E175-class MTOW.
 
+## Full-aircraft comparison: TASOPT.jl's own LH2 aircraft
+
+TASOPT.jl ships a complete hydrogen aircraft — `example/cryo_input.toml`, an
+**LH2-burning turbofan** with the fuselage tank, 180 pax x 215 lbf over
+3000 nmi — and `size_aircraft!` closes it at 76.0 t MTOW. Re-running this SP
+at that exact mission (payload 172,146 N, 5,556 km) gives the honest
+side-by-side. Propulsion differs by design: they burn the hydrogen, we run
+it through a fuel cell.
+
+| | TASOPT.jl LH2-TF | this SP (FC-electric) | reading |
+|---|---|---|---|
+| MTOW | 76.0 t | 47.3 t | not comparable headline: see rows below |
+| block H2 | 9,634 kg | 3,707 kg | ~1.55x fuel-cell chain efficiency x ~1.35x full mission vs cruise-only |
+| tank dry / gravimetric | 3,426 kg / **73.8%** (their printout) | 838 kg / 81.6% | 8-point gap, mostly the already-measured −22% tank idealization |
+| wing / MTOW | 16.1% (12.2 t, with flaps, slats, ribs) | 5.5% (bare box x1.2) | their buildup shows secondary structure ~doubles a bare box |
+| fuselage / MTOW | 26.6% | 25.4% | closer than the crude k_fuse deserves |
+| empty fraction | 55.5% | 55.1% | **coincidence**: missing gear/systems offset by the 10 t stack |
+
+**The fuel-cell full-aircraft path in TASOPT.jl is scaffolding, not a
+model.** The enum, engine model and weight hooks all exist
+(`prop_sys_arch = "fuel_cell_with_ducted_fan"`), but no example exercises it
+and it cannot run: `read_input`'s first propsys switch predates the option
+(leaving `eng_has_BLI_cores` unset), the wing-relief switch in
+`size_aircraft!` omits the arch (leaving `Weng1` unset), and with both
+patched locally the sizing loop NaNs. So for a fuel-cell-electric transport,
+**this SP is currently the only one of the two that closes** — and the
+component-level verification above is the strongest available check until
+TASOPT.jl's FC path is finished.
+
 ## Caveats — read before quoting numbers
 
 * **`j` sits at the polarisation fit's validity cap (10 000 A/m²).** The
