@@ -46,9 +46,11 @@ from __future__ import annotations
 
 import math
 
+from .atmosphere import atmos
 from .model import indices as I
 
-__all__ = ["report", "geowrt", "tofwrt", "prfwrt", "blfwrt", "VERSION",
+__all__ = ["report", "geowrt", "tofwrt", "prfwrt", "blfwrt", "airwrt",
+           "engwrt", "VERSION",
            "LB_N", "FT_M", "KFT_M", "IN_M", "PSI_PA", "NMI_M", "HR_S"]
 
 VERSION = 2.16
@@ -62,6 +64,8 @@ PSI_PA = 0.000145038
 NMI_M = 0.000539975
 HR_S = 1.0 / 3600.0
 GAMSL = 1.4
+#: constants.inc sets Tref = TSL and pref = pSL from atmos(0).
+_TREF, _PREF = atmos(0.0).T, atmos(0.0).p
 
 #: ``write(lu,1010)`` and ``write(lu,1020)`` -- each is preceded by a blank
 #: line, which is what the leading ``/`` in the format does.
@@ -108,7 +112,13 @@ def _gfmt(v: float, w: int, d: int) -> str:
     is the decimal exponent; ``E(w,d)`` outside that. A zero is treated as
     ``N = 1``, which is why the column shows ``0.00`` and not ``0.000``.
     """
-    n = 1 if v == 0.0 else math.floor(math.log10(abs(v))) + 1
+    if v == 0.0:
+        n = 1
+    else:
+        # The decimal exponent is taken from the value after rounding to d
+        # significant digits, so 99.999999 at d = 5 counts as 100.00 (N = 3)
+        # and not as 99.9999 (N = 2).
+        n = math.floor(math.log10(abs(float(f"{v:.{d - 1}e}")))) + 1
     if 0 <= n <= d:
         return _ffmt(v, w - 4, d - n) + " " * 4
     return _efmt(v, w, d)
@@ -445,6 +455,362 @@ def blfwrt(bl, Mach: float, Reunit: float) -> list:
     return out
 
 
+def airwrt(chp: str, para, parg) -> list:
+    """``airwrt`` -- the aerodynamic state at one mission point."""
+    out = [_blank()]
+
+    def w(label, value, d, unit=""):
+        out.append(f" {chp}: {label}{value:8.{d}f}{unit}")
+
+    cosL = math.cos(parg[I.IGSWEEP] * math.pi / 180.0)
+    CD = para[I.IACD]
+    LoD = 0.0 if CD == 0.0 else para[I.IACL] / CD
+
+    S, Sh = parg[I.IGS], parg[I.IGSH]
+    co, coh, cma = parg[I.IGCO], parg[I.IGCOH], parg[I.IGCMA]
+    CL, CLh = para[I.IACL], para[I.IACLH]
+    CLhtail = CLh * Sh / S
+
+    a = atmos(para[I.IAALT] / 1000.0)
+    u0 = a.a * para[I.IAMACH]
+    q0 = 0.5 * a.rho * u0 ** 2
+
+    # Lift split between wing, fuselage carryover and tail.
+    lambdat, lambdas = parg[I.IGLAMBDAT], parg[I.IGLAMBDAS]
+    gammat = lambdat * para[I.IARCLT]
+    gammas = lambdas * para[I.IARCLS]
+    etao, etas = parg[I.IGBO] / parg[I.IGB], parg[I.IGBS] / parg[I.IGB]
+    fLo, fLt, AR = parg[I.IGFLO], parg[I.IGFLT], parg[I.IGAR]
+    Kc = (etao + 0.5 * (1.0 + lambdas) * (etas - etao)
+          + 0.5 * (lambdas + lambdat) * (1.0 - etas))
+    Ko = 1.0 / (AR * Kc)
+    Kp = (etao + 0.5 * (1.0 + gammas) * (etas - etao)
+          + 0.5 * (gammas + gammat) * (1.0 - etas)
+          + fLo * etao + 2.0 * fLt * Ko * gammat * lambdat)
+    Kf = etao + fLo * etao
+    if CL == 0.0:
+        Lwingf = Lfusef = Ltailf = 0.0
+    else:
+        Lwingf = (1.0 - CLhtail / CL) * (1.0 - Kf / Kp)
+        Lfusef = (1.0 - CLhtail / CL) * Kf / Kp
+        Ltailf = CLhtail / CL
+
+    CMwing = ((co * para[I.IACMW0]
+               + (co * para[I.IACMW1] - parg[I.IGXWBOX])
+               * (CL - CLh * Sh / S)) / cma)
+    CMtail = ((coh * para[I.IACMH0] * Sh / S
+               + (coh * para[I.IACMH1] - parg[I.IGXHBOX]) * CLh * Sh / S)
+              / cma)
+    CMfuse = parg[I.IGCMVF1] * (CL - parg[I.IGCLMF0]) / (S * cma)
+    SM = (para[I.IAXNP] - para[I.IAXCG]) / cma
+
+    out.append(f" {chp}: alt.   ={_ffmt(para[I.IAALT] * FT_M, 8, 0)} ft")
+    w("dyn.pr.=", q0 * LB_N / FT_M ** 2, 2, " psf")
+    w("VTAS   =", u0 * FT_M, 2, " ft/s")
+    w("W/WMTO =", para[I.IAFRACW], 5)
+    w("Mach   =", para[I.IAMACH], 4)
+    w("L/D    =", LoD, 3)
+    w("gamV   =", para[I.IAGAMV] * 180.0 / math.pi, 5, " deg")
+    w("e      =", para[I.IASPANEFF], 4)
+    w("CL     =", CL, 4)
+    for label, idx in (("CD     =", I.IACD), ("CDi    =", I.IACDI),
+                       ("CDfuse =", I.IACDFUSE), ("CDwing =", I.IACDWING),
+                       ("CDover =", I.IACDOVER), ("CDhtail=", I.IACDHTAIL),
+                       ("CDvtail=", I.IACDVTAIL), ("CDnace =", I.IACDNACE),
+                       ("CDstrut=", I.IACDSTRUT)):
+        w(label, para[idx], 5)
+    w("Mperp  =", para[I.IAMACH] * cosL, 4)
+    for label, idx in (("clpo   =", I.IACLPO), ("clps   =", I.IACLPS),
+                       ("clpt   =", I.IACLPT), ("fduo   =", I.IAFDUO),
+                       ("fdus   =", I.IAFDUS), ("fdut   =", I.IAFDUT)):
+        w(label, para[idx], 4)
+    w("cdpw   =", para[I.IACDPW], 5)
+    w("cdfw   =", para[I.IACDFW], 5)
+    w("cdw    =", para[I.IACDPW] + para[I.IACDFW], 5)
+    w("Clh    =", CLh, 4)
+    w("ClhSh/S=", CLhtail, 4)
+    w("CMwing =", CMwing, 4)
+    w("CMfuse =", CMfuse, 4)
+    w("CMtail =", CMtail, 4)
+    w("cmpo   =", para[I.IACMPO], 4)
+    w("cmps   =", para[I.IACMPS], 4)
+    w("cmpt   =", para[I.IACMPT], 4)
+    w("dh/dR  =", math.tan(para[I.IAGAMV]), 5)
+    w("xCG    =", para[I.IAXCG] * FT_M, 2, " ft")
+    w("xNP    =", para[I.IAXNP] * FT_M, 2, " ft")
+    w("S.M.   =", SM, 3)
+    w("Wbuoy  =", para[I.IAWBUOY] * LB_N, 1, " lb")
+    w("Lwing  =", Lwingf * 100.0, 2, " %")
+    w("Lfuse  =", Lfusef * 100.0, 2, " %")
+    w("Ltail  =", Ltailf * 100.0, 2, " %")
+    return out
+
+
+def engwrt(chp: str, pare) -> list:
+    """``engwrt`` -- the engine state at one mission point.
+
+    Note the station table prints ``Rt5`` in the ``R`` column for stations
+    18, 19, 21 and 25 rather than each station's own ``Rt``. That is what the
+    source does -- four copy-paste slips in a row -- and it is reproduced.
+    """
+    out = []
+
+    out.append(_blank())
+
+    def g(label, *vals):
+        """``format(1x,a,': ',a,6g13.5)``."""
+        out.append(f" {chp}: {label}" + "".join(_gfmt(v, 13, 5)
+                                                for v in vals))
+
+    def gu(label, v, unit=""):
+        """``format(1x,a,': ',a,g13.5,a)``."""
+        out.append(f" {chp}: {label}" + _gfmt(v, 13, 5) + unit)
+
+    ncrowx = I.NCROWX
+    epsrow = [pare[I.IEEPSC1 + k] for k in range(ncrowx)]
+    Tmrow = [pare[I.IETMET1 + k] for k in range(ncrowx)]
+    ncrow = 0
+    for k in range(ncrowx):
+        if epsrow[k] > 0.0:
+            ncrow = k + 1
+
+    def t(stn, what):
+        return pare[getattr(I, f"IE{what}{stn}")]
+
+    tot = {n: {w: t(n, w) for w in ("TT", "HT", "PT", "CPT", "RT")}
+           for n in ("0", "18", "19", "2", "21", "25", "3", "4", "41",
+                     "45", "49", "5", "7")}
+    gam = {n: v["CPT"] / (v["CPT"] - v["RT"]) for n, v in tot.items()}
+
+    p0, T0, u0 = pare[I.IEP0], pare[I.IET0], pare[I.IEU0]
+    M0, a0, rho0 = pare[I.IEM0], pare[I.IEA0], pare[I.IERHO0]
+
+    st = {}
+    for n in ("2", "25", "5", "6", "7", "8"):
+        st[n] = {w: pare[getattr(I, f"IE{w}{n}")]
+                 for w in ("P", "T", "U", "R", "A", "CP")}
+    u9, A9 = pare[I.IEU9], pare[I.IEA9]
+
+    def mach(n):
+        s = st[n]
+        return s["U"] / math.sqrt(s["T"] * s["R"] * s["CP"]
+                                  / (s["CP"] - s["R"]))
+
+    M2, M25 = pare[I.IEM2], pare[I.IEM25]
+    M5, M6, M7, M8 = (mach(n) for n in ("5", "6", "7", "8"))
+
+    BPR = pare[I.IEBPR]
+    pif, pilc, pihc = pare[I.IEPIF], pare[I.IEPILC], pare[I.IEPIHC]
+    N1, N2 = pare[I.IEN1], pare[I.IEN2]
+    ff = pare[I.IEFF]
+    fo = pare[I.IEMOFFT] / pare[I.IEMCORE]
+    fc = pare[I.IEFC]
+    mcore = pare[I.IEMCORE]
+
+    Tref, pref = _TREF, _PREF
+    Nbf = pare[I.IENF] / math.sqrt(tot["2"]["TT"] / Tref)
+    Nblc = N1 / math.sqrt(tot["19"]["TT"] / Tref)
+    Nbhc = N2 / math.sqrt(tot["25"]["TT"] / Tref)
+    Nbht = N2 / math.sqrt(tot["41"]["TT"] / Tref)
+    Nblt = N1 / math.sqrt(tot["45"]["TT"] / Tref)
+
+    def mb(n, fac):
+        return (mcore * math.sqrt(tot[n]["TT"] / Tref)
+                / (tot[n]["PT"] / pref) * fac)
+
+    mbf = mb("2", BPR)
+    mblc = mb("19", 1.0)
+    mbhc = mb("25", 1.0 - fo)
+    mbht = mb("41", 1.0 - fo + ff)
+    mblt = mb("45", 1.0 - fo + ff)
+
+    g("BPR    =", BPR)
+    g("FPR    =", pif)
+    g("OPR    =", pilc * pihc)
+    g("pilc   =", pilc)
+    g("pihc   =", pihc)
+    g("1/piht =", tot["41"]["PT"] / tot["45"]["PT"])
+    g("1/pilt =", tot["45"]["PT"] / tot["49"]["PT"])
+    g("pid    =", pare[I.IEPID])
+    g("pib    =", pare[I.IEPIB])
+    g("pifn   =", pare[I.IEPIFN])
+    g("pitn   =", pare[I.IEPITN])
+    g("N1     =", N1)
+    g("N2     =", N2)
+    g("Nlc_c% =", Nblc / pare[I.IENBLCD] * 100.0)
+    g("Nhc_c% =", Nbhc / pare[I.IENBHCD] * 100.0)
+    g("Nht_c% =", Nbht / pare[I.IENBHTD] * 100.0)
+    g("Nlt_c% =", Nblt / pare[I.IENBLTD] * 100.0)
+    g("mlc_c% =", mblc / pare[I.IEMBLCD] * 100.0)
+    g("mhc_c% =", mbhc / pare[I.IEMBHCD] * 100.0)
+    g("mht_c% =", mbht / pare[I.IEMBHTD] * 100.0)
+    g("mlt_c% =", mblt / pare[I.IEMBLTD] * 100.0)
+    g("mf_c%  =", mbf / pare[I.IEMBFD] * 100.0)
+    for label, idx in (("epf    =", I.IEEPF), ("eplc   =", I.IEEPLC),
+                       ("ephc   =", I.IEEPHC), ("epht   =", I.IEEPHT),
+                       ("eplt   =", I.IEEPLT), ("etab   =", I.IEETAB)):
+        g(label, pare[idx])
+    g("fo     =", fo)
+    g("ffbar  =", ff / (1.0 - fo - fc))
+    g("ff     =", ff)
+    g("fc     =", fc)
+    g("epsrow =", *epsrow[:ncrow])
+    g("Tmrow  =", *Tmrow[:ncrow])
+
+    u5, u6, u7, u8 = (st[n]["U"] for n in ("5", "6", "7", "8"))
+    effp6 = 2.0 * u0 / (u0 + u6)
+    effp8 = 2.0 * u0 / (u0 + u8)
+    effp9 = 0.0 if u0 + u9 == 0.0 else 2.0 * u0 / (u0 + u9)
+
+    Phiinl, Kinl = pare[I.IEPHIINL], pare[I.IEKINL]
+    mdot = ff * mcore
+    PK = (0.5 * ((1.0 - fo + ff) * (u6 ** 2 - u0 ** 2)
+                 + BPR * (u8 ** 2 - u0 ** 2)
+                 + fo * (u9 ** 2 - u0 ** 2)) * mcore + Phiinl)
+    Phij = 0.5 * ((1.0 - fo + ff) * (u6 - u0) ** 2
+                  + BPR * (u8 - u0) ** 2
+                  + fo * (u9 - u0) ** 2) * mcore
+    Pprop = PK - Phij + mdot * u0 ** 2
+    etap = 0.0 if PK == 0.0 else Pprop / PK
+
+    F6sp = ((1.0 - fo + ff) * u6 - u0) / ((1.0 + BPR) * a0)
+    F8sp = BPR * (u8 - u0) / ((1.0 + BPR) * a0)
+    F9sp = (fo * u9) / ((1.0 + BPR) * a0)
+    Fsp = F6sp + F8sp + F9sp
+
+    # Kerrebrock's thrust definition, as an alternative.
+    FA = (((1.0 - fo + ff) * u5 - u0) * mcore
+          + (st["5"]["P"] - p0) * st["5"]["A"]
+          + BPR * (u7 - u0) * mcore + (st["7"]["P"] - p0) * st["7"]["A"]
+          + (fo * u9) * mcore)
+    Acap = 99.9999 if u0 == 0.0 else mcore * (1.0 + BPR) / (rho0 * u0)
+
+    out.append(_blank())
+    gu("Fsp    =", Fsp)
+    gu("Feng   =", pare[I.IEFE] / 1.0e3, " kN")
+    gu("FengA  =", FA / 1.0e3, " kN")
+    gu("mcore  =", mcore, " kg/s")
+    gu("mcool  =", mcore * fc, " kg/s")
+    gu("mfuel  =", mcore * ff, " kg/s")
+    gu("mofft  =", pare[I.IEMOFFT], " kg/s")
+    gu("Pofft  =", pare[I.IEPOFFT] / 1000.0, " kW")
+    gu("PK     =", PK / 1000.0, " kW")
+    gu("Phijet =", Phij / 1000.0, " kW")
+    gu("Phiinl =", Phiinl / 1000.0, " kW")
+    gu("Kinl   =", Kinl / 1000.0, " kW")
+    gu("etap   =", etap)
+    gu("TSFC   =", pare[I.IETSFC] * 3600.0, " 1/hr")
+    gu("hfuel  =", pare[I.IEHFUEL] / 1.0e6, " MJ/kg")
+
+    # --- total-state table ------------------------------------------------
+    out.append(_blank())
+    out.append(f" {chp}:  loc     Tt      pt       cpt       R"
+               "    cpt/(cpt-R)")
+    out.append("   " + "           K       kPa     J/kg K   J/kg K")
+
+    def trow(stn, label, Rcol=None):
+        v = tot[stn]
+        R = v["RT"] if Rcol is None else tot[Rcol]["RT"]
+        out.append("      " + label
+                   + f"{v['TT']:9.1f}{v['PT'] / 1000.0:9.2f}"
+                   + f"{v['CPT']:9.1f}{R:9.1f}{gam[stn]:9.4f}")
+
+    trow("0", " 0 ")
+    trow("2", " 2 ")
+    trow("21", " 21", Rcol="5")       # Rt5, not Rt21 -- see the docstring
+    trow("7", " 7 ")
+    out.append(_blank())
+    trow("0", " 0 ")
+    trow("18", " 18", Rcol="5")
+    trow("19", " 19", Rcol="5")
+    trow("25", " 25", Rcol="5")
+    trow("3", " 3 ")
+    trow("4", " 4 ")
+    trow("41", " 41")
+    trow("45", " 45")
+    trow("49", " 49")
+    trow("5", " 5 ")
+
+    # --- component powers -------------------------------------------------
+    def ht(n):
+        return tot[n]["HT"]
+
+    def Tt(n):
+        return tot[n]["TT"]
+
+    mdot2 = mcore * BPR
+    Pfan = mdot2 * (ht("2") - ht("21"))
+    Plpc = mcore * (ht("19") - ht("25"))
+    Phpc = mcore * (1.0 - fo) * (ht("25") - ht("3"))
+    Phpt = mcore * (1.0 - fo + ff) * (ht("41") - ht("45"))
+    Plpt = mcore * (1.0 - fo + ff) * (ht("45") - ht("49"))
+    cpf = (ht("21") - ht("2")) / (Tt("21") - Tt("2"))
+    cplc = (ht("25") - ht("19")) / (Tt("25") - Tt("19"))
+    cphc = (ht("3") - ht("25")) / (Tt("3") - Tt("25"))
+    cpht = (ht("45") - ht("41")) / (Tt("45") - Tt("41"))
+    cplt = (ht("49") - ht("45")) / (Tt("49") - Tt("45"))
+
+    out.append(_blank())
+    out.append(f" {chp}:  device     power    dh/dT     epol     eta")
+    out.append("   " + "               kW      J/kg K                ")
+    for label, P, cp, ep, eta in (
+            ("fan 2 -21", Pfan, cpf, pare[I.IEEPF], pare[I.IEETAF]),
+            ("LPC 19-25", Plpc, cplc, pare[I.IEEPLC], pare[I.IEETALC]),
+            ("HPC 25-3 ", Phpc, cphc, pare[I.IEEPHC], pare[I.IEETAHC]),
+            ("HPT 41-45", Phpt, cpht, pare[I.IEEPHT], pare[I.IEETAHT]),
+            ("LPT 45-49", Plpt, cplt, pare[I.IEEPLT], pare[I.IEETALT])):
+        out.append("     " + label
+                   + f"{P / 1000.0:9.1f}{cp:9.1f}{ep:9.4f}{eta:9.4f}")
+
+    # --- static-state table -----------------------------------------------
+    out.append(_blank())
+    out.append(f" {chp}:  loc   T       p       M       u        A "
+               "    Fsp    eta_p")
+    out.append("    " + "        K      kPa             m/s      m^2")
+
+    def srow(n, label, M, extra=()):
+        s = st[n]
+        line = ("     " + label
+                + f"{s['T']:8.1f}{s['P'] / 1000.0:8.2f}{M:8.4f}"
+                + f"{s['U']:8.2f}{s['A']:8.4f}")
+        for v in extra:
+            line += f"{v:8.4f}"
+        out.append(line)
+
+    srow("0", " 0 ", M0) if False else out.append(
+        "     " + " 0 " + f"{T0:8.1f}{p0 / 1000.0:8.2f}{M0:8.4f}"
+        + f"{u0:8.2f}{Acap:8.4f}{Fsp:8.4f}")
+    srow("2", " 2 ", M2)
+    out.append(_blank())
+    srow("25", " 25", M25)
+    out.append(_blank())
+    srow("5", " 5 ", M5)
+    srow("6", " 6 ", M6, (F6sp, effp6))
+    out.append(_blank())
+    srow("7", " 7 ", M7)
+    srow("8", " 8 ", M8, (F8sp, effp8))
+    out.append(_blank())
+    # Station 9 has no T, p or M -- the format skips those three fields.
+    out.append("     " + " 9 " + " " * 24
+               + f"{u9:8.2f}{A9:8.4f}{F9sp:8.4f}{effp9:8.4f}")
+    return out
+
+
+def _point_names():
+    """The mission points the report walks, and what it calls each."""
+    # The first three names are written as literals and so are not padded;
+    # the rest go through a character*20 variable and are.
+    pts = [(I.IPROTATE, "Rotation..."), (I.IPTAKEOFF, "Takeoff..."),
+           (I.IPCUTBACK, "Cutback...")]
+    for k, ip in enumerate(range(I.IPCLIMB1, I.IPCLIMBN + 1), start=1):
+        pts.append((ip, f"Climb{k}...".ljust(20)))
+    for k, ip in enumerate(range(I.IPCRUISE1, I.IPCRUISEN + 1), start=1):
+        pts.append((ip, f"Cruise{k}...".ljust(20)))
+    for k, ip in enumerate(range(I.IPDESCENT1, I.IPDESCENTN + 1), start=1):
+        pts.append((ip, f"Descent{k}...".ljust(20)))
+    return pts
+
+
 def report(case, result, *, Lfblwrite: bool = True) -> str:
     """The whole ``.out`` report for a completed run.
 
@@ -527,5 +893,17 @@ def report(case, result, *, Lfblwrite: bool = True) -> str:
         out.append(_say("Mission profile summary..."))
         out.append(_blank())
         out += prfwrt(parg, m.parm, m.para, m.pare)
+
+        out.append(_blank())
+        out.append(RULE2)
+        out.append(_say("Aero, Engine parameters..."))
+        out.append(_blank())
+        out.append(RULE3)
+        for ip, name in _point_names():
+            out.append(f" {I.CPLAB[ip - 1]}:  {name}")
+            out += airwrt(I.CPLAB[ip - 1], m.para.column(ip), parg)
+            out += engwrt(I.CPLAB[ip - 1], m.pare.column(ip))
+            out.append(_blank())
+            out.append(RULE3)
 
     return "".join(line + "\n" for line in out)

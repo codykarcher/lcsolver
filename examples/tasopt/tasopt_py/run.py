@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 from .aero.airfoil import airtable
 from .model import indices as I
+from .sizing.noise import noise
 from .sizing.woper import WOperResult, woper
 from .sizing.wsize import WSizeResult, wsize
 from .tasfile import TasCase, read_tas
@@ -27,6 +28,11 @@ from .tasfile import TasCase, read_tas
 __all__ = ["run_case", "RunResult", "LB_N"]
 
 LB_N = 1.0 / 4.44822
+#: The acoustic model, if one is available. ``tfnoise.f`` is not ported, so
+#: the three certification decibel values stay unset; every other quantity
+#: noise.f produces -- the takeoff and cutback engine points, and the observer
+#: positions -- is computed.
+_TFNOISE = None
 
 
 @dataclass
@@ -79,6 +85,15 @@ def run_case(path, *, Litprint: bool = False,
                 woper(case.pari, case.parg, m.parm, m.para, m.pare,
                       design.para, design.pare, iterfmax=s.iterfmax,
                       initeng=1, table=table, Litprint=Litprint))
+
+    # noise.f is the only routine that runs the engine at the takeoff and
+    # cutback points, so nothing can report on them until it has. tasopt.f
+    # calls it once per mission, after the off-design loop -- so only for
+    # missions that have actually been flown.
+    flown = case.missions if off_design else case.missions[:1]
+    for m in flown:
+        noise(case.pari, case.parg, m.parm, m.para, m.pare, initeng=1,
+              table=table, tfnoise=_TFNOISE)
     return RunResult(case=case, sized=sized, off_design=results)
 
 

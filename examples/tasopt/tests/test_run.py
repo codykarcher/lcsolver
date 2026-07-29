@@ -45,14 +45,16 @@ def stubbed(monkeypatch):
     ws = _Stub(converged=True, iterations=18,
                mission=type("M", (), {"PFEI": 7.849124})())
     wo = _Stub(converged=True, iterations=3)
+    no = _Stub()
     monkeypatch.setattr(R, "wsize", ws)
     monkeypatch.setattr(R, "woper", wo)
+    monkeypatch.setattr(R, "noise", no)
     monkeypatch.setattr(R, "airtable", lambda p: ("table", p))
-    return ws, wo
+    return ws, wo, no
 
 
 def test_sizes_the_design_mission_with_the_files_own_settings(stubbed):
-    ws, _ = stubbed
+    ws, _, _ = stubbed
     r = R.run_case(TAS)
     assert len(ws.calls) == 1
     args, kw = ws.calls[0]
@@ -65,7 +67,7 @@ def test_sizes_the_design_mission_with_the_files_own_settings(stubbed):
 
 
 def test_off_design_missions_start_from_the_design_state(stubbed):
-    _, wo = stubbed
+    _, wo, _ = stubbed
     r = R.run_case(TAS)
     # The 737 has two missions, so exactly one off-design run.
     assert len(wo.calls) == 1 == len(r.off_design)
@@ -83,9 +85,19 @@ def test_off_design_missions_start_from_the_design_state(stubbed):
 
 
 def test_off_design_can_be_skipped(stubbed):
-    _, wo = stubbed
+    _, wo, _ = stubbed
     r = R.run_case(TAS, off_design=False)
     assert wo.calls == [] and r.off_design == []
+
+
+def test_noise_runs_once_per_mission(stubbed):
+    """It is the only routine that runs the engine at the takeoff and cutback
+    points, so it has to run before anything reports on them."""
+    _, _, no = stubbed
+    r = R.run_case(TAS)
+    assert len(no.calls) == len(r.case.missions) == 2
+    _args, kw = no.calls[0]
+    assert kw["initeng"] == 1
 
 
 def test_reported_weights_come_from_the_design_mission(stubbed):

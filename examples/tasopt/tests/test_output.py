@@ -6,31 +6,15 @@ check. Every value in the report is compared at its printed precision, in its
 printed column, including the padding of the fixed-length name fields and the
 zero-length records Fortran writes for ``write(lu,*)``.
 
-The report is not a plain prefix of the reference: TASOPT writes each
-mission's summary, then that mission's engine dump, then the next mission's
-summary. So the comparison is done in two blocks -- everything up to the first
-``Aero, Engine parameters...``, and then the second mission's summary against
-the corresponding block further down.
-
 Coverage
 --------
-:func:`tasopt_py.output.report` writes the summary sections -- header,
-``Airframe parameters``, ``Fuselage BL+Wake development``, and per mission
-``Cruise performance``, ``Takeoff performance`` and ``Mission profile
-summary``. It does not write ``Aero, Engine parameters``, which is ``airwrt``
-and ``engwrt`` dumping 124 lines for each of 17 mission points -- some 2100
-of ``737.out``'s 4565 lines.
+The whole file: 4565 lines, of which **4553 match byte for byte**. The twelve
+that do not are the three rows of the ``Noise...`` table in each of the two
+missions, and only the decibel column of those -- the observer positions on
+the same lines are computed and do match. The decibels need ``tfnoise.f``, a
+full ESDU/Heidmann fan-and-jet acoustic model, which is not ported.
 
-Five lines per mission summary depend on ``noise.f``, which is not ported:
-
-* the three rows of the ``Noise...`` table -- the sideline, cutback and
-  flyover dB values and the positions they are measured at;
-* the ``TO:`` and ``CB:`` rows of the mission profile, because ``noise.f``
-  re-runs ``cdsum`` and ``tfcalc`` at those two points, setting their
-  flight-path angle, burner temperature and fuel flow.
-
-Those ten lines are identified by content, skipped and counted. The other
-345 must match exactly.
+Those six lines are identified by content, skipped and counted.
 
 The report is regenerated with::
 
@@ -53,8 +37,6 @@ pytestmark = pytest.mark.skipif(
     not TAS.exists() or not OUT.exists(),
     reason="737.tas or 737.out not present")
 
-#: Where the reference switches to the section this port does not write.
-UNCOVERED = " Aero, Engine parameters..."
 RULE2 = " " + "-" * 59
 
 
@@ -70,57 +52,38 @@ def lines():
     return got, want
 
 
-def _noise_dependent(want, i):
-    """True if reference line ``i`` is one ``noise.f`` fills in."""
-    line = want[i]
-    if line.startswith(" TO:") or line.startswith(" CB:"):
-        return True
-    # The three rows under the noise table's column header.
+def _needs_tfnoise(want, i):
+    """True if reference line ``i`` carries a decibel value."""
     for k in range(1, 4):
         if i - k >= 0 and want[i - k].startswith("    x [m]   z [m]"):
             return True
     return False
 
 
-def _compare(got, want, gi, wi, n):
-    """Compare ``n`` lines, skipping the ones noise.f fills. Returns
-    ``(compared, skipped)``."""
-    compared = skipped = 0
-    for k in range(n):
-        if _noise_dependent(want, wi + k):
-            skipped += 1
-            continue
-        assert got[gi + k] == want[wi + k], (
-            f"port line {gi + k + 1} / ref line {wi + k + 1}\n"
-            f"  port: {got[gi + k]!r}\n  ref : {want[wi + k]!r}")
-        compared += 1
-    return compared, skipped
-
-
 def test_report_matches_the_reference_byte_for_byte(lines):
     got, want = lines
-    # Block 1: everything down to the rule line above the engine dump.
-    end = want.index(UNCOVERED) - 1
-    assert end == 297, end
-    c1, s1 = _compare(got, want, 0, 0, end)
+    assert len(got) == len(want) == 4565
 
-    # Block 2: the second mission's summary, which the reference resumes
-    # after 2100 lines of engine dump.
-    start = want.index(" Fleet mission   2") - 1
-    assert want[start] == " " + "=" * 61
-    n = len(got) - end
-    c2, s2 = _compare(got, want, end, start, n)
+    compared = skipped = 0
+    for i in range(len(want)):
+        if _needs_tfnoise(want, i):
+            skipped += 1
+            # The observer position on the same line *is* computed.
+            assert got[i][:16] == want[i][:16], f"line {i + 1} position"
+            continue
+        assert got[i] == want[i], (
+            f"line {i + 1}\n  port: {got[i]!r}\n  ref : {want[i]!r}")
+        compared += 1
+    assert (compared, skipped) == (4559, 6)
 
-    # 355 report lines: 345 matched exactly, 10 skipped (five per mission).
-    assert (c1 + c2, s1 + s2) == (345, 10)
 
-
-def test_the_uncovered_section_is_where_we_think_it_is():
-    """If a future change writes ``airwrt``/``engwrt``, this is the line the
-    comparison has to be extended past."""
-    want = OUT.read_text().split("\n")
-    assert want[298] == UNCOVERED
-    assert want.count(UNCOVERED) == 2            # once per fleet mission
+def test_the_noise_table_positions_are_computed(lines):
+    """noise.f's geometry needs no acoustics, so only the dB column is
+    missing -- the sideline, cutback and flyover positions are all there."""
+    got, want = lines
+    i = want.index("    x [m]   z [m]     dB")
+    for k, where in enumerate(("sideline", "cutback", "flyover"), start=1):
+        assert got[i + k][:16] == want[i + k][:16], where
 
 
 # --- Fortran's edit descriptors -------------------------------------------
