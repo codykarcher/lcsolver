@@ -48,7 +48,9 @@ __all__ = ["add_wing_h2"]
 P_TAPER, Q_TAPER = 1.6, 1.3
 
 
-def add_wing_h2(f, *, prefix: str = "Wing_"):
+def add_wing_h2(f, *, prefix: str = "Wing_", f_nonstruct: float = 1.2,
+                tau_max: float = 0.15, p_taper: float = P_TAPER,
+                q_taper: float = Q_TAPER):
     """Planform + structural box. Returns ``(vars, constraints)``.
 
     The caller supplies the load case by constraining ``L_max`` (ultimate
@@ -65,26 +67,27 @@ def add_wing_h2(f, *, prefix: str = "Wing_"):
     AR = V("AR", 10.0, "-", "aspect ratio", bounds=(6.0, 14.0))
     S = V("S", 68.0, "m^2", "reference area", bounds=(30.0, 250.0))
     b = V("b", 26.0, "m", "span", bounds=(12.0, 55.0))
-    tau = V("tau", 0.13, "-", "thickness-to-chord ratio", bounds=(0.08, 0.15))
+    tau = V("tau", min(0.13, tau_max), "-", "thickness-to-chord ratio",
+            bounds=(0.08, tau_max))
     Lmax = V("L_max", 1.2e6, "N", "ultimate load", bounds=(1e5, 2e7))
     Mr = V("M_r", 8.0e5, "N", "root moment per root chord",
            bounds=(1e4, 2e7))
     W_wing = V("W_wing", 2.3e4, "N", "wing weight incl. non-structural",
                bounds=(2e3, 5e5))
 
-    box = add_wingbox("wing", AR=AR, b=b, S=S, p=P_TAPER, q=Q_TAPER,
-                      tau=tau, Lmax=Lmax, Mr=Mr, tau_max=0.15,
+    box = add_wingbox("wing", AR=AR, b=b, S=S, p=p_taper, q=q_taper,
+                      tau=tau, Lmax=Lmax, Mr=Mr, tau_max=tau_max,
                       group=wg.group("box", prefix=f"{prefix}box_"))
     box_vars, cons = box if isinstance(box, tuple) else (box, [])
 
-    f_ns = wg.Constant("f_nonstruct", 1.2, "-",
+    f_ns = wg.Constant("f_nonstruct", f_nonstruct, "-",
                        "LE/TE devices, ribs, controls over box weight")
 
     cons += [
         # Root moment per root chord for triangular-ish spanwise loading --
         # the same form SPaircraft's vertical tail uses with its own L_max.
         # No fuel-relief subtraction: a hydrogen wing is dry.
-        Mr >= Lmax * AR * P_TAPER / 24.0,
+        Mr >= Lmax * AR * p_taper / 24.0,
         W_wing >= f_ns * box_vars.W_struct,
     ]
 

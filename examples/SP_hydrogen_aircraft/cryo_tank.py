@@ -84,7 +84,8 @@ LH2_LHV = 1.20e8
 LH2_LATENT_HEAT = 4.46e5
 
 
-def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
+def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
+                  pvent: float = 1.3e5, qfac: float = 1.0):
     """Add an LH2 fuselage tank. Returns ``(vars, constraints)``.
 
     The tank is a cylinder with ellipsoidal heads, sitting inside the
@@ -135,7 +136,7 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
 
     # ---- constants --------------------------------------------------------
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
-    dp = C("dp", 1.3e5, "Pa", "tank vent (design) pressure")
+    dp = C("dp", pvent, "Pa", "tank vent (design) pressure")
     sig_a = C("sigma_a", 4.7e8 / 4.0, "Pa", "allowable stress, Al-2219 UTS/4")
     e_w = C("e_w", 0.9, "-", "weld efficiency")
     rho_skin = C("rho_skin", 2825.0, "kg/m^3", "Al-2219 density")
@@ -146,6 +147,7 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
     ullage = C("ullage", 0.95, "-", "fraction of tank volume that is liquid")
     dT = C("dT", 273.0, "K", "ambient-to-cryogen temperature difference")
     k_insul = C("k_insul", 0.011, "W/(m*K)", "foam conductivity at mean temp")
+    qfac = C("qfac", qfac, "-", "structural/piping heat leak factor")
     h_lat = C("h_lat", LH2_LATENT_HEAT, "J/kg", "latent heat of vaporisation")
     # Support-ring fit against the port's stiffener_weight; see docstring.
     k_stiff = C("k_stiff", 599.4, "N", "ring weight fit at 15 kN load")
@@ -197,7 +199,9 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
         # One lumped conduction resistance. Monomial: heat leak falls as
         # insulation thickens, which is the trade the optimiser gets to make
         # against W_insul above.
-        Q_leak * t_insul == k_insul * S_tank * dT,
+        # qfac > 1 charges for heat leaking through supports and piping
+        # (TASOPT's heat_leak_factor); 1.0 leaves pure conduction.
+        Q_leak * t_insul == qfac * k_insul * S_tank * dT,
         m_boil * h_lat == Q_leak,
     ]
 

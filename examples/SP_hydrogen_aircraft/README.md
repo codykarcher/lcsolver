@@ -161,6 +161,59 @@ patched locally the sizing loop NaNs. So for a fuel-cell-electric transport,
 component-level verification above is the strongest available check until
 TASOPT.jl's FC path is finished.
 
+## Replicating TASOPT.jl's LH2 turbofan (`model_lh2tf.py`)
+
+The full-aircraft comparison above left a 63,000 lb gap and a diagnosis:
+part modeling scope, part wrong parameters. `model_lh2tf.py` settles which is
+which by replicating their aircraft — same propulsion architecture
+(H2-burning turbofan, their engine's own solved TSFC and weight-per-thrust),
+every calibration read from *their design*, never tuned to their MTOW. The
+convergence sequence is the answer to the diagnosis:
+
+| step | what was set | MTOW [lb] | error |
+|---|---|---:|---:|
+| calibrations only, free planform | k_fuse (validated at 259 vs 260), hull geometry, f_ns = 1.64, Wadd = 0.065 MTOW, engines, TSFC, 20% reserves | 138,268 | −17.6% |
+| + their planform | AR = 10.1, taper 0.25, sweep factor 1/cos²(26°) | 150,843 | −10.1% |
+| + their policies | CL ≤ 0.57, boil-off ≤ 0.4%/hr, k_beam = 1.196 (declared) | 160,509 | −4.3% |
+| + their tank parameters | vent pressure 2 atm, heat-leak factor 1.3 | **164,920** | **−1.7%** |
+
+Final breakdown, every row within 2% except the tank:
+
+| | SP [lb] | TASOPT [lb] | diff |
+|---|---:|---:|---:|
+| wing | 26,566 | 26,988 | −1.6% |
+| fuselage | 44,624 | 44,678 | −0.1% |
+| empennage | 2,975 | 3,020 | −1.5% |
+| engines | 14,367 | 14,621 | −1.7% |
+| tank | 6,055 | 7,556 | **−19.9%** |
+| gear+systems | 10,720 | 10,901 | −1.7% |
+| fuel | 20,913 | 21,247 | −1.6% |
+| **MTOW** | **164,920** | **167,711** | **−1.7%** |
+
+Wing area lands at 122.0 vs their 121.5 m², L/D 14.58 vs 14.71, tank
+9.29 × 2.31 m vs 9.51 × 2.28, insulation 12.7 cm at exactly their 0.4%/hour
+boil-off policy.
+
+What the sequence taught:
+
+* **Parameters were most of it.** Free-planform optimization flew off to
+  AR 6 (the Hoburg box under-prices span with sweep unmodelled); their CL
+  policy, boil-off policy, vent pressure and heat-leak factor were all
+  simply *settings* the first comparison had not set.
+* **Two genuine modeling gaps, both now priced:** the Hoburg box vs
+  TASOPT's beam theory is worth 19.6% on the box at their exact point
+  (carried as the declared constant `k_beam = 1.196`, measured once, not
+  tuned), and the lumped tank thermal/structural model is worth ~20% on the
+  tank — 0.9% of MTOW — from their layered k(T) insulation integral,
+  support-angle and `ftankadd` details the SP deliberately lumps.
+* **`k_fuse = 260 N/m²` was never wrong.** Their hull works out to
+  259 N/m²; the earlier fuselage gap was missing nose/tailcone geometry.
+
+On "did you port all of SPaircraft": no — only `wingbox.py`, because
+`wing.py`/`fuselage.py`/tails/gear close through the trim block and cannot
+be taken piecewise (documented above). The sweep block that `wing.py` would
+have contributed is exactly what the +12,600 lb step 2 recovered.
+
 ## Caveats — read before quoting numbers
 
 * **`j` sits at the polarisation fit's validity cap (10 000 A/m²).** The
