@@ -180,6 +180,21 @@ class TestElementwiseArithmetic(unittest.TestCase):
         with self.assertRaises(ShapeMismatch):
             M2 == T * 2
 
+    def test_combining_two_different_lengths_raises(self):
+        """How a real error surfaced: a constraint written over Nseg panels
+        widened to all N stations, because M carried N and Sy carried N-1."""
+        f, T, M, R = self._f()
+        short = f.Variable('short', 1.0, '-', 'a shorter vector', size=2)
+        with self.assertRaises(ShapeMismatch) as ctx:
+            T / short
+        self.assertIn('(3,)', str(ctx.exception))
+        self.assertIn('(2,)', str(ctx.exception))
+
+    def test_slicing_to_match_is_what_the_message_suggests(self):
+        f, T, M, R = self._f()
+        short = f.Variable('short', 1.0, '-', 'a shorter vector', size=2)
+        self.assertEqual(len(T[:2] / short), 2)
+
 
 @unittest.skipIf(not available, 'EDI import failed')
 class TestKeywordNamedQuantity(unittest.TestCase):

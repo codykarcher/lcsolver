@@ -217,6 +217,25 @@ def broadcast_cols(vector, n):
     return out.view(VectorArray)
 
 
+def _checked(left, right, op):
+    """Apply ``op`` elementwise, refusing to broadcast between shapes.
+
+    numpy would report `operands could not be broadcast together with shapes
+    (5,) (4,)`, which says nothing about the model. Worse, when the lengths do
+    line up it would broadcast happily and quietly answer a different
+    question -- the same reason the comparisons refuse it.
+    """
+    ls = left.shape if isinstance(left, np.ndarray) else ()
+    rs = right.shape if isinstance(right, np.ndarray) else ()
+    if ls and rs and ls != rs:
+        raise ShapeMismatch(
+            f"cannot combine shapes {ls} and {rs}. A vector of one length is "
+            "not a vector of another: slice one of them to match "
+            f"(x[:{min(ls[0], rs[0])}]) if that is what was meant, or use "
+            "f.broadcast_rows / f.broadcast_cols to say which axis lines up.")
+    return op(left, right)
+
+
 def _rhs(other):
     """The other operand of an arithmetic expression, as numpy can use it.
 
@@ -314,7 +333,7 @@ class VectorComponent:
     # had to spell out `for i in range(N)` to write the very expressions the
     # comparisons were meant to free it from.
     def _arith(self, other, op):
-        return op(self.as_array(), _rhs(other))
+        return _checked(self.as_array(), _rhs(other), op)
 
     def __mul__(self, other):
         return self._arith(other, lambda a, b: a * b)
