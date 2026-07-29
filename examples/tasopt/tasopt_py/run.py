@@ -1,11 +1,16 @@
 """Run a ``.tas`` case end to end -- the port's equivalent of ``tasopt.f``.
 
-``tasopt.f`` does a good deal besides: parameter sweeps, an optimiser, plot
-and save files, five output formats. This is only the path a plain
-``tasopt 737`` takes with ``Lopt = F``: read the file, size the aircraft for
-the design mission, then fly each remaining mission off-design.
+Reads a case file, sizes the aircraft for the design mission, flies each
+remaining mission off-design, and runs the certification-noise points. With
+``Lopt = T`` in the file (or ``--optimise``) it instead runs the Nelder-Mead
+search of :mod:`tasopt_py.optimise`, sizing an aircraft per objective
+evaluation. With ``i``/``j`` sequence values in the file it sweeps over them,
+sizing one aircraft per grid point.
 
-    python -m tasopt_py /path/to/737.tas [--out 737.out]
+Not covered, of what ``tasopt.f`` also does: the Matlab and gnuplot plot
+files, the ASWING export, and the ``.sav`` optimiser restart files.
+
+    python -m tasopt_py /path/to/737.tas [--out 737.out] [--optimise]
 
 or, from Python::
 
@@ -20,10 +25,11 @@ from dataclasses import dataclass, field
 
 from .aero.airfoil import airtable
 from .model import indices as I
+from .optimise import OptResult, optimise
 from .sizing.noise import noise
 from .sizing.woper import WOperResult, woper
 from .sizing.wsize import WSizeResult, wsize
-from .tasfile import TasCase, read_tas
+from .tasfile import TasCase, apply_sweep, read_tas
 
 __all__ = ["run_case", "RunResult", "LB_N"]
 
@@ -40,6 +46,10 @@ class RunResult:
     case: TasCase
     sized: WSizeResult
     off_design: list = field(default_factory=list)   # one WOperResult each
+    #: Set when the run optimised rather than just sized.
+    optimum: OptResult = None
+    #: ``(i_value, j_value)`` for this point, when sweeping.
+    sweep_point: tuple = None
 
     @property
     def fuselage_bl(self):
@@ -59,21 +69,63 @@ class RunResult:
         return self.sized.mission.PFEI
 
 
-def run_case(path, *, Litprint: bool = False,
-             off_design: bool = True) -> RunResult:
+def run_case(path, *, Litprint: bool = False, off_design: bool = True,
+             optimise_it: bool = None) -> RunResult:
     """Read a ``.tas`` file, size the aircraft, and fly the other missions.
+
+    ``optimise_it`` defaults to the file's own ``Lopt`` flag. When it is true
+    the design variables are searched rather than taken as given, and the
+    returned result carries the optimum.
 
     The airfoil database named in the file is loaded once and shared, as
     ``getparm.f`` does -- it reads the same file into two identical tables and
     hands out an index; here it is one table handed to everything.
     """
     case = read_tas(path)
+    return run_prepared(case, Litprint=Litprint, off_design=off_design,
+                        optimise_it=optimise_it)
+
+
+def run_sweep(path, *, Litprint: bool = False, **kw):
+    """Run every point of a case's ``i``/``j`` parameter sweep.
+
+    Yields one :class:`RunResult` per grid point, in the order ``tasopt.f``
+    walks them -- ``j`` innermost. A file with no sequence values is one
+    point, and this is then just :func:`run_case`.
+    """
+    case = read_tas(path)
+    ivals = case.parsi or [None]
+    jvals = case.parsj or [None]
+    for iv in ivals:
+        for jv in jvals:
+            pt = read_tas(path)
+            if iv is not None:
+                apply_sweep(pt, case.ispars, iv)
+            if jv is not None:
+                apply_sweep(pt, case.jspars, jv)
+            r = run_prepared(pt, Litprint=Litprint, **kw)
+            r.sweep_point = (iv, jv)
+            yield r
+
+
+def run_prepared(case, *, Litprint: bool = False, off_design: bool = True,
+                 optimise_it: bool = None) -> RunResult:
+    """Run one already-read case. See :func:`run_case`."""
     table = airtable(case.airfoil_file)
     s = case.settings
+    if optimise_it is None:
+        optimise_it = s.Lopt
+
+    optimum = None
+    if optimise_it:
+        optimum = optimise(case, table=table, settings=s,
+                           Loprint=Litprint or s.Loprint)
 
     sized = wsize(*case.design, iterwmax=s.iterwmax,
                   wrlx1=s.wrlx1, wrlx2=s.wrlx2, wrlx3=s.wrlx3,
-                  initwgt=0, initeng=0, table=table, Litprint=Litprint)
+                  initwgt=1 if optimise_it else 0,
+                  initeng=1 if optimise_it else 0,
+                  table=table, Litprint=Litprint)
 
     results = []
     if off_design:
@@ -94,7 +146,8 @@ def run_case(path, *, Litprint: bool = False,
     for m in flown:
         noise(case.pari, case.parg, m.parm, m.para, m.pare, initeng=1,
               table=table, tfnoise=_TFNOISE)
-    return RunResult(case=case, sized=sized, off_design=results)
+    return RunResult(case=case, sized=sized, off_design=results,
+                     optimum=optimum)
 
 
 def main(argv=None) -> int:
@@ -107,11 +160,15 @@ def main(argv=None) -> int:
             return 2
         out_path = argv[k + 1]
         del argv[k:k + 2]
+    opt = None
+    if "--optimise" in argv:
+        argv.remove("--optimise")
+        opt = True
     if not argv:
-        print("usage: python -m tasopt_py <case.tas> [--out <report>]",
-              file=sys.stderr)
+        print("usage: python -m tasopt_py <case.tas> [--out <report>] "
+              "[--optimise]", file=sys.stderr)
         return 2
-    r = run_case(argv[0], Litprint=True)
+    r = run_case(argv[0], Litprint=True, optimise_it=opt)
     if out_path is not None:
         from .output import report
         with open(out_path, "w") as fh:
@@ -124,6 +181,12 @@ def main(argv=None) -> int:
           f" in {r.sized.iterations} iterations)")
     print(f"  Wfuel = {r.Wfuel_lbf:12.4f} lbf")
     print(f"  PFEI  = {r.PFEI:12.6f}")
+    if r.optimum is not None:
+        o = r.optimum
+        print(f"  optimised in {o.steps} steps"
+              f" ({'converged' if o.converged else 'step limit'})")
+        for k, v in o.variables.items():
+            print(f"    {k:<8} = {v:12.6f}")
     for k, o in enumerate(r.off_design, start=2):
         print(f"  mission {k}: WTO = "
               f"{r.case.missions[k - 1].parm[I.IMWTO] * LB_N:12.4f} lbf"

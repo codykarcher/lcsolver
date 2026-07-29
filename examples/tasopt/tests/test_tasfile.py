@@ -229,3 +229,62 @@ def test_sizes_the_737_straight_from_the_tas_file(case):
     ulp = [1e-10] + [1e-4] * 5 + [1e-3] * 3 + [1e-5]
     for got, w, u in zip(r.history[0][1:], want[1:], ulp):
         assert got == pytest.approx(w, abs=1.5 * u)
+
+
+# --- the i/j parameter sweeps ----------------------------------------------
+# These mutate, so they get their own case rather than the module-scoped one.
+
+@pytest.fixture
+def fresh():
+    return read_tas(TAS)
+
+
+def test_sweeping_a_scalar_parameter(fresh):
+    from tasopt_py.tasfile import apply_sweep
+    apply_sweep(fresh, "AR", 12.0)
+    assert fresh.parg[I.IGAR] == 12.0
+    apply_sweep(fresh, "bmax", 40.0)
+    assert fresh.parg[I.IGBMAX] == 40.0
+
+
+def test_sweeping_mach_touches_only_the_cruise_block(fresh):
+    from tasopt_py.tasfile import apply_sweep
+    before = fresh.missions[0].para[I.IAMACH, I.IPCLIMB1]
+    apply_sweep(fresh, "Mach", 0.72)
+    m = fresh.missions[0]
+    for ip in range(I.IPCLIMBN, I.IPDESCENT1 + 1):
+        assert m.para[I.IAMACH, ip] == 0.72
+    assert m.para[I.IAMACH, I.IPCLIMB1] == before
+
+
+def test_sweeping_opr_uses_one_lpc_ratio_for_every_point(fresh):
+    """The HPC ratio is worked out once, from the start-of-cruise LPC ratio of
+    the first mission, and written everywhere -- the per-point form is
+    commented out beside it. So a point whose LPC ratio differs does not end
+    up at the OPR that was asked for."""
+    from tasopt_py.tasfile import apply_sweep
+    m = fresh.missions[0]
+    m.pare[I.IEPILC, I.IPSTATIC] = m.pare[I.IEPILC, I.IPCRUISE1] * 2.0
+    apply_sweep(fresh, "OPR", 35.0)
+    got_cruise = (m.pare[I.IEPIHC, I.IPCRUISE1]
+                  * m.pare[I.IEPILC, I.IPCRUISE1])
+    got_static = (m.pare[I.IEPIHC, I.IPSTATIC]
+                  * m.pare[I.IEPILC, I.IPSTATIC])
+    assert got_cruise == pytest.approx(35.0)
+    assert got_static == pytest.approx(70.0)     # not 35, by construction
+
+
+def test_sweeping_range_moves_only_the_design_mission(fresh):
+    """The loop that would have changed the other missions is commented out."""
+    from tasopt_py.tasfile import apply_sweep
+    other = fresh.missions[1].parm[I.IMRANGE]
+    apply_sweep(fresh, "Range", 4.0e6)
+    assert fresh.parg[I.IGRANGE] == 4.0e6
+    assert fresh.missions[0].parm[I.IMRANGE] == 4.0e6
+    assert fresh.missions[1].parm[I.IMRANGE] == other
+
+
+def test_an_unsweepable_keyword_is_refused(fresh):
+    from tasopt_py.tasfile import TasFormatError, apply_sweep
+    with pytest.raises(TasFormatError, match="cannot sweep"):
+        apply_sweep(fresh, "Wpay", 1.0)

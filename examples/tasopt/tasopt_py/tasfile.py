@@ -56,8 +56,8 @@ from .atmosphere import atmos
 from .model import Aircraft
 from .model import indices as I
 
-__all__ = ["read_tas", "TasCase", "RunSettings", "TasFormatError", "BIGNUM",
-           "LINE_WIDTH", "NMISX"]
+__all__ = ["read_tas", "apply_sweep", "TasCase", "RunSettings",
+           "TasFormatError", "BIGNUM", "LINE_WIDTH", "NMISX"]
 
 #: ``tasopt.f``'s fill value for "not set". Every parameter array starts here.
 BIGNUM = 2.0 ** 1023
@@ -636,3 +636,73 @@ def read_tas(path) -> TasCase:
     parg[I.IGWPAY] = case.missions[0].parm[I.IMWPAY]
 
     return case
+
+
+def apply_sweep(case, name: str, value: float) -> None:
+    """Set one swept parameter, as ``tasopt.f`` does per ``i``/``j`` point.
+
+    A ``.tas`` file may put a list of values after an ``i`` or ``j`` keyword,
+    and the program then sizes an aircraft at every combination. This applies
+    one such value. The keywords are ``cpars``; several of them reach more
+    than one place, and ``OPR`` reaches an odd one -- see below.
+    """
+    parg, missions = case.parg, case.missions
+    if name == "Range":
+        # Only the *design* mission's range moves; the loop that would have
+        # changed the others is commented out.
+        parg[I.IGRANGE] = value
+        missions[0].parm[I.IMRANGE] = value
+    elif name == "Mach":
+        for m in missions:
+            for ip in range(I.IPCLIMBN, I.IPDESCENT1 + 1):
+                m.para[I.IAMACH, ip] = value
+    elif name == "Nmax":
+        parg[I.IGNLIFT] = value
+    elif name == "sigfac":
+        parg[I.IGSIGFAC] = value
+    elif name == "CL":
+        for m in missions:
+            for ip in range(I.IPCRUISE1, I.IPCRUISEN + 1):
+                m.para[I.IACL, ip] = value
+    elif name == "AR":
+        parg[I.IGAR] = value
+    elif name == "sweep":
+        # Only the wing; the line that would also set the tail sweep is
+        # commented out -- and getparm overwrites the tail sweep anyway.
+        parg[I.IGSWEEP] = value
+    elif name == "etas":
+        parg[I.IGETAS] = value
+    elif name == "Tt4CR":
+        for m in missions:
+            for ip in range(I.IPCRUISE1, I.IPCRUISEN + 1):
+                m.pare[I.IETT4, ip] = value
+    elif name == "Tt4TO":
+        for m in missions:
+            for ip in (I.IPSTATIC, I.IPROTATE, I.IPTAKEOFF):
+                m.pare[I.IETT4, ip] = value
+    elif name == "Tmetal":
+        parg[I.IGTMETAL] = value
+    elif name == "OPR":
+        # The HPC pressure ratio is worked out *once*, from the LPC ratio at
+        # the start of cruise of the first mission, and then written to every
+        # point of every mission. The per-point form is commented out beside
+        # it, so a point whose LPC ratio differs does not get the OPR asked
+        # for.
+        pihc = value / missions[0].pare[I.IEPILC, I.IPCRUISE1]
+        for m in missions:
+            for ip in range(1, I.IPTOTAL + 1):
+                m.pare[I.IEPIHC, ip] = pihc
+    elif name == "FPR":
+        for m in missions:
+            for ip in range(1, I.IPTOTAL + 1):
+                m.pare[I.IEPIF, ip] = value
+    elif name == "lBFmax":
+        parg[I.IGLBFMAX] = value
+    elif name == "bmax":
+        parg[I.IGBMAX] = value
+    elif name == "alt":
+        for m in missions:
+            m.para[I.IAALT, I.IPCRUISE1] = value
+    else:
+        raise TasFormatError(f"cannot sweep over {name!r}; "
+                             f"valid keywords are {I.CPARS}")

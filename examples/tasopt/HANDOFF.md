@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 34 modules, 276 tests
+## Done — 37 modules, 297 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -117,7 +117,9 @@ and you cannot tell which module to look at.
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
-| `output` | `output.f` (summary) | **byte-exact vs 737.out** |
+| `output` | `output.f` (report) | **4553/4565 lines byte-exact** |
+| `sizing.noise` | `noise.f` (engine + geometry) | real 737 run |
+| `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
@@ -151,23 +153,22 @@ state the program hands to `wsize` — every array entry, no tolerance),
 | `fobj.f`, `gradop.f`, `simpop.f` | the optimiser wrapper around `wsize` |
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
-| `getsave.f` | optimiser restart files |
-| `output.f` (`airwrt`, `engwrt`) | the per-point engine dump — 2100 lines of `737.out` |
-| `noise.f`, `tfnoise.f` | the noise estimate — five report lines per mission |
+| `tfnoise.f` | the acoustic model — six numbers in the report |
+| `aswout.f`, `aswio.f` | ASWING export, 2795 lines |
+| `airpic.f`, `pltwrt`, `picwrt`, `picidr` | Matlab and gnuplot plot files |
+| `getsave.f` | optimiser restart (`.sav`) files |
 
-The optimiser is the natural next piece: `fobj` is a thin wrapper that
-perturbs design variables, calls `wsize` then `woper` for each mission, and
-returns a fuel-burn objective, and `simpop`/`gradop` drive it. It reads
-`pare(ieu8)` for a jet-velocity-ratio constraint, which `tfcalc` now stores.
+`tfnoise.f` is the only remaining piece that computes anything. It is a
+self-contained acoustic model -- SAE/ESDU jet noise, ESDU 98008 fan broadband,
+discrete-tone and combination-tone, third-octave banding, A-weighting and
+atmospheric attenuation -- in 14 routines with a few polynomial coefficient
+tables. `tasopt_py.sizing.noise` already computes everything around it and
+takes the model as an injected callable, so porting it is self-contained:
+implement the one `tfnoise(...)` signature in that module's docstring and pass
+it in as `run._TFNOISE`. That closes the last six numbers in the report.
 
-Two things it needs that do not exist yet: the `i`/`j` parameter sweeps
-(`tasfile` reads and returns `ispars`/`parsi` but nothing applies them — see
-the guarded block around `tasopt.f:424`), and `getsave` for restart files.
-
-The report's summary sections are ported and diff byte-identically against
-`737.out`. Finishing it means `airwrt`/`engwrt` (mechanical -- a flat dump of
-`para`/`pare` per mission point) and `noise.f` (which is not: it re-runs
-`cdsum` and `tfcalc` at the takeoff and cutback points, and needs `tfnoise`).
+The rest is export formats. ASWING (2795 lines) is much the largest and is a
+file-format translation rather than physics.
 
 ## Conventions to keep
 
@@ -339,7 +340,8 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 276 tests, ~40 s (sizes a 737 twice)
+python -m pytest tests/ -q            # 297 tests, ~75 s
+TASOPT_SLOW=1 python -m pytest tests/  # + the 18-evaluation optimiser check
 
 # run the port itself
 python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas \

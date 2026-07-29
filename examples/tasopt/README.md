@@ -50,16 +50,19 @@ python -m pytest tests/ -q
 Fortran source, and to what agreement. It is the one place that list is kept,
 so it does not go stale in two files at once.
 
-In short: 34 modules, 276 tests, and **the port runs**:
+In short: 37 modules, 297 tests, and **the port runs**:
 
 ```bash
 python -m tasopt_py /path/to/Tasopt2.16/runs/737/737.tas --out port.out
+python -m tasopt_py 737.tas --optimise      # Nelder-Mead over the design vars
 ```
 
-reads the case file, sizes the aircraft, flies the off-design mission and
-writes the report — reproducing both convergence tables the shipped program
-prints, and a `.out` file byte-identical to its own for every line that does
-not depend on the unported noise estimate.
+reads the case file, sizes the aircraft, flies the off-design mission, runs
+the certification-noise points and writes the report. It reproduces both
+convergence tables the shipped program prints, and 4553 of the 4565 lines of
+its `.out` file byte for byte. It also optimises: given the 737 case with
+`Lopt = T`, it reproduces the Fortran's Nelder-Mead search evaluation for
+evaluation, at the same simplex vertices to machine precision.
 It converges in the same 18 iterations to WTO = 174979.1500 lbf against the
 program's 174979.1499, with the whole converged aircraft agreeing to 1.5e-9,
 and PFEI = 7.849124 against the 7.8491 in `737.out`. `DISCREPANCIES.md`

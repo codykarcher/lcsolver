@@ -38,10 +38,12 @@ precision; the reference drivers use the same flag.
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
-| `output` | `output.f` (summary sections) | **byte-exact vs 737.out** |
+| `output` | `output.f` (report) | **4553/4565 lines byte-exact** |
+| `sizing.noise` | `noise.f` (engine + geometry) | real 737 run |
+| `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc` | 611 constants, generated |
 
-276 tests. Reference CSVs are committed, so the suite runs without a Fortran
+297 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -93,22 +95,31 @@ no tolerance** — all 27 `pari`, 254 `parg`, 17 `parm`, 51x17 `para` and
 269x17 `pare` values, unset entries included.
 
 So is the report. `python -m tasopt_py 737.tas --out port.out` writes the
-summary sections of the `.out` file and they come out **byte-identical** to
-the reference program's own `737.out` — 345 of 355 lines, every value at its
-printed precision in its printed column. The ten that differ are the five per
-mission that `noise.f` fills, and `noise.f` is not ported.
+whole `.out` file and **4553 of its 4565 lines are byte-identical** to the
+reference program's own — every value at its printed precision in its printed
+column. The twelve that differ are the decibel column of three rows per
+mission; the observer positions on the same lines match. Those need
+`tfnoise.f`, an ESDU/Heidmann acoustic model that is not ported.
+
+And so is the optimiser. Instrumenting `fobj.f` and running the 737 with
+`Lopt = T` gives 18 objective evaluations over four Nelder-Mead steps; the
+port reproduces **all 18, in order, at the same simplex vertices** — to
+8.8e-16 on the vertices, so it is taking identical moves, and 1.2e-9 on the
+objective.
 
 ## Still to port
 
 | source | lines | what it is |
 |---|---|---|
-| `fobj.f`, `gradop.f`, `simpop.f` | ~600 | the optimiser wrapper around `wsize` |
-| `noise.f`, `tfnoise.f` | ~700 | noise estimate — five report lines depend on it |
-| `output.f` (`airwrt`, `engwrt`) | ~620 | the per-point engine dump, 2100 lines of `737.out` |
-| `getsave.f` | 150 | optimiser restart files |
+| `tfnoise.f` | 619 | the acoustic model — six numbers in the report |
+| `aswout.f`, `aswio.f` | 2795 | ASWING input-file export |
+| `airpic.f`, `pltwrt`, `picwrt`, `picidr` | ~500 | Matlab and gnuplot plot files |
+| `getsave.f` | 127 | optimiser restart (`.sav`) files |
+| `blfwrt2`, `trpwrt`, `trpwrt2` | 154 | Trefftz and BL plot files |
+| `gradop.f` | 40 | an empty shell — see `DISCREPANCIES.md` §34 |
 
-Nothing that computes an aircraft remains. What is left is the optimiser that
-wraps the sizing loop, the noise estimate, and output formatting.
+Everything that computes or optimises an aircraft is ported. What is left is
+the acoustic model and four export formats.
 
 ## Accuracy of the boundary-layer chain
 

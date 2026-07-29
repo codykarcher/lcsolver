@@ -306,3 +306,87 @@ Two smaller notes on the reader itself:
 * `getrkey`'s header comment says the keyword must be "at the beginning of
   line", but the implementation is `index(line(1:kend), key(1:nkey))`, which
   matches anywhere. Reproduced as implemented.
+
+## §34 — `gradop.f` is an empty shell
+
+`gradop.f` advertises itself as a BFGS minimiser. Its step loop is
+
+```fortran
+      do 100 istep = 1, nstepmax
+        grms = 0.
+        gmax = 0.
+        do i = 1, n
+          grel = funv(i)*dvopt(i)
+          grms = grms + grel**2
+        enddo
+ 100  continue  ! with next step
+```
+
+— a gradient norm accumulated and then discarded, with no search direction,
+no line search and no Hessian update. It runs `nstepmax` times, changes
+nothing, and exits reporting the step limit. Its call site in `tasopt.f` is
+commented out beside the `simpop` call that is live, so nothing is lost.
+
+Not ported. `gobj`, the objective-and-gradient wrapper it would have consumed,
+*is* ported, since it is well-defined and is what a working gradient method
+would need.
+
+## §35 — the optimiser's constraints are penalties, not constraints
+
+`fobj.f` adds `penfac * max(g, 0)**2` for each of the four optional
+constraints — balanced field length, fuel volume, span, top-of-climb angle —
+with `penfac` between 1 and 25 times the payload weight. Nothing is enforced,
+so a converged design can sit slightly outside a constraint, by an amount that
+depends on how steep the objective is there.
+
+Three further *ad hoc* penalties are added before any of those, and they shape
+the design space rather than describe the aircraft:
+
+* negative sweep, "because the model depends on `cos(sweep)`, so negative
+  sweep is invisible";
+* inner-panel reverse taper, which "might otherwise look attractive to the
+  optimizer for strut-wing cases, because it doesn't know about the download
+  requirements";
+* excessive tip taper, "to strongly discourage the optimizer from trying a
+  negative tip chord as it samples the design space".
+
+All three are the source's own words. They are real modelling decisions, not
+numerical guards, and anyone reading an optimised TASOPT design should know
+they are there.
+
+## §36 — `voptset` clamps a design variable and tells the optimiser
+
+```fortran
+        if(io .eq. iolamt ) then
+         parg(iglambdat) = vopt(iv)
+         if(parg(iglambdat) .lt. 0.1) then
+          parg(iglambdat) = 0.1
+          vopt(iv) = 0.1
+         endif
+        endif
+```
+
+The tip taper ratio is floored at 0.1, and the floored value is written back
+into the optimiser's own variable vector — so the simplex *vertex* moves, not
+just the aircraft built from it. That is unusual: most clamps are invisible to
+the search, and a search that cannot see one will keep pushing against it.
+Here it can, which means a vertex can be silently merged with another.
+
+## §37 — a swept `OPR` is not the OPR at every point
+
+`tasopt.f`'s `i`/`j` sweep over overall pressure ratio computes
+
+```fortran
+        ip = ipcruise1
+        km = 1
+        pihc = OPR/pare(iepilc,ip,km)
+        do km = 1, nmission
+          do ip = 1, iptotal
+            pare(iepihc,ip,km) = pihc
+```
+
+with the per-point form `pihc = OPR/pare(iepilc,ip,km)` commented out just
+above it. So the HPC pressure ratio is worked out once, from the
+start-of-cruise LPC ratio of the first mission, and written to every point of
+every mission — and any point whose LPC ratio differs ends up at a different
+overall pressure ratio than the one swept for. Reproduced, with a test.
