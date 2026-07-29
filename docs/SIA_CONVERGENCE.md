@@ -105,11 +105,31 @@ against it -- by sign, by magnitude, or by correlation -- is not diagnostic,
 and an attempt to do so here produced numbers that looked damning and meant
 nothing. The only sound statement is that SIA's multipliers fail stationarity.
 
-The live candidate is that IPOPT rescales the problem by default
-(``nlp_scaling_method=gradient-based``) and reports duals for the *scaled*
-problem, which would corrupt them by a per-constraint factor while leaving the
-primal solution untouched -- exactly the pattern seen. Test it by passing
-``nlp_scaling_method=none``.
+**Five hypotheses tested and refuted**, each by measurement:
+
+1. *Sign convention.* All six conventions tried on the raw duals; the one in
+   use is already the best (0.502 against 3.88 for the alternatives).
+2. *Bound multipliers ignored by ``_kkt``.* Only 5 of 1121 variables sit at a
+   bound, and the projected-gradient residual is identical to the plain one.
+3. *Dual degeneracy of the equality pairs.* Real, and it was the cause of the
+   step collapse -- but fixing it took the largest multiplier from 4047 to
+   3.34 and left stationarity unchanged.
+4. *IPOPT rescaling the problem and reporting scaled duals.* Identical to the
+   last digit with ``nlp_scaling_method=none``, and with ``tol=1e-10``.
+5. *Duals valid at ``d*`` but tested at ``d=0``.* Measured at both points:
+   0.538848 either way. (The tempting estimate ``sum|lam| * |d| = 164 * 0.002
+   = 0.35`` is a loose bound whose terms cancel in practice.)
+
+What is known: the point is stationary (best any-sign multipliers give
+1.1e-14), the multipliers are small and well-conditioned, and they nonetheless
+fail stationarity by a factor of ~45.
+
+The remaining lead is that the residual is **concentrated**, not spread. It
+lives on a handful of variables -- ``Fuse_l_cone`` at 0.497, ``Fuse_l_shell``
+at 0.335, ``Wing_AR`` at 0.230 -- which points at a few specific constraints
+being mishandled rather than a systematic corruption of every dual. Identifying
+which constraints carry those variables, and checking how each is represented
+in the sub-problem against its ``log_grad``, is the next step.
 
 The old text below is retained for the record: stationarity is unchanged at
 ~0.5
