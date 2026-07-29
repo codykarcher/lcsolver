@@ -519,10 +519,18 @@ def mission(pari, parg, parm, para, pare, table, initeng: int = 0,
         Fspec = BW * (math.sin(gamVde) + cosg * DoL)
         ecol[I.IEFE] = Fspec / parg[I.IGNENG]
 
-        if initeng == 0 and ip > I.IPDESCENT1:
+        if initeng == 0:
             # Seed the engine from the previous point, and estimate the new
             # burner temperature and turbine exit pressure from the ambient
             # change -- a cold start here is much less likely to converge.
+            #
+            # This runs at *every* descent point including the first, where
+            # `ip - 1` is the last cruise point. The source has no guard on
+            # ip here, and adding one is what stopped this port sizing the
+            # D8: at descent 1 it cold-started where the reference program
+            # seeds, and the D8's cold start diverges into a state where the
+            # LPT is asked to extract more enthalpy than the flow has. See
+            # DISCREPANCIES.md 51.
             for idx in (I.IEMBF, I.IEMBLC, I.IEMBHC, I.IEPIF, I.IEPILC,
                         I.IEPIHC):
                 ecol[idx] = pare[idx, ip - 1]

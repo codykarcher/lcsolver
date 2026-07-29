@@ -916,7 +916,7 @@ def _point_names():
     return pts
 
 
-def report(case, result, *, Lfblwrite: bool = True) -> str:
+def report(case, result, *, Lfblwrite: bool = None) -> str:
     """The whole ``.out`` report for a completed run.
 
     ``case`` is a :class:`~tasopt_py.tasfile.TasCase` and ``result`` a
@@ -924,6 +924,11 @@ def report(case, result, *, Lfblwrite: bool = True) -> str:
     per line, as the Fortran writes it.
     """
     pari, parg = case.pari, case.parg
+    if Lfblwrite is None:
+        # The case file's own flag. The 737 sets it, the D8 does not, and
+        # getting this from a default rather than the case is what made the
+        # D8's report come out 54 lines too long.
+        Lfblwrite = case.settings.Lfblwrite
     out = []
 
     out.append(_blank())

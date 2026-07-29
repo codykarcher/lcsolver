@@ -619,20 +619,84 @@ is given a section property from a different surface.
 `runs/D8` and `runs/HE` both have Pi-tails, so this does fire; the port
 reproduces it, and `tests/data/sd81.asw` is the reference.
 
-## §51 — the port cannot size the D8
+## §51 — a guard on the descent engine seeding that the source does not have  *(fixed)*
 
-`runs/D8/sd81.tas` sizes in the Fortran (18 iterations, WTO = 134921.77 lbf)
-but not in the port: `tfcalc` fails at mission point 12 with a complex number
-reaching a comparison, which means `tfoper`'s numerical Jacobian has raised a
-negative base to a fractional power somewhere the Fortran does not.
+`mission.f` seeds the engine state from the previous mission point at **every**
+descent point when `initeng = 0`:
 
-This is a genuine limitation, not a formatting difference, and it is the first
-thing found that the reference program does and this port does not. It is *not*
-what §22 describes — that is about `tfoper` exiting early on a step-size test —
-though both are about the same Newton.
+```fortran
+        if(initeng.eq.0) then
+c------- use previous point to initialize engine state for prescribed thrust
+         pare(iembf ,ip) = pare(iembf ,ip-1)
+         ...
+         inite = 1
+        else
+         inite = initeng
+        endif
+```
 
-It does not affect the ASWING export, which is checked against the D8 by the
-instrument-the-real-program route instead: `aswout.f` was patched to dump
-everything it received, `sd81` was run, and the port was handed exactly those
-inputs. See `fortran_ref/aswout_instrumented.f` and
-`tests/data/aswout_in_sd81.txt`.
+There is no condition on `ip`. This port had `if initeng == 0 and ip > ipdescent1`,
+so at the **first** descent point it cold-started `tfoper` where the reference
+program seeds it from the last cruise point.
+
+The 737 survives the cold start. `runs/D8/sd81` does not: the Newton wanders to
+a state where the LPT is asked to extract more enthalpy than the flow contains
+(`Tt45 = 650 K`, `dh/cpt = -651 K`), `Trat` goes negative, and `Trat**gex` —
+NaN in Fortran, a complex number in Python — reaches a comparison and raises.
+
+Two things are worth recording about how this was found, because the first
+diagnosis was wrong.
+
+**It is not the numerical Jacobian.** The obvious explanation, given §22, was
+that this port differentiates `tfoper` numerically and so takes a different
+iterate path. Instrumenting `etmap` in the Fortran and running both aircraft
+shows the reference program **never** reaches a non-positive `Trat`, on either
+— so it was not tolerating a NaN that Python refuses to produce. It simply
+never goes there.
+
+**It is not the finite-difference perturbation either.** That was the second
+guess: that `x ± h` crosses a boundary the step limiter keeps the iterate away
+from. `FD_STEP` is 1e-6 relative, which cannot move `Tt + dh/cpt` from positive
+to −1.06.
+
+It was a porting bug, on a path the 737 does not take — the same shape as the
+four in §29-adjacent territory that `test_mission.py` records. With the guard
+removed the port sizes all four shipped aircraft families and agrees with the
+reference program on every one:
+
+| case | port | reference | iterations |
+|---|---|---|---|
+| `737` | 174979.1500 | 174979.1499 | 18 / 18 |
+| `D8/sd81` | 134921.7659 | 134921.7659 | 18 / 18 |
+| `D8/d81` | 138438.3844 | 138438.3846 | 20 / 20 |
+| `777` | 625008.3157 | 625008.3160 | 20 / 20 |
+
+## §52 — `Kinl` at climb 1 on the D8, 1.8e-5
+
+With §51 fixed, `runs/D8/sd81`'s whole 2347-line report reproduces except for
+one line:
+
+```
+ B1: Kinl   =   24.928     kW      (port)
+ B1: Kinl   =   24.927     kW      (reference)
+```
+
+This is **not** a rounding boundary — unlike the one line of the `.oute` deck,
+which is. `Kinl` prints at five significant figures, so the boundary is
+24.9275, and the port's 24.92794 sits 4.4e-4 above it: 1.8e-5 relative.
+
+`Kinl = 0.5 rho0 u0^3 KAfTE fBLIf / neng` with `fBLIw = 0`, and `KAfTE` is
+broadcast to every mission point from the single cruise-1 fuselage BL solve, so
+it is bit-identical. The disagreement is therefore entirely in `rho0 u0^3` at
+climb 1 — about 6e-6 in `u0`, which is the climb schedule, not the ingestion
+model. Not chased further; recorded so it is not mistaken for a tie-break.
+
+The 737 cannot show this because its `fBLIf` is zero, which makes `Kinl`
+identically zero at every point.
+
+## §53 — the `.out` report's BL section was written on a default, not the case
+
+`report()` took `Lfblwrite` as a keyword defaulting to `True` rather than
+reading `case.settings.Lfblwrite`. The 737 sets the flag, so nothing showed;
+`sd81` clears it, and the port's report came out 54 lines too long with a table
+of zeros in it. Fixed to read the case.

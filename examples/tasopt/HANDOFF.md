@@ -69,6 +69,14 @@ Far stronger than a hand-built case — every value is a real converged 737.
 See `fortran_ref/mission_instrumented.f` and `tests/test_mission.py`.
 **Restore the source file afterwards** (`cp` a saved copy back and rebuild).
 
+**A second aircraft is worth more than a tighter tolerance on the first.**
+Everything end-to-end was checked against the 737 until `runs/D8/sd81` was
+tried, and that immediately turned up §51 — a guard this port had that the
+source does not, on a branch the 737 happens to survive. The D8 is a good
+second case precisely because it is unlike the first: strut-braced wing,
+Pi-tail, three tail-mounted engines, and `fBLIf = 0.4`, which is the only
+shipped case that makes the BLI credit path do anything at all.
+
 Tolerances achieved are 1e-13..1e-16 for closed-form modules. The exceptions,
 both understood and documented: `tfoper` at 9e-10 (numerical vs analytic
 Jacobian), and the BL chain at 1e-14 (`blax`'s capped Newton amplifies its
@@ -192,11 +200,13 @@ The port reproduces the reference program. The open questions are now about
 * **The signomial baseline.** That was goal 3 in the README and nothing here
   has been pointed at it yet. `engine_deck()` returning operating points as
   data is the obvious surrogate-fitting input.
-* **The port cannot size the D8** (`runs/D8/sd81.tas`) — `tfoper`'s
-  numerical Jacobian produces a complex number at mission point 12. This is
-  §51, and it is the first thing found that the reference program does and
-  this port does not. Worth fixing: it is the only known correctness gap, and
-  a second aircraft is the obvious next verification target.
+* **§52 is open**: one line of the D8's 2347-line report, `Kinl` at climb 1,
+  differs by 1.8e-5. It is not a rounding boundary. `KAfTE` is bit-identical,
+  so it is `rho0 u0^3` — about 6e-6 in the climb-1 airspeed. Small, but it is
+  the only unexplained number left anywhere in the port.
+* **A third aircraft.** The 737 and the D8 between them cover a lot, but the
+  `runs/HE` (hydrogen-ish) and `runs/D12` cases are untried, and `d81`/`777`
+  size but have no committed reference report.
 * **The five ASWING mistranslations** (§46–§50) are reproduced, not fixed.
   If anyone means to *use* a deck rather than diff it, §48, §49 and §50
   change the structure and should probably be corrected behind a flag.
