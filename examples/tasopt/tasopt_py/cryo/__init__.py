@@ -11,5 +11,12 @@ produce the reference values and ``tests/test_fuel_thermo.py`` onward.
 """
 from .fuel_thermo import (SaturatedPhase, gas_properties,  # noqa: F401
                           liquid_properties)
+from .geometry import CrossSection, scaled_cross_section  # noqa: F401
+from .stiffeners import (find_K1_head, stiffener_weight,  # noqa: F401
+                         stiffeners_bending_moment,
+                         stiffeners_bending_moment_outer)
 
-__all__ = ["gas_properties", "liquid_properties", "SaturatedPhase"]
+__all__ = ["gas_properties", "liquid_properties", "SaturatedPhase",
+           "CrossSection", "scaled_cross_section",
+           "stiffeners_bending_moment", "stiffeners_bending_moment_outer",
+           "stiffener_weight", "find_K1_head"]
