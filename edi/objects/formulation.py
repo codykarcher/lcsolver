@@ -193,6 +193,7 @@ class Formulation(ConcreteModel):
         self._constraint_counter = 0
 
         self._groups = {}
+        self._sensitivity_cache = None
         #: Set False to let `Variable` omit its guess. See `require_guesses`.
         self._require_guesses = True
         self._defaulted_guesses = []
@@ -206,6 +207,47 @@ class Formulation(ConcreteModel):
         self._constraint_keys = []
         self._allConstraint_keys = []
 
+    #: Names a formulation reserves for itself. A component of one of these
+    #: names would shadow the attribute, so `f.solution` would return a
+    #: variable and the real solution would be unreachable.
+    RESERVED_NAMES = ('solution', 'sensitivities', 'group')
+
+    @property
+    def solution(self):
+        """The current values, as a :class:`~edi.objects.solution.Solution`.
+
+        Pyomo reloads a solution onto the model, and EDI keeps doing that, so
+        `pyo.value(f.x)` answers after a solve. This is the same information
+        with somewhere to live: objective, every variable and constant with its
+        units and description, and the sensitivities once computed, printable
+        as a table.
+
+        It reads THIS model, which is the one a solve writes back to. A
+        detected structure holds the unit-corrected clone's variables, and that
+        clone is never solved -- reading it returns the initial guess.
+        """
+        from edi.objects.solution import Solution
+
+        return Solution.from_model(self, sensitivities=self._sensitivity_cache)
+
+    def solution_with_sensitivities(self, **kwargs):
+        """The solution, with sensitivities computed and attached."""
+        from edi.objects.solution import Solution
+
+        try:
+            sens = self.sensitivities(**kwargs)['sensitivities']
+        except Exception:
+            sens = None
+        self._sensitivity_cache = sens
+        return Solution.from_model(self, sensitivities=sens)
+
+    def _check_name_available(self, name, what='component'):
+        if name in self.RESERVED_NAMES:
+            raise ValueError(
+                f"{name!r} is reserved: a {what} of that name would shadow "
+                f"`f.{name}`, which is how the {name} is reached. Choose "
+                "another name.")
+
     # -- grouping -----------------------------------------------------------
     def group(self, name):
         """A named region of the model; see :class:`Group`.
@@ -213,6 +255,7 @@ class Formulation(ConcreteModel):
         ``f.group('wing')`` returns it and ``f.wing`` reaches it afterwards, so
         a builder can stop threading a prefix string through its signature.
         """
+        self._check_name_available(name, 'group')
         if name not in self._groups:
             # A component of the same name wins attribute lookup, since Pyomo
             # resolves it before __getattr__ is ever reached -- the group would
@@ -274,6 +317,7 @@ class Formulation(ConcreteModel):
         self, name, guess=UNSET, units=None, description='', size=None,
         bounds=None, domain=None
     ):
+        self._check_name_available(name, 'variable')
         if guess is UNSET:
             if self._require_guesses:
                 raise ValueError(
@@ -398,6 +442,7 @@ class Formulation(ConcreteModel):
         return self.__dict__[name]
 
     def Constant(self, name, value, units, description='', size=None, within=None):
+        self._check_name_available(name, 'constant')
         if within is None:
             within = Reals
         else:

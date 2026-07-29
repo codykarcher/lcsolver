@@ -135,3 +135,83 @@ def hx_weight(N_tubes_tot: float, tD_o: float, tD_i: float, length: float,
         L, D_i, rho_shaft = shaft
         W += gee * rho_shaft * L * D_i ** 2 * math.pi / 4.0
     return W
+
+
+# --------------------------------------------------------------------------
+# Effectiveness-NTU, both directions
+# --------------------------------------------------------------------------
+
+def _capacity_rates(C_c: float, C_p: float) -> tuple:
+    """``(C_min, C_max, C_r, coolant_is_min)``."""
+    C_min, C_max = min(C_c, C_p), max(C_c, C_p)
+    if C_max <= 0.0:
+        raise ValueError("both heat capacity rates are zero or negative")
+    return C_min, C_max, C_min / C_max, C_c <= C_p
+
+
+def max_effectiveness(C_r: float, coolant_is_min: bool) -> float:
+    """The effectiveness at which NTU goes to infinity.
+
+    A single-pass cross-flow exchanger with one stream mixed cannot reach
+    ``eps = 1`` however large it is made -- the mixed stream carries its
+    outlet temperature everywhere, which caps what the unmixed stream can
+    exchange with it. The cap depends on **which** stream is mixed, and the
+    two expressions are not the same function:
+
+    * coolant is ``C_min`` (so ``C_max`` mixed): ``(1 - exp(-C_r)) / C_r``
+    * coolant is ``C_max`` (so ``C_min`` mixed): ``1 - exp(-1/C_r)``
+
+    At ``C_r = 1`` both give 0.632; they diverge as the capacity rates
+    separate, and at ``C_r = 0.2`` they are 0.906 and 0.993.
+    """
+    if C_r <= 0.0:
+        raise ValueError(f"capacity rate ratio must be positive, got {C_r}")
+    if coolant_is_min:
+        return (1.0 - math.exp(-C_r)) / C_r
+    return 1.0 - math.exp(-1.0 / C_r)
+
+
+def NTU_from_effectiveness(eps: float, C_c: float, C_p: float) -> tuple:
+    """``(NTU, eps_used)`` for a required effectiveness -- the sizing
+    direction.
+
+    ``eps`` is **clipped to 99% of the achievable maximum** if it is asked
+    for above it, exactly as the reference does. That is a silent
+    substitution: a caller that asks for 0.95 on a geometry that can only
+    reach 0.906 gets 0.897 back and no indication, so the returned value is
+    handed back here for the caller to check.
+    """
+    C_min, C_max, C_r, coolant_is_min = _capacity_rates(C_c, C_p)
+    eps_max = max_effectiveness(C_r, coolant_is_min)
+    if eps > eps_max:
+        eps = 0.99 * eps_max
+
+    if coolant_is_min:
+        NTU = -math.log(1.0 + math.log(1.0 - C_r * eps) / C_r)
+    else:
+        NTU = -1.0 / C_r * math.log(1.0 + C_r * math.log(1.0 - eps))
+    return NTU, eps
+
+
+def effectiveness_from_NTU(NTU: float, C_c: float, C_p: float) -> float:
+    """Effectiveness for a given NTU -- the off-design direction.
+
+    The exact inverse of :func:`NTU_from_effectiveness` on the branch that
+    applies, which the tests check by round trip.
+    """
+    _, _, C_r, coolant_is_min = _capacity_rates(C_c, C_p)
+    if coolant_is_min:
+        return (1.0 - math.exp(-C_r * (1.0 - math.exp(-NTU)))) / C_r
+    return 1.0 - math.exp(-1.0 / C_r * (1.0 - math.exp(-C_r * NTU)))
+
+
+def heat_transfer(eps: float, C_c: float, C_p: float, Tp_in: float,
+                  Tc_in: float) -> tuple:
+    """``(Q, Tp_out, Tc_out)`` from an effectiveness.
+
+    ``Qmax = C_min (Tp_in - Tc_in)`` is the thermodynamic ceiling: the most
+    either stream could exchange if the exchanger were infinitely large.
+    """
+    C_min, _, _, _ = _capacity_rates(C_c, C_p)
+    Q = eps * C_min * (Tp_in - Tc_in)
+    return Q, Tp_in - Q / C_p, Tc_in + Q / C_c
