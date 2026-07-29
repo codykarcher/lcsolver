@@ -220,40 +220,42 @@ def build(engine: str = "CFM56") -> Formulation:
     N = len(segs)
     f = Formulation()
 
-    Vn = lambda n, g, u, d: f.Variable(name=n, guess=g, units=u,
-                                       description=d, size=N)
-    state = {
-        "P_atm": Vn("P_atm", 23.84, "kPa", "ambient static pressure"),
-        "T_atm": Vn("T_atm", 218.0, "K", "ambient static temperature"),
-        "a": Vn("a", 300.0, "m/s", "ambient speed of sound"),
-        "V": Vn("V", 240.0, "m/s", "flight speed"),
-        "M": Vn("M", 0.8, "-", "flight Mach number"),
-    }
+    # The ambient state is a group rather than a dictionary of quantities, so
+    # it is read the same way here as it is when the mission supplies it.
+    # Its prefix is empty: on the test stand the engine is the whole model and
+    # its names are not namespaced.
+    state = f.group("state", prefix="")
+    Vn = lambda n, g, u, d: state.Variable(n, g, u, d, size=N)
+    Vn("P_atm", 23.84, "kPa", "ambient static pressure")
+    Vn("T_atm", 218.0, "K", "ambient static temperature")
+    Vn("a", 300.0, "m/s", "ambient speed of sound")
+    Vn("V", 240.0, "m/s", "flight speed")
+    Vn("M", 0.8, "-", "flight Mach number")
     v, cons = add_engine(f, N, state, engine=engine)
 
     # The test-stand mission: prescribed operating points, weight cap, and the
     # TSFC-weighted objective from engine_validation.__main__.
-    R = v["R"]
+    R = v.R
     for i in range(N):
         thrust_N, P_kPa, T_K, m0, m2, m25 = segs[i]
         cons += [
-            state["P_atm"][i] == P_kPa * units.kPa,
-            state["T_atm"][i] == T_K * units.K,
-            state["M"][i] == m0,
-            state["a"][i] == (1.4 * R * state["T_atm"][i]) ** 0.5,
-            state["V"][i] == state["M"][i] * state["a"][i],
-            v["M_2"][i] == m2,
-            v["M_25"][i] == m25,
-            v["c1"][i] == 1 + 0.5 * 0.401 * m0 ** 2,
-            v["hold_2"][i] == 1 + 0.5 * (G2 - 1) * m2 ** 2,
-            v["hold_25"][i] == 1 + 0.5 * (G25 - 1) * m25 ** 2,
-            v["F"][i] == thrust_N * units.N,
+            state.P_atm[i] == P_kPa * units.kPa,
+            state.T_atm[i] == T_K * units.K,
+            state.M[i] == m0,
+            state.a[i] == (1.4 * R * state.T_atm[i]) ** 0.5,
+            state.V[i] == state.M[i] * state.a[i],
+            v.M_2[i] == m2,
+            v.M_25[i] == m25,
+            v.c1[i] == 1 + 0.5 * 0.401 * m0 ** 2,
+            v.hold_2[i] == 1 + 0.5 * (G2 - 1) * m2 ** 2,
+            v.hold_25[i] == 1 + 0.5 * (G25 - 1) * m25 ** 2,
+            v.F[i] == thrust_N * units.N,
         ]
-    cons += [v["W_engine"] <= WCAP_N[engine] * units.N]
+    cons += [v.W_engine <= WCAP_N[engine] * units.N]
 
     w = [10.0] + [1.0] * (N - 1)
-    f.Objective(v["W_engine"] ** 0.5
-                * sum(w[i] * v["TSFC"][i] for i in range(N)))
+    f.Objective(v.W_engine ** 0.5
+                * sum(w[i] * v.TSFC[i] for i in range(N)))
     f.ConstraintList(cons)
     return f
 
@@ -355,8 +357,8 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
 
     # ---- per-segment free variables ---------------------------------------
     # Ambient state is supplied by the caller; c1 is the engine's own.
-    Patm, Tatm = state["P_atm"], state["T_atm"]
-    a, Vinf, M0 = state["a"], state["V"], state["M"]
+    Patm, Tatm = state.P_atm, state.T_atm
+    a, Vinf, M0 = state.a, state.V, state.M
     c1 = Vn("c1", 1.13, "-", "1 + (gamma-1)/2 M_0^2")
 
     # stagnation states through the machine
@@ -706,7 +708,7 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
                T_t_4=Tt4, m_core=mCore, m_fan=mFan, m_total=mtot, f=fuel,
                pi_f=pif, pi_lc=pilc, pi_hc=pihc, N_1=N1, N_2=N2, I_sp=Isp)
     out.update(out_extra)
-    return out, cons
+    return eng, cons
 
 
 if __name__ == "__main__":

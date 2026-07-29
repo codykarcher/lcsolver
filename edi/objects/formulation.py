@@ -256,6 +256,25 @@ class Group:
         # Otherwise fall through to the component this group named.
         return getattr(self._formulation, f'{self._prefix}{item}')
 
+    def __getitem__(self, item):
+        """``g['name']`` for the same thing as ``g.name``.
+
+        Attribute access is how a group is meant to be read, but a name held
+        in a variable has to be looked up somehow, and a group is often passed
+        where a dictionary of quantities used to be.
+        """
+        try:
+            return getattr(self, item)
+        except AttributeError as exc:
+            raise KeyError(item) from exc
+
+    def __contains__(self, item):
+        try:
+            getattr(self, item)
+            return True
+        except AttributeError:
+            return False
+
     def __repr__(self):
         return f"<Group {self._name!r} -> {self._prefix!r}>"
 

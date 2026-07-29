@@ -29,7 +29,12 @@ from __future__ import annotations
 
 
 def add_flight_state(f, N, *, prefix="FS_"):
-    """Add an N-segment flight state. Returns ``(vars, constraints)``."""
+    """Add an N-segment flight state. Returns ``(group, constraints)``.
+
+    The group is the namespace itself, so a caller reads ``st.T_atm`` rather
+    than looking a name up in a dictionary that had to be kept in step with
+    the declarations by hand.
+    """
     fs = f.group("fs", prefix=prefix)
     C = fs.Constant
     Vn = lambda n, g, u, d: fs.Variable(n, g, u, d, size=N)
@@ -56,21 +61,18 @@ def add_flight_state(f, N, *, prefix="FS_"):
     sfudge = C("sutherland_fudge", 6.64, "K^0.28",
                "dimensional factor in the monomial viscosity fit")
 
-    out = dict(h=h, hft=hft, V=V, a=a, M=M, rho=rho, P_atm=p_atm,
-               T_atm=T_atm, mu=mu, R=R, gamma=gamma)
+    # Every relation here holds segment by segment, so it is written once over
+    # the whole vector rather than once per segment inside a loop.
+    cons = [
+        h == hft,
+        a == (gamma * R * T_atm) ** 0.5,
+        V == M * a,
+        # Pressure-altitude relation. The 1/5.257 exponent is
+        # (g M_atm)/(R_atm L_atm) evaluated once.
+        (p_atm / p_sl) ** (1 / 5.257) == T_atm / T_sl,
+        rho == p_atm / (R_atm / M_atm * T_atm),
+        T_sl == T_atm + L_atm * h,                                   # [SP] SigEq
+        mu == C_1 * T_atm ** 1.5 / (sfudge * T_s ** 0.72),
+    ]
 
-    cons = []
-    for i in range(N):
-        cons += [
-            h[i] == hft[i],
-            a[i] == (gamma * R * T_atm[i]) ** 0.5,
-            V[i] == M[i] * a[i],
-            # Pressure-altitude relation. The 1/5.257 exponent is
-            # (g M_atm)/(R_atm L_atm) evaluated once.
-            (p_atm[i] / p_sl) ** (1 / 5.257) == T_atm[i] / T_sl,
-            rho[i] == p_atm[i] / (R_atm / M_atm * T_atm[i]),
-            T_sl == T_atm[i] + L_atm * h[i],                         # [SP] SigEq
-            mu[i] == C_1 * T_atm[i] ** 1.5 / (sfudge * T_s ** 0.72),
-        ]
-
-    return out, cons
+    return fs, cons

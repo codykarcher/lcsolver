@@ -346,4 +346,4 @@ def add_fuselage(f, *, prefix="Fuse_"):
                           + Wpadd + Wseat + Whbend + Wvbend + Wcone),
     ]
 
-    return out, cons
+    return fuse, cons

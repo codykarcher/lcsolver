@@ -131,4 +131,4 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
         raise ValueError(f"unknown surfacetype {surfacetype!r}")
 
     out["N_lift"] = Nlift
-    return out, cons
+    return group, cons

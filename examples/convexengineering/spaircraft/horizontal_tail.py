@@ -131,24 +131,23 @@ def add_horizontal_tail(f, N, state, *, sweep_deg, prefix="HT_"):
     out.update(D_ht=Dht, L_ht=Lh, C_L_ht=CLh, C_L_alpha_ht=CLah,
                C_L_alpha_ht_0=CLah0, alpha_ht=alphah, C_D_ht=CDh)
 
-    rho, Vinf, M, mu = state["rho"], state["V"], state["M"], state["mu"]
-    for i in range(N):
-        cons += [
-            Lh[i] == 0.5 * rho[i] * Vinf[i] ** 2 * Sh * CLh[i],
-            CLh[i] == CLah[i] * alphah[i],
-            alphah[i] <= amax,
-            # Thin airfoil theory, used as an approximation.
-            CLah0[i] == 2 * 3.14,
-            Dht[i] == 0.5 * rho[i] * Vinf[i] ** 2 * Sh * CDh[i],
-            CDh[i] >= CD0h[i] + CLh[i] ** 2 / (pi * e * ARht),
-            Rec[i] == rho[i] * Vinf[i] * chma / mu[i],
-            # Martin's TASOPT tail drag fit.
-            CD0h[i] ** 6.48983 >= (
-                5.28751e-20 * Rec[i] ** 0.900672 * tau ** 0.912222 * M[i] ** 8.64547
-                + 1.67605e-28 * Rec[i] ** 0.350958 * tau ** 6.29187 * M[i] ** 10.2559
-                + 7.09757e-25 * Rec[i] ** 1.39489 * tau ** 1.96239 * M[i] ** 0.567066
-                + 3.73076e-14 * Rec[i] ** -2.57406 * tau ** 3.12793 * M[i] ** 0.448159
-                + 1.44343e-12 * Rec[i] ** -3.91046 * tau ** 4.66279 * M[i] ** 7.68852),
-        ]
+    rho, Vinf, M, mu = state.rho, state.V, state.M, state.mu
+    cons += [
+        Lh == 0.5 * rho * Vinf ** 2 * Sh * CLh,
+        CLh == CLah * alphah,
+        alphah <= amax,
+        # Thin airfoil theory, used as an approximation.
+        CLah0 == 2 * 3.14,
+        Dht == 0.5 * rho * Vinf ** 2 * Sh * CDh,
+        CDh >= CD0h + CLh ** 2 / (pi * e * ARht),
+        Rec == rho * Vinf * chma / mu,
+        # Martin's TASOPT tail drag fit.
+        CD0h ** 6.48983 >= (
+            5.28751e-20 * Rec ** 0.900672 * tau ** 0.912222 * M ** 8.64547
+            + 1.67605e-28 * Rec ** 0.350958 * tau ** 6.29187 * M ** 10.2559
+            + 7.09757e-25 * Rec ** 1.39489 * tau ** 1.96239 * M ** 0.567066
+            + 3.73076e-14 * Rec ** -2.57406 * tau ** 3.12793 * M ** 0.448159
+            + 1.44343e-12 * Rec ** -3.91046 * tau ** 4.66279 * M ** 7.68852),
+    ]
 
-    return out, cons
+    return ht, cons

@@ -384,6 +384,46 @@ class TestConstraintListAcceptsArrays(unittest.TestCase):
 
 
 @unittest.skipIf(not available, 'EDI import failed')
+class TestGroupLookupByName(unittest.TestCase):
+    """A group reads like the dictionary of quantities it replaced.
+
+    The models used to hand a builder's output back as `dict(h=h, hft=hft,
+    ...)`, kept in step with the declarations by hand. The group already knows
+    those names, so it is returned instead -- and supporting `g['name']` means
+    it drops straight into anywhere the dictionary was passed, and a name held
+    in a variable can still be looked up.
+    """
+
+    def _f(self):
+        f = Formulation()
+        g = f.group('fs', prefix='FS_')
+        g.Variable('T_atm', 230.0, 'K', 'air temperature', size=3)
+        return f, g
+
+    def test_item_access_matches_attribute_access(self):
+        f, g = self._f()
+        self.assertIs(g['T_atm'], g.T_atm)
+
+    def test_a_missing_name_raises_KeyError_not_AttributeError(self):
+        """It is being used as a mapping here, so it should fail like one."""
+        f, g = self._f()
+        with self.assertRaises(KeyError):
+            g['nope']
+
+    def test_membership(self):
+        f, g = self._f()
+        self.assertIn('T_atm', g)
+        self.assertNotIn('nope', g)
+
+    def test_a_keyword_name_works_through_item_access_too(self):
+        f = Formulation()
+        w = f.group('wing')
+        lam = w.Variable('lambda', 0.25, '-', 'taper ratio')
+        self.assertIs(w['lambda'], lam)
+        self.assertIs(w.lambda_, lam)
+
+
+@unittest.skipIf(not available, 'EDI import failed')
 class TestGroupsExposeTheHelpers(unittest.TestCase):
 
     def test_a_group_forwards_the_vector_operations(self):

@@ -125,19 +125,18 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_"):
     CDvis = Vn("C_D_vis_vt", 0.005, "-", "viscous drag coefficient")
     out.update(D_vt=Dvt, C_D_vis_vt=CDvis)
 
-    rho, Vinf, M, mu = state["rho"], state["V"], state["M"], state["mu"]
-    for i in range(N):
-        cons += [
-            Dvt[i] >= 0.5 * rho[i] * Vinf[i] ** 2 * Svt * CDvis[i],
-            Rec[i] == rho[i] * Vinf[i] * cma / mu[i],
-            # Martin's TASOPT tail drag fit. The exponents on the first and
-            # last terms (tau^133.8 M^1022.7, M^-114.6) are not typos: they
-            # are near-vertical barriers that fence the fit's valid region.
-            CDvis[i] ** 1.18909 >= (
-                2.43701e-77 * Rec[i] ** -0.52841 * tau ** 133.796 * M[i] ** 1022.7
-                + 0.00304307 * Rec[i] ** -0.409988 * tau ** 1.22062 * M[i] ** 1.55119
-                + 0.000196709 * Rec[i] ** 0.214479 * tau ** -0.0383195 * M[i] ** -0.137561
-                + 6.59349e-50 * Rec[i] ** -0.498092 * tau ** 1.55922 * M[i] ** -114.577),
-        ]
+    rho, Vinf, M, mu = state.rho, state.V, state.M, state.mu
+    cons += [
+        Dvt >= 0.5 * rho * Vinf ** 2 * Svt * CDvis,
+        Rec == rho * Vinf * cma / mu,
+        # Martin's TASOPT tail drag fit. The exponents on the first and last
+        # terms (tau^133.8 M^1022.7, M^-114.6) are not typos: they are
+        # near-vertical barriers that fence the fit's valid region.
+        CDvis ** 1.18909 >= (
+            2.43701e-77 * Rec ** -0.52841 * tau ** 133.796 * M ** 1022.7
+            + 0.00304307 * Rec ** -0.409988 * tau ** 1.22062 * M ** 1.55119
+            + 0.000196709 * Rec ** 0.214479 * tau ** -0.0383195 * M ** -0.137561
+            + 6.59349e-50 * Rec ** -0.498092 * tau ** 1.55922 * M ** -114.577),
+    ]
 
-    return out, cons
+    return vt, cons

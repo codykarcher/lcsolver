@@ -87,9 +87,8 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     ht, c = add_horizontal_tail(f, N, st, sweep_deg=SWEEP_HT); cons += c
     lg, c = add_landing_gear(f); cons += c
     fu, c = add_fuselage(f); cons += c
-    eng, c = add_engine(f, N, {"P_atm": st["P_atm"], "T_atm": st["T_atm"],
-                               "a": st["a"], "V": st["V"], "M": st["M"]},
-                        engine="D82_SPaircraft", BLI=True, prefix="Eng_"); cons += c
+    eng, c = add_engine(f, N, st, engine="D82_SPaircraft", BLI=True,
+                        prefix="Eng_"); cons += c
 
     # ---- aircraft-level scalars -------------------------------------------
     W_total = V("W_total", 1.4e5, "lbf", "total aircraft weight")
@@ -206,125 +205,125 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
     # ---- variable linking ---------------------------------------------------
     cons += [
-        wing["c_root"] == fu["c_0"],
-        wing["x_w"] == fu["x_wing"],
-        fu["N_lift"] == wing["box"]["N_lift"],
-        Ltow * wing["L_max"] >= wing["box"]["N_lift"] * W_totalmax + ht["L_ht_max"],
-        wing["b"] <= bmax,
+        wing.c_root == fu.c_0,
+        wing.x_w == fu.x_wing,
+        fu.N_lift == wing.box.N_lift,
+        Ltow * wing.L_max >= wing.box.N_lift * W_totalmax + ht.L_ht_max,
+        wing.b <= bmax,
 
         # ---- weight build-up -------------------------------------------------
-        fu["W_fuse"] + numeng * Wengsys + fu["W_tail"] + wing["W_wing"] + Wmisc <= W_dry,
-        W_ftotal + W_dry + fu["W_payload"] <= W_total,
+        fu.W_fuse + numeng * Wengsys + fu.W_tail + wing.W_wing + Wmisc <= W_dry,
+        W_ftotal + W_dry + fu.W_payload <= W_total,
         W_ftotal >= W_fprimary + ReserveFraction * W_fprimary,
         W_fprimary >= W_fclimb + W_fcruise,
         W_totalmax >= W_total,
-        wing["W_fuel_wing"] >= f_wingfuel * W_ftotal / FuelFrac,
+        wing.W_fuel_wing >= f_wingfuel * W_ftotal / FuelFrac,
 
         # ---- landing gear and power systems ----------------------------------
-        Wmisc >= lg["W_lg"] + Whpesys,
+        Wmisc >= lg.W_lg + Whpesys,
         Whpesys == fhpesys * W_totalmax,
-        lg["x_n"] <= fu["l_nose"],
-        lg["x_m"] >= fu["x_wing"],
-        lg["x_m"] <= wing["dx_AC_wing"] + fu["x_wing"],
-        xhpesys == 1.1 * fu["l_nose"],
+        lg.x_n <= fu.l_nose,
+        lg.x_m >= fu.x_wing,
+        lg.x_m <= wing.dx_AC_wing + fu.x_wing,
+        xhpesys == 1.1 * fu.l_nose,
         xmisc * Wmisc >= xhpesys * Whpesys,
-        lg["d_nacelle"] >= eng["d_f"] + 2 * lg["t_nacelle"],
-        lg["d_nacelle"] <= wing["b"],
+        lg.d_nacelle >= eng.d_f + 2 * lg.t_nacelle,
+        lg.d_nacelle <= wing.b,
         # Hard landing, Torenbeek (10-26): 10 ft/s sink at max landing weight.
-        lg["E_land"] >= W_totalmax / (2 * g) * lg["w_ult"] ** 2,
-        lg["x_up"] == fu["x_shell2"],
-        lg["L_n"] == W_totalmax * lg["dx_m"] / lg["B"],
-        lg["L_m"] == W_totalmax * lg["dx_n"] / lg["B"],
-        lg["L_n_dyn"] >= 0.31 * ((lg["z_CG"] + lg["l_m"]) / lg["B"]) * W_totalmax,
-        y_eng >= lg["y_m"],
+        lg.E_land >= W_totalmax / (2 * g) * lg.w_ult ** 2,
+        lg.x_up == fu.x_shell2,
+        lg.L_n == W_totalmax * lg.dx_m / lg.B,
+        lg.L_m == W_totalmax * lg.dx_n / lg.B,
+        lg.L_n_dyn >= 0.31 * ((lg.z_CG + lg.l_m) / lg.B) * W_totalmax,
+        y_eng >= lg.y_m,
 
         # ---- fuselage --------------------------------------------------------
         # Tail cone sizing, driven by the VT root moment.
-        3. * (numVT * vt["box"]["M_r"]) * vt["c_root_vt"] * (fu["p_lambda_vt"] - 1.)
-            >= numVT * vt["L_vt_max"] * vt["b_vt"] * fu["p_lambda_vt"],
-        fu["V_cone"] * (1. + fu["lambda_cone"]) * (pi + 4. * fu["theta_db"])
-            >= (numVT * vt["box"]["M_r"] * vt["c_root_vt"] / fu["tau_cone"]
-                * (pi + 2. * fu["theta_db"]) * (fu["l_cone"] / fu["R_fuse"])),
-        fu["W_tail"] >= numVT * vt["W_vt"] + ht["W_ht"],
-        2. * fu["w_fuse"] >= (fu["SPR"] * w_seat + numaisle * w_aisle
-                              + 2. * w_sys + fu["t_db"]),
-        fu["B_1v"] == fu["r_M_v"] * numVT * vt["L_vt_max"] / (fu["w_fuse"] * fu["sigma_M_v"]),
+        3. * (numVT * vt.box.M_r) * vt.c_root_vt * (fu.p_lambda_vt - 1.)
+            >= numVT * vt.L_vt_max * vt.b_vt * fu.p_lambda_vt,
+        fu.V_cone * (1. + fu.lambda_cone) * (pi + 4. * fu.theta_db)
+            >= (numVT * vt.box.M_r * vt.c_root_vt / fu.tau_cone
+                * (pi + 2. * fu.theta_db) * (fu.l_cone / fu.R_fuse)),
+        fu.W_tail >= numVT * vt.W_vt + ht.W_ht,
+        2. * fu.w_fuse >= (fu.SPR * w_seat + numaisle * w_aisle
+                              + 2. * w_sys + fu.t_db),
+        fu.B_1v == fu.r_M_v * numVT * vt.L_vt_max / (fu.w_fuse * fu.sigma_M_v),
 
         # ---- horizontal tail --------------------------------------------------
-        ht["m_ratio"] * (1 + 2 / wing["AR"]) == 1 + 2 / ht["AR_ht"],     # [SP] SigEq
-        ht["x_CG_ht"] <= fu["l_fuse"],
-        ht["V_ht"] == ht["S_ht"] * ht["l_ht"] / (wing["S"] * wing["mac"]),
-        ht["L_ht_max"] >= 0.5 * rhoTO * Vne ** 2 * ht["S_ht"] * ht["C_L_ht_max"],
+        ht.m_ratio * (1 + 2 / wing.AR) == 1 + 2 / ht.AR_ht,     # [SP] SigEq
+        ht.x_CG_ht <= fu.l_fuse,
+        ht.V_ht == ht.S_ht * ht.l_ht / (wing.S * wing.mac),
+        ht.L_ht_max >= 0.5 * rhoTO * Vne ** 2 * ht.S_ht * ht.C_L_ht_max,
 
         # ---- vertical tail ----------------------------------------------------
-        vt["L_vt_max"] >= 0.5 * rhoTO * Vne ** 2 * vt["S_vt"] * vt["C_L_vt_max"],
-        vt["x_CG_vt"] <= fu["l_fuse"],
-        vt["V_vt"] == numVT * vt["S_vt"] * vt["l_vt"] / (wing["S"] * wing["b"]),
+        vt.L_vt_max >= 0.5 * rhoTO * Vne ** 2 * vt.S_vt * vt.C_L_vt_max,
+        vt.x_CG_vt <= fu.l_fuse,
+        vt.V_vt == numVT * vt.S_vt * vt.l_vt / (wing.S * wing.b),
         # Yaw rate at flare
-        numVT * .5 * vt["rho_TO"] * Vland ** 2 * vt["S_vt"] * vt["l_vt"]
-            * vt["C_L_vt_yaw"] >= rreq * vt["I_z_max"],
+        numVT * .5 * vt.rho_TO * Vland ** 2 * vt.S_vt * vt.l_vt
+            * vt.C_L_vt_yaw >= rreq * vt.I_z_max,
         # One-engine-out moment balance (TASOPT 2.0 p45)
-        numVT * vt["L_vt_EO"] * vt["l_vt"] >= vt["T_e"] * y_eng + vt["D_wm"] * y_eng,
-        vt["D_wm"] >= 0.5 * vt["rho_TO"] * vt["V_1"] ** 2. * eng["A_2"] * CDwm,
+        numVT * vt.L_vt_EO * vt.l_vt >= vt.T_e * y_eng + vt.D_wm * y_eng,
+        vt.D_wm >= 0.5 * vt.rho_TO * vt.V_1 ** 2. * eng.A_2 * CDwm,
 
         # ---- moment of inertia -------------------------------------------------
         Iz >= Izwing + Iztail + Izfuse,
-        vt["I_z_max"] >= Iz,
+        vt.I_z_max >= Iz,
 
         # ---- engine installation ------------------------------------------------
-        Snace == rSnace * np.pi * 0.25 * eng["d_f"] ** 2,
-        lnace == 0.15 * eng["d_f"] * rSnace,
-        fSnace == Snace * wing["S"] ** -1,
+        Snace == rSnace * np.pi * 0.25 * eng.d_f ** 2,
+        lnace == 0.15 * eng.d_f * rSnace,
+        fSnace == Snace * wing.S ** -1,
         Ainlet == 0.4 * Snace,
         Afancowl == 0.2 * Snace,
         Aexh == 0.4 * Snace,
-        Acorecowl == 3. * np.pi * eng["d_LPC"] ** 2,
-        Wnace >= ((2.5 + 0.238 * eng["d_f"] / units.inch) * Ainlet + 1.9 * Afancowl
-                  + (2.5 + 0.0363 * eng["d_f"] / units.inch) * Aexh + 1.9 * Acorecowl
+        Acorecowl == 3. * np.pi * eng.d_LPC ** 2,
+        Wnace >= ((2.5 + 0.238 * eng.d_f / units.inch) * Ainlet + 1.9 * Afancowl
+                  + (2.5 + 0.0363 * eng.d_f / units.inch) * Aexh + 1.9 * Acorecowl
                   ) * units.lbf / units.ft ** 2,
-        Weadd == feadd * eng["W_engine"],
-        Wpylon >= (Wnace + Weadd + eng["W_engine"]) * fpylon,
-        Wengsys >= Ceng * (Wpylon + Wnace + Weadd + eng["W_engine"]),
+        Weadd == feadd * eng.W_engine,
+        Wpylon >= (Wnace + Weadd + eng.W_engine) * fpylon,
+        Wengsys >= Ceng * (Wpylon + Wnace + Weadd + eng.W_engine),
     ]
 
     # ---- rear-engine + BLI configuration -------------------------------------
     cons += [
         # Engine-out moment arm for a rear-mounted, BLI engine.
-        y_eng == 0.5 * fu["w_fuse"],
+        y_eng == 0.5 * fu.w_fuse,
         # Wing root moment, with wing weight and fuel load relief.
-        wing["box"]["M_r"] * wing["c_root"] >= (
-            (wing["L_max"] - wing["box"]["N_lift"] * (wing["W_wing"] + f_wingfuel * W_ftotal))
-            * (wing["b"] ** 2 / (12 * wing["S"]) * (wing["c_root"] + 2 * wing["c_tip"]))),
-        fu["A_1h_Land"] >= (fu["N_land"] * (fu["W_tail"] + numeng * Wengsys + fu["W_apu"]))
-                           / (fu["h_fuse"] * fu["sigma_bend"]),
-        fu["A_1h_MLF"] >= (fu["N_lift"] * (fu["W_tail"] + numeng * Wengsys + fu["W_apu"])
-                           + fu["r_M_h"] * ht["L_ht_max"]) / (fu["h_fuse"] * fu["sigma_M_h"]),
-        Izwing >= ((wing["W_fuel_wing"] + wing["W_wing"]) / (wing["S"] * g)
-                   * wing["c_root"] * wing["b"] ** 3. * (1. / 12. - (1. - wing["taper"]) / 16.)),
-        Iztail >= ((fu["W_apu"] + vt["W_vt"] + numeng * Wengsys) * vt["l_vt"] ** 2. / g
-                   + ht["W_ht"] * ht["l_ht"] ** 2. / g),
+        wing.box.M_r * wing.c_root >= (
+            (wing.L_max - wing.box.N_lift * (wing.W_wing + f_wingfuel * W_ftotal))
+            * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip))),
+        fu.A_1h_Land >= (fu.N_land * (fu.W_tail + numeng * Wengsys + fu.W_apu))
+                           / (fu.h_fuse * fu.sigma_bend),
+        fu.A_1h_MLF >= (fu.N_lift * (fu.W_tail + numeng * Wengsys + fu.W_apu)
+                           + fu.r_M_h * ht.L_ht_max) / (fu.h_fuse * fu.sigma_M_h),
+        Izwing >= ((wing.W_fuel_wing + wing.W_wing) / (wing.S * g)
+                   * wing.c_root * wing.b ** 3. * (1. / 12. - (1. - wing.lambda_) / 16.)),
+        Iztail >= ((fu.W_apu + vt.W_vt + numeng * Wengsys) * vt.l_vt ** 2. / g
+                   + ht.W_ht * ht.l_ht ** 2. / g),
         # x_wing and l_vt stand in for CG-relative distances so I_z stays scalar.
-        Izfuse >= ((fu["W_fuse"] + fu["W_payload_max"]) / fu["l_fuse"]
-                   * (fu["x_wing"] ** 3. + vt["l_vt"] ** 3.) / (3. * g)),
-        xeng <= fu["x_shell2"] + 1.00 * fu["l_cone"],
-        xeng >= fu["x_shell2"] + 0.75 * fu["l_cone"],
+        Izfuse >= ((fu.W_fuse + fu.W_payload_max) / fu.l_fuse
+                   * (fu.x_wing ** 3. + vt.l_vt ** 3.) / (3. * g)),
+        xeng <= fu.x_shell2 + 1.00 * fu.l_cone,
+        xeng >= fu.x_shell2 + 0.75 * fu.l_cone,
 
         # ---- double-bubble floor loading -------------------------------------
-        fu["S_floor"] == (5. / 16.) * fu["P_floor"],
-        fu["M_floor"] == 9. / 256. * fu["P_floor"] * fu["w_floor"],
-        fu["dR_fuse"] == fu["R_fuse"] * 0.43 / 1.75,
+        fu.S_floor == (5. / 16.) * fu.P_floor,
+        fu.M_floor == 9. / 256. * fu.P_floor * fu.w_floor,
+        fu.dR_fuse == fu.R_fuse * 0.43 / 1.75,
     ]
 
     # ---- pi-tail horizontal tail ---------------------------------------------
-    hb = ht["box"]
+    hb = ht.box
     Mrout = V("M_r_out", 1e5, "N", "HT moment at the VT attachment")
     cons += [
-        hb["b_ht_out"] == 0.5 * ht["b_ht"] - fu["w_fuse"],               # [SP] SigEq
-        Mrout * ht["c_attach"] >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
+        hb["b_ht_out"] == 0.5 * ht.b_ht - fu.w_fuse,               # [SP] SigEq
+        Mrout * ht.c_attach >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
                                    + hb["L_ht_tri_out"] * (1. / 3. * hb["b_ht_out"])),
         hb["L_shear"] >= hb["L_ht_rect_out"] + hb["L_ht_tri_out"],
-        ht["c_tip_ht"] + (1. - ht["lambda_ht"]) * 2. * hb["b_ht_out"] / ht["b_ht"]
-            * ht["c_root_ht"] == ht["c_attach"],                         # [SP] SigEq
+        ht.c_tip_ht + (1. - ht.lambda_ht) * 2. * hb["b_ht_out"] / ht.b_ht
+            * ht.c_root_ht == ht.c_attach,                         # [SP] SigEq
     ]
 
     if pi_tail_supports == "pinned":
@@ -336,16 +335,16 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # onto the 1e-30 box floor along with I_cap and t_cap. Reproduced
         # because the gpkit reference depends on it -- see DISCREPANCIES.md.
         cons += [
-            ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
-                == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                 # [SP] SigEq
-            hb["M_r"] * ht["c_root_ht"] >= (hb["L_ht_rect"] * (ht["b_ht"] / 4.)
-                                            + hb["L_ht_tri"] * (ht["b_ht"] / 6.)
-                                            - fu["w_fuse"] * ht["L_ht_max"] / 2.),
-            hb["pi_M_fac"] >= ((0.5 * (Mrout * ht["c_attach"]
-                                       + hb["M_r"] * ht["c_root_ht"])
-                                * fu["w_fuse"]
-                                / (0.5 * Mrout * ht["c_attach"] * hb["b_ht_out"])
-                                + 1.0) * hb["b_ht_out"] / (0.5 * ht["b_ht"])),
+            ht.b_ht / 4. * hb["L_ht_rect"] + ht.b_ht / 3. * hb["L_ht_tri"]
+                == hb["b_ht_out"] * ht.L_ht_max / 2.,                 # [SP] SigEq
+            hb["M_r"] * ht.c_root_ht >= (hb["L_ht_rect"] * (ht.b_ht / 4.)
+                                            + hb["L_ht_tri"] * (ht.b_ht / 6.)
+                                            - fu.w_fuse * ht.L_ht_max / 2.),
+            hb["pi_M_fac"] >= ((0.5 * (Mrout * ht.c_attach
+                                       + hb["M_r"] * ht.c_root_ht)
+                                * fu.w_fuse
+                                / (0.5 * Mrout * ht.c_attach * hb["b_ht_out"])
+                                + 1.0) * hb["b_ht_out"] / (0.5 * ht.b_ht)),
         ]
     else:
         # FIXED SUPPORTS. A pi-tail horizontal joins two verticals rigidly, so
@@ -372,151 +371,158 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         cons += [
             # Load inboard of the attachments. The section is untapered over
             # this span, so its share of the load is its share of the span.
-            Lin >= ht["L_ht_max"] * (2. * fu["w_fuse"]) / ht["b_ht"],
+            Lin >= ht.L_ht_max * (2. * fu.w_fuse) / ht.b_ht,
             # Fixed-end (hogging) moment at each support, W*L/12.
-            Mfe * ht["c_attach"] >= Lin * (2. * fu["w_fuse"]) / 12.,
+            Mfe * ht.c_attach >= Lin * (2. * fu.w_fuse) / 12.,
             # The attachment carries the overhang AND the fixed-end moment;
             # both hog the beam over the support, so they add.
-            Mrout * ht["c_attach"] >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
+            Mrout * ht.c_attach >= (hb["L_ht_rect_out"] * (0.5 * hb["b_ht_out"])
                                        + hb["L_ht_tri_out"] * (1. / 3. * hb["b_ht_out"])
-                                       + Mfe * ht["c_attach"]),
+                                       + Mfe * ht.c_attach),
             # Sagging at the centreline, W*L/24 -- half the fixed-end value
             # and a third of what a pinned span would carry.
-            hb["M_r"] * ht["c_root_ht"] >= Lin * (2. * fu["w_fuse"]) / 24.,
+            hb["M_r"] * ht.c_root_ht >= Lin * (2. * fu.w_fuse) / 24.,
             # Load split, unchanged in form but now with no cancellation.
-            ht["b_ht"] / 4. * hb["L_ht_rect"] + ht["b_ht"] / 3. * hb["L_ht_tri"]
-                == hb["b_ht_out"] * ht["L_ht_max"] / 2.,                 # [SP] SigEq
+            ht.b_ht / 4. * hb["L_ht_rect"] + ht.b_ht / 3. * hb["L_ht_tri"]
+                == hb["b_ht_out"] * ht.L_ht_max / 2.,                 # [SP] SigEq
             # The cap must carry the larger of the two stations.
             hb["pi_M_fac"] >= 1.0,
-            hb["pi_M_fac"] >= Mrout * ht["c_attach"]
-                              / (hb["M_r"] * ht["c_root_ht"]),
+            hb["pi_M_fac"] >= Mrout * ht.c_attach
+                              / (hb["M_r"] * ht.c_root_ht),
         ]
 
     # ---- per-segment performance -----------------------------------------------
+    cons += [
+        rhocabin == Pcabin / (st.R * Tcabin),
+        st.V >= Vstall,
+        W_avg >= (W_start * W_end) ** .5 + W_buoy,
+        tmin == thr,
+        W_buoy >= rhocabin * g * fu.V_cabin,
+        # Fuselage lift, as a fraction of wing lift.
+        Lfuse == (Ltow - 1.) * wing.L_w,                    # [SP] SigEq
+        Ltotal == Ltow * wing.L_w,
+        Ltotal >= W_avg + ht.L_ht,
+
+        # ---- drag ------------------------------------------------------
+        Dfuse == (0.5 * st.rho * st.V ** 2 * CDfuse
+                     * fu.l_fuse * fu.R_fuse
+                     * (st.M ** 2 / fu.M_fuseD ** 2)),
+        D >= Dreduct * (wing.D_wing + Dfuse + numVT * vt.D_vt
+                           + ht.D_ht + numeng * Dnace),
+        C_D == D / (.5 * st.rho * st.V ** 2 * wing.S),
+        LoD == W_avg / D,
+
+        # ---- wing loading and lift losses -------------------------------
+        WLoad <= WLoadmax,
+        WLoad == (.5 * wing.C_L * st.rho * st.V ** 2),
+        wing.p_o >= wing.L_w * wing.c_root / wing.S,
+        wing.eta_o == fu.w_fuse / (wing.b / 2),
+
+        # ---- stability ---------------------------------------------------
+        xAC <= fu.x_wing + 0.25 * wing.dx_AC_wing + xNP,
+        wing.c_m_w == cmw,
+        # Neutral point approximation, from Unified's aircraft design rules.
+        (xNP / wing.mac / ht.V_ht * (wing.AR + 2.)
+         * (1. + 2. / ht.AR_ht)
+         == (1. + 2. / wing.AR) * (wing.AR - 2.)),             # [SP] SigEq
+        xCG + vt.dx_trail_vt <= fu.l_fuse,
+        vt.x_CG_vt >= xCG + 0.5 * (vt.dx_lead_vt + vt.dx_trail_vt),
+        ht.x_CG_ht >= xCG + 0.5 * (ht.dx_lead_ht + ht.dx_trail_ht),
+        ht.C_L_alpha_ht + (2 * wing.C_L_alpha_w / (pi * wing.AR))
+            * ht.eta_ht * ht.C_L_alpha_ht_0
+            <= ht.C_L_alpha_ht_0 * ht.eta_ht,
+        ht.C_L_ht >= 0.01,
+        SM <= (xAC - xCG) / wing.mac,
+        SM >= SMmin,
+        xAC / wing.mac <= (xCG / wing.mac + cmw / wing.C_L
+                                 + ht.V_ht * (ht.C_L_ht / wing.C_L)),
+
+        # ---- nacelle drag --------------------------------------------------
+        Renace == st.rho * st.V * lnace / st.mu,
+        Cfnace == 0.94 * 4. * 0.0743 / (Renace ** 0.2),
+        Vnace == rvnace * st.V,
+        Vnacrat >= 2. * Vnace / st.V - V2 / st.V,
+        rvnsurf ** 3. >= 0.25 * (Vnacrat + rvnace) * (Vnacrat ** 2. + rvnace ** 2.),
+        Cdnace == fSnace * Cfnace[0] * rvnsurf ** 3.,
+        Dnace == Cdnace * 0.5 * st.rho * st.V ** 2. * wing.S,
+        V2 == eng.M_2 * st.a,
+
+        # ---- pi-tail trailing edge ------------------------------------------
+
+        # ---- climb -----------------------------------------------------------
+        excessP + st.V * D <= st.V * numeng * eng.F,
+        RC == excessP / W_avg,
+        theta * st.V == RC,
+        dhft == tmin * RC,
+        Rseg == thr * st.V,
+        numeng * eng.F >= D + W_avg * theta,
+
+        # ---- CG ----------------------------------------------------------------
+        xCG * W_avg >= (
+            xmisc * Wmisc + lg.x_CG_lg * lg.W_lg
+            + 0.5 * (fu.W_fuse + fu.W_payload) * fu.l_fuse
+            + ht.W_ht * ht.x_CG_ht + vt.W_vt * vt.x_CG_vt
+            + numeng * Wengsys * xeng
+            + wing.W_wing * (fu.x_wing + wing.dx_AC_wing)
+            + (PCFuel + ReserveFraction) * W_fprimary
+            * (fu.x_wing + wing.dx_AC_wing * PCFuel)),
+
+        # ---- fuel burn -----------------------------------------------------------
+        W_burn == numeng * eng.TSFC * thr * eng.F,
+        W_start >= W_end + W_burn,
+        PCFuel <= 1.0000001,
+
+        # ---- engine operating point -----------------------------------------------
+        eng.M_2 == st.M,
+        eng.M_25 == 0.6,
+        eng.hold_2 == 1. + .5 * (1.398 - 1.) * 0.6 ** 2,
+        eng.hold_25 == 1. + .5 * (1.354 - 1.) * 0.6 ** 2,
+        eng.c1 == 1. + 0.5 * .401 * st.M ** 2.,          # [SP] SigEq
+    ]
+
+
+    # These three say nothing about the segment, so the loop makes N identical
+    # copies of each. Left as they were for now: removing the duplicates is a
+    # change to how many rows the model has, and belongs in its own step.
     for i in range(N):
         cons += [
-            rhocabin[i] == Pcabin / (st["R"] * Tcabin),
-            st["V"][i] >= Vstall,
-            W_avg[i] >= (W_start[i] * W_end[i]) ** .5 + W_buoy[i],
-            tmin[i] == thr[i],
-            W_buoy[i] >= rhocabin[i] * g * fu["V_cabin"],
-            # Fuselage lift, as a fraction of wing lift.
-            Lfuse[i] == (Ltow - 1.) * wing["L_w"][i],                    # [SP] SigEq
-            Ltotal[i] == Ltow * wing["L_w"][i],
-            Ltotal[i] >= W_avg[i] + ht["L_ht"][i],
-
-            # ---- drag ------------------------------------------------------
-            Dfuse[i] == (0.5 * st["rho"][i] * st["V"][i] ** 2 * CDfuse
-                         * fu["l_fuse"] * fu["R_fuse"]
-                         * (st["M"][i] ** 2 / fu["M_fuseD"] ** 2)),
-            D[i] >= Dreduct * (wing["D_wing"][i] + Dfuse[i] + numVT * vt["D_vt"][i]
-                               + ht["D_ht"][i] + numeng * Dnace[i]),
-            C_D[i] == D[i] / (.5 * st["rho"][i] * st["V"][i] ** 2 * wing["S"]),
-            LoD[i] == W_avg[i] / D[i],
-
-            # ---- wing loading and lift losses -------------------------------
-            WLoad[i] <= WLoadmax,
-            WLoad[i] == (.5 * wing["C_L"][i] * st["rho"][i] * st["V"][i] ** 2),
-            wing["p_o"][i] >= wing["L_w"][i] * wing["c_root"] / wing["S"],
-            wing["eta_o"][i] == fu["w_fuse"] / (wing["b"] / 2),
-
-            # ---- stability ---------------------------------------------------
-            xAC[i] <= fu["x_wing"] + 0.25 * wing["dx_AC_wing"] + xNP[i],
-            wing["c_m_w"][i] == cmw,
-            # Neutral point approximation, from Unified's aircraft design rules.
-            (xNP[i] / wing["mac"] / ht["V_ht"] * (wing["AR"] + 2.)
-             * (1. + 2. / ht["AR_ht"])
-             == (1. + 2. / wing["AR"]) * (wing["AR"] - 2.)),             # [SP] SigEq
-            xCG[i] + vt["dx_trail_vt"] <= fu["l_fuse"],
-            vt["x_CG_vt"] >= xCG[i] + 0.5 * (vt["dx_lead_vt"] + vt["dx_trail_vt"]),
-            ht["x_CG_ht"] >= xCG[i] + 0.5 * (ht["dx_lead_ht"] + ht["dx_trail_ht"]),
-            ht["C_L_alpha_ht"][i] + (2 * wing["C_L_alpha_w"][i] / (pi * wing["AR"]))
-                * ht["eta_ht"] * ht["C_L_alpha_ht_0"][i]
-                <= ht["C_L_alpha_ht_0"][i] * ht["eta_ht"],
-            ht["AR_ht"] >= 4.,
-            ht["C_L_ht"][i] >= 0.01,
-            SM[i] <= (xAC[i] - xCG[i]) / wing["mac"],
-            SM[i] >= SMmin,
-            SMmin + dxCG / wing["mac"] + cmw / CLwmax
-                <= ht["V_ht"] * ht["m_ratio"] + ht["V_ht"] * ht["C_L_ht_max"] / CLwmax,
-            xAC[i] / wing["mac"] <= (xCG[i] / wing["mac"] + cmw / wing["C_L"][i]
-                                     + ht["V_ht"] * (ht["C_L_ht"][i] / wing["C_L"][i])),
-
-            # ---- nacelle drag --------------------------------------------------
-            Renace[i] == st["rho"][i] * st["V"][i] * lnace / st["mu"][i],
-            Cfnace[i] == 0.94 * 4. * 0.0743 / (Renace[i] ** 0.2),
-            Vnace[i] == rvnace * st["V"][i],
-            Vnacrat[i] >= 2. * Vnace[i] / st["V"][i] - V2[i] / st["V"][i],
-            rvnsurf[i] ** 3. >= 0.25 * (Vnacrat[i] + rvnace) * (Vnacrat[i] ** 2. + rvnace ** 2.),
-            Cdnace[i] == fSnace * Cfnace[0] * rvnsurf[i] ** 3.,
-            Dnace[i] == Cdnace[i] * 0.5 * st["rho"][i] * st["V"][i] ** 2. * wing["S"],
-            V2[i] == eng["M_2"][i] * st["a"][i],
-
-            # ---- pi-tail trailing edge ------------------------------------------
-            ht["dx_trail_ht"] <= (vt["dx_lead_vt"] + vt["b_vt"] / tan(SWEEP_VT * pi / 180)
-                                  + fu["w_fuse"] / tan(SWEEP_HT * pi / 180)
-                                  + ht["c_root_ht"]),
-
-            # ---- climb -----------------------------------------------------------
-            excessP[i] + st["V"][i] * D[i] <= st["V"][i] * numeng * eng["F"][i],
-            RC[i] == excessP[i] / W_avg[i],
-            theta[i] * st["V"][i] == RC[i],
-            dhft[i] == tmin[i] * RC[i],
-            Rseg[i] == thr[i] * st["V"][i],
-            numeng * eng["F"][i] >= D[i] + W_avg[i] * theta[i],
-
-            # ---- CG ----------------------------------------------------------------
-            xCG[i] * W_avg[i] >= (
-                xmisc * Wmisc + lg["x_CG_lg"] * lg["W_lg"]
-                + 0.5 * (fu["W_fuse"] + fu["W_payload"]) * fu["l_fuse"]
-                + ht["W_ht"] * ht["x_CG_ht"] + vt["W_vt"] * vt["x_CG_vt"]
-                + numeng * Wengsys * xeng
-                + wing["W_wing"] * (fu["x_wing"] + wing["dx_AC_wing"])
-                + (PCFuel[i] + ReserveFraction) * W_fprimary
-                * (fu["x_wing"] + wing["dx_AC_wing"] * PCFuel[i])),
-
-            # ---- fuel burn -----------------------------------------------------------
-            W_burn[i] == numeng * eng["TSFC"][i] * thr[i] * eng["F"][i],
-            W_start[i] >= W_end[i] + W_burn[i],
-            PCFuel[i] <= 1.0000001,
-
-            # ---- engine operating point -----------------------------------------------
-            eng["M_2"][i] == st["M"][i],
-            eng["M_25"][i] == 0.6,
-            eng["hold_2"][i] == 1. + .5 * (1.398 - 1.) * 0.6 ** 2,
-            eng["hold_25"][i] == 1. + .5 * (1.354 - 1.) * 0.6 ** 2,
-            eng["c1"][i] == 1. + 0.5 * .401 * st["M"][i] ** 2.,          # [SP] SigEq
+            ht.AR_ht >= 4.,
+            ht.dx_trail_ht <= (vt.dx_lead_vt + vt.b_vt / tan(SWEEP_VT * pi / 180)
+                               + fu.w_fuse / tan(SWEEP_HT * pi / 180)
+                               + ht.c_root_ht),
+            SMmin + dxCG / wing.mac + cmw / CLwmax
+                <= ht.V_ht * ht.m_ratio + ht.V_ht * ht.C_L_ht_max / CLwmax,
         ]
 
     # ---- mission stitching ------------------------------------------------------
     cons += [
         W_start[0] == W_total,
-        st["hft"][0] == dhft[0],
-        st["hft"][Nclimb - 1] >= MinCruiseAlt,
+        st.hft[0] == dhft[0],
+        st.hft[Nclimb - 1] >= MinCruiseAlt,
         RC[0] >= 2500. * units.ft / units.min,
         theta[Nclimb - 1] >= 0.015,
-        vt["T_e"] == Fsafetyfac * eng["F"][0],
-        W_dry + fu["W_payload"] + ReserveFraction * W_fprimary <= W_end[N - 1],
-        W_fclimb >= sum(W_burn[i] for i in range(Nclimb)),
-        W_fcruise >= sum(W_burn[i] for i in range(Nclimb, N)),
-        sum(Rseg[i] for i in range(N)) >= ReqRng,
-        sum(thr[i] for i in range(Nclimb)) <= maxclimbtime,
-        lg["dx_n"] + lg["x_n"] >= xCG[Nclimb],
-        lg["dx_m"] + xCG[Nclimb] >= lg["x_m"],
-        lg["x_m"] >= lg["tan_phi"] * (lg["z_CG"] + lg["l_m"]) + xCG[Nclimb],
+        vt.T_e == Fsafetyfac * eng.F[0],
+        W_dry + fu.W_payload + ReserveFraction * W_fprimary <= W_end[N - 1],
+        W_fclimb >= f.sum(W_burn[:Nclimb]),
+        W_fcruise >= f.sum(W_burn[Nclimb:]),
+        f.sum(Rseg) >= ReqRng,
+        f.sum(thr[:Nclimb]) <= maxclimbtime,
+        lg.dx_n + lg.x_n >= xCG[Nclimb],
+        lg.dx_m + xCG[Nclimb] >= lg.x_m,
+        lg.x_m >= lg.tan_phi * (lg.z_CG + lg.l_m) + xCG[Nclimb],
         # Mission caps bypass ratio rather than fixing it; subs/optimalD8.py
         # supplies neither alpha_max nor alpha_OD, so both are free.
-        eng["alpha_max"] <= 100.0,
+        eng.alpha_max <= 100.0,
     ]
-    for i in range(1, N):
-        cons += [
-            W_start[i] == W_end[i - 1],
-            st["hft"][i] == st["hft"][i - 1] + dhft[i],                  # [SP] SigEq
-        ]
-    for i in range(1, Nclimb):
-        cons += [dhft[i] == dhft[i - 1], RC[i] >= minRC]
-    for i in range(Nclimb, N):
-        cons += [st["M"][i] >= Mmin]
+    # Segment-to-segment stitching: each of these relates a segment to the one
+    # before it, which is what the offset slices say.
+    cons += [
+        W_start[1:] == W_end[:-1],
+        st.hft[1:] == st.hft[:-1] + dhft[1:],                      # [SP] SigEq
+        dhft[1:Nclimb] == dhft[:Nclimb - 1],
+        RC[1:Nclimb] >= minRC,
+        st.M[Nclimb:] >= Mmin,
+    ]
     # Keep Mach inside the transonic band. Not in the source, but needed here:
     # the VT drag fit carries M**1022.7 and M**-114.577, and in the log-space
     # GP those become exponents of ~1023*log(M). A line search that steps M
@@ -524,16 +530,16 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # AMPL evaluation". gpkit avoids this because MOSEK's exponential-cone
     # form never forms exp() explicitly. 0.1-0.95 is far outside any
     # physically meaningful excursion for this aircraft.
+    cons += [st.M <= 0.95, st.M >= 0.1]
+    cons += [Rseg[Nclimb:N - 1] == Rseg[Nclimb + 1:N]]
+    # Fuel still to burn after each segment. The slice bound moves with the
+    # segment, so this one keeps its loop.
     for i in range(N):
-        cons += [st["M"][i] <= 0.95, st["M"][i] >= 0.1]
-    for i in range(Nclimb, N - 1):
-        cons += [Rseg[i] == Rseg[i + 1]]
-    for i in range(N):
-        rest = sum(W_burn[j] for j in range(i + 1, N))
+        rest = f.sum(W_burn[i + 1:])
         cons += [PCFuel[i] >= (rest + 0.0000001 * W_fprimary) / W_fprimary]
     # Wing max angle of attack differs between climb and cruise.
-    for i in range(N):
-        cons += [wing["alpha_w"][i] <= (0.18 if i < Nclimb else 0.10)]
+    cons += [wing.alpha_w[:Nclimb] <= 0.18,
+             wing.alpha_w[Nclimb:] <= 0.10]
 
     # ---- substitutions -------------------------------------------------------
     # subs/optimalD8.py *fixes* these; leaving any of them free lets the

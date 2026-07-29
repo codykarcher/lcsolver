@@ -211,4 +211,4 @@ def add_landing_gear(f, *, prefix="LG_"):
         x_m >= xcglg,
     ]
 
-    return out, cons
+    return lg, cons

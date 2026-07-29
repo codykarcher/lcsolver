@@ -164,34 +164,33 @@ def add_wing(f, N, state, *, sweep_deg, prefix="Wing_"):
     out.update(alpha_w=alpha, C_L=CLw, C_d_w=CDw, D_wing=Dwing, L_w=Lw,
                C_L_alpha_w=CLaw, c_m_w=cmw, eta_o=etao, p_o=po)
 
-    rho, Vinf, M, mu = state["rho"], state["V"], state["M"], state["mu"]
+    rho, Vinf, M, mu = state.rho, state.V, state.M, state.mu
 
-    for i in range(N):
-        cons += [
-            0.5 * rho[i] * Vinf[i] ** 2 * S * CLw[i] >= Lw[i] + dLo[i] + 2. * dLt[i],
-            dLo[i] == etao[i] * fLo * b / 2 * po[i],
-            # TODO in source: c_root ~ c_o and taper ~ gamma_t.
-            dLt[i] == fLt * po[i] * croot * taper ** 2,
-            # DATCOM swept-wing lift curve slope. The `- M^2` is what makes
-            # this signomial, and it is written as an equality on purpose.
-            (AR / eta) ** 2 * (1 + tanL ** 2 - M[i] ** 2) + 8 * pi * AR / CLaw[i]
-                == (2 * pi * AR / CLaw[i]) ** 2,                    # [SP] SigEq
-            CLw[i] == CLaw[i] * alpha[i],
-            alpha[i] <= amax,
-            Dwing[i] == 0.5 * rho[i] * Vinf[i] ** 2 * S * CDw[i],
-            CDw[i] >= CDp[i] + CDi[i],
-            CDi[i] >= TipReduct * CLw[i] ** 2 / (pi * e * AR),
-            Re[i] == rho[i] * Vinf[i] * mac / mu[i],
-            # Martin York's fit to the TASOPT C-series transonic airfoils.
-            CDp[i] ** 1.6515 >= (
-                1.61418 * (Re[i] / 1000) ** -0.550434 * tau ** 1.29151
-                    * (cosL * M[i]) ** 3.03609 * CLw[i] ** 1.77743
-                + 0.0466407 * (Re[i] / 1000) ** -0.389048 * tau ** 0.784123
-                    * (cosL * M[i]) ** -0.340157 * CLw[i] ** 0.950763
-                + 190.811 * (Re[i] / 1000) ** -0.218621 * tau ** 3.94654
-                    * (cosL * M[i]) ** 19.2524 * CLw[i] ** 1.15233
-                + 2.82283e-12 * (Re[i] / 1000) ** 1.18147 * tau ** -1.75664
-                    * (cosL * M[i]) ** 0.10563 * CLw[i] ** -1.44114),
-        ]
+    cons += [
+        0.5 * rho * Vinf ** 2 * S * CLw >= Lw + dLo + 2. * dLt,
+        dLo == etao * fLo * b / 2 * po,
+        # TODO in source: c_root ~ c_o and taper ~ gamma_t.
+        dLt == fLt * po * croot * taper ** 2,
+        # DATCOM swept-wing lift curve slope. The `- M^2` is what makes this
+        # signomial, and it is written as an equality on purpose.
+        (AR / eta) ** 2 * (1 + tanL ** 2 - M ** 2) + 8 * pi * AR / CLaw
+            == (2 * pi * AR / CLaw) ** 2,                           # [SP] SigEq
+        CLw == CLaw * alpha,
+        alpha <= amax,
+        Dwing == 0.5 * rho * Vinf ** 2 * S * CDw,
+        CDw >= CDp + CDi,
+        CDi >= TipReduct * CLw ** 2 / (pi * e * AR),
+        Re == rho * Vinf * mac / mu,
+        # Martin York's fit to the TASOPT C-series transonic airfoils.
+        CDp ** 1.6515 >= (
+            1.61418 * (Re / 1000) ** -0.550434 * tau ** 1.29151
+                * (cosL * M) ** 3.03609 * CLw ** 1.77743
+            + 0.0466407 * (Re / 1000) ** -0.389048 * tau ** 0.784123
+                * (cosL * M) ** -0.340157 * CLw ** 0.950763
+            + 190.811 * (Re / 1000) ** -0.218621 * tau ** 3.94654
+                * (cosL * M) ** 19.2524 * CLw ** 1.15233
+            + 2.82283e-12 * (Re / 1000) ** 1.18147 * tau ** -1.75664
+                * (cosL * M) ** 0.10563 * CLw ** -1.44114),
+    ]
 
-    return out, cons
+    return wing, cons
