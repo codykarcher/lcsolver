@@ -19,6 +19,7 @@ import pytest
 
 from edi import Formulation
 from edi.presolve import (
+    cancellation_report,
     degeneracy_report,
     fold_singleton_rows,
     presolve_report,
@@ -251,6 +252,64 @@ def test_folding_takes_the_tightest_of_several_rows():
 def test_folding_needs_split_bounds():
     with pytest.raises(ValueError, match='bounds_as_rows'):
         fold_singleton_rows(_detect(_singleton_row_model(), bounds_as_rows=True))
+
+
+# ---------------------------------------------------------------------------
+# signomial cancellation
+# ---------------------------------------------------------------------------
+def test_cancellation_finds_the_term_that_does_nothing():
+    """A subtraction large enough to satisfy the constraint by itself.
+
+    This is the pi-tail failure in miniature: `m >= a - c` with `c` far bigger
+    than `a` holds for any `m`, so `m` is disconnected. EDI writes it as
+    `a / (m + c) <= 1`, and the check is that `m`'s share of that denominator
+    is negligible.
+    """
+    f = Formulation()
+    m = f.Variable('m', 1.0, '', 'm', bounds=[1e-30, 1e30])
+    a = f.Variable('a', 1.0, '', 'a', bounds=[0.5, 2.0])
+    f.Objective(m)
+    f.Constraint(a >= 1.0)
+    f.Constraint(m >= a - 1e6)          # 1e6 swamps a; m does nothing
+    st = _detect(f)
+    res = solve_sia(st, x0=np.array([1.0, 1.0]))
+
+    names = [str(v) for v in st['variables']]
+    rep = cancellation_report(st, res.x, names=names)
+    inert = {v for _, _, _, vs in rep for v in vs}
+    assert 'm' in inert, rep
+
+
+def test_cancellation_quiet_when_the_subtraction_is_small():
+    """Same shape, but the subtracted term no longer dominates."""
+    f = Formulation()
+    m = f.Variable('m', 1.0, '', 'm', bounds=[1e-30, 1e30])
+    a = f.Variable('a', 1.0, '', 'a', bounds=[0.5, 2.0])
+    f.Objective(m)
+    f.Constraint(a >= 1.0)
+    f.Constraint(m >= a - 0.1)          # m still has to supply most of it
+    st = _detect(f)
+    res = solve_sia(st, x0=np.array([1.0, 1.0]))
+
+    names = [str(v) for v in st['variables']]
+    inert = {v for _, _, _, vs in cancellation_report(st, res.x, names=names)
+             for v in vs}
+    assert 'm' not in inert
+
+
+def test_cancellation_ignores_plain_posynomials():
+    """A small term in a posynomial is ordinary, not a defect."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(x)
+    f.Constraint(x >= y + 1e-12)        # tiny term, but no subtraction
+    f.Constraint(y >= 1.0)
+    st = _detect(f)
+    res = solve_sia(st, x0=np.array([1.0, 1.0]))
+
+    assert cancellation_report(st, res.x,
+                               names=[str(v) for v in st['variables']]) == []
 
 
 # ---------------------------------------------------------------------------

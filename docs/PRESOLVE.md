@@ -166,13 +166,34 @@ the inboard share of the load as its share of the span, justified by the
 section being untapered over that stretch. With real taper the inboard carries
 somewhat more, so this slightly under-predicts the fixed-end moment.
 
+## Signomial cancellation
+
+`cancellation_report` looks for the pi-tail failure directly, rather than
+inferring it from a variable parked at 1e-30.
+
+EDI writes a constraint containing a subtraction as a ratio, moving the
+negative terms into the denominator alongside the left-hand side, so
+`M_r*c >= A + B - C` becomes `(A + B) / (M_r*c + C) <= 1`. The two terms in
+that denominator are in direct competition: whatever `C` supplies, `M_r` need
+not. When `C` supplies essentially all of it, `M_r` is inert — the constraint
+holds regardless of what it does.
+
+```python
+for i, side, share, variables in cancellation_report(structures, x):
+    print(f"constraint {i}: {variables} contributes {share:.1e} of its {side}")
+```
+
+Each entry is a term whose share of its own group falls below `tol` (1e-6 by
+default), worst first. Only constraints with a denominator are examined — a
+small term in a plain posynomial is ordinary and not a defect.
+
+This is solution-dependent, so it runs after a solve. LP presolve has no reason
+to look for it, since LP has no signomials, but on a signomial program it is
+the check most likely to find a real modelling error: a subtraction that
+silently disconnects the quantity it was meant to size.
+
 ## What is not checked
 
 `fold_singleton_rows` is the only reduction that actually transforms the
 problem. Duplicate rows are reported but not removed, and dominated columns and
 forcing rows are not implemented.
-
-There is no signomial-specific cancellation check yet — a constraint whose
-positive and negative parts nearly cancel, which is the pi-tail failure mode
-above and is not something the LP presolve battery has any reason to look for.
-That is the most valuable thing missing here.

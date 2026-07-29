@@ -60,7 +60,7 @@ import collections
 from dataclasses import dataclass, field
 
 __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
-           "fold_singleton_rows",
+           "cancellation_report", "fold_singleton_rows",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -388,6 +388,75 @@ def fold_singleton_rows(structures):
     info["N_cons_total"] = len(keep)
     info["N_cons_folded"] = len(folded)
     out["info"] = info
+    return out
+
+
+def cancellation_report(structures, x, tol=1e-6, names=None):
+    """Terms in a signomial constraint that contribute nothing at ``x``.
+
+    EDI writes a constraint containing a subtraction as a ratio ``p/q <= 1``,
+    moving the negative terms into the denominator alongside the left-hand
+    side. So ``M_r*c >= A + B - C`` becomes ``(A + B) / (M_r*c + C) <= 1``, and
+    the two terms in that denominator are in direct competition: whatever ``C``
+    supplies, ``M_r`` need not.
+
+    When one of them supplies essentially all of it, the other is inert. The
+    constraint holds no matter what that variable does, so a quantity the
+    modeller believed was being sized is in fact disconnected -- which is how a
+    variable ends up parked at 1e-30 with nothing complaining.
+
+    This is a signomial-specific failure and the LP presolve battery has no
+    reason to look for it, since LP has no signomials. It is also
+    solution-dependent, so it runs after a solve, like
+    :func:`degeneracy_report`.
+
+    Returns ``[(constraint_index, side, share, variables), ...]`` for each term
+    whose share of its own group falls below ``tol``, worst first. ``side`` is
+    ``'numerator'`` or ``'denominator'``.
+    """
+    import math
+
+    import numpy as np
+
+    x = np.asarray(x, dtype=float)
+    rows, _operators, _key = _rows_of(structures)
+    if names is None:
+        names = [str(v) for v in structures.get("variables", [])]
+
+    numer, denom = collections.defaultdict(list), collections.defaultdict(list)
+    for r in rows:
+        idx = int(r[0])
+        (numer if idx >= 0 else denom)[
+            idx if idx >= 0 else -idx - 1].append(
+                (float(r[1]), [float(e) for e in r[2:]]))
+
+    def value(coeff, expo):
+        acc = math.log(coeff) if coeff > 0 else -math.inf
+        for j, e in enumerate(expo):
+            if abs(e) > 1e-12 and j < len(x) and x[j] > 0:
+                acc += e * math.log(x[j])
+        return math.exp(acc) if acc > -700 else 0.0
+
+    out = []
+    # Only constraints that actually have a denominator -- i.e. the signomial
+    # ones. A small term in a plain posynomial is ordinary and not a defect.
+    for i in sorted(k for k in denom if k != 0):
+        for side, terms in (("numerator", numer.get(i, [])),
+                            ("denominator", denom.get(i, []))):
+            if len(terms) < 2:
+                continue                      # nothing to be crowded out by
+            vals = [value(c, a) for c, a in terms]
+            total = sum(vals)
+            if total <= 0:
+                continue
+            for (c, a), v in zip(terms, vals):
+                share = v / total
+                if share < tol:
+                    involved = [nm_at(names, j) for j, e in enumerate(a)
+                                if abs(e) > 1e-12]
+                    out.append((i, side, share, involved))
+
+    out.sort(key=lambda t: t[2])
     return out
 
 
