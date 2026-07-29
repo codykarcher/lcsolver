@@ -1368,3 +1368,63 @@ Nothing here is wrong in the sense of producing a bad number -- the speed is
 consistent with 2.16's map and the efficiency with pyCycle's. But a reported
 fan speed and a reported fan efficiency at the same point come from two
 unrelated fits, and should not be treated as one operating point on one map.
+
+
+## §81 -- the LT cell's membrane ODE is integrated loosely
+
+`LT_PEMFC_voltage` integrates two quantities across the membrane: the water
+content `lambda`, and the area-specific resistance, via `dASR/dz = 1/sigma`.
+It asks for `reltol = 1e-6` and does not set an absolute tolerance, so
+DifferentialEquations.jl uses its default of `1e-6`.
+
+At the reference's own test point the ASR comes out at **1.74e-5 ohm m^2**.
+The absolute tolerance is therefore 6% of the quantity being integrated --
+which means that component is effectively uncontrolled, and the answer rests
+on the integrand being smooth rather than on the tolerance.
+
+This port integrates with DOP853 at `rtol = 1e-12`, and the answer is
+converged: tightening from 1e-8 to 1e-13 moves the voltage by under 1e-9.
+The residual disagreement with TASOPT.jl is 1.2e-7 relative on the voltage
+and 5.7e-8 on `alpha_star`, which is the reference's tolerance rather than
+this port's error.
+
+Immaterial physically -- 8.7e-8 V out of 0.71 V -- but it is the one place
+in the v3 port where the two cannot be made to agree to machine precision,
+and the reason is worth knowing rather than guessing at.
+
+## §82 -- the Nafion diffusivity extrapolation has an extra 1e-10
+
+`Nafion_diffusion` fits a cubic in water content below `lambda = 16.8` and,
+says its comment, "extrapolates with constant slope" above it. It does not.
+
+The cubic's derivative at 16.8 is `-0.01110912`. The source's stored
+constant is `-1.1109120000000084e-12` -- that derivative already carrying
+the `1e-10` that the cubic branch applies at the end. It is then multiplied
+by `1e-10` a second time:
+
+```julia
+slope = exp(2416 * (1/303 - 1/T)) * (-1.1109120000000084e-12) * 1e-10
+```
+
+So the extrapolation slope is ten orders of magnitude too small, and the
+branch extrapolates with **zero** slope rather than constant slope. Across
+`lambda` from 16.8 to 1000 the diffusivity moves by 8e-8 percent.
+
+The intended tangent would have carried the diffusivity to zero at
+`lambda = 132.8`, and negative beyond -- so the bug is arguably protective.
+Neither behaviour is reached in practice: saturated Nafion sits near
+`lambda = 14` to `22`. The port reproduces the reference exactly and says so
+in the docstring.
+
+## §83 -- two different `porous_diffusion` functions share a name
+
+The simple polarisation model uses `D * eps / tau`; the 1-D model uses
+`eps^tau * D`. Same name, same argument list, different formula.
+
+At the shipped defaults (`eps = 0.4`, `tau = 1.5`) they give 0.2667 and
+0.2530 -- within 5.4% -- which is exactly what makes this easy to miss. Move
+off those defaults and they diverge: at `eps = 0.8`, `tau = 4` they are
+0.200 and 0.410, a factor of two the other way round.
+
+The port keeps both, in their own modules, and the tests pin both formulas
+so neither can be quietly "corrected" into the other.

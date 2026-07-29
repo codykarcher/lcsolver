@@ -31,3 +31,13 @@ __all__ += ["CompressorMap", "FAN_MAP", "LPC_MAP", "HPC_MAP", "MAP_BY_NAME",
             "find_NR_inverse", "compressor_speed_and_efficiency",
             "DuctedFanState", "ducted_fan_size", "ducted_fan_operate",
             "V3_CMAPF"]
+from .fuelcell_1d import (PEMInputs, ht_pemfc_voltage,  # noqa: F401
+                          lt_pemfc_voltage, pem_size, pem_operate,
+                          pem_stack_weight, water_balance,
+                          binary_diffusion, solve_diffusion_ode,
+                          nafion_diffusion, cell_voltage)
+
+__all__ += ["PEMInputs", "ht_pemfc_voltage", "lt_pemfc_voltage", "pem_size",
+            "pem_operate", "pem_stack_weight", "water_balance",
+            "binary_diffusion", "solve_diffusion_ode", "nafion_diffusion",
+            "cell_voltage"]
