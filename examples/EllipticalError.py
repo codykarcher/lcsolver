@@ -19,11 +19,11 @@ N = N.value
 # Declare Variables
 # =================
 #D_i            = f.Variable(name="D_i",            guess=10.0,    units="N",              description="induced drag")
-delta_phi      = f.Variable(name="delta_phi",      guess=1.0,    units="-",   size = N,     description="potential difference")
+delta_phi      = f.Variable(name="delta_phi",      guess=1.0,    units="m^2/s", size = N,   description="velocity potential difference")
 delta_s        = f.Variable(name="delta_s",        guess=1.0,    units="m",   size = N,     description="length along wake")
 #denom          = f.Variable(name="denom",          guess=1.0,    units="m^2",               description="denominator of nabla_phi step")
 #denom_store    = f.Variable(name="denom_store",    guess=1.0,    units="m^2",   size = N,     description="denominator of nabla_phi step, stored for each individual loop")
-Gamma          = f.Variable(name="Gamma",          guess=1.0,    units="-",   size = N + 1, description="Lifting Line circulation")
+Gamma          = f.Variable(name="Gamma",          guess=1.0,    units="m^2/s", size = N + 1, description="Lifting Line circulation")
 L_dist         = f.Variable(name="L_dist",         guess=1.0,    units="N",   size = N,     description="lift distribution")
 L_dist_sum     = f.Variable(name="L_dist_sum",     guess=5.0,    units="N",               description="lift distribution sum")
 #n              = f.Variable(name="n",              guess=1.0,    units="-",  size = N,     description="normal vector")
@@ -50,6 +50,11 @@ z     = np.array([1.5, 1, 1, 1, 1, 1.5]) * units.m # panel edge z-coordinates
 # Declare Constants
 # =================
 epsilon    = f.Constant(name="epsilon",    value=1e-10,   units="m",       description="small constant to avoid denom of 0")
+# Kutta-Joukowski turns a circulation into a force: L' = rho * V * Gamma. The
+# lift constraint below stated `L_dist == delta_phi * dy`, which is m**3/s,
+# not a force -- these are the two factors it was missing.
+rho        = f.Constant(name="rho",        value=1.225,   units="kg/m^3",  description="air density")
+V_inf      = f.Constant(name="V_inf",      value=30.0,    units="m/s",     description="freestream velocity")
 
 # =====================
 # Declare the Objective
@@ -68,8 +73,8 @@ Constraints = []
 #delta_phi == [1, 1, 1, 1, 1]
 for i in range(N):
     Constraints += [
-                    L_dist[i] == delta_phi[i] * (y[i + 1] - y[i]), 
-                    delta_phi[i] <= 11
+                    L_dist[i] == rho * V_inf * delta_phi[i] * (y[i + 1] - y[i]),
+                    delta_phi[i] <= 11 * units.m**2 / units.s
                     ]
     
 Constraints += [
@@ -93,7 +98,7 @@ for i in range(N):
 
 for i in range(N + 1):
    Constraints += [
-                   Gamma[i] <= 10,
+                   Gamma[i] <= 10 * units.m**2 / units.s,
                    # n_hat[i] == n[i] / (n[i]**0.5)**2,  # Ensure no division by zero if n[i] could be 0
                    # this might not be needed at all? components are used later
                     ]
