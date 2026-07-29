@@ -145,3 +145,26 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
         x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])
     x0 = np.where(x0 > 0, x0, 1.0)
     return _slcp_solve(problem, x0[:problem.n], method=method, options=options)
+
+
+def solve_sia(structures, x0=None, options=None, sp_form=True):
+    """Solve a detected GP/SP by sequential inner approximation.
+
+    Same adapter as :func:`solve_slcp`, pointed at
+    :func:`edi.solvers.ipopt.sia.solve_sia`. ``sp_form`` defaults to True here
+    and should stay that way -- the conservative condensation is the whole
+    basis of the method, and turning it off downgrades every signomial
+    constraint to a linearization that then has to be globalized.
+    """
+    import pyomo.environ as pyo
+
+    from edi.solvers.ipopt.sia import solve_sia as _sia_solve
+
+    problem = build_problem(structures, sp_form=sp_form)
+    if x0 is None:
+        x0 = [float(pyo.value(v)) for v in structures['variables']]
+    x0 = np.asarray(x0, dtype=float)
+    if len(x0) < problem.n:
+        x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])
+    x0 = np.where(x0 > 0, x0, 1.0)
+    return _sia_solve(problem, x0[:problem.n], options=options)
