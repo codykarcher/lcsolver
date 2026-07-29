@@ -164,13 +164,45 @@ Nothing that computes a number remains. What is left is output formats:
 * **ASWING export** (`aswout`/`aswio`, 2795 lines) -- write the aircraft as an
   ASWING `.asw` input deck. Behind `Laswwrite`, which `737.tas` sets to F.
   Much the largest of these, and the one real gap if the port is meant to be a
-  drop-in replacement.
+  drop-in replacement. Scoped in detail below.
 * **gnuplot and idraw drawing commands** (`picwrt`/`picidr`, ~190 lines).
   `tasopt_py.planview.airpic` already gives the geometry these draw, so this
   is emitting a plotting syntax rather than computing anything -- in Python
   you would reach for matplotlib against `airpic` instead.
 * **Trefftz and BL plot files** (`blfwrt2`, `trpwrt`, `trpwrt2`, 154 lines),
   behind `Ltrpwrite`.
+
+### Scoping the ASWING export
+
+Measured, so the next session does not have to:
+
+| piece | code lines | what it does |
+|---|---|---|
+| `aswout.f` | 1443 | build ASWING's beam/joint/weight arrays from `parg` |
+| `BOUTPUT` in `aswio.f` | 678 | write those arrays as an `.asw` deck |
+| `INDEXB.INC` | 133 | names and indices of the 102 spanwise variables |
+| `BINPUT` in `aswio.f` | 1265 | **reads** `.asw` files; nothing calls it — skip |
+
+So the export path is about 2100 code lines, comparable to `wsize` plus the
+report. `aswout` splits cleanly into aircraft-level blocks (reference,
+ground, joints, weights, engines -- `aswout.f` lines 60-445) and four beam
+blocks (fuselage 446-791, wing 792-1254, htail 1255-1523, vtail 1524-1748,
+plus a strut block 1750-1940 that only fires on a strut-braced case).
+
+**It is verifiable byte-for-byte.** `tests/data/737.asw` is the 320-line deck
+the shipped program writes for the 737, produced by flipping `Laswwrite` to T
+in a copy of `737.tas`. The deck is sectioned -- `Name`, `Unit`, `Constant`,
+`Reference`, `Weight`, `Engine`, `Joint`, `Ground`, then one `Beam` block per
+surface -- so the work can be done and checked a section at a time, exactly
+as the `.out` report was.
+
+`INDEXB.INC` is the same shape as `index.inc` and should be *generated*, not
+transcribed -- extend `tools/gen_indices.py` rather than typing 102 names and
+indices out.
+
+Worth weighing before starting: an ASWING deck serves neither of this port's
+stated goals -- an independent Python TASOPT, and a baseline for the
+signomial formulation. It is completeness for its own sake.
 
 ## Conventions to keep
 
