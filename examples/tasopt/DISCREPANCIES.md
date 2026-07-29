@@ -1137,3 +1137,50 @@ contains nacelle mass.
 
 Reproduced exactly and pinned by `tests/test_ducted_fan.py`, so that if
 anyone does correct it the effect on electric-aircraft weight is visible.
+
+## §71 — the water saturation pressure is discontinuous at 100 C
+
+`PEMfuelcell.jl`, `water_sat_pressure`. Two correlations spliced at 100 C:
+
+```julia
+    if t < 100 #Huang, J. (2018)
+        p_SAT = exp(34.494 - 4924.99/(t + 237.1)) / (t + 105)^1.57
+    else #Jiao, K., and Li, X. (2010)
+        p_SAT = 0.68737*T^3 - 732.39*T^2 + 263390*T - 31919000
+    end
+```
+
+They do not meet. Approaching from below the pressure is 101 381 Pa; the
+first value on the other side is 100 518 Pa. **It drops by 860 Pa as the
+temperature rises through the splice** — a 0.85% step in the wrong direction,
+on a quantity that must be monotone in temperature.
+
+Each branch is individually well behaved; it is only the join. It matters
+because the low-temperature PEM cell operates near 80 C and the
+high-temperature one above 100 C, so both sides are used, and any model that
+differentiates or iterates across the boundary sees a sign reversal.
+
+## §72 — `λ_calc` has a branch that cannot run
+
+```julia
+function λ_calc(a)
+    if (a < 1)
+        λ = 0.043 + 17.81*a - 39.85*a^2 + 36*a^3
+    elseif (a >= 1)
+        λ = 14 + 1.4*(a - 1)
+    else #Extrapolated for robustness if a < 1
+        λ = 14 * a
+    end
+```
+
+The first two branches are exhaustive over the reals, so the third can never
+execute. Its comment says it handles `a < 1`, which the *first* branch
+already caught — so the "robustness" it was written for is absent.
+
+What it was presumably meant to guard is a **negative** water activity, which
+is physically meaningless but numerically reachable inside an iteration. As
+shipped, a negative activity falls through the cubic and returns a negative
+water content, which then makes `conductivity_Nafion` negative too (that fit
+crosses zero at `λ = 0.634` and keeps going).
+
+Reproduced as written and pinned by `tests/test_fuelcell.py`.
