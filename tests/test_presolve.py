@@ -27,6 +27,7 @@ from edi.presolve import (
     PresolveLog,
     assert_equivalent,
     cancellation_report,
+    evaluate,
     degeneracy_report,
     eliminate_monomial_equalities,
     fold_singleton_rows,
@@ -1274,3 +1275,59 @@ def test_the_typed_view_is_idempotent():
 
     st = _detect(_active_bound_model(), bounds_as_rows=False)
     assert as_detected(st) is st
+
+
+# ---------------------------------------------------------------------------
+# evaluate on a linear program
+# ---------------------------------------------------------------------------
+def _lp_with_negatives():
+    """min x + y  s.t.  x - y >= 2, both variables free to go negative."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[-10.0, 10.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[-10.0, 10.0])
+    f.Objective(x + y)
+    f.Constraint(x - y >= 2.0)
+    return f
+
+
+def test_evaluate_reads_a_linear_program_correctly():
+    """The LP branch had no test, and was wrong in two ways because of it.
+
+    The objective coefficients sit one level deeper than the rest of the
+    payload (solve_LP reads `[1][0][0]`), so unpacking positionally yielded a
+    wrapper whose elements would not convert; and `AG or []` raises outright on
+    a numpy array. Both survived because nothing exercised the path.
+    """
+    st = _detect(_lp_with_negatives(), bounds_as_rows=False)
+
+    obj, viol = evaluate(st, [3.0, -1.0])         # x-y = 4 >= 2
+    assert obj == pytest.approx(2.0)
+    assert viol < 0                               # strictly feasible
+
+    obj, viol = evaluate(st, [0.0, 0.0])          # x-y = 0, violates by 2
+    assert obj == pytest.approx(0.0)
+    assert viol == pytest.approx(2.0)
+
+    obj, viol = evaluate(st, [3.0, 2.0])          # x-y = 1, violates by 1
+    assert obj == pytest.approx(5.0)
+    assert viol == pytest.approx(1.0)
+
+
+def test_evaluate_counts_bound_violations_in_natural_space():
+    st = _detect(_lp_with_negatives(), bounds_as_rows=False)
+    _obj, viol = evaluate(st, [50.0, 0.0])        # x above its upper bound 10
+    assert viol >= 40.0 - 1e-9
+
+
+def test_equivalence_check_works_on_a_linear_program():
+    """assert_equivalent must cover LPs, not only the log-space models."""
+    st = _detect(_lp_with_negatives(), bounds_as_rows=False)
+    assert_equivalent(st, st, [3.0, -1.0])
+
+    key = st.linear_key
+    broken = dict(st)
+    payload = list(st[key][1])
+    payload[1] = float(payload[1] or 0.0) + 5.0   # shift the objective
+    broken[key] = [st[key][0], payload, list(st[key][2])]
+    with pytest.raises(AssertionError, match='changed the problem'):
+        assert_equivalent(st, broken, [3.0, -1.0])

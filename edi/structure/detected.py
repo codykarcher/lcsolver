@@ -222,7 +222,8 @@ class Detected(dict):
             return sorted(i for i in self._grouped() if i != 0)
         k = self.key
         AG = self[k][1][2] if k else None
-        return list(range(len(AG or [])))
+        # `AG or []` raises on a numpy array -- truth value is ambiguous.
+        return list(range(0 if AG is None else len(AG)))
 
     def terms(self, i):
         """The :class:`Term` list for constraint ``i``; ``0`` is the objective.

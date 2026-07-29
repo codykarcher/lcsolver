@@ -59,6 +59,8 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
+from edi.structure.detected import as_detected
+
 class InfeasibleProblem(ValueError):
     """Presolve proved the model infeasible before any solve was attempted."""
 
@@ -205,11 +207,20 @@ def nm_at(names, j):
 
 
 def _rows_of(structures):
-    """``(rows, operators, key)`` for whichever structure was detected."""
-    for key in ("Signomial_Program", "Geometric_Program"):
-        if structures.get(key, (False,))[0]:
-            return structures[key][1], structures[key][2], key
-    raise ValueError("presolve needs a detected GP or SP structure")
+    """``(rows, operators, key)`` for the log-space encoding.
+
+    Signomial before geometric, which used to be duplicated here as folklore.
+    :attr:`~edi.structure.detected.Detected.log_key` names it now, and names
+    why: a model can satisfy several structure flags at once, so "which kind
+    is this" and "which encoding are the terms in" are different questions.
+    """
+    from edi.structure.detected import as_detected
+
+    st = as_detected(structures)
+    key = st.log_key
+    if key is None:
+        raise ValueError("presolve needs a detected GP or SP structure")
+    return st[key][1], st[key][2], key
 
 
 def presolve_report(structures, names=None) -> PresolveReport:
@@ -1266,39 +1277,46 @@ def evaluate(structures, x):
     import math
 
     x = list(x)
+    # Dispatch exactly as propagate_bounds does, linear flag first. It has to
+    # match: this compares a structure before and after a transform, and
+    # reading one side in a different encoding than the transform used would
+    # compare two different problems. The linear-first rule also matters for
+    # correctness rather than only consistency -- a model with negative
+    # variables can carry a signomial flag whose log encoding is invalid for
+    # it, and preferring log there would take logs of negative numbers.
     lp = (structures.get("Linear_Program", (False,))[0]
           or structures.get("Quadratic_Program", (False,))[0])
     worst = -math.inf
 
+    st = as_detected(structures)
     if lp:
-        key = ("Linear_Program" if structures["Linear_Program"][0]
-               else "Quadratic_Program")
-        c, shift, AG, bh = structures[key][1][:4]
-        operators = structures[key][2]
+        key = st.linear_key
+        payload = st[key][1]
+        # The objective coefficients are nested one deeper than the rest:
+        # solve_LP reads payload[0][0]. Unpacking payload[:4] positionally
+        # yields the wrapper, not the vector, and every element then fails to
+        # convert. This path had no test until now, which is why it survived.
+        c = payload[0][0]
+        shift, AG, bh = payload[1], payload[2], payload[3]
+        operators = st[key][2]
         obj = float(shift or 0.0) + sum(float(ci) * x[i]
                                         for i, ci in enumerate(c) if i < len(x))
-        for i, row in enumerate(AG or []):
+        for i, row in enumerate([] if AG is None else AG):
             lhs = sum(float(v) * x[j] for j, v in enumerate(row) if j < len(x))
             r = lhs + float(bh[i])
             op = operators[i] if i < len(operators) else "<="
             worst = max(worst, abs(r) if op == "==" else r)
     else:
-        rows, operators, _key = _rows_of(structures)
-        numer, denom = (collections.defaultdict(list),
-                        collections.defaultdict(list))
-        for r in rows:
-            idx = int(r[0])
-            (numer if idx >= 0 else denom)[
-                idx if idx >= 0 else -idx - 1].append(
-                    (float(r[1]), [float(e) for e in r[2:]]))
-        obj = _eval_terms(numer.get(0, []), x)
-        for i in sorted(k for k in set(numer) | set(denom) if k != 0):
-            p_ = _eval_terms(numer.get(i, []), x)
-            q_ = _eval_terms(denom.get(i, []), x) if denom.get(i) else 1.0
+        obj = sum(t.value(x) for t in st.terms(0) if not t.denominator)
+        for i in st.constraint_indices:
+            terms = st.terms(i)
+            p_ = sum(t.value(x) for t in terms if not t.denominator)
+            den = [t for t in terms if t.denominator]
+            q_ = sum(t.value(x) for t in den) if den else 1.0
             if p_ <= 0 or q_ <= 0:
                 continue
             lg = math.log(p_) - math.log(q_)
-            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+            op = st.operator(i)
             worst = max(worst, abs(lg) if op == "==" else lg)
 
     for j, pair in enumerate(structures.get("bounds") or []):
