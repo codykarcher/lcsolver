@@ -50,7 +50,18 @@ N_CRUISE = 4
 PI = 3.141592653589793
 
 
-def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
+def build(N: int = N_CRUISE, *, mode: str = "free") -> Formulation:
+    """``mode="free"``: wing geometry -- S, AR, CL, tau AND sweep -- is
+    optimised, with York's transonic airfoil fit supplying the physics that
+    makes each trade real (wave drag prices CL, thickness and sweep; the
+    structural span factor 1/cos^2(Lambda) prices sweep the other way;
+    Nita-Scholz prices AR through the Oswald factor). Sweep is carried as
+    ``cos(Lambda)`` itself, which keeps every appearance monomial -- the
+    trig-of-a-variable obstruction never arises.
+
+    ``mode="point"``: the original replication -- AR, CL and sweep pinned to
+    TASOPT's values -- which validates the weight accounting at their design
+    point."""
     f = Formulation()
     Vb = lambda n, g, u, d, bd: f.Variable(name=n, guess=g, units=u,
                                            description=d, bounds=bd)
@@ -64,7 +75,9 @@ def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
     # the structural-span factor 1/cos^2(26 deg); TASOPT's own cap sizing
     # goes as 1/cos^4, so this is a conservative UNDER-correction and the
     # wing is expected to land ~16% light -- the honest Hoburg-vs-beam gap.
-    wing, cons = add_wing_h2(f, f_nonstruct=1.64, tau_max=0.126,
+    point = (mode == "point")
+    wing, cons = add_wing_h2(f, f_nonstruct=1.64,
+                             tau_max=0.126 if point else 0.15,
                              p_taper=1.5, q_taper=1.25)
     # Their tank pressure policy (pressure_venting = 2 atm) and their
     # structural heat-leak factor (heat_leak_factor = 1.3), both from the
@@ -84,10 +97,16 @@ def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
 
     W = Vnb("W", 7.4e5, "N", "weight at segment start", (1e5, 3e6))
     D = Vnb("D", 5.0e4, "N", "drag", (2e3, 5e5))
-    # Capped at THEIR cruise CL -- a buffet-margin policy, and the
-    # replication lever that stops the optimiser shrinking the wing by
-    # flying a higher CL than they allow themselves.
-    C_L = Vnb("C_L", 0.57, "-", "lift coefficient", (0.10, 0.57))
+    # In "free" mode CL is priced by the transonic fit, not capped.
+    C_L = Vnb("C_L", 0.57, "-", "lift coefficient",
+              (0.10, 0.57 if point else 0.85))
+    cosL = Vb("cosL", 0.9, "-", "cosine of quarter-chord sweep",
+              (0.72, 0.999))
+    CDp = Vnb("CDp", 0.008, "-", "wing profile+wave drag coeff", (1e-4, 0.1))
+    CDi = Vnb("CDi", 0.012, "-", "induced drag coeff", (1e-4, 0.1))
+    e_osw_v = Vb("e_osw", 0.975, "-", "Oswald (span) efficiency", (0.5, 1.0))
+    mac = Vb("mac", 3.9, "m", "mean aerodynamic chord", (0.5, 12.0))
+    Re = Vb("Re", 2.4e7, "-", "chord Reynolds number", (1e6, 2e8))
     C_D = Vnb("C_D", 0.0388, "-", "drag coefficient", (0.008, 0.30))
     t_seg = Vnb("t_seg", 5.85e3, "s", "segment duration", (100.0, 5e4))
     mdot_f = Vnb("mdot_f", 0.33, "kg/s", "fuel flow", (0.005, 5.0))
@@ -95,7 +114,10 @@ def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
     rho = C("rho", 0.374, "kg/m^3", "cruise density, their operating point")
     V_inf = C("V_inf", 237.5, "m/s", "their cruise speed")
-    e_osw = C("e", 0.85, "-", "Oswald efficiency")
+    M_crz = C("M_crz", 0.80, "-", "cruise Mach")
+    mu_air = C("mu_air", 1.45e-5, "kg/(m*s)", "viscosity at cruise")
+    k_mac = C("k_mac", 1.12, "-", "mac over S/b at taper 0.25")
+    f_lam = C("f_lam", 0.00248, "-", "Nita-Scholz taper function, lam=0.25")
     C_f = C("C_f", 0.0032, "-", "equivalent skin friction coefficient")
     W_pay = C("W_pay", 172146.2, "N", "payload, 180 pax x 215 lbf")
     R_req = C("R_req", 5.556e6, "m", "3000 nmi")
@@ -122,15 +144,13 @@ def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
     # fuel load (sizes_insulation = true in their TOML).
     r_boil = C("r_boil", 0.004 / 3600.0, "1/s", "their boil-off rate limit")
 
+    if point:
+        cons += [wing["AR"] == AR_fix, cosL == 0.8988]
     cons += [
-        wing["L_max"] >= k_sweep * N_ult * W_MTO,
-    ]
-    if fix_AR:
-        # Replication evaluates the SP at THEIR design point. Freeing AR is
-        # the test of whether the SP would also CHOOSE their wing -- run
-        # build(fix_AR=False) to ask it; see the README for what it says.
-        cons += [wing["AR"] == AR_fix]
-    cons += [
+        # Structural span: load normal to the swept axis over the longer
+        # structural span. This is what prices sweep against the wave drag
+        # that rewards it.
+        wing["L_max"] * cosL ** 2 >= N_ult * W_MTO,
         l_fuse >= l_fixed + tank["l_tank"],
         S_wet >= 2.0 * wing["S"] + 2.0 * PI * R_fuse * l_fuse + S_nace,
         R_fuse >= tank["R_o"] + tank["t_insul"] + clear,
@@ -148,8 +168,30 @@ def build(N: int = N_CRUISE, *, fix_AR: bool = True) -> Formulation:
     for i in range(N):
         cons += [
             W[i] <= 0.5 * rho * V_inf ** 2 * wing["S"] * C_L[i],
-            C_D[i] >= (C_f * S_wet / wing["S"]
-                       + C_L[i] ** 2 / (PI * wing["AR"] * e_osw)),
+            # Fuselage + nacelle skin friction only -- the wing's profile
+            # and wave drag come from the fit, so the wetted-area lump must
+            # not double-count it.
+            C_D[i] >= (C_f * (2.0 * PI * R_fuse * l_fuse + S_nace)
+                       / wing["S"] + CDp[i] + CDi[i]),
+            CDi[i] >= C_L[i] ** 2 / (PI * wing["AR"] * e_osw_v),
+            # Nita-Scholz: span efficiency falls with AR.
+            e_osw_v + f_lam * e_osw_v * wing["AR"] <= 1.0,
+            mac == k_mac * wing["S"] / wing["b"],
+            Re == rho * V_inf * mac / mu_air,
+            # Martin York's fit to the TASOPT C-series transonic airfoils --
+            # the physics that lets CL, tau and sweep be free variables.
+            CDp[i] ** 1.6515 >= (
+                1.61418 * (Re / 1000.0) ** -0.550434 * wing["tau"] ** 1.29151
+                    * (cosL * M_crz) ** 3.03609 * C_L[i] ** 1.77743
+                + 0.0466407 * (Re / 1000.0) ** -0.389048
+                    * wing["tau"] ** 0.784123
+                    * (cosL * M_crz) ** -0.340157 * C_L[i] ** 0.950763
+                + 190.811 * (Re / 1000.0) ** -0.218621
+                    * wing["tau"] ** 3.94654
+                    * (cosL * M_crz) ** 19.2524 * C_L[i] ** 1.15233
+                + 2.82283e-12 * (Re / 1000.0) ** 1.18147
+                    * wing["tau"] ** -1.75664
+                    * (cosL * M_crz) ** 0.10563 * C_L[i] ** -1.44114),
             D[i] >= 0.5 * rho * V_inf ** 2 * wing["S"] * C_D[i],
             # Their engine at their cruise TSFC; thrust = drag in cruise.
             mdot_f[i] * g >= TSFC * D[i],

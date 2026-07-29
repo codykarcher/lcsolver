@@ -209,6 +209,42 @@ What the sequence taught:
 * **`k_fuse = 260 N/m²` was never wrong.** Their hull works out to
   259 N/m²; the earlier fuselage gap was missing nose/tailcone geometry.
 
+**The free-wing experiment** (`build(mode="free")`, now the default): CL,
+tau, AR *and sweep* are all optimised, with the physics that makes each
+trade real — York's transonic airfoil fit (wave drag prices CL, thickness
+and sweep), the structural span factor `1/cos²Λ` (prices sweep the other
+way), and Nita-Scholz span efficiency (prices AR). Sweep is carried as
+`cos Λ` itself, so every appearance is monomial and the trig-of-a-variable
+obstruction never arises. It converges, and sweep lands at an **interior**
+optimum — the trade is genuinely live:
+
+| | free SP | TASOPT |
+|---|---:|---:|
+| AR | 6.0 (bound) | 10.1 |
+| sweep | 6.9° | 26.0° |
+| CL | 0.416 | 0.570 |
+| tau | 0.150 (bound) | ~0.126 |
+| S | 141.7 m² | 121.5 m² |
+| MTOW | 139,656 lb | 167,711 lb |
+
+The free optimum is an internally consistent *different* aircraft: a big,
+thick, lightly-swept, lightly-loaded wing — dodging the wave-drag wall by
+flying low CL instead of buying sweep and span. Three named reasons it is
+not TASOPT's design, in decreasing confidence:
+
+1. **Wing-structure curvature.** The Hoburg box grows ≈ AR^1.5 against
+   TASOPT's nearer-linear beam, so span is over-priced; `k_beam` fixes the
+   point, not the slope.
+2. **Cruise-only mission.** TASOPT's climb segments fly high CL where
+   induced drag argues for span; this model never sees them.
+3. **Frozen flight condition.** rho and V are constants, so the optimiser
+   answers low CL with a big wing at low loading — where a real aircraft
+   (and TASOPT, which sizes the cruise altitude) would fly higher instead.
+
+Closing those is the real frontier: a `surfw`-derived wing (the MAIDAS map
+in `../tasopt/MAIDAS_REPORT.md` already classified it), a climb segment,
+and altitude as a variable.
+
 **Point-validated is not curvature-validated.** The replication pins
 AR = 10.1 and their CL policy — it evaluates the SP *at their design point*.
 Asking whether the SP would *choose* their wing (`build(fix_AR=False)`)
