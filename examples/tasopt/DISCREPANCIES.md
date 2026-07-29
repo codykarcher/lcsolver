@@ -1184,3 +1184,31 @@ water content, which then makes `conductivity_Nafion` negative too (that fit
 crosses zero at `λ = 0.634` and keeps going).
 
 Reproduced as written and pinned by `tests/test_fuelcell.py`.
+
+## §73 — the heat exchanger's hoop-stress thickness has a pole
+
+`hxfun.jl`, `tubesize!`:
+
+```julia
+      C = safety_factor * Δp / (2 * σy)
+      thoop = C * K / (K - 2 * K * C)^2
+```
+
+As `C` approaches 0.5 the denominator vanishes and the required thickness
+diverges. `C = SF Δp / (2 σy)` with `SF = 2`, so `C = 0.5` means the design
+pressure difference equals the yield stress — a genuine physical limit, but
+the expression approaches it as a pole rather than reporting it.
+
+Nothing checks. Past `C = 0.5` the square in the denominator keeps the result
+*positive*, so an over-pressured design does not even produce a negative
+thickness to notice — it produces a plausible small one on the far side of
+the singularity.
+
+`tasopt_py.engine_v3.heat_exchanger.tube_thickness` refuses at `C >= 0.5`.
+Below it the two agree exactly.
+
+Worth contrasting with §71: this is the fourth unguarded singularity found in
+v3 (with §58 the tank buckling pole, §63 the two thermal ones, §67 the
+windage solver). They are not the same bug, but they are the same *habit* —
+an expression or a solve written for the design region and used inside an
+optimiser that leaves it.
