@@ -113,7 +113,9 @@ class SIAOptions:
         # --- penalty CCP, only active while infeasible --------------------
         self.tau0 = 1.0
         self.tau_factor = 5.0
-        self.tau_max = 1e8
+        self.tau_max = 1e12
+        self.tau_binding = 0.9         # raise tau once a multiplier reaches
+                                       # this fraction of it -- see solve_sia
         # --- trust region, only applied to LINEARIZED constraints ---------
         self.trust_radius = 1.0        # initial |d_j| bound, log space
         self.trust_min = 1e-8
@@ -281,12 +283,28 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
     s = np.array([pyo.value(m.s[i]) for i in range(len(cons))])
+
+    # Multipliers. An INEQUALITY multiplier is non-negative by definition, so
+    # its magnitude is the quantity wanted. An EQUALITY multiplier is not --
+    # it carries a sign, and taking its magnitude makes the stationarity sum
+    # unable to cancel. On Hoburg, 25 of 58 constraints are equalities, and
+    # dropping their signs pins the residual at 2.5 no matter how converged
+    # the iterate is. The rest of SLCP takes abs() throughout because it only
+    # ever uses these for a merit function and a BFGS update, where magnitude
+    # is all that matters; a KKT certificate needs the sign.
     mults = np.zeros(len(cons))
     for i in range(len(cons)):
         try:
-            mults[i] = abs(m.dual.get(m.cons[i + 1], 0.0) or 0.0)
+            lam = m.dual.get(m.cons[i + 1], 0.0) or 0.0
         except Exception:
-            mults[i] = 0.0
+            lam = 0.0
+        # Pyomo/IPOPT report the equality dual with the opposite sign to the
+        # one the Lagrangian gradient f + sum(lam * g) wants, so it is negated.
+        # Verified against a least-squares fit of the multipliers that zero
+        # stationarity at a converged Hoburg point: magnitudes agree exactly,
+        # and only the equality signs were inverted.
+        mults[i] = (-float(lam) if cons[i].operator == '=='
+                    else abs(float(lam)))
     return d, s, mults, float(pyo.value(obj))
 
 
@@ -319,6 +337,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, radius, options, has_blackbox)
         except RuntimeError as exc:
+            # An INFEASIBLE sub-problem is not a bad step -- it means the
+            # trust region is too tight for the relaxed feasible set to be
+            # reachable from here, which happens on the first pass from a
+            # badly infeasible start. The trust-region response to a bad step
+            # is to shrink; the response to an unreachable one is the
+            # opposite. Widen and retry before giving up.
+            if (has_blackbox and "infeasible" in str(exc).lower()
+                    and radius < options.trust_max):
+                radius = min(options.trust_max,
+                             radius * options.trust_expand)
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  sub-problem unreachable, "
+                          f"widening radius -> {radius:.3g}")
+                continue
             res.status = f"sub-problem failure at iteration {k}: {exc}"
             res.x, res.objective = x, problem.objective_value(x)
             res.iterations = k
@@ -356,10 +388,27 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         res.history.append(x.copy())
         res.objectives.append(problem.objective_value(x))
 
-        # --- escalate the slack penalty while still infeasible ------------
+        # --- escalate the slack penalty -----------------------------------
+        # Two reasons to raise tau, and the second is easy to miss.
+        #
+        # 1. Slack is still open, so the iterate is infeasible.
+        # 2. A MULTIPLIER has run into tau. Each slack costs tau per unit, so
+        #    tau is an upper bound on every multiplier: a constraint whose
+        #    true multiplier exceeds tau is cheaper to violate than to satisfy,
+        #    and it goes soft. The iterate then looks feasible (the slack is
+        #    tiny) and complementarity looks satisfied, while stationarity
+        #    stalls at whatever the capped multipliers leave behind. This is
+        #    the classic exact-penalty condition -- the penalty parameter has
+        #    to dominate the multipliers, not merely close the slacks.
         slack = float(np.max(s)) if len(s) else 0.0
-        if slack > options.feasibility_tolerance and tau < options.tau_max:
-            tau = min(options.tau_max, tau * options.tau_factor)
+        lam_max = float(np.max(np.abs(mults))) if len(mults) else 0.0
+        need = (slack > options.feasibility_tolerance
+                or lam_max >= options.tau_binding * tau)
+        if need and tau < options.tau_max:
+            tau = min(options.tau_max,
+                      tau * options.tau_factor,
+                      max(tau * options.tau_factor,
+                          options.tau_factor * lam_max))
 
         # --- KKT test on the ORIGINAL problem -----------------------------
         stat, viol, comp = _kkt(problem, x, mults)
