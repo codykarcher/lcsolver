@@ -27,6 +27,43 @@ condensed constraints, about 40 are signomial *equalities*, which are condensed
 in **both** directions (`p/q <= 1` and `q/p <= 1`). Squeezing between two
 approximations that are each tangent at `x_k` pins the step hard.
 
+## Why the step is small: the equality pair pins it to a null space
+
+This can be made exact, and it is the sharpest statement of the gap.
+
+The bridge writes a signomial equality as a **pair**, `p/q <= 1` and `q/p <= 1`,
+and SIA condenses the denominator of each. At the iterate both are active and
+tangent with *opposite* gradients. Write
+
+    f1 = log p - log q_hat        f2 = log q - log p_hat
+
+Both are convex, because the condensed term is a monomial and so linear in log
+space. Both vanish at `x_k`, and `grad f2 = -grad f1` there by tangency. A step
+`d` must satisfy both `<= 0`, so to second order
+
+    ½ dᵀH₂d  <=  grad f1 · d  <=  -½ dᵀH₁d
+
+which has a solution only when `dᵀ(H₁ + H₂) d <= 0`. `H₁` is the log-space
+Hessian of `p` and `H₂` that of `q`; both are positive semidefinite because a
+posynomial is log-convex. **So the step is confined to the null space of
+`H₁ + H₂`** — the directions in which both posynomials are locally linear.
+
+PCCP condenses the numerator too, so `p_hat` and `q_hat` are both monomials,
+`H₁ = H₂ = 0`, and the same condition collapses to `grad f · d = 0`: a full
+`(n-1)`-dimensional hyperplane tangent to the true feasible manifold.
+
+That is the whole difference. Not a heuristic about step lengths — SIA's
+sub-problem is genuinely restricted to a lower-dimensional subspace wherever a
+signomial equality is active, and SPaircraft has about 40 of them. It also
+explains why the feasibility-verified step expansion is inert: there is no
+slack to expand into, because the binding set is a manifold rather than a
+region.
+
+The targeted repair is to condense the numerator **only for equality-derived
+pairs**, recovering PCCP's hyperplane there while leaving genuine inequalities
+exact and conservative. `condense_numerator` currently applies to every ratio,
+which gives up conservatism on inequalities that never needed it.
+
 ## The trace
 
 Feasible from iteration 1, monotone throughout, and crawling:
@@ -97,14 +134,56 @@ The caveat is that 0.021 is still well above the 1e-6 tolerance, so the point
 is not a converged KKT point either. There is genuine headroom, just an order
 of magnitude less than the reported figure suggested.
 
-Where to look next: the active set at that point is 1024 constraints, 648 of
-them equalities. Each signomial equality enters the sub-problem as a *pair* --
-`p/q <= 1` and `q/p <= 1`, both condensed -- and that pair is exactly where an
-inequality multiplier would want to take a negative value, the two directions
-of one equality pulling against each other. Comparing SIA's extracted duals
-against the NNLS solution element-wise, looking for sign flips or a systematic
-scale factor on the paired constraints, is the diagnostic that should isolate
-it.
+### The cause: the equality pair is dual-degenerate
+
+It is not a sign convention. Testing all six conventions on the raw duals, the
+one in use is already the best available (0.502 against 3.88 for the
+alternatives). Nor is it a point mismatch between where the multipliers are
+computed and where they are tested: `|d|` falls from 12.5 to 0.021 over a run
+while stationarity barely moves, and a point-mismatch error would shrink with
+the step.
+
+It is the pairing. The largest multipliers come in consecutive pairs of
+near-identical magnitude:
+
+```
+con 265 <= ratio mult=4047  log_g=-3.542e-08
+con 266 <= ratio mult=4047  log_g=+3.542e-08
+con 683 <= ratio mult=1404  log_g=-1.749e-08
+con 684 <= ratio mult=1404  log_g=+1.749e-08
+con 315 <= posy  mult=910.8
+con 316 <= ratio mult=910.9
+```
+
+These are the two halves of one signomial equality, whose gradients are
+negatives of each other. The Lagrangian sees only their **difference**,
+`(lam_A - lam_B) grad g_A`, so the pair is dual-degenerate: adding the same
+constant to both multipliers leaves `grad L` unchanged, and the solver is free
+to return any large pair with the correct difference. It does.
+
+That is catastrophic cancellation. With `lam ~ 4047` and a relative dual
+tolerance around 1e-4, the difference carries an absolute error of about 0.4 --
+precisely the stationarity floor observed. `315/316` show it directly, 910.8
+against 910.9, differing in the fourth figure.
+
+Complementarity is clean by comparison (1.4e-4; zeroing the multipliers on all
+179 inactive constraints changes stationarity not at all), so the error is
+specifically the paired equalities.
+
+### Both failures have the same root
+
+Splitting a signomial equality into two condensed inequalities produces:
+
+1. a step confined to the null space of `H1 + H2` -- no progress;
+2. a dual-degenerate multiplier pair whose difference is numerical noise -- no
+   certificate.
+
+So the fix is the same for both: **stop splitting**. Impose the equality as one
+constraint with both sides condensed, which is PCCP's treatment applied only to
+equalities. That gives a single signed, well-conditioned multiplier and a full
+`(n-1)`-dimensional hyperplane to move in. No conservatism is lost, because an
+equality never had an interior to be conservative about -- the inner
+approximation argument only ever applied to the inequalities, which keep it.
 
 ## What is still unexplained
 
