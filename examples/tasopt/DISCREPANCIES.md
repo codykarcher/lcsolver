@@ -934,3 +934,37 @@ This port refuses both — the first in `freestream_heat_coeff`, the second in
 changes any reachable answer: all the verified cases agree with the reference
 to 4e-13. What they change is that an impossible request fails where it
 becomes impossible instead of returning a number.
+
+## §64 — the fuel-flow interpolation zeroes any segment that touches zero
+
+`tanktools.jl`, `find_mdot_time`. Fuel flow between mission points is
+interpolated **exponentially**, which is right — flow falls roughly
+geometrically through a cruise as the aircraft lightens, and a straight line
+would understate it mid-segment. But the exponential form needs a logarithm,
+and the two ends of a segment fail differently:
+
+```julia
+      if m0 > 0
+            k = log(mf / m0) / (tf - t0)
+            return m0 * exp(k * (t - t0))
+      else
+            return 0.0
+      end
+```
+
+* A segment that **starts** at zero is caught by the explicit guard and reads
+  zero for its whole length — even if it ends at full flow.
+* A segment that **ends** at zero is not guarded at all. It survives only
+  because `log(0)` is `-Inf` in Julia, making `exp(-Inf dt)` zero for any
+  `dt > 0`.
+
+Either way, touching zero anywhere in a segment zeroes the whole segment. The
+shipped descent ends at idle, so the final leg of every mission reads zero
+fuel flow throughout rather than decaying to it — an understatement of
+descent fuel burn.
+
+Python raises on `log(0)` rather than returning `-Inf`, so the second case is
+written out explicitly in `tasopt_py.cryo.mission_tank` to give the same
+answer. Both are reproduced and pinned; neither is corrected, because
+correcting one would change every integrated fuel total away from the
+reference's.
