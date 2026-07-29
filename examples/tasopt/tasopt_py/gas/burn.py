@@ -1,5 +1,19 @@
 """Combustion: fuel-air ratio and burnt-gas properties — a port of ``gasburn.f``.
 
+**Not on the live path.** ``gasburn.f`` is not in the Makefile's link list,
+and neither is the near-identical ``gasprop.f``; what the shipped program
+actually burns fuel with is ``gas_burn`` in ``gascalc.f``, ported as
+:func:`tasopt_py.gas.mixture.gas_burn`. This one is ported anyway, and
+verified, because a reader will look for it -- the same reason ``dilw``,
+``dit`` and ``hct`` are ported in :mod:`tasopt_py.aero.blsys`.
+
+The two differ in more than provenance: this routine carries a table of fuel
+properties hard-wired to methane's (``cpcoldi(5) = 2240``, ``hsi(5) =
+-4.675e6``, commented ``fuel(CH4)``) and takes the fuel's atom counts as
+arguments, where ``gas_burn`` takes the reaction's mass-fraction changes from
+``gasfuel`` and the fuel enthalpy from the caller. Do not reach for this one
+by mistake.
+
 Given the air temperature before the burner and the required temperature
 after it, this solves for the fuel mass fraction that gets you there, and
 returns the properties of the resulting gas mixture. It is the step that sits

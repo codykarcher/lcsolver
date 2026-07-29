@@ -100,7 +100,7 @@ and you cannot tell which module to look at.
 | `atmosphere` | `atmos.f` | 4.4e-16 |
 | `gas.properties` | `gasfun.f` | 3.6e-14, 2046 values |
 | `gas.mixture` | `gascalc.f` (incl. `gas_mass`) | 4.4e-16 |
-| `gas.burn` | `gasburn.f` | 1e-13 |
+| `gas.burn` | `gasburn.f` (not linked) | 1e-13 |
 | `structures.fuselage` | `fusew.f` | 3.5e-16 |
 | `structures.surface` | `surfw.f` | 3.8e-16 |
 | `structures.planform` | `tailpo.f`, `surfdx.f`, `wingsc.f` | 4.1e-16 |

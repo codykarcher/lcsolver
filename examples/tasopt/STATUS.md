@@ -11,7 +11,7 @@ precision; the reference drivers use the same flag.
 | `atmosphere` | `atmos.f` | 4.4e-16 |
 | `gas.properties` | `gasfun.f` | 2046 values, 3.6e-14 |
 | `gas.mixture` | `gascalc.f` | 212 values + `gas_mass`, 4.4e-16 |
-| `gas.burn` | `gasburn.f` | 60 values, 1e-13 |
+| `gas.burn` | `gasburn.f` (not linked; see below) | 60 values, 1e-13 |
 | `structures.fuselage` | `fusew.f` | 66x3 configs, 3.5e-16 |
 | `structures.surface` | `surfw.f` | 111x3 planforms, 3.8e-16 |
 | `structures.planform` | `tailpo.f`, `surfdx.f`, `wingsc.f` | 52 values, 4.1e-16 |
@@ -254,6 +254,13 @@ Both harmless in the shipped program, neither harmless in general. §27.
 — and a **non-converged sizing is not an error**: `wsize.f` prints a warning
 and carries on into the takeoff and balance calculations, its `return` being
 commented out. §29, §30.
+
+**`gasburn.f` and `gasprop.f` are not linked.** Neither is in the Makefile's
+object list. What the program actually burns fuel with is `gas_burn` in
+`gascalc.f`. Both are ported anyway (`gas.burn` and `gas.mixture.gas_burn`
+respectively) and both are verified, but only the second one runs — and they
+are not interchangeable, since `gasburn.f` hard-wires the fuel's own `cp` and
+heat of formation to methane's.
 
 **Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
 in `trefftz.f`, whose only call site is commented out); `bodycd`; `blax1.f`
