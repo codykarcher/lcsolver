@@ -284,6 +284,68 @@ class PosynomialRatio:
         return condense(self.p, x_k, self.n)
 
 
+class CondensedEquality:
+    """A signomial equality ``p/q == 1``, condensed on BOTH sides.
+
+    The obvious representation is a pair of one-sided ratios, ``p/q <= 1`` and
+    ``q/p <= 1``, each with its denominator condensed. That pair is correct but
+    behaves badly in two ways at once, and both are severe:
+
+    * **The step collapses.** At the iterate both halves are active and tangent
+      with opposite gradients, so a step ``d`` must satisfy
+      ``½dᵀH₂d <= grad f · d <= -½dᵀH₁d``. Both Hessians are positive
+      semidefinite (a posynomial is log-convex), so this has a solution only
+      where ``dᵀ(H₁+H₂)d <= 0`` -- the null space of the sum. The sub-problem is
+      restricted to a lower-dimensional subspace wherever such an equality is
+      active.
+    * **The multipliers become meaningless.** The Lagrangian sees only
+      ``(lam_A - lam_B) grad g_A``, so the pair is dual-degenerate: the same
+      constant added to both changes nothing. A solver may return any large
+      pair with the right difference, and does -- magnitudes of several
+      thousand were measured on SPaircraft, whose difference is then noise at
+      the solver's dual tolerance. The KKT residual inherits that noise and
+      never falls below it.
+
+    Condensing both sides instead gives ``p_hat/q_hat == 1``, a MONOMIAL
+    equality and so affine in log space. One signed, well-conditioned
+    multiplier, and a full ``(n-1)``-dimensional hyperplane tangent to the true
+    feasible manifold rather than a null space.
+
+    Nothing conservative is given up. An inner approximation needs an interior,
+    and an equality has none; the inner-approximation argument only ever applied
+    to the inequalities, which keep it untouched. What is given up is that an
+    iterate can now leave the true feasible set, exactly as it can under PCCP --
+    but tangency survives, so the multipliers still certify the original
+    problem.
+    """
+
+    __slots__ = ('p', 'q', 'n')
+
+    def __init__(self, p, q, n):
+        self.p, self.q, self.n = p, q, n
+
+    def __call__(self, x):
+        return self.p(x) / self.q(x)
+
+    def log_grad(self, x):
+        """The TRUE gradient, for the KKT test -- not the condensed one."""
+        return self.p.log_grad(x) - self.q.log_grad(x)
+
+    def grad(self, x):
+        p, q = self.p(x), self.q(x)
+        return self.p.grad(x)/q - p*self.q.grad(x)/q**2
+
+    @property
+    def is_monomial(self):
+        return self.p.is_monomial and self.q.is_monomial
+
+    def condensed(self, x_k):
+        """``(coeff, exponents)`` of the monomial ``p_hat/q_hat``."""
+        cp, ap = condense(self.p, x_k, self.n)
+        cq, aq = condense(self.q, x_k, self.n)
+        return cp / cq, ap - aq
+
+
 def condense(posy, x_k, n=None):
     """AGM monomial under-estimator of a posynomial at ``x_k``.
 

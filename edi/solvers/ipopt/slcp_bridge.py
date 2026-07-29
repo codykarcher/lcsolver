@@ -34,7 +34,8 @@ than silently dropped.
 
 import numpy as np
 
-from edi.solvers.ipopt.slcp import (Constraint, Options, Posynomial,
+from edi.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
+                                    Posynomial,
                                     PosynomialRatio, Problem, Signomial,
                                     solve as _slcp_solve)
 
@@ -52,7 +53,7 @@ def _group(rows):
     return numerator, denominator
 
 
-def build_problem(structures, sp_form=True):
+def build_problem(structures, sp_form=True, split_equalities=True):
     """Translate a detected structure into an SLCP :class:`Problem`.
 
     ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
@@ -117,6 +118,14 @@ def build_problem(structures, sp_form=True):
         if den:
             p_ = posynomial(num, f'constraint {idx} numerator')
             q_ = posynomial(den, f'constraint {idx} denominator')
+            if op == '==' and split_equalities is False:
+                # One constraint, both sides condensed. See CondensedEquality
+                # for why the split pair is bad on both counts -- it pins the
+                # step to a null space and makes the multipliers degenerate.
+                constraints.append(
+                    Constraint(CondensedEquality(p_, q_, n), '=='))
+                n_split += 1
+                continue
             constraints.append(Constraint(wrap(PosynomialRatio(p_, q_, n)), '<='))
             if op == '==':
                 # An equality is TWO inequalities. Writing only p/q <= 1
@@ -133,6 +142,15 @@ def build_problem(structures, sp_form=True):
             if op == '==' and body.is_monomial:
                 # A monomial equality is affine in log space: exact as is.
                 constraints.append(Constraint(body, '=='))
+            elif op == '==' and split_equalities is False:
+                # One condensed equality, p_hat == 1, instead of the pair.
+                # This branch matters as much as the ratio one above: the pair
+                # it replaces is `p <= 1` plus `1/p <= 1`, whose multipliers
+                # are just as degenerate -- measured at 910.8 against 910.9 on
+                # SPaircraft, differing only in the fourth figure.
+                constraints.append(
+                    Constraint(CondensedEquality(body, unit(), n), '=='))
+                n_split += 1
             elif op == '==':
                 # A multi-term posynomial equality. p <= 1 is log-convex and
                 # goes in as it stands; the reverse 1/p <= 1 is NOT a
@@ -251,7 +269,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
 
 
 def solve_sia(structures, x0=None, options=None, sp_form=True,
-              presolve=True):
+              presolve=True, split_equalities=True):
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
@@ -270,7 +288,8 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     if presolve:
         structures, x0, removed, n_original = _apply_presolve(structures, x0)
 
-    problem = build_problem(structures, sp_form=sp_form)
+    problem = build_problem(structures, sp_form=sp_form,
+                            split_equalities=split_equalities)
     x0 = np.asarray(x0, dtype=float)
     if len(x0) < problem.n:
         x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])

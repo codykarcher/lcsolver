@@ -95,8 +95,8 @@ import math
 import numpy as np
 import pyomo.environ as pyo
 
-from edi.solvers.ipopt.slcp import (Posynomial, PosynomialRatio, Problem,
-                                    Signomial)
+from edi.solvers.ipopt.slcp import (CondensedEquality, Posynomial,
+                                    PosynomialRatio, Problem, Signomial)
 
 __all__ = ["SIAOptions", "SIAResult", "solve_sia", "classify",
            "SubproblemCache"]
@@ -194,7 +194,7 @@ def classify(problem):
     for c in problem.constraints:
         if c.exact_in_logspace:
             n_exact += 1
-        elif isinstance(c.body, PosynomialRatio):
+        elif isinstance(c.body, (PosynomialRatio, CondensedEquality)):
             n_cons += 1
         else:
             n_lin += 1
@@ -299,6 +299,9 @@ class SubproblemCache:
         """Only the shapes the bridge produces; a black box needs a rebuild."""
         for con in self.problem.constraints:
             if not isinstance(con.body, (Posynomial, PosynomialRatio)):
+                # A CondensedEquality re-condenses BOTH sides every iteration,
+                # so it is not yet expressible with the fixed-projection trick
+                # the cache relies on. Falls back to rebuilding.
                 return False
         return isinstance(self.problem.objective, Posynomial)
 
@@ -589,6 +592,13 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
             else:
                 m.cons.add(lse(body.terms) <= rhs(i))
+        elif isinstance(body, CondensedEquality):
+            # Both sides condensed -> a monomial equality, affine in log space.
+            # One signed multiplier, and a hyperplane rather than a null space.
+            ce, ae = body.condensed(x_k)
+            e = math.log(ce) + sum(ae[j] * (m.d[j] + log_xk[j])
+                                   for j in range(n))
+            m.cons.add(e == rhs(i))
         elif isinstance(body, PosynomialRatio):
             # log p  <=  log q_hat, with q_hat the AGM monomial under-estimator.
             # q_hat <= q everywhere, so this is HARDER than the true constraint.

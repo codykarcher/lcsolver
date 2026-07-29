@@ -643,3 +643,94 @@ def test_degeneracy_finds_a_variable_the_optimum_does_not_determine():
     free = dict(degeneracy_report(problem, res.x, names=names))
     assert 'u' in free
     assert 'x' not in free
+
+
+# ---------------------------------------------------------------------------
+# signomial equalities: split pair vs single condensed equality
+# ---------------------------------------------------------------------------
+def _sig_equality_model():
+    """min z  s.t.  z == x - y,  x >= 4,  1 <= y <= 2.
+
+    Normalizes to `(z + y)/x == 1`: a multi-term POSYNOMIAL equality, which the
+    bridge splits into `p <= 1` plus a condensed `1/p <= 1`. That pair is
+    dual-degenerate exactly as the ratio pair is -- on SPaircraft the two
+    halves came back as 910.8 and 910.9. Minimising z drives x down and y up,
+    so the optimum is x=4, y=2, z=2.
+    """
+    f = Formulation()
+    x = f.Variable('x', 5.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 1.5, '', 'y', bounds=[1.0, 2.0])
+    z = f.Variable('z', 3.0, '', 'z', bounds=[0.1, 100.0])
+    f.Objective(z)
+    f.Constraint(z == x - y)
+    f.Constraint(x >= 4.0)
+    return f
+
+
+def test_signomial_equality_is_a_ratio_with_an_equality_operator():
+    """Guards the premise: this really is the case under test."""
+    from edi.solvers.ipopt.slcp import CondensedEquality, PosynomialRatio
+
+    split = build_problem(_detect(_sig_equality_model()), split_equalities=True)
+    single = build_problem(_detect(_sig_equality_model()),
+                           split_equalities=False)
+
+    assert any(isinstance(c.body, PosynomialRatio) for c in split.constraints)
+    assert any(isinstance(c.body, CondensedEquality)
+               for c in single.constraints)
+    assert not any(isinstance(c.body, PosynomialRatio)
+                   for c in single.constraints)
+    # the pair becomes one constraint
+    assert len(single.constraints) == len(split.constraints) - 1
+
+
+def test_the_single_equality_reaches_the_optimum_and_the_pair_does_not():
+    """The bug and its fix, on three variables.
+
+    Split into a pair, the step is confined to the null space of the summed
+    log-Hessians and the run stalls 31% high with `y` nowhere near its bound.
+    As one condensed equality the same problem solves exactly.
+    """
+    a = solve_sia(_detect(_sig_equality_model()), split_equalities=True)
+    b = solve_sia(_detect(_sig_equality_model()), split_equalities=False)
+
+    assert b.objective == pytest.approx(2.0, rel=1e-6)
+    assert a.objective > 2.5                      # the pair does not get there
+    assert b.objective < a.objective - 0.5
+
+
+def test_single_equality_keeps_the_multipliers_well_conditioned():
+    """The point of the change: no huge cancelling multiplier pair.
+
+    Split into two condensed inequalities the pair is dual-degenerate, so the
+    solver may return arbitrarily large multipliers whose DIFFERENCE is the
+    only meaningful quantity. As one equality there is a single signed
+    multiplier and nothing to cancel.
+    """
+    a = solve_sia(_detect(_sig_equality_model()), split_equalities=True)
+    b = solve_sia(_detect(_sig_equality_model()), split_equalities=False)
+
+    # measured: ~3611 for the pair against ~2 for the single equality
+    assert np.max(np.abs(np.asarray(a.multipliers))) > 1e3
+    assert np.max(np.abs(np.asarray(b.multipliers))) < 1e2
+
+
+def test_condensed_equality_reports_the_true_gradient():
+    """The KKT test must use the TRUE gradient, not the condensed one."""
+    from edi.solvers.ipopt.slcp import CondensedEquality, Posynomial
+
+    n = 2
+    p = Posynomial([(1.0, [1.0, 0.0]), (1.0, [0.0, 1.0])], n)   # x + y
+    q = Posynomial([(2.0, [1.0, 0.0])], n)                      # 2x
+    ce = CondensedEquality(p, q, n)
+    x = np.array([3.0, 5.0])
+
+    assert ce(x) == pytest.approx((3.0 + 5.0) / (2 * 3.0))
+    expected = p.log_grad(x) - q.log_grad(x)
+    assert np.allclose(ce.log_grad(x), expected)
+
+    # the condensed monomial matches p/q in value and gradient AT x
+    c, a = ce.condensed(x)
+    val = c * np.prod(x ** a)
+    assert val == pytest.approx(ce(x), rel=1e-10)
+    assert np.allclose(a, expected, atol=1e-10)
