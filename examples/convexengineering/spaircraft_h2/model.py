@@ -113,7 +113,13 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # The tank is sized first so the fuselage knows how much shell to add.
     # Its parameters are TASOPT's cryo case: 2 atm vent pressure and the 1.3
     # structural heat-leak factor.
-    tank, c = add_cryo_tank(f, prefix="Tank_", pvent=2.0265e5, qfac=1.3)
+    # ftankadd=0.35 and the 10 cm clearance are TASOPT's own parameters,
+    # calibrated in add_cryo_tank's docstring against their documented LH2
+    # turbofan. Without them this tank reads gravimetric 0.81 -- *better*
+    # than TASOPT's 0.738 while holding a third of the fuel, which is
+    # backwards, since a smaller tank has the worse square-cube ratio.
+    tank, c = add_cryo_tank(f, prefix="Tank_", pvent=2.0265e5, qfac=1.3,
+                            ftankadd=0.35)
     cons += c
     fu, c = add_fuselage(f, l_tank=tank["l_tank"]); cons += c
     eng, c = add_engine(f, N, st, engine="D82_LH2", BLI=True,
@@ -230,6 +236,8 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Tcabin = C("T_cabin", 297.0, "K", "cabin air temperature")
     minRC = C("RC_min", 500.0, "feet/min", "minimum rate of climb")
     CDfuse = C("C_D_fuse", 0.018081, "-", "fuselage drag coefficient")
+    tankclear = C("tank_clearance", 0.10, "m",
+                  "radial gap between tank insulation and fuselage wall")
     cmw = C("c_m_w_val", 1.9, "-", "wing pitching moment coefficient")
 
     f.Objective(W_ftotal)
@@ -248,7 +256,9 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # The tank carries the whole fuel load, reserves included, and must
         # fit inside the fuselage with its insulation.
         tank["W_fuel"] >= W_ftotal,
-        fu.R_fuse >= tank["R_o"] + tank["t_insul"],
+        # 10 cm of radial clearance between insulation and the fuselage
+        # inner wall, for frames, mounts and the vapour line.
+        fu.R_fuse >= tank["R_o"] + tank["t_insul"] + tankclear,
         W_ftotal + W_dry + fu.W_payload <= W_total,
         W_ftotal >= W_fprimary + ReserveFraction * W_fprimary,
         W_fprimary >= W_fclimb + W_fcruise,
@@ -504,7 +514,15 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             * (fu.x_wing + wing.dx_AC_wing * PCFuel)),
 
         # ---- fuel burn -----------------------------------------------------------
-        W_burn == numeng * eng.TSFC * thr * eng.F,
+        # Boil-off is charged against the fuel budget in every segment. It
+        # has to be: nothing else in this model pays for insulation, so
+        # without this row the optimiser deletes it -- t_insul ran to zero
+        # and the tank got its weight and length for free.
+        #
+        # Charging it rather than imposing TASOPT's fixed 0.4 %/hour policy
+        # makes insulation thickness a real trade here: foam weight and the
+        # fuselage length it costs, against the hydrogen it boils away.
+        W_burn >= numeng * eng.TSFC * thr * eng.F + g * tank["m_boil"] * thr,
         W_start >= W_end + W_burn,
         PCFuel <= 1.0000001,
 

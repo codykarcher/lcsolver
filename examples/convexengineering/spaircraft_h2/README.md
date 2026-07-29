@@ -34,42 +34,97 @@ Both solved through identical code, same solver, same seed.
 
 | | Jet-A D8.2 | LH2 D8.2 | Δ |
 |---|---:|---:|---:|
-| MTOW [lb] | 134,781 | 124,125 | **−7.9%** |
-| dry [lb] | 74,601 | 77,824 | +4.3% |
-| fuel [lb] | 21,480 | 7,601 | **−64.6%** |
-| wing [lb] | 22,886 | 22,387 | −2.2% |
-| fuselage [lb] | 31,354 | 33,205 | +5.9% |
-| tank dry [lb] | — | 1,786 | new |
-| wing area [m²] | 152 | 169 | +11.4% |
-| aspect ratio | 12.0 | 10.7 | −10.3% |
-| fuselage length [m] | 32.7 | 39.1 | +19.7% |
-| shell length [m] | 18.2 | 24.6 | **+35.2%** |
-| **mission energy [GJ]** | **418.8** | **413.6** | **−1.2%** |
+| MTOW [lb] | 134,781 | 128,612 | −4.6% |
+| dry [lb] | 74,601 | 81,541 | +9.3% |
+| fuel [lb] | 21,480 | 8,371 | −61.0% |
+| wing [lb] | 22,886 | 21,857 | −4.5% |
+| fuselage [lb] | 31,354 | 34,230 | +9.2% |
+| tails [lb] | 701 | 1,236 | +76.4% |
+| tank dry [lb] | — | 3,663 | new |
+| **mission energy [GJ]** | **418.8** | **455.5** | **+8.8%** |
 
-The fuel mass drop (−64.6%) is almost exactly hydrogen's LHV advantage
-(1/2.79 = −64.2%), which is the arithmetic working. MTOW falls because the
-fuel saved outweighs the tank added; the fuselage grows 35% in shell length
-to house a 6.4 m tank; and the optimiser answers by growing wing area 11% and
-dropping aspect ratio 10%.
+**Fuselage geometry** — the radius is unchanged, so the tank pays entirely in
+length:
 
-## The number to distrust
+| | Jet-A | LH2 | Δ |
+|---|---:|---:|---:|
+| overall length [m] | 32.67 | 42.49 | +30.1% |
+| shell length [m] | 18.22 | 28.05 | +53.9% |
+| radius [m] | 1.68 | 1.68 | 0.0% |
+| nose / cone [m] | 8.84 / 5.60 | 8.84 / 5.60 | 0.0% |
 
-**Mission energy comes out flat (−1.2%).** Published LH2 conversions of
-conventional transports land nearer +8 to +15% energy, and there are two
-named reasons this model is optimistic:
+**Drag** — the longer fuselage is charged for, through
+`Dfuse == 0.5 rho V^2 * C_D_fuse * l_fuse * R_fuse * (M/M_fuseD)^2`:
 
-1. **The tank is ~20% light.** Verified directly against the TASOPT v3 port
-   (see `../../SP_hydrogen_aircraft/verify_against_tasopt.py`): the lumped
-   thermal/structural model reads about 20% under TASOPT's layered `k(T)`
-   insulation integral and support details. Gravimetric efficiency here is
-   0.81 against TASOPT's printed 0.738.
-2. **The planform re-optimised.** This is not a fixed-geometry swap — S and
-   AR both moved, so part of the energy parity is the optimiser recovering
-   losses elsewhere. A fixed-geometry comparison would show a larger penalty.
+| cruise | Jet-A | LH2 | Δ |
+|---|---:|---:|---:|
+| fuselage drag [lbf] | 258 | 296 | +14.5% |
+| total drag [lbf] | 1,157 | 1,221 | +5.5% |
+| **L/D** | **25.12** | **23.45** | **−6.6%** |
+| fuselage share of drag | 22.3% | 24.2% | |
 
-The *direction* (MTOW down, energy roughly flat-to-worse, fuselage much
-longer) is right and is what the hydrogen literature reports. The magnitude
-of the energy term is not yet trustworthy.
+Fuel mass falls 61% against hydrogen's 64.2% LHV advantage — the shortfall is
+the aircraft growing to carry the tank. Energy rises **8.8%**, inside the
++8 to +15% band published for LH2 conversions of conventional transports.
+
+## The tank, against TASOPT's documented case
+
+Two corrections moved this from a tank that was frankly too good to one that
+verifies.
+
+**1. Boil-off was not charged.** Nothing in the first version of this port
+paid for insulation, so the optimiser deleted it: `t_insul` ran to *zero*,
+and the tank collected its weight and its length for free. Every segment now
+carries `g * m_boil * thr` against the fuel budget.
+
+Charging it, rather than imposing TASOPT's fixed 0.4 %/hour policy, makes
+insulation thickness a genuine trade — foam weight and the fuselage length it
+costs, against the hydrogen it boils away. The trade lands at **18.4 cm and
+0.42 %/hour**, which is TASOPT's policy number recovered as an *outcome*
+rather than assumed.
+
+**2. `ftankadd` was zero.** TASOPT's own parameter for mounts, fill and vent
+lines, baffles and vapour management, as a fraction of structural weight.
+Calibrated at 0.35 by sweeping the *port's* sizer against their published
+tank (below).
+
+| | this model | TASOPT port, same inputs | Δ |
+|---|---:|---:|---:|
+| tank dry [lb] | 2,345 | 2,279 | +2.9% |
+| tank length [m] | 7.25 | 7.25 | 0.0% |
+
+| | LH2 D8.2 | TASOPT documented |
+|---|---:|---:|
+| fuel carried [lb] | 8,371 | 21,247 |
+| tank dry [lb] | 3,663 | 7,556 |
+| tank length [m] | 9.82 | 9.51 |
+| insulation [cm] | 18.4 | 12.7 |
+| **gravimetric** | **0.696** | **0.738** |
+
+Gravimetric now sits *below* theirs, which is the direction square-cube
+demands: this tank holds a third of the fuel, and a smaller tank has the
+worse surface-to-volume ratio. The earlier 0.81 was backwards — better than
+TASOPT's while a third the size.
+
+**Ruled out along the way:** their tank is not vacuum-jacketed. Running the
+port's `size_outer_tank` on their case lands at gravimetric 0.48, far from
+their published 0.738, so the documented tank is single-wall foam-insulated.
+
+**What the calibration cannot separate:** `ftankadd ≈ 0.4` and "`ftankadd ≈
+0.1` with roughly twice the insulation density" fit their two published
+numbers about equally well, since insulation density moves weight without
+moving length either. Two numbers cannot distinguish them. The term is a
+calibrated lump, not a claim about where their extra mass physically sits.
+
+## What this comparison is not
+
+TASOPT's documented LH2 case is a 737-class tube-and-wing at R_fuse = 2.54 m;
+this is a D8.2 with a double bubble, BLI and rear engines. The airframe-level
+numbers are **not** like-for-like and no attempt is made here to pretend
+otherwise — SPaircraft only converges in its `optimalD8` configuration, so
+there is no 737 variant to run. `../../SP_hydrogen_aircraft/model_lh2tf.py`
+is the TASOPT replication (−1.7% on MTOW); the comparison above is
+deliberately at *component* level, where inputs can be matched exactly.
 
 ## A presolve bug this exposed
 

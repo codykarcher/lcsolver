@@ -85,11 +85,34 @@ LH2_LATENT_HEAT = 4.46e5
 
 
 def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
-                  pvent: float = 1.3e5, qfac: float = 1.0):
+                  pvent: float = 1.3e5, qfac: float = 1.0,
+                  ftankadd: float = 0.0):
     """Add an LH2 fuselage tank. Returns ``(vars, constraints)``.
 
     The tank is a cylinder with ellipsoidal heads, sitting inside the
     fuselage and sized by the fuel it must hold.
+
+    ``ftankadd`` is TASOPT's own parameter: a fraction of the *structural*
+    weight -- skin, heads and rings, but not insulation -- added for mounts,
+    fill and vent lines, baffles and vapour management. It defaults to 0.0,
+    which is what this model carried before the parameter existed, so
+    existing callers are unaffected.
+
+    Calibrating it: at TASOPT's documented LH2 turbofan (21,247 lbf of fuel
+    in a 2.54 m fuselage), sweeping the *port's* own sizer reproduces their
+    published 7,556 lbf / 9.51 m / 0.738-gravimetric tank at ftankadd ~0.35
+    to 0.40 with 12.7 cm of foam, and the length pins it there: thicker
+    insulation reaches their weight only by overshooting their length. A
+    double-walled vacuum jacket was ruled out directly -- running the port's
+    ``size_outer_tank`` on the same case lands at gravimetric 0.48, so their
+    documented tank is single-wall foam-insulated.
+
+    One caveat on that calibration. ftankadd ~0.4 and "ftankadd ~0.1 with
+    roughly twice the insulation density" fit their two published numbers
+    about equally well, because insulation density moves weight without
+    moving length either. This model cannot separate them from two numbers,
+    and does not pretend to: the term is a calibrated lump, not a claim
+    about where their extra mass physically sits.
     """
     P = prefix
     V = lambda n, g, u, d: f.Variable(name=f"{P}{n}", guess=g, units=u,
@@ -152,6 +175,8 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
     # Support-ring fit against the port's stiffener_weight; see docstring.
     k_stiff = C("k_stiff", 599.4, "N", "ring weight fit at 15 kN load")
     R_ref = C("R_ref", 1.0, "m", "reference radius for the fit")
+    f_add = C("f_tankadd", ftankadd, "-",
+              "fittings, supports and piping, as a fraction of structure")
 
     cons = [
         # -- pressure vessel, from cryo.tank.size_inner_tank ----------------
@@ -193,7 +218,9 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
         # Rings carry the vessel and its fuel; nearly all their weight is
         # their own perimeter, so the load term is frozen (see docstring).
         W_stiff >= k_stiff * (R / R_ref) ** 1.0823,
-        W_tank >= W_skin + W_head + W_insul + W_stiff,
+        # ftankadd multiplies structure only -- insulation is already a
+        # direct area x thickness x density and carries no fittings.
+        W_tank >= (1.0 + f_add) * (W_skin + W_head + W_stiff) + W_insul,
 
         # -- thermal, from cryo.thermal ---------------------------------------
         # One lumped conduction resistance. Monomial: heat leak falls as
