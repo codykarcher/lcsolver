@@ -68,14 +68,21 @@ Far stronger than a hand-built case — every value is a real converged 737.
 See `fortran_ref/mission_instrumented.f` and `tests/test_mission.py`.
 **Restore the source file afterwards** (`cp` a saved copy back and rebuild).
 
-Tolerances achieved are 1e-13..1e-16 for closed-form modules. Two exceptions,
-both understood and documented: `tfoper` at 9e-10 (numerical vs analytic
-Jacobian) and `mission` at 5.7e-6 (an ill-conditioned fixed point at
-`ipclimb1` amplifying a 1e-9 engine difference).
+Tolerances achieved are 1e-13..1e-16 for closed-form modules. The exceptions,
+all understood and documented: `tfoper` at 9e-10 (numerical vs analytic
+Jacobian), `mission` at 5.7e-6 (an ill-conditioned fixed point at `ipclimb1`
+amplifying a 1e-9 engine difference), and the BL chain at 1e-14 (`blax`'s
+capped Newton amplifies its inputs by ~3000; see `STATUS.md`).
+
+**Dump the driver's inputs alongside its outputs** when the module sits
+downstream of another one. `drv_blax.f` does this, and feeding those exact
+inputs back in is what separated "`blax` is exact" (3e-14) from "`axisol`
+composed with `blax` drifts" (1.2e-12). Without it the two are indistinguishable
+and you cannot tell which module to look at.
 
 ---
 
-## Done — 25 modules, 202 tests
+## Done — 29 modules, 227 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -103,36 +110,28 @@ Jacobian) and `mission` at 5.7e-6 (an ill-conditioned fixed point at
 | `sizing.balance` | `balance.f` (+`htsize`,`cglpay`) | 3.4e-16 |
 | `sizing.takeoff` | `takeoff.f` | 2.8e-16 |
 | `sizing.mission` | `mission.f` | **5.7e-6** |
+| `aero.blsys` | `blvar`, `blsys` in `blsys.f` | 1e-14 |
+| `aero.blax` | `blax.f` | 3e-14 |
+| `aero.fusebl` | `fusebl.f` | 2.8e-14 (real 737 call: 1.4e-15) |
+| `linalg` | `gaussn.f` | literal port |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
 
 ## Left to do
 
-In dependency order.
+**`wsize.f` (1727 lines) — the outer sizing loop.** This is the only thing
+left on the sizing path. Everything it calls is ported and verified.
 
-**1. `blsys.f` — the 3×3 station system (~250 lines of the file).**
-`blvar` (values already covered by `aero.blclosure`) plus `blsys` itself,
-which assembles the momentum/shape/lag equations for one station against the
-previous one. The file is derivative-dominated like `tfoper` — port the
-*residuals* and differentiate numerically.
+Verify it the `mission.f` way: instrument it to dump state and compare against
+the real 737 run. It also contains `Wupdate`/`Wupdate0`/`Wupdate1` (the
+weight-fraction update) and `cfturb` (already ported, in `aero.cdsum`).
 
-**2. `blax.f` (632 lines) — the global BL Newton.**
-An initial direct march downstream, then a Newton over 3n unknowns
-(`th`, `ds`/`md`, `ue`) with viscous-inviscid coupling. Local coupling only
-(station `i` touches `i-1`), so a banded numerical Jacobian is cheap.
-
-**3. `fusebl.f` (151 lines) — ties `axisol` + `blax` together.**
-Straightforward once the two above exist. Produces `DAfsurf`, `DAfwake`,
-`KAfTE`, `PAfinf` into `para`. `cdsum` already reads `PAfinf`, and `tfcalc`
-already reads `DAfsurf`/`KAfTE` for the BLI defects — so nothing downstream
-needs changing.
-
-**4. `wsize.f` (1727 lines) — the outer sizing loop.**
-The last piece. Verify it the `mission.f` way: instrument it to dump state and
-compare against the real 737 run. It also contains `Wupdate`/`Wupdate0`/
-`Wupdate1` (weight-fraction update) and `cfturb` (already ported in
-`aero.cdsum`).
+One thing that will save time: `fusebl` is called **once** per sizing, not
+once per iteration — the fuselage geometry does not change over the loop, so
+the BL solve is hoisted out. Confirmed by instrumenting it (two calls in a
+full 737 run, identical inputs). So `wsize` can treat `PAfinf`, `DAfsurf`,
+`DAfwake` and `KAfTE` as fixed after the first pass.
 
 **Not needed:** `noise.f` (not on the sizing path), `engwrt` (output
 formatting only, lives in `output.f`).
@@ -157,6 +156,14 @@ formatting only, lives in `output.f`).
   instead** (as `tfoper` does) and say so in the docstring. It costs
   convergence *rate*, not the root, and it is what makes 1265-line routines
   tractable.
+  **But check first whether the iteration is allowed to run out.** `blax` is
+  the counter-example: it caps its Newton at twenty passes, limits the step,
+  and stops on *step size* rather than residual, so where it stops depends on
+  the iterate path — and the iterate path depends on the Jacobian. There the
+  derivatives were transcribed (`aero/blsys.py`) and `gaussn.f` ported
+  literally (`linalg.py`), which is what takes that chain from "close" to
+  1e-14. `tfoper` gets away with numerical differentiation because it
+  converges properly on the shipped engine.
 * Docstrings explain *why*, and record what was learned about the source.
   Commit messages likewise — they are the record of what was found.
 * **No `Co-Authored-By: Claude` trailers.**
@@ -260,8 +267,20 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
   the range interval *behind* the current point; and `FFC` is computed from
   TSFC then unconditionally overwritten from fuel mass flow (the comment says
   "if F < 0" but there is no `if`). Missing either costs ~0.5% on fuel.
+* **`blvar` writes `cd_ue` where it means `cf_ue`** in its wake branch, so the
+  last pre-wake `cf_ue` is reused through the whole wake. Jacobian only — no
+  answer changes. `DISCREPANCIES.md` §25.
+* **`blax` forms the mass defect with and without `rn`** in two places, and
+  its step limiter with a third. All cancel at the fixed point. §26.
+* **`blax` reads `cdi(1)` without ever writing it**, relying on a zeroed
+  `COMMON` block, and zeroes `phi(n+1)` where it means `phi(1)`. §27.
+* **Only *one* fuselage BL solve happens per sizing.** `fusebl` is called
+  outside the iteration loop, so `PAfinf`/`DAfsurf`/`DAfwake`/`KAfTE` are
+  fixed after the first pass. Confirmed by instrumenting the real 737.
 * **Dead code, not ported:** `tfani.f`; the second routine in `trefftz.f`
-  (its only call site is commented out); `bodycd`.
+  (its only call site is commented out); `bodycd`; `blax1.f`, `axisol1.f`
+  (not in the Makefile). Dead but ported anyway, being XFOIL's: `dilw`,
+  `dit`, `hct` — `blvar` computes both inline instead. §28.
 * `tfweight`'s `iengwgt` 3 and 4 are Gaussian-process surrogates whose
   training data lives in `crddc.inc`; not ported, and calling them raises. No
   shipped case uses them (`737.tas` selects 1).
@@ -272,7 +291,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 202 tests, no compiler needed
+python -m pytest tests/ -q            # 227 tests, no compiler needed
 
 # build the reference program
 cd /Users/codykarcher/Desktop/Tasopt2.16/src && make tasopt
@@ -280,3 +299,8 @@ cd ../runs/737 && ../../src/tasopt 737
 ```
 
 Read `STATUS.md` first, then `DISCREPANCIES.md` §22.
+
+If you touch a file under `Tasopt2.16/src/` to instrument it, **copy it aside
+first and copy it back afterwards**, then rebuild and confirm the 737 still
+sizes to 174979.1499 lbf in 18 iterations. The instrumented copies live in
+`fortran_ref/` (`mission_instrumented.f`, `fusebl_instrumented.f`).

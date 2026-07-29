@@ -112,3 +112,52 @@ def test_laminar_friction_goes_negative_when_separated():
 
 def test_hct_vanishes_in_incompressible_flow():
     assert B.hct(2.0, 0.0) == 0.0
+
+
+# --- the derivative forms -------------------------------------------------
+
+def _d_pairs(hk, rt, msq):
+    return ((B.hkin(hk, msq), B.hkin_d(hk, msq)),
+            (B.hsl(hk, rt, msq), B.hsl_d(hk, rt, msq)),
+            (B.hst(hk, rt, msq), B.hst_d(hk, rt, msq)),
+            (B.cfl(hk, rt, msq), B.cfl_d(hk, rt, msq)),
+            (B.cft(hk, rt, msq), B.cft_d(hk, rt, msq)),
+            (B.dil(hk, rt), B.dil_d(hk, rt)))
+
+
+def test_derivative_forms_return_the_same_value():
+    """The two forms are written out separately, so pin them together."""
+    for i in range(1, 9):
+        for j in range(5):
+            hk, rt, msq = _grid(i, j)
+            for value, withd in _d_pairs(hk, rt, msq):
+                assert withd[0] == value
+
+
+def test_derivatives_agree_with_finite_differences():
+    """A blunt check that the transcribed analytic derivatives are the
+    derivatives of the values above them, away from the branch points."""
+    def fd(f, args, k, h):
+        up, dn = list(args), list(args)
+        up[k], dn[k] = args[k] + h, args[k] - h
+        return (f(*up) - f(*dn)) / (2.0 * h)
+
+    for hk, rt, msq in ((1.8, 1.0e4, 0.30), (2.6, 5.0e5, 0.64),
+                        (3.9, 8.0e2, 0.10), (5.0, 2.0e5, 0.50)):
+        checks = (
+            (lambda h, m: B.hkin(h, m), B.hkin_d(hk, msq)[1:], (hk, msq)),
+            (lambda k, r, m: B.hsl(k, r, m), B.hsl_d(hk, rt, msq)[1:2],
+             (hk, rt, msq)),
+            (lambda k, r, m: B.hst(k, r, m), B.hst_d(hk, rt, msq)[1:],
+             (hk, rt, msq)),
+            (lambda k, r, m: B.cfl(k, r, m), B.cfl_d(hk, rt, msq)[1:3],
+             (hk, rt, msq)),
+            (lambda k, r, m: B.cft(k, r, m), B.cft_d(hk, rt, msq)[1:],
+             (hk, rt, msq)),
+            (lambda k, r: B.dil(k, r), B.dil_d(hk, rt)[1:], (hk, rt)),
+        )
+        for f, ders, args in checks:
+            for k, want in enumerate(ders):
+                step = 1e-6 * max(abs(args[k]), 1.0)
+                assert fd(f, args, k, step) == pytest.approx(
+                    want, rel=2e-5, abs=1e-12), f"{f} arg {k} at hk={hk}"

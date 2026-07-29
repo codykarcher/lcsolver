@@ -46,17 +46,15 @@ python -m pytest tests/ -q
 
 ## Status
 
-| module | Fortran source | status | agreement |
-|---|---|---|---|
-| `atmosphere` | `atmos.f` | **verified** | 205 values, max rel 4.4e-16 |
-| `gas.properties` | `gasfun.f` | **verified** | 2046 values, max rel 3.6e-14 |
-| `gas.mixture` | `gascalc.f` | **verified** | 212 values, max rel 4.4e-16 |
-| `engine` | `tfsize.f`, `tfoper.f`, `tfcalc.f` | not started | |
-| `structures.fuselage` | `fusew.f` | **verified** | 66 values x 3 configs, max rel 3.5e-16 |
-| `structures.surface` | `surfw.f` | **verified** | 111 values x 3 planforms, max rel 3.8e-16 |
-| `aero.moment` | `surfcm.f`, `tailpo.f` | **verified** | 15 values x 3 cases, max rel 5.2e-16 |
-| `aero.drag` | `surfcd.f`, `cdsum.f`, `trefftz.f`, `blax.f` | not started | |
-| `mission` | `mission.f`, `wsize.f`, `balance.f` | not started | |
+**`STATUS.md` carries the module table** — what is ported, against which
+Fortran source, and to what agreement. It is the one place that list is kept,
+so it does not go stale in two files at once.
+
+In short: 29 modules, 227 tests. Everything on the sizing path is ported and
+verified except `wsize.f` itself — the gas model, structures, the drag
+buildup, the airfoil tables, the fuselage boundary layer, the engine, trim,
+takeoff and the mission march. `DISCREPANCIES.md` records what was found in
+the source along the way.
 
 The gas tables (11 gases, ~600 numbers each) are **generated**, not
 transcribed — `fortran_ref/extract_gas_tables.py` parses them out of the

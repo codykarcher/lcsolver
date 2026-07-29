@@ -28,9 +28,16 @@ precision; the reference drivers use the same flag.
 | `engine.weight` | `tfweight.f` | 72 values, 2.6e-16 |
 | `sizing.balance` | `balance.f` | 56 values, 3.4e-16 |
 | `sizing.takeoff` | `takeoff.f` | 36 values, 2.8e-16 |
+| `sizing.mission` | `mission.f` | real 737 state, 5.7e-6 |
+| `aero.axisol` | `axisol.f` | 873 values, 4.4e-16 |
+| `aero.blclosure` | closure routines in `blsys.f` | 360 values, 4.9e-16 |
+| `aero.blsys` | `blvar`, `blsys` in `blsys.f` | 2200 values, 1e-14 |
+| `aero.blax` | `blax.f` | 2350 values, 3e-14 |
+| `aero.fusebl` | `fusebl.f` | 28 values, 2.8e-14 |
+| `linalg` | `gaussn.f` | literal port |
 | `model` | `index.inc` | 611 constants, generated |
 
-161 tests. Reference CSVs are committed, so the suite runs without a Fortran
+227 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -45,17 +52,37 @@ against.
 
 | source | lines | what it is |
 |---|---|---|
-| `wsize.f` | 1727 | the outer sizing loop |
-| `mission.f` | 985 | the mission march |
-| `tfcalc.f` | 766 | engine wrapper over `tfsize`/`tfoper` |
-| `blax.f` | 632 | axisymmetric boundary layer |
-| `axisol.f` | 365 | axisymmetric potential flow |
-| `fusebl.f` | 151 | fuselage BL driver — supplies `PAfinf` to `cdsum` |
+| `wsize.f` | 1727 | the outer sizing loop — the last piece |
 | `noise.f` | 460 | noise estimate (not on the sizing path) |
 | `engwrt` | — | output formatting only |
 
-Everything the drag buildup, trim and takeoff need is done. What remains is
-the loop that drives them.
+Everything `wsize` calls is now ported and verified: the drag buildup, the
+fuselage boundary layer, trim, takeoff, the mission march and the engine.
+What remains is the loop that drives them, plus `Wupdate`/`Wupdate0`/
+`Wupdate1`, which live inside `wsize.f`.
+
+## Accuracy of the boundary-layer chain
+
+Worth stating together, because the numbers are not all the same and the
+reason matters. `axisol` (potential flow) agrees to 4.4e-16 and `blax`
+(the BL Newton) to 3e-14 when each is driven with the Fortran's own inputs.
+Composed, the answer moves by up to 1.2e-12: `blax` runs a *limited* Newton —
+twenty passes, step-limited, stopping on step size rather than residual — so
+it amplifies an input perturbation by about three thousand. The amplification
+lands on derived quantities (`ct`, `cf`); the state variables `ue` and `th`
+still agree to 3e-15, and `fusebl`'s four outputs to 2.8e-14.
+
+This is also why `blsys` and `blax` carry the Fortran's *analytic* Jacobian
+rather than differentiating numerically the way `tfoper` does, and why
+`gaussn.f` is ported literally rather than replaced by a library solve. An
+iteration that is allowed to run out is not a fixed point, so the answer
+depends on the iterate path, and the iterate path depends on the Jacobian and
+the elimination.
+
+The strongest check available: instrumenting `fusebl.f` and re-running the
+shipped 737 shows the program performs exactly **one** fuselage BL solve per
+sizing (the geometry does not change over the loop). This port reproduces that
+solve to **1.4e-15**. `tests/test_fusebl.py` pins the four numbers.
 
 ## Things found in the source
 
@@ -106,8 +133,27 @@ uppercase `SUBROUTINE COMPARE` and is not a dependency of any numerical
 module. The call sits behind `if (iter .eq. -1)` so it never runs, but the
 reference is emitted anyway. See `DISCREPANCIES.md` §23.
 
+**`blvar` writes `cd_ue` where it means `cf_ue`.** In the wake branch of
+`blsys.f`'s `blvar`, so `cf_ue` keeps the value from the last station before
+the wake and is reused through it. Confirmed by presetting the variable and
+running the compiled routine. It reaches only the Jacobian — `cf` itself is
+zero there — so no answer changes; see `DISCREPANCIES.md` §25.
+
+**`blax` builds the mass defect two different ways**, with and without the
+lateral-divergence factor `rn`, and its step limiter inverts `md -> ds` with a
+third. All cancel at the fixed point. §26.
+
+**`blax` reads `cdi(1)` without ever writing it**, and relies on the caller's
+array being a zeroed `COMMON` block. Its `phi` initialisation writes
+`phi(n+1)` rather than `phi(1)`, an off-by-one on a leftover loop variable.
+Both harmless in the shipped program, neither harmless in general. §27.
+
 **Dead code, not ported:** `tfani.f` entirely; `trefftz` (the second routine
-in `trefftz.f`, whose only call site is commented out); `bodycd`.
+in `trefftz.f`, whose only call site is commented out); `bodycd`; `blax1.f`
+and `axisol1.f` (neither is in the Makefile). **Dead but ported anyway,**
+because they are XFOIL's and a reader will look for them: `dilw`, `dit` and
+`hct` in `blsys.f` are called from nowhere — `blvar` computes the density
+shape parameter and the turbulent dissipation inline instead. §28.
 
 **`constants.inc` is a COMMON block filled at runtime by `tasopt.f`.** A
 standalone driver that does not fill it gets `pi = 0`, which silently deletes

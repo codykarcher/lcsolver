@@ -102,3 +102,106 @@ When `tfoper` does fail, `tfcalc.f` responds with a bare `stop` for
 driver that hits the §22 regime gets no output at all, and
 `fortran_ref/drv_tfcalc.f` can only produce reference values for the sizing
 path. This port raises `TFCalcError` instead, which a caller can catch.
+
+## §25 — `blvar` writes `cd_ue` where it means `cf_ue`
+
+In `blsys.f`, `blvar`'s wake branch is
+
+```fortran
+      if(wake) then
+       cf    = 0.
+       cf_th = 0.
+       cf_ds = 0.
+       cd_ue = 0.          ! <- cf_ue
+```
+
+Under `implicit real (a-h,m,o-z)` this silently declares a new local and
+leaves the output argument `cf_ue` alone. Because it is a dummy argument
+aliased to the caller's variable, the value **carried over from the last
+station before the wake** is reused for every wake station, and reused again
+by `di_ue` a few lines down, which is built from `cf_ue`.
+
+Verified rather than inferred: presetting `cf_ue` to `0.1234567890123456`
+before the call and running the compiled routine returns it unchanged
+(`fortran_ref/drv_blsys.f`, case 3).
+
+**It does not change any answer.** `cf` itself is zero in the wake, so the
+residuals are untouched; only `aa(1,3)`, `aa(2,3)` and their `bb` counterparts
+— the Jacobian — carry the stale number. A wrong Jacobian costs Newton
+iterations, not the root, and `blax` converges anyway. The port reproduces it
+by threading the previous `cf_ue` into `blvar`, so the iterate path matches
+too.
+
+## §26 — `blax` forms the mass defect two inconsistent ways
+
+`blax.f` closes the initial direct march with
+
+```fortran
+        mdi(i) = ue*ds*(b + 2.0*pi*ds)          ! line 255, no rn
+```
+
+and the global Newton update with
+
+```fortran
+          mdi(i) = uei(i)*dsi(i)*(bi(i) + 2.0*pi*dsi(i)*rni(i))   ! line 596
+```
+
+Only the second is the inverse of the quadratic the Newton sweep solves at its
+top (`0.5 rn ds^2 + (b/4pi) ds - md/(4 pi ue) = 0`). The march's mass defects
+are therefore inconsistent with its own displacement thicknesses wherever
+`rn ≠ 1` — that is, everywhere but the cylindrical barrel.
+
+Separately, the Newton's step limiter inverts `md -> ds` **without** the `rn`
+division the sweep uses (line 569 against line 394), so `ddsi` is not the
+change in `dsi` implied by `dmdi`.
+
+Both are path effects rather than errors in the answer: the march only
+supplies a starting guess, and `dsi` feeds nothing but `mdi`, which the next
+sweep re-inverts consistently. At the fixed point they cancel. Ported as
+written, with the consequence that the port's iterate sequence matches.
+
+## §27 — `blax` reads `cdi(1)` and `phi(1)` before anything writes them
+
+`blax.f` never assigns `cdi(1)`, yet the running-dissipation integral reads it:
+
+```fortran
+        dibm = cdi(i-1)*rhi(i-1)*uei(i-1)**3 * (...)
+```
+
+at `i = 2`. In the shipped program the array is `cdbl` from the `fbl.inc`
+`COMMON` block, so it is statically zero and nothing ever writes it — the
+integral is seeded with zero, which is what it should be. But a caller passing
+a stack array gets whatever is there.
+
+The initialisation block above has a related slip:
+
+```fortran
+      if(xi(1) .eq. 0.0) then
+       thi(1) = 0.
+       dsi(1) = 0.
+       mdi(1) = 0.
+       phi(i) = 0.          ! <- phi(1)
+```
+
+`i` is the loop variable left over from the `do i = 1, n` loop just above, so
+after normal termination this zeroes `phi(n+1)`, not `phi(1)`. Harmless twice
+over: `phi(1)` is set to zero before the integral that is actually returned,
+and `n < ndim` in every shipped case so the write lands inside the array. It
+would run off the end if `n == ndim`.
+
+This port initialises the output arrays to zero explicitly and says why,
+rather than inheriting it from storage class.
+
+## §28 — three closure routines in `blsys.f` are dead
+
+`dilw` (laminar wake dissipation), `dit` (turbulent dissipation) and `hct`
+(density shape parameter) are called from nowhere in the shipped program.
+`blvar`'s `hct` call is commented out and replaced by an inline
+`Hc = (gam-1)/2 M_e^2 H`, which is not the same function; the turbulent
+dissipation is likewise assembled inline from an equilibrium shear-stress
+estimate rather than through `dit`; and `dil` covers the laminar wake as well
+as the attached case. The only other call site of `hct` is `blax1.f`, which
+the Makefile does not compile.
+
+They are XFOIL's, and correct — this port keeps and tests them — but nothing
+in a TASOPT result depends on them.
