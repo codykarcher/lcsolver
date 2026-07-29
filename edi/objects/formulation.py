@@ -92,6 +92,98 @@ def decodeUnits(u_val):
         return u_val
 
 
+
+class _Unset:
+    """Sentinel for an omitted guess, distinct from a guess of None."""
+    def __repr__(self):
+        return '<unset>'
+
+
+UNSET = _Unset()
+
+
+class Group:
+    """A named region of a formulation.
+
+    Every multi-part model in this repository was namespacing by hand::
+
+        def add_wing(f, ..., prefix="Wing_"):
+            V = lambda n, g, u, d: f.Variable(name=f"{prefix}{n}", guess=g,
+                                              units=u, description=d)
+
+    Nine of twenty-six model files open with a shim of that shape, which is the
+    API reporting a defect: when every author independently invents the same
+    abbreviation, the canonical form is wrong for the thing they do fifty times
+    a file. The prefix is half of what those shims are for; the other half is
+    the length of ``f.Variable(name=..., guess=..., units=..., description=...)``.
+
+    A group supplies both::
+
+        wing = f.group('wing')
+        AR = wing.Variable('AR', 11.0, '-', 'aspect ratio')     # -> wing_AR
+        box = wing.group('box')
+        t   = box.Variable('t_cap', 0.01, 'm', 'cap thickness') # -> wing_box_t_cap
+
+    and ``f.wing`` reaches it afterwards, so a builder no longer has to thread a
+    prefix string through its signature and back out again.
+
+    Names stay **flat** -- ``wing_box_t_cap``, joined by underscores -- rather
+    than becoming Pyomo sub-blocks. That keeps the detector, the unit walker,
+    write-back and every saved reference solution working exactly as they do
+    now; the hierarchy is in how you write the model, not in a second component
+    tree to keep consistent with the first.
+    """
+
+    __slots__ = ('_formulation', '_prefix', '_name', '_groups')
+
+    def __init__(self, formulation, name, prefix):
+        object.__setattr__(self, '_formulation', formulation)
+        object.__setattr__(self, '_name', name)
+        object.__setattr__(self, '_prefix', prefix)
+        object.__setattr__(self, '_groups', {})
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def prefix(self):
+        return self._prefix
+
+    def group(self, name):
+        """A nested group, named ``<this>_<name>``."""
+        if name not in self._groups:
+            self._groups[name] = Group(self._formulation, name,
+                                       f'{self._prefix}{name}_')
+        return self._groups[name]
+
+    def Variable(self, name, guess=UNSET, units=None, description='', **kw):
+        return self._formulation.Variable(f'{self._prefix}{name}', guess,
+                                          units, description, **kw)
+
+    def Constant(self, name, value, units=None, description='', **kw):
+        return self._formulation.Constant(f'{self._prefix}{name}', value,
+                                          units, description, **kw)
+
+    def Constraint(self, expr):
+        return self._formulation.Constraint(expr)
+
+    def ConstraintList(self, conList):
+        return self._formulation.ConstraintList(conList)
+
+    def __getattr__(self, item):
+        if item.startswith('_'):
+            raise AttributeError(item)
+        groups = object.__getattribute__(self, '_groups')
+        if item in groups:
+            return groups[item]
+        # Otherwise fall through to the component this group named.
+        return getattr(self._formulation, f'{self._prefix}{item}')
+
+    def __repr__(self):
+        return f"<Group {self._name!r} -> {self._prefix!r}>"
+
+
 class Formulation(ConcreteModel):
     def __init__(self):
         super(Formulation, self).__init__()
@@ -99,6 +191,11 @@ class Formulation(ConcreteModel):
         # self._constant_counter = 1
         self._objective_counter = 0
         self._constraint_counter = 0
+
+        self._groups = {}
+        #: Set False to let `Variable` omit its guess. See `require_guesses`.
+        self._require_guesses = True
+        self._defaulted_guesses = []
 
         self._variable_keys = []
         self._constant_keys = []
@@ -109,9 +206,83 @@ class Formulation(ConcreteModel):
         self._constraint_keys = []
         self._allConstraint_keys = []
 
+    # -- grouping -----------------------------------------------------------
+    def group(self, name):
+        """A named region of the model; see :class:`Group`.
+
+        ``f.group('wing')`` returns it and ``f.wing`` reaches it afterwards, so
+        a builder can stop threading a prefix string through its signature.
+        """
+        if name not in self._groups:
+            self._groups[name] = Group(self, name, f'{name}_')
+        return self._groups[name]
+
+    @property
+    def require_guesses(self):
+        """Whether :meth:`Variable` insists on an initial guess. Default True.
+
+        The guess is required on purpose: it makes the author state what they
+        expect a quantity to be, it mirrors ``Constant``, and it tells the
+        backend the intended scale -- which is real information when the
+        problem is signomial or carries a black box, where the starting point
+        decides which optimum you reach.
+
+        Turning it off is for someone who knows their model is a geometric
+        program, where the solve is global in log space and the guess cannot
+        change the answer::
+
+            f.require_guesses = False
+            AR = f.Variable('AR', units='-', description='aspect ratio')
+
+        Variables that took a default are recorded and reported by
+        ``edi.presolve.diagnose``, so the omission stays visible rather than
+        becoming invisible.
+        """
+        return self._require_guesses
+
+    @require_guesses.setter
+    def require_guesses(self, value):
+        self._require_guesses = bool(value)
+
+    @property
+    def defaulted_guesses(self):
+        """Names of variables whose guess was supplied by default."""
+        return list(self._defaulted_guesses)
+
+    def __getattr__(self, item):
+        # Pyomo resolves components here; a group is not a component, so it is
+        # looked up only once the normal path has failed.
+        try:
+            return super().__getattr__(item)
+        except AttributeError:
+            groups = self.__dict__.get('_groups') or {}
+            if item in groups:
+                return groups[item]
+            raise
+
     def Variable(
-        self, name, guess, units, description='', size=None, bounds=None, domain=None
+        self, name, guess=UNSET, units=None, description='', size=None,
+        bounds=None, domain=None
     ):
+        if guess is UNSET:
+            if self._require_guesses:
+                raise ValueError(
+                    f"Variable {name!r} needs a guess. It is required so that "
+                    "the author states what they expect the quantity to be, "
+                    "and because for a signomial or black-box model the "
+                    "starting point decides which optimum you reach. If this "
+                    "model is a geometric program, where the solve is global "
+                    "in log space and the guess cannot change the answer, set "
+                    "`f.require_guesses = False` first.")
+            # A geometric program is scale-free in log space, so 1 is as good a
+            # starting point as any; what matters is that it is positive.
+            guess = 1.0
+            self._defaulted_guesses.append(name)
+        if units is None:
+            raise ValueError(
+                f"Variable {name!r} needs units. Use '-' for a dimensionless "
+                "quantity; EDI requires them so that unit errors are caught "
+                "rather than propagated.")
         if domain is None:
             domain = Reals
         else:

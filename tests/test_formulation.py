@@ -950,3 +950,73 @@ class TestEDIFormulation(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+class TestGroupsAndGuesses(unittest.TestCase):
+    """The two ergonomics changes: named regions, and an opt-out on guesses."""
+
+    def test_group_namespaces_without_a_prefix_argument(self):
+        f = Formulation()
+        wing = f.group('wing')
+        ar = wing.Variable('AR', 11.0, '-', 'aspect ratio')
+        box = wing.group('box')
+        t = box.Variable('t_cap', 0.01, 'm', 'cap thickness')
+
+        self.assertEqual(ar.name, 'wing_AR')
+        self.assertEqual(t.name, 'wing_box_t_cap')
+
+    def test_the_group_is_reachable_from_the_formulation(self):
+        """`f.wing.AR` -- so a builder need not thread a prefix and return dicts."""
+        f = Formulation()
+        wing = f.group('wing')
+        wing.Variable('AR', 11.0, '-', 'aspect ratio')
+        wing.group('box').Variable('t_cap', 0.01, 'm', 'cap')
+
+        self.assertIs(f.wing, wing)
+        self.assertEqual(f.wing.AR.name, 'wing_AR')
+        self.assertEqual(f.wing.box.t_cap.name, 'wing_box_t_cap')
+
+    def test_group_is_idempotent(self):
+        f = Formulation()
+        self.assertIs(f.group('wing'), f.group('wing'))
+
+    def test_an_unknown_attribute_still_raises(self):
+        f = Formulation()
+        f.group('wing')
+        with self.assertRaises(AttributeError):
+            f.definitely_not_there
+
+    def test_a_group_can_carry_constraints(self):
+        f = Formulation()
+        w = f.group('w')
+        x = w.Variable('x', 2.0, '-', 'x')
+        y = w.Variable('y', 2.0, '-', 'y')
+        f.Objective(x + y)
+        w.Constraint(x * y >= 4.0)
+        self.assertEqual(len(f.get_constraints()), 1)
+
+    def test_guess_is_required_by_default(self):
+        f = Formulation()
+        with self.assertRaises(ValueError) as ctx:
+            f.Variable('x', units='-', description='no guess')
+        self.assertIn('require_guesses', str(ctx.exception))
+
+    def test_guess_can_be_waived_and_the_waiver_is_recorded(self):
+        """Off is for a GP, where the solve is global and the guess cannot
+        change the answer. The omission stays visible in `defaulted_guesses`."""
+        f = Formulation()
+        f.require_guesses = False
+        x = f.Variable('x', units='-', description='defaulted')
+        y = f.Variable('y', 3.0, '-', 'given')
+
+        self.assertEqual(f.defaulted_guesses, ['x'])
+        self.assertAlmostEqual(pyo.value(x), 1.0)
+        self.assertAlmostEqual(pyo.value(y), 3.0)
+
+    def test_units_are_still_required(self):
+        f = Formulation()
+        f.require_guesses = False
+        with self.assertRaises(ValueError) as ctx:
+            f.Variable('x', description='no units')
+        self.assertIn('units', str(ctx.exception))

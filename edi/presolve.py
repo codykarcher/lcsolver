@@ -159,6 +159,7 @@ class PresolveReport:
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
     at_floor: list = field(default_factory=list)
+    defaulted_guesses: list = field(default_factory=list)
     cancelling: list = field(default_factory=list)
     bounds: dict = field(default_factory=dict)
     unbounded_above: list = field(default_factory=list)
@@ -219,6 +220,16 @@ class PresolveReport:
             L.append(f"  ... and {len(self.unbounded_below) - 12} more not "
                      "lower bounded")
 
+        if self.defaulted_guesses:
+            L.append(f"  {len(self.defaulted_guesses)} variables took a "
+                     "default guess (require_guesses is off). Harmless for a "
+                     "geometric program, which is solved globally in log "
+                     "space; for a signomial or black-box model the starting "
+                     "point decides which optimum you reach:")
+            for nm in self.defaulted_guesses[:12]:
+                L.append(f"    {nm}")
+            if len(self.defaulted_guesses) > 12:
+                L.append(f"    ... and {len(self.defaulted_guesses) - 12} more")
         if self.clean:
             L.append("  no empty columns and every variable is bounded "
                      "both ways")
@@ -1539,6 +1550,10 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
             pass
 
     rep = presolve_report(st)
+    model = st.get("model")
+    guesses = getattr(model, 'defaulted_guesses', None)
+    if guesses:
+        rep.defaulted_guesses = list(guesses)
     if x is not None and problem is not None:
         try:
             rep.degenerate = degeneracy_report(problem, x, names=names)
