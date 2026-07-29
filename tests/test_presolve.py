@@ -23,6 +23,7 @@ pytest.importorskip("edi.solvers.ipopt.sia")
 
 from edi import Formulation
 from edi.presolve import (
+    InfeasibleProblem,
     cancellation_report,
     degeneracy_report,
     fold_singleton_rows,
@@ -738,3 +739,59 @@ def test_condensed_equality_reports_the_true_gradient():
     val = c * np.prod(x ** a)
     assert val == pytest.approx(ce(x), rel=1e-10)
     assert np.allclose(a, expected, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# bounds that meet, and bounds that cross
+# ---------------------------------------------------------------------------
+def _two_sided(lo, hi):
+    """min y  s.t.  x >= lo,  x <= hi,  x*y >= 1."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(y)
+    f.Constraint(x >= lo)
+    f.Constraint(x <= hi)
+    f.Constraint(x * y >= 1.0)
+    return f
+
+
+def test_bounds_that_meet_become_a_fixed_variable():
+    """`x >= 1` with `x <= 1` is an equality however it was written."""
+    st = fold_singleton_rows(_detect(_two_sided(1.0, 1.0),
+                                     bounds_as_rows=False))
+    names = [str(v) for v in st['variables']]
+    assert st['bounds'][names.index('x')] == (1.0, 1.0)
+
+    _small, removed = reduce_columns(st)
+    assert [(r.name, r.reason, r.value) for r in removed] == [('x', 'fixed', 1.0)]
+
+
+def test_an_ordinary_range_is_left_alone():
+    st = fold_singleton_rows(_detect(_two_sided(1.0, 3.0),
+                                     bounds_as_rows=False))
+    _small, removed = reduce_columns(st)
+    assert [r.name for r in removed if r.reason == 'fixed'] == []
+
+
+def test_crossed_bounds_are_reported_as_infeasible():
+    """`x >= 2` with `x <= 1` has no solution, and must say so.
+
+    Folding them naively gives "x is fixed at 2", and the solver then answers a
+    different question than the one that was asked -- the same class of silent
+    substitution as relaxing an equality.
+    """
+    with pytest.raises(InfeasibleProblem, match='no feasible point'):
+        fold_singleton_rows(_detect(_two_sided(2.0, 1.0),
+                                    bounds_as_rows=False))
+
+
+def test_crossed_declared_bounds_are_caught_too():
+    """Not just folded rows -- bounds that arrive already crossed."""
+    st = _detect(_two_sided(1.0, 3.0), bounds_as_rows=False)
+    names = [str(v) for v in st['variables']]
+    st = dict(st)
+    st['bounds'] = list(st['bounds'])
+    st['bounds'][names.index('x')] = (5.0, 2.0)      # crossed
+    with pytest.raises(InfeasibleProblem, match='no feasible point'):
+        reduce_columns(st)

@@ -59,7 +59,12 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
+class InfeasibleProblem(ValueError):
+    """Presolve proved the model infeasible before any solve was attempted."""
+
+
 __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
+           "InfeasibleProblem",
            "cancellation_report", "fold_singleton_rows",
            "reduce_columns", "restore_columns", "Removed",
            "VACUOUS_LO", "VACUOUS_HI"]
@@ -352,6 +357,7 @@ def fold_singleton_rows(structures):
             "run structure_detector with bounds_as_rows=False")
 
     rows, operators, key = _rows_of(structures)
+    names = [str(v) for v in structures.get("variables", [])]
     numer, denom = collections.defaultdict(list), collections.defaultdict(list)
     for r in rows:
         idx = int(r[0])
@@ -367,6 +373,15 @@ def fold_singleton_rows(structures):
             cur_lo = lo if cur_lo is None else max(cur_lo, lo)
         if hi is not None:
             cur_hi = hi if cur_hi is None else min(cur_hi, hi)
+        # Crossed bounds are a proof of infeasibility, and the cheapest one
+        # available. Saying so beats silently picking a side: `x >= 2` with
+        # `x <= 1` folded naively becomes "x is fixed at 2", and the solver
+        # then answers a different question than the one that was asked.
+        if (cur_lo is not None and cur_hi is not None
+                and cur_hi < cur_lo * (1.0 - 1e-9)):
+            raise InfeasibleProblem(
+                f"{nm_at(names, j)} is required to be both >= {cur_lo:g} and "
+                f"<= {cur_hi:g}; the model has no feasible point")
         bounds[j] = (cur_lo, cur_hi)
 
     folded = set()
@@ -642,10 +657,14 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
     for j in range(n):
         lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
 
-        if (lo is not None and hi is not None and lo > 0
-                and hi <= lo * (1.0 + 1e-9)):
-            removed.append(Removed(j, nm_at(names, j), float(lo), "fixed"))
-            continue
+        if lo is not None and hi is not None and lo > 0:
+            if hi < lo * (1.0 - 1e-9):
+                raise InfeasibleProblem(
+                    f"{nm_at(names, j)} is required to be both >= {lo:g} and "
+                    f"<= {hi:g}; the model has no feasible point")
+            if hi <= lo * (1.0 + 1e-9):
+                removed.append(Removed(j, nm_at(names, j), float(lo), "fixed"))
+                continue
 
         if j in out_vars:
             continue                    # handled below, in peel order
