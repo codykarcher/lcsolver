@@ -390,10 +390,10 @@ def test_presolve_works_when_bounds_are_still_rows():
     """The default detector output has bounds as rows; presolve must cope."""
     st = _detect(_disconnected_model(), bounds_as_rows=True)
     assert st['bounds'] is None
-    reduced, removed = presolve_structures(st)
+    reduced, log = presolve_structures(st)
 
     assert reduced['bounds'] is not None
-    assert [nm for _j, nm, _v, _why in removed] == ['y']
+    assert [r.name for r in log.removed_variables] == ['y']
 
 
 def test_reduction_needs_split_bounds():
