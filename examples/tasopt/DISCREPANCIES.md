@@ -847,3 +847,39 @@ It exists because a cryogenic tank has to be designed for a hot day on the
 ground — `fuse_tank.TSLtank` is a *vector* of sea-level design temperatures.
 The port takes the argument with a default of zero, which reproduces the
 Fortran exactly and is what keeps `737.out` byte-identical.
+
+## §61 — a vacuum insulation layer does not advance the radius or the temperature
+
+`TASOPT.jl/src/cryo_tank/tankWthermal.jl`, `residuals_Q`. The insulation loop
+walks outward layer by layer, keeping a running radius and the previous
+layer's interface temperature:
+
+```julia
+      for i in 1:N
+            if lowercase(material[i].name) == "vacuum"
+                  ...
+                  R_ins[i] = vacuum_resistance(T_prev, T_ins[i], S_inner, S_outer)
+            else
+                  ...
+                  r_inner = r_inner + t_cond[i]
+                  T_prev = T_ins[i]
+            end
+      end
+```
+
+Both updates sit **inside the `else`**. A vacuum layer therefore leaves the
+running radius and `T_prev` exactly as they were, so every layer outboard of a
+vacuum gap is computed
+
+* at the radius of the gap's *inner* face rather than its outer one, and
+* against the *wall* temperature rather than the gap's outer temperature.
+
+The second is the larger effect: on a representative stack it moves the
+temperature at which the conductivity fit is evaluated from 180 K to 135 K,
+and the outer layer's resistance by about a third.
+
+This matters for exactly the configuration the outer vessel exists to enable —
+a vacuum-jacketed tank with insulation outboard of the gap. It is reproduced
+as written (the vacuum reference case agrees to 2e-14, which could not happen
+otherwise) and pinned by `tests/test_thermal.py` so it is visible rather than
+buried in a branch.

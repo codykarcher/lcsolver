@@ -181,3 +181,148 @@ def test_atmos_gained_a_hot_day_offset_that_defaults_to_2_16():
     assert hot.p == std.p                    # pressure is untouched
     assert hot.rho < std.rho                 # ...so it thins
     assert hot.a > std.a
+
+
+# --- the coupled solve ----------------------------------------------------
+
+HEAT_REF = Path(__file__).parent / "data" / "heatleak_ref.csv"
+
+
+def _params(r):
+    from tasopt_py.cryo.geometry import CrossSection
+    from tasopt_py.cryo.thermal import ThermalParams
+
+    mats = (["vacuum", "polyurethane32"] if r["case"] == "vacuum"
+            else ["polyurethane27", "polyurethane32"])
+    return ThermalParams(
+        l_cyl=float(r["l_cyl"]), l_tank=float(r["l_inner"]),
+        r_tank=float(r["Rinner"]),
+        Shead=[float(r["Sh1"]), float(r["Sh2"]), float(r["Sh3"])],
+        t_cond=[float(r["t1"]), float(r["t2"])], material=mats,
+        Tfuel=float(r["Tfuel"]), z=float(r["z"]), TSL=float(r["TSL"]),
+        Mair=float(r["M"]), xftank=float(r["xftank"]),
+        ifuel=int(r["ifuel"]),
+        cross_section=CrossSection(float(r["R"]), float(r["dR"]),
+                                   float(r["wfb"]), int(r["nw"])))
+
+
+@pytest.mark.skipif(not HEAT_REF.exists(), reason="heat leak reference absent")
+def test_the_coupled_heat_leak_matches_tasopt_jl():
+    """Five configurations -- cruise, a hot day on the ground, a double
+    bubble, methane, and a vacuum-gap insulation stack -- all to 4e-12.
+
+    The reference solves this with NLsolve's trust region; this port uses a
+    damped Newton with a numerical Jacobian and a plain partial-pivot solve.
+    That substitution is safe here in a way it explicitly is not for ``blax``:
+    this system is solved *to convergence*, so where it lands does not depend
+    on the iterate path, and therefore not on the elimination.
+    """
+    from tasopt_py.cryo.thermal import tank_heat_leak
+
+    n = 0
+    for r in csv.DictReader(HEAT_REF.open()):
+        Q = tank_heat_leak(_params(r), float(r["qfac"]))
+        assert Q == pytest.approx(float(r["Q"]), rel=1e-10), r["case"]
+        n += 1
+    assert n == 5
+
+
+@pytest.mark.skipif(not HEAT_REF.exists(), reason="heat leak reference absent")
+def test_what_the_heat_leak_costs_in_fuel():
+    """The number the whole tank module exists to produce. 2.6 kW into an LH2
+    tank is about 21 kg/hr of boil-off at 446 kJ/kg -- so a six-hour mission
+    boils roughly 4% of a 3 t fuel load, which the aircraft has to carry and
+    does not get to burn as thrust."""
+    from tasopt_py.cryo.thermal import tank_heat_leak
+
+    cruise = next(r for r in csv.DictReader(HEAT_REF.open())
+                  if r["case"] == "cruise")
+    Q = tank_heat_leak(_params(cruise), float(cruise["qfac"]))
+    assert Q == pytest.approx(2598.0, abs=5.0)
+
+    hvap = 446.0e3                              # J/kg for LH2
+    boiloff_kg_per_hr = Q / hvap * 3600.0
+    assert boiloff_kg_per_hr == pytest.approx(21.0, abs=1.0)
+    assert 6.0 * boiloff_kg_per_hr / 3000.0 == pytest.approx(0.042, abs=0.005)
+
+
+@pytest.mark.skipif(not HEAT_REF.exists(), reason="heat leak reference absent")
+def test_a_vacuum_gap_is_worth_a_factor_of_five():
+    """Swapping the inner polyurethane layer for a vacuum gap of the same
+    thickness cuts the heat leak from 2598 W to 489 W. That is the case for
+    a vacuum-jacketed tank, and it is why the outer vessel -- which exists
+    only to hold that vacuum -- is worth its weight."""
+    from tasopt_py.cryo.thermal import tank_heat_leak
+
+    rows = {r["case"]: r for r in csv.DictReader(HEAT_REF.open())}
+    plain = tank_heat_leak(_params(rows["cruise"]), 1.3)
+    vac = tank_heat_leak(_params(rows["vacuum"]), 1.3)
+    assert vac < plain / 5.0
+
+
+@pytest.mark.skipif(not HEAT_REF.exists(), reason="heat leak reference absent")
+def test_a_hot_day_on_the_ground_is_worse_than_cruise():
+    """Which is not obvious -- cruise is colder outside but much faster, so
+    the air-side film coefficient is far higher. The ground case wins anyway,
+    and it is the one the tank has to be designed to."""
+    from tasopt_py.cryo.thermal import tank_heat_leak
+
+    rows = {r["case"]: r for r in csv.DictReader(HEAT_REF.open())}
+    assert (tank_heat_leak(_params(rows["ground"]), 1.3)
+            > tank_heat_leak(_params(rows["cruise"]), 1.3))
+
+
+def test_a_vacuum_layer_does_not_advance_the_radius_or_temperature():
+    """§61. In `insulation_resistances` the updates to the running radius and
+    to the previous-layer temperature both sit *inside* the non-vacuum
+    branch, so a vacuum layer leaves both untouched. A layer outboard of a
+    vacuum gap is therefore computed
+
+      * at the radius of the gap's **inner** face, not its outer one, and
+      * against the **wall** temperature, not the gap's outer temperature.
+
+    The second is the larger effect here: it shifts the mean temperature the
+    conductivity fit is evaluated at from 180 K to 135 K.
+
+    Reproduced -- the vacuum reference case above agrees to 2e-14, which
+    could not happen otherwise. Pinned here so it is visible rather than
+    buried in a branch.
+    """
+    import math
+
+    from tasopt_py.cryo.geometry import CrossSection
+    from tasopt_py.cryo.thermal import (ThermalParams,
+                                        insulation_resistances,
+                                        thermal_conductivity)
+
+    cs = CrossSection(1.9)
+    Shead = [11.0, 12.0, 13.0]
+    t = [0.05, 0.10]
+    p = ThermalParams(l_cyl=5.0, l_tank=7.0, r_tank=1.65, Shead=Shead,
+                      t_cond=t, material=["vacuum", "polyurethane32"],
+                      Tfuel=20.4, z=11000.0, TSL=288.2, Mair=0.8,
+                      xftank=20.0, ifuel=40, cross_section=cs)
+    T_w = 30.0
+    T_ins = [120.0, 240.0]
+    R = insulation_resistances(T_w, T_ins, p)
+
+    # Recompute the outer layer by hand, with the *un-advanced* radius and
+    # the *wall* temperature -- which is what the source does.
+    r_inner = 1.65                       # not 1.65 + 0.05
+    k = thermal_conductivity("polyurethane32", (T_ins[1] + T_w) / 2.0)
+    R_cyl = math.log((r_inner + t[1]) / r_inner) / (p.perim_R * p.l_cyl * k)
+    Area_coeff = Shead[1] / r_inner ** 2
+    R_ends = t[1] / (k * (Shead[2] + Shead[1] - Area_coeff * t[1] ** 2))
+    assert R[1] == pytest.approx(R_ends * R_cyl / (R_ends + R_cyl),
+                                 rel=1e-12)
+
+    # ...and it is measurably different from the physically-intended version.
+    r_adv = 1.65 + t[0]
+    k_adv = thermal_conductivity("polyurethane32",
+                                 (T_ins[1] + T_ins[0]) / 2.0)
+    R_cyl_a = (math.log((r_adv + t[1]) / r_adv)
+               / (p.perim_R * p.l_cyl * k_adv))
+    Area_a = Shead[1] / r_adv ** 2
+    R_ends_a = t[1] / (k_adv * (Shead[2] + Shead[1] - Area_a * t[1] ** 2))
+    intended = R_ends_a * R_cyl_a / (R_ends_a + R_cyl_a)
+    assert abs(R[1] - intended) / intended > 0.2       # ~33% apart

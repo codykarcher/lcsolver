@@ -39,12 +39,17 @@ Verified against TASOPT.jl; see ``tests/test_thermal.py``.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from ..atmosphere import atmos
+from .geometry import scaled_cross_section
+from .material_data import MATERIALS
 from .stiffeners import GEE
 
 __all__ = ["gas_Pr", "freestream_heat_coeff", "tank_heat_coeff",
-           "vacuum_resistance", "SIGMA_SB", "TREF",
+           "vacuum_resistance", "thermal_conductivity",
+           "insulation_resistances", "residuals_Q", "tank_heat_leak",
+           "ThermalParams", "SIGMA_SB", "TREF",
            "VACUUM_PRESSURE", "VACUUM_EMISSIVITY"]
 
 #: ``constants.jl``. Note ``Tref`` is 288.2, not the 288.15 of the standard
@@ -177,3 +182,211 @@ def vacuum_resistance(Tcold: float, Thot: float, S_inner: float,
     R_conv = 1.0 / (G * VACUUM_PRESSURE * S_inner)
 
     return R_conv * R_rad / (R_conv + R_rad)
+
+
+def thermal_conductivity(name: str, T: float) -> float:
+    """Insulation conductivity at temperature ``T``, W/(m K).
+
+    A polynomial in temperature, ``sum(c[i] T^i)``, with the coefficients
+    from v3's material database. Cryogenic insulation conductivity varies
+    strongly over the 20-300 K range the tank spans, which is why this is a
+    fit rather than a constant.
+    """
+    props = MATERIALS.get(name)
+    if props is None:
+        raise KeyError(f"no material {name!r} in the database")
+    coeffs = props.get("conductivity_coeffs")
+    if coeffs is None:
+        raise KeyError(
+            f"{name!r} has no conductivity fit; it is not an insulator")
+    return sum(c * T ** i for i, c in enumerate(coeffs))
+
+
+def insulation_resistances(T_w: float, T_ins, p) -> list:
+    """Thermal resistance of each insulation layer, K/W.
+
+    Cylindrical and end-cap paths act in **parallel** within a layer -- heat
+    can go out through the barrel or through the heads -- so they combine as
+    ``R_cyl R_ends / (R_cyl + R_ends)``. A vacuum layer instead uses
+    :func:`vacuum_resistance`.
+
+    Reproduces §61: a vacuum layer does **not** advance the running radius
+    or the previous-layer temperature, because those two updates sit inside
+    the non-vacuum branch. Any layer outboard of a vacuum gap is therefore
+    computed at the wrong radius and against the wrong inner temperature.
+    """
+    r_inner = p.r_tank
+    T_prev = T_w
+    out = []
+    for i, t in enumerate(p.t_cond):
+        name = p.material[i]
+        if name.lower() == "vacuum":
+            S_inner = p.perim_R * p.l_cyl * r_inner + 2.0 * p.Shead[i]
+            S_outer = (p.perim_R * p.l_cyl * (r_inner + t)
+                       + 2.0 * p.Shead[i + 1])
+            out.append(vacuum_resistance(T_prev, T_ins[i], S_inner, S_outer))
+            # r_inner and T_prev are deliberately not advanced here -- §61.
+        else:
+            k = thermal_conductivity(name, (T_ins[i] + T_prev) / 2.0)
+            R_cyl = (math.log((r_inner + t) / r_inner)
+                     / (p.perim_R * p.l_cyl * k))
+            Area_coeff = p.Shead[i] / r_inner ** 2
+            R_ends = t / (k * (p.Shead[i + 1] + p.Shead[i]
+                               - Area_coeff * t ** 2))
+            out.append(R_ends * R_cyl / (R_ends + R_cyl))
+            r_inner += t
+            T_prev = T_ins[i]
+    return out
+
+
+@dataclass
+class ThermalParams:
+    """The tank geometry and flight condition the heat path is solved on."""
+    l_cyl: float                 # cylindrical length of the inner tank, m
+    l_tank: float                # overall inner-tank length, m
+    r_tank: float                # inner-tank radius, m
+    Shead: list                  # head area at each insulation interface
+    t_cond: list                 # insulation layer thicknesses, m
+    material: list               # insulation material names
+    Tfuel: float                 # liquid temperature, K
+    z: float                     # altitude, m
+    TSL: float                   # sea-level design temperature, K
+    Mair: float                  # freestream Mach
+    xftank: float                # tank CG station, m
+    ifuel: int
+    cross_section: object        # the fuselage CrossSection
+
+    @property
+    def perim_R(self) -> float:
+        """Perimeter over radius -- 2 pi for a circle, more for a bubble."""
+        perim, _ = scaled_cross_section(self.cross_section, self.r_tank)
+        return perim / self.r_tank
+
+
+def residuals_Q(x, p: ThermalParams) -> list:
+    """The heat-path residual. ``x = [Q, T_w, T_ins...]``.
+
+    The circuit is air, then each insulation layer, then the liquid film, in
+    series. The first residual sets the total heat rate against the driving
+    temperature difference over the total resistance; the rest march the
+    temperature outward from the fuel through each resistance in turn, so
+    every interface temperature is consistent with the heat passing through
+    it.
+    """
+    Q = x[0]
+    T_w = x[1]
+    T_ins = list(x[2:])
+    Tfuse = x[-1]                # the outermost interface is the fuselage
+
+    Rfuse = p.cross_section.radius
+    h_air, _, Taw = freestream_heat_coeff(p.z, p.TSL, p.Mair, p.xftank,
+                                          Tfuse, Rfuse)
+    dT = Taw - p.Tfuel
+
+    perim_inner, _ = scaled_cross_section(p.cross_section, p.r_tank)
+    S_int = perim_inner * p.l_cyl + 2.0 * p.Shead[0]
+
+    # Air-side resistance is taken over the *fuselage* perimeter, not the
+    # tank's -- the tank is heated through the fuselage skin around it.
+    Rair = 1.0 / (h_air * p.cross_section.perimeter * p.l_tank)
+    h_liq = tank_heat_coeff(T_w, p.ifuel, p.Tfuel, p.l_tank)
+    R_liq = 1.0 / (h_liq * S_int)
+
+    R_ins = insulation_resistances(T_w, T_ins, p)
+    Req = sum(R_ins) + R_liq + Rair
+
+    F = [Q - dT / Req, 0.0] + [0.0] * len(T_ins)
+    T_calc = p.Tfuel + R_liq * Q
+    F[1] = T_w - T_calc
+    for i in range(len(T_ins)):
+        T_calc = T_calc + R_ins[i] * Q
+        F[i + 2] = T_ins[i] - T_calc
+    return F
+
+
+def _solve(A, b) -> list:
+    """``A x = b`` by Gaussian elimination with partial pivoting."""
+    n = len(b)
+    M = [row[:] + [b[i]] for i, row in enumerate(A)]
+    for k in range(n):
+        piv = max(range(k, n), key=lambda i: abs(M[i][k]))
+        if M[piv][k] == 0.0:
+            raise ZeroDivisionError(
+                "singular Jacobian in the tank heat-path solve")
+        M[k], M[piv] = M[piv], M[k]
+        for i in range(k + 1, n):
+            f = M[i][k] / M[k][k]
+            for j in range(k, n + 1):
+                M[i][j] -= f * M[k][j]
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        x[i] = (M[i][n] - sum(M[i][j] * x[j]
+                              for j in range(i + 1, n))) / M[i][i]
+    return x
+
+
+def _newton(f, x0, xtol: float = 1.0e-7, ftol: float = 1.0e-6,
+            maxiter: int = 200) -> list:
+    """A damped Newton with numerical Jacobian, for the heat path.
+
+    The reference uses ``NLsolve.nlsolve`` (trust-region) at the same
+    tolerances. This is a genuine root of a smooth system rather than a
+    capped iteration, so the solver choice does not change the answer -- the
+    tests confirm agreement with the reference.
+
+    The elimination here is a plain partial-pivot solve rather than
+    :func:`tasopt_py.linalg.gaussn`. That is a deliberate difference from how
+    ``blax`` is handled: there the Newton is *capped* and stops on step size,
+    so where it lands depends on the iterate path and therefore on the
+    elimination, and the Fortran's had to be reproduced exactly. Here the
+    system is solved to convergence, so it does not.
+    """
+    x = list(x0)
+    n = len(x)
+    for _ in range(maxiter):
+        F = f(x)
+        if max(abs(v) for v in F) < ftol:
+            return x
+        A = [[0.0] * n for _ in range(n)]
+        for j in range(n):
+            h = 1.0e-7 * max(abs(x[j]), 1.0)
+            xp = list(x)
+            xp[j] += h
+            Fp = f(xp)
+            for i in range(n):
+                A[i][j] = (Fp[i] - F[i]) / h
+        step = _solve(A, [-v for v in F])
+
+        # Damp so a wild first step cannot drive a temperature negative.
+        scale = 1.0
+        for i in range(n):
+            if x[i] + step[i] <= 0.0 < x[i]:
+                scale = min(scale, 0.5 * x[i] / abs(step[i]))
+        for i in range(n):
+            x[i] += scale * step[i]
+        if max(abs(scale * s) for s in step) < xtol:
+            return x
+    return x
+
+
+def tank_heat_leak(p: ThermalParams, qfac: float = 1.0) -> float:
+    """Heat rate into the tank, W.
+
+    ``qfac`` is the reference's allowance for extra leakage through valves
+    and penetrations that the one-dimensional circuit does not model
+    (Verstraete Eq. 3.20). It multiplies the answer.
+    """
+    _, _, Taw = freestream_heat_coeff(p.z, p.TSL, p.Mair, p.xftank)
+    thickness = sum(p.t_cond)
+    dT = Taw - p.Tfuel
+
+    # The reference's initial guess: a nominal 0.01 K/W total resistance,
+    # the wall a degree above the fuel, and the interfaces spread linearly
+    # through the insulation.
+    guess = [dT / 0.01, p.Tfuel + 1.0]
+    for i in range(len(p.t_cond)):
+        guess.append(p.Tfuel + dT * sum(p.t_cond[:i + 1]) / thickness)
+    guess[-1] = guess[-1] - 1.0
+
+    sol = _newton(lambda x: residuals_Q(x, p), guess)
+    return qfac * sol[0]
