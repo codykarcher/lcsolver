@@ -348,5 +348,69 @@ class TestParameterGradient(unittest.TestCase):
             self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
 
 
+class TestDualAmbiguity(unittest.TestCase):
+    """Which sensitivities the problem actually determines.
+
+    A rank-deficient active set leaves the duals non-unique: any null-space
+    vector can be added and stationarity still holds. `lstsq` returns the
+    minimum-norm member of that family without saying so, so an undetermined
+    sensitivity comes back looking like an ordinary number. On SPaircraft that
+    produced a reported +315 -- not a credible log-log sensitivity -- from an
+    active set rank deficient by 23.
+    """
+
+    def test_a_nondegenerate_problem_reports_nothing_ambiguous(self):
+        from edi.solvers.ipopt import ipopt_solve
+        from edi.solvers.sensitivity import DUAL_AMBIGUITY_TOL
+
+        f = _gp()
+        ipopt_solve(f)
+        res = sensitivities(f)
+        self.assertEqual(res['ambiguous'], [])
+        for r in res['ambiguity'].values():
+            self.assertLessEqual(r, DUAL_AMBIGUITY_TOL)
+
+    def test_a_duplicated_constraint_makes_its_constant_undetermined(self):
+        """State the same binding constraint twice and the duals split freely.
+
+        Either multiplier can take the other's share, so any sensitivity that
+        reads them individually is an artefact of the split.
+        """
+        from edi.solvers.ipopt import ipopt_solve
+
+        f = Formulation()
+        x = f.Variable('x', 1.0, '', 'x')
+        a = f.Constant('a', 2.0, '', 'a')
+        b = f.Constant('b', 2.0, '', 'b')
+        f.Objective(x)
+        f.Constraint(x >= a)
+        f.Constraint(x >= b)            # the same constraint, said twice
+        ipopt_solve(f)
+
+        res = sensitivities(f)
+        self.assertTrue(res['ambiguous'],
+                        'a duplicated binding constraint leaves the duals '
+                        'undetermined, and that should be reported')
+
+    def test_the_ambiguity_measure_is_a_relative_size(self):
+        from edi.solvers.ipopt import ipopt_solve
+        from edi.solvers.sensitivity import dual_ambiguity
+
+        f = _gp()
+        ipopt_solve(f)
+        for r in dual_ambiguity(f).values():
+            self.assertGreaterEqual(r, 0.0)
+            self.assertLessEqual(r, 1.0 + 1e-9)
+
+    def test_it_can_be_switched_off(self):
+        from edi.solvers.ipopt import ipopt_solve
+
+        f = _gp()
+        ipopt_solve(f)
+        res = sensitivities(f, check_ambiguity=False)
+        self.assertEqual(res['ambiguity'], {})
+        self.assertEqual(res['ambiguous'], [])
+
+
 if __name__ == '__main__':
     unittest.main()

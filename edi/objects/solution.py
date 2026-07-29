@@ -72,12 +72,17 @@ class Solution:
 
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
-                 solver=None, structure=None, groups=None):
+                 solver=None, structure=None, groups=None, ambiguous=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
         self.constants = dict(constants or {})
         self.sensitivities = dict(sensitivities) if sensitivities else None
+        #: Constants whose sensitivity the problem does not determine, because
+        #: the active set is degenerate. Hidden from the table by default: the
+        #: value returned for one of these is a property of which dual vector
+        #: was recovered, not of the design.
+        self.ambiguous = set(ambiguous or ())
         self.status = status
         self.solver = solver
         self.structure = structure
@@ -122,7 +127,11 @@ class Solution:
         ``landing.gear``.
         """
         for prefix, path in self.groups:
-            if name.startswith(prefix):
+            # An empty prefix is a group that namespaces nothing -- a builder
+            # shared between a standalone model and a larger one that mounts it
+            # under a prefix. Every name starts with '', so matching on it
+            # would file the entire model under that group.
+            if prefix and name.startswith(prefix):
                 return path + '.' + name[len(prefix):]
         return name
 
@@ -149,8 +158,19 @@ class Solution:
                 + u.center(w[2]) + ('   ' + d.ljust(w[3]) if d else '')
                 for n, v, u, d in zip(shown, vals, uts, des)]
 
-    def summary(self, ndecimal=2, sensitivity_tol=1e-8):
-        """The table, as a string."""
+    def summary(self, ndecimal=2, sensitivity_tol=1e-8, top=None,
+                show_ambiguous=False):
+        """The table, as a string.
+
+        ``top`` keeps only the ``n`` largest sensitivities by magnitude, and
+        ``sensitivity_tol`` drops everything below a threshold. A model with
+        two hundred constants prints two hundred rows otherwise, and the ones
+        worth reading are the handful at the top.
+
+        ``show_ambiguous`` includes the sensitivities the problem does not
+        determine, marked with ``?``. They are hidden by default because they
+        look exactly like answers.
+        """
         L = ['']
         if self.objective is not None:
             L += ['Objective', '---------',
@@ -170,23 +190,45 @@ class Solution:
             L += ['   Not computed. Call f.sensitivities(), or '
                   'f.solution_with_sensitivities().', '']
         else:
-            items = [(n, v) for n, v in self.sensitivities.items()
-                     if v == v and abs(v) >= sensitivity_tol]
-            # Ungrouped first as elsewhere, then by magnitude within each half,
-            # so the table reads the same way as the ones above it.
-            items.sort(key=lambda kv: (self.display_name(kv[0]) != kv[0],
-                                       -abs(kv[1])))
+            hidden_ambiguous = 0
+            items = []
+            for n, v in self.sensitivities.items():
+                if v != v or abs(v) < sensitivity_tol:
+                    continue
+                if n in self.ambiguous and not show_ambiguous:
+                    hidden_ambiguous += 1
+                    continue
+                items.append((n, v))
             if not items:
                 L += [f'   all below {sensitivity_tol:g}', '']
             else:
-                wn = max(len(self.display_name(n)) for n, _ in items)
-                for n, v in items:
+                # `top` means the n largest in the model, so select on
+                # magnitude alone first. Sorting for display first and
+                # truncating after would quietly return the n largest
+                # *ungrouped* ones, which is a different question.
+                items.sort(key=lambda kv: -abs(kv[1]))
+                shown = items if top is None else items[:top]
+                # Ungrouped first as elsewhere, then by magnitude within each
+                # half, so the table reads the way the ones above it do.
+                shown.sort(key=lambda kv: (self.display_name(kv[0]) != kv[0],
+                                           -abs(kv[1])))
+                wn = max(len(self.display_name(n)) for n, _ in shown)
+                for n, v in shown:
                     bar = ('+' if v > 0 else '-') * min(int(abs(v) * 20) + 1, 24)
+                    mark = ' ?' if n in self.ambiguous else ''
                     L.append('   ' + self.display_name(n).ljust(wn) + '  :  '
-                             + f'{v:+.4f}'.rjust(9) + '   ' + bar)
-                omitted = len(self.sensitivities) - len(items)
+                             + f'{v:+.4f}'.rjust(9) + '   ' + bar + mark)
+                if top is not None and len(items) > top:
+                    L.append(f'   ({len(items) - top} smaller not shown; '
+                             f'pass top=None for all)')
+                omitted = (len(self.sensitivities) - len(items)
+                           - hidden_ambiguous)
                 if omitted:
                     L.append(f'   ({omitted} below {sensitivity_tol:g} omitted)')
+                if hidden_ambiguous:
+                    L.append(f'   ({hidden_ambiguous} not determined by the '
+                             f'problem -- degenerate active set -- hidden; '
+                             f'pass show_ambiguous=True)')
                 L.append('')
         if self.status or self.solver or self.structure:
             bits = [b for b in (self.structure, self.solver, self.status) if b]
@@ -215,7 +257,7 @@ class Solution:
 
     @classmethod
     def from_model(cls, model, sensitivities=None, status=None, solver=None,
-                   structure=None):
+                   structure=None, ambiguous=None):
         """Read the model's current values into a Solution.
 
         Deliberately reads the model handed to it rather than any structure
@@ -225,16 +267,38 @@ class Solution:
         """
         import pyomo.environ as pyo
 
+        def expand(components):
+            """One entry per element, so a vector prints as its members.
+
+            `get_variables` hands back components, and an indexed one is not a
+            number: asking Pyomo to evaluate it raises, and Pyomo logs a page
+            of ERROR lines on the way out. An indexed quantity is also the one
+            a reader most wants broken out -- `V[0]`, `V[1]`, `V[2]` rather
+            than a single row that cannot be printed at all.
+            """
+            for v in components:
+                if v.is_indexed():
+                    for ix in v:
+                        yield v[ix]
+                else:
+                    yield v
+
         def entries(components):
             out = {}
-            for v in components:
+            for v in expand(components):
                 try:
                     value = pyo.value(v)
                 except Exception:
                     value = None
+                # The description is declared on the component, so an
+                # element of a vector has to ask its parent for it.
+                doc = getattr(v, 'doc', '') or ''
+                if not doc:
+                    parent = v.parent_component()
+                    doc = (getattr(parent, 'doc', '') or '') if parent is not v else ''
                 out[v.name] = Entry(v.name, value,
                                     getattr(v, 'get_units', lambda: None)(),
-                                    (getattr(v, 'doc', '') or ''))
+                                    doc)
             return out
 
         variables = entries(model.get_variables())
@@ -253,5 +317,5 @@ class Solution:
         return cls(objective=objective, objective_units=objective_units,
                    variables=variables, constants=constants,
                    sensitivities=sensitivities, status=status, solver=solver,
-                   structure=structure,
+                   structure=structure, ambiguous=ambiguous,
                    groups=cls._group_paths(getattr(model, '_groups', {})))

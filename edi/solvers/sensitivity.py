@@ -77,6 +77,7 @@ matches how such sensitivities are used in practice; ``result['approximate']``
 flags it.
 """
 
+import collections
 import math
 import warnings
 
@@ -87,7 +88,8 @@ from pyomo.core.expr import identify_mutable_parameters
 from pyomo.common.dependencies import numpy as np
 
 
-__all__ = ["sensitivities", "constraint_duals", "format_sensitivities"]
+__all__ = ["sensitivities", "constraint_duals", "dual_ambiguity",
+           "format_sensitivities"]
 
 
 #: Relative tolerance for deciding that a constraint is binding.
@@ -100,6 +102,28 @@ __all__ = ["sensitivities", "constraint_duals", "format_sensitivities"]
 #: to 8e-6 and completely insensitive to this value anywhere in 1e-5 .. 1e-2,
 #: so 1e-4 sits in the middle of a wide plateau.
 ACTIVE_RTOL = 1e-4
+
+#: Relative size of a constant's null-space component above which its
+#: sensitivity is reported as undetermined rather than returned as a number.
+#:
+#: When the active-constraint Jacobian is rank deficient the duals are not
+#: unique -- any vector from the null space can be added to them and
+#: stationarity still holds. `lstsq` picks the minimum-norm member of that
+#: family, silently, so an undetermined sensitivity comes back looking like an
+#: ordinary answer. A sensitivity is determined exactly when the constant's
+#: gradient vector over the active set is orthogonal to that null space, which
+#: is what this measures.
+#:
+#: The value sits in an empty band rather than being tuned. Measured on
+#: SPaircraft, whose active set is rank deficient by 23, the 195 constants
+#: land either below 1e-8 or above 1e-4 and NOTHING falls in between; any
+#: threshold inside that decade selects the same 40. Below the band is
+#: orthogonality blurred by conditioning -- the scaled system has a condition
+#: number of 2e17, so a true zero shows up as 1e-12 rather than 1e-16 -- and
+#: above it is a real component. Hiding those 40 takes the largest reported
+#: sensitivity from 315.86, which is not a credible log-log sensitivity, to
+#: 1.71, which is.
+DUAL_AMBIGUITY_TOL = 1e-6
 
 #: Relative stationarity residual above which the recovered duals are reported
 #: as untrustworthy. A converged solve sits several orders of magnitude below
@@ -299,26 +323,26 @@ def _duals_from_suffix(model):
     return duals if len(duals) else None
 
 
-def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
-    """Recover duals from the primal solution via KKT stationarity.
+#: A KKT stationarity system, kept so that the ambiguity test can reuse it.
+KKTSystem = collections.namedtuple("KKTSystem", "A_s rhs_s col_scale owners")
 
-    Solves ``grad f = sum_i lambda_i grad(body_i - bound_i)`` in the least-squares
-    sense over the active set, in the same sign convention Pyomo's ``dual``
-    Suffix uses. Active variable bounds are included as columns so that
-    stationarity can actually be met; their multipliers are then discarded,
-    since a variable bound is a number and cannot depend on a Constant.
+
+def _kkt_system(model, rtol=ACTIVE_RTOL):
+    """Assemble the scaled stationarity system ``A_s lambda_s = rhs_s``.
+
+    Separated from solving it because :func:`dual_ambiguity` needs the same
+    matrix, and assembling it is the expensive half -- one symbolic gradient
+    per active constraint.
     """
     obj = _objective(model)
     variables = _variables(model)
     if not variables:
-        return ComponentMap()
+        return None
 
-    active = _active_constraints(model, rtol, variables)
     columns, owners = [], []
-    for con in active:
+    for con in _active_constraints(model, rtol, variables):
         bound, _ = _bound_of(con)
-        g = _grad(con.body, variables) - _grad(bound, variables)
-        columns.append(g)
+        columns.append(_grad(con.body, variables) - _grad(bound, variables))
         owners.append(con)
 
     # Active variable bounds participate in stationarity too.
@@ -336,9 +360,8 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
                 columns.append(e)
                 owners.append(None)              # discarded afterwards
 
-    duals = ComponentMap()
     if not columns:
-        return duals
+        return None
 
     A = np.column_stack(columns)
     rhs = _grad(obj.expr, variables)
@@ -357,8 +380,25 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
     col_scale = np.abs(A * row_scale[:, None]).max(axis=0)
     col_scale = np.where(col_scale > 0, col_scale, 1.0)
 
-    A_s = A * row_scale[:, None] / col_scale[None, :]
-    rhs_s = rhs * row_scale
+    return KKTSystem(A_s=A * row_scale[:, None] / col_scale[None, :],
+                     rhs_s=rhs * row_scale, col_scale=col_scale, owners=owners)
+
+
+def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
+    """Recover duals from the primal solution via KKT stationarity.
+
+    Solves ``grad f = sum_i lambda_i grad(body_i - bound_i)`` in the least-squares
+    sense over the active set, in the same sign convention Pyomo's ``dual``
+    Suffix uses. Active variable bounds are included as columns so that
+    stationarity can actually be met; their multipliers are then discarded,
+    since a variable bound is a number and cannot depend on a Constant.
+    """
+    system = _kkt_system(model, rtol)
+    duals = ComponentMap()
+    if system is None:
+        return duals
+    A_s, rhs_s, col_scale, owners = (system.A_s, system.rhs_s,
+                                     system.col_scale, system.owners)
 
     try:
         lam_s, *_ = np.linalg.lstsq(A_s, rhs_s, rcond=None)
@@ -379,6 +419,60 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
         if owner is not None:
             duals[owner] = float(value)
     return duals
+
+
+def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
+    """How undetermined each constant's sensitivity is, as a relative size.
+
+    Returns ``{name: r}`` where ``r`` is the fraction of the constant's
+    active-set gradient vector that lies in the null space of the stationarity
+    system. ``r == 0`` means the sensitivity is the same for every valid choice
+    of duals; ``r > 0`` means it is not determined by the problem at all, and
+    the number that comes back is an artefact of which dual vector was picked.
+
+    A degenerate active set is the normal state of an engineering model, not a
+    pathology -- SPaircraft carries 23 degrees of freedom -- so this is
+    reported rather than treated as a failure.
+    """
+    if system is None:
+        system = _kkt_system(model, rtol)
+    if system is None:
+        return {}
+    if constants is None:
+        constants = _constants(model)
+    index = {id(pd): n for n, pd in constants.items()}
+
+    A_s, col_scale, owners = system.A_s, system.col_scale, system.owners
+    try:
+        _u, sv, Vt = np.linalg.svd(A_s, full_matrices=True)
+    except np.linalg.LinAlgError:
+        return {}
+    tol = max(A_s.shape) * (sv[0] if len(sv) else 0.0) * np.finfo(float).eps
+    rank = int((sv > tol).sum())
+    if rank >= A_s.shape[1]:
+        return dict.fromkeys(constants, 0.0)     # full rank: nothing ambiguous
+    null_basis = Vt[rank:].T
+
+    # The constant's gradient over the active set. A variable bound is a
+    # number and cannot depend on a Constant, so those columns stay zero.
+    grads = {name: np.zeros(len(owners)) for name in constants}
+    for i, con in enumerate(owners):
+        if con is None:
+            continue
+        bound, _ = _bound_of(con)
+        g = _param_gradient(con.body, index)
+        for name, dv in _param_gradient(bound, index).items():
+            g[name] = g.get(name, 0.0) - dv
+        for name, dv in g.items():
+            grads[name][i] = dv
+
+    out = {}
+    for name, d in grads.items():
+        u = d / col_scale
+        norm = float(np.linalg.norm(u))
+        out[name] = (0.0 if norm == 0.0
+                     else float(np.linalg.norm(null_basis.T @ u) / norm))
+    return out
 
 
 def constraint_duals(model, method='auto', rtol=ACTIVE_RTOL):
@@ -453,7 +547,7 @@ def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
 
 
 def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
-                  duals=None, approximate=None):
+                  duals=None, approximate=None, check_ambiguity=True):
     """Sensitivity of the optimum to every Constant in the model.
 
     Parameters
@@ -481,12 +575,19 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     approximate : bool, optional
         Marks the result as a local approximation. Set automatically for a
         signomial program, whose duals come from the final convex subproblem.
+    check_ambiguity : bool
+        Test which sensitivities the problem actually determines. A degenerate
+        active set leaves the duals non-unique, and a sensitivity that depends
+        on which dual vector was chosen is an artefact rather than an answer.
+        Costs one SVD of the stationarity system -- 0.2s on SPaircraft -- and
+        is what keeps a meaningless +315 out of the table.
 
     Returns
     -------
     dict
         ``{'sensitivities': {name: value}, 'objective': f*, 'normalized': bool,
-        'method': str, 'approximate': bool}``
+        'method': str, 'approximate': bool, 'ambiguous': [name, ...],
+        'ambiguity': {name: float}}``
 
     Notes
     -----
@@ -593,11 +694,33 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         else:
             out[name] = total
 
+    # Which of these the problem actually determines. Reported alongside
+    # rather than dropped here: a caller asking for raw numbers should get
+    # them, and the display layer decides what to show.
+    ambiguity, ambiguous = {}, []
+    if check_ambiguity:
+        try:
+            ambiguity = dual_ambiguity(model, rtol=rtol, constants=constants)
+        except Exception:
+            ambiguity = {}
+        ambiguous = sorted(n for n, r in ambiguity.items()
+                           if r > DUAL_AMBIGUITY_TOL)
+        if ambiguous:
+            warnings.warn(
+                f"{len(ambiguous)} of {len(out)} sensitivities are not "
+                f"determined by the problem: the active set is degenerate, so "
+                f"the duals are not unique and these values depend on which "
+                f"dual vector was recovered. They are listed under "
+                f"'ambiguous' and are hidden from the printed table.",
+                RuntimeWarning, stacklevel=2)
+
     return {'sensitivities': out,
             'objective': fstar,
             'normalized': bool(normalized),
             'method': used,
             'stationarity_residual': residual,
+            'ambiguity': ambiguity,
+            'ambiguous': ambiguous,
             'approximate': bool(approximate) if approximate is not None else False}
 
 

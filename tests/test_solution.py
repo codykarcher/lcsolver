@@ -147,3 +147,101 @@ class TestSolution(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipIf(not available, 'EDI import failed')
+class TestEmptyPrefixGroup(unittest.TestCase):
+    """A group that namespaces nothing must not claim the whole model.
+
+    A builder shared between a standalone model and a larger one that mounts
+    it under a prefix gets prefix='' in the standalone case. Every name starts
+    with the empty string.
+    """
+
+    def test_an_empty_prefix_does_not_swallow_every_name(self):
+        from edi.objects.solution import Solution, Entry
+        sol = Solution(objective=1.0,
+                       variables={'x': Entry('x', 1.0), 'y': Entry('y', 2.0)},
+                       groups=[('', 'eng')])
+        self.assertEqual(sol.display_name('x'), 'x')
+        self.assertEqual(sol.display_name('y'), 'y')
+
+    def test_a_real_prefix_still_applies(self):
+        from edi.objects.solution import Solution, Entry
+        sol = Solution(objective=1.0,
+                       variables={'Eng_M': Entry('Eng_M', 1.0)},
+                       groups=[('Eng_', 'eng')])
+        self.assertEqual(sol.display_name('Eng_M'), 'eng.M')
+
+
+@unittest.skipIf(not available, 'EDI import failed')
+class TestSensitivityDisplay(unittest.TestCase):
+    """`top`, the threshold, and hiding what the problem does not determine."""
+
+    @staticmethod
+    def _sens(text):
+        """Just the sensitivity block: the names also appear above it."""
+        return text.split('Sensitivities', 1)[1]
+
+    def _solution(self, n=6, ambiguous=()):
+        from edi.objects.solution import Solution, Entry
+        sens = {f'c{i}': (n - i) * 1.0 for i in range(n)}
+        constants = {k: Entry(k, 1.0, None, '') for k in sens}
+        return Solution(objective=1.0, constants=constants,
+                        sensitivities=sens, ambiguous=ambiguous)
+
+    def test_top_keeps_the_n_largest(self):
+        text = self._sens(self._solution().summary(top=2))
+        self.assertIn('c0', text)                 # 6.0, largest
+        self.assertIn('c1', text)                 # 5.0
+        self.assertNotIn('c4', text)
+        self.assertIn('4 smaller not shown', text)
+
+    def test_top_selects_on_magnitude_not_display_order(self):
+        """Grouped names sort last for display but must not sort last for `top`."""
+        from edi.objects.solution import Solution, Entry
+        sens = {'plain': 0.5, 'wing_AR': 9.0}
+        sol = Solution(objective=1.0,
+                       constants={k: Entry(k, 1.0) for k in sens},
+                       sensitivities=sens, groups=[('wing_', 'wing')])
+        text = self._sens(sol.summary(top=1))
+        self.assertIn('wing.AR', text)            # the larger one
+        self.assertNotIn('plain', text)
+
+    def test_a_threshold_drops_the_small_ones(self):
+        text = self._sens(self._solution().summary(sensitivity_tol=4.5))
+        self.assertIn('c0', text)
+        self.assertNotIn('c3', text)
+        self.assertIn('omitted', text)
+
+    def test_undetermined_sensitivities_are_hidden_by_default(self):
+        text = self._sens(self._solution(ambiguous={'c0'}).summary())
+        self.assertNotIn('c0', text)
+        self.assertIn('not determined by the problem', text)
+
+    def test_they_can_be_shown_and_are_marked(self):
+        text = self._sens(
+            self._solution(ambiguous={'c0'}).summary(show_ambiguous=True))
+        line = [l for l in text.splitlines() if 'c0' in l][0]
+        self.assertTrue(line.rstrip().endswith('?'))
+
+    def test_an_indexed_variable_prints_one_row_per_element(self):
+        """`get_variables` yields components; an indexed one is not a number.
+
+        Asking Pyomo to evaluate it raises and logs a page of ERROR lines.
+        """
+        from edi.solvers.solver import solve
+
+        f = Formulation()
+        x = f.Variable('x', 1.0, 'm', 'a scalar')
+        v = f.Variable('v', 1.0, 'm', 'a vector', size=3)
+        f.Objective(x + sum(v[i] for i in range(3)))
+        f.Constraint(x >= 2.0 * units.m)
+        for i in range(3):
+            f.Constraint(v[i] >= (i + 1) * 1.0 * units.m)
+        solve(f, sensitivities=False)
+
+        text = f.solution.summary()
+        for i in range(3):
+            self.assertIn(f'v[{i}]', text)
+        self.assertIn('a vector', text)           # description from the parent

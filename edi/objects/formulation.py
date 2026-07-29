@@ -161,11 +161,18 @@ class Group:
         """
         return self._path
 
-    def group(self, name):
-        """A nested group, named ``<this>_<name>``."""
+    def group(self, name, prefix=None):
+        """A nested group, named ``<this>_<name>``.
+
+        ``prefix`` overrides the flat name, as on
+        :meth:`Formulation.group`; it is taken as written rather than
+        appended to this group's own prefix, so a nested group can carry a
+        name a model already publishes.
+        """
         if name not in self._groups:
             self._groups[name] = Group(self._formulation, name,
-                                       f'{self._prefix}{name}_',
+                                       prefix if prefix is not None
+                                       else f'{self._prefix}{name}_',
                                        f'{self._path}.{name}')
         return self._groups[name]
 
@@ -240,18 +247,25 @@ class Formulation(ConcreteModel):
         """
         from edi.objects.solution import Solution
 
-        return Solution.from_model(self, sensitivities=self._sensitivity_cache)
+        return Solution.from_model(self, sensitivities=self._sensitivity_cache,
+                                   ambiguous=getattr(self, '_ambiguous_cache',
+                                                     None))
 
     def solution_with_sensitivities(self, **kwargs):
         """The solution, with sensitivities computed and attached."""
         from edi.objects.solution import Solution
 
+        ambiguous = None
         try:
-            sens = self.sensitivities(**kwargs)['sensitivities']
+            res = self.sensitivities(**kwargs)
+            sens = res['sensitivities']
+            ambiguous = res.get('ambiguous')
         except Exception:
             sens = None
         self._sensitivity_cache = sens
-        return Solution.from_model(self, sensitivities=sens)
+        self._ambiguous_cache = ambiguous
+        return Solution.from_model(self, sensitivities=sens,
+                                   ambiguous=ambiguous)
 
     def _check_name_available(self, name, what='component'):
         if name in self.RESERVED_NAMES:
@@ -261,11 +275,19 @@ class Formulation(ConcreteModel):
                 "another name.")
 
     # -- grouping -----------------------------------------------------------
-    def group(self, name):
+    def group(self, name, prefix=None):
         """A named region of the model; see :class:`Group`.
 
         ``f.group('wing')`` returns it and ``f.wing`` reaches it afterwards, so
         a builder can stop threading a prefix string through its signature.
+
+        ``prefix`` overrides the flat name each member gets, which defaults to
+        ``<name>_``. That is for a model whose component names are already
+        published -- ``Wing_AR`` verified against a saved reference solution,
+        say. Such a model can adopt groups for what they give it (the shorter
+        declaration, `f.wing`, dotted output) without renaming anything, which
+        would otherwise mean rewriting the reference alongside it and losing
+        the check.
         """
         self._check_name_available(name, 'group')
         if name not in self._groups:
@@ -279,7 +301,9 @@ class Formulation(ConcreteModel):
                     f"already has a component called {name!r}, and it would "
                     f"shadow the group -- `f.{name}` would return the "
                     "component. Choose a different group name.")
-            self._groups[name] = Group(self, name, f'{name}_')
+            self._groups[name] = Group(self, name,
+                                       prefix if prefix is not None
+                                       else f'{name}_')
         return self._groups[name]
 
     @property
