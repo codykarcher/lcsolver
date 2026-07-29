@@ -17,8 +17,8 @@ if not cvxopt_available:
 
 
 def solve_QP(structures):
-    from edi.structure.structureDetector import require_bounds_as_rows
-    require_bounds_as_rows(structures, 'solve_QP')
+    from edi.structure.structureDetector import require
+    require(structures, 'solve_QP')
 
     P = cvxopt.matrix( structures['Quadratic_Program'][1][0] )
     q = cvxopt.matrix(structures['Quadratic_Program'][1][1])

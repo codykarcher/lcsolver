@@ -184,14 +184,27 @@ def require(structures, who):
         return
     missing = features(structures) - can - {'columns_substituted',
                                             'columns_removed'}
-    if missing:
-        raise ValueError(
-            f"{who} cannot read a structure with {sorted(missing)}. It "
-            f"understands {sorted(can)}. Solving would ignore that part of "
-            "the problem and return an answer to a different question.")
+    if not missing:
+        return
+    # Say what to do about it, not merely what is wrong. The remedy is the
+    # part a caller actually needs.
+    remedy = {
+        'bounds_split': "re-run structure_detector with bounds_as_rows=True",
+    }
+    how = "; ".join(remedy[m] for m in sorted(missing) if m in remedy)
+    raise ValueError(
+        f"{who} cannot read a structure with {sorted(missing)}. It understands "
+        f"{sorted(can)}. Solving would ignore that part of the problem and "
+        f"return an answer to a different question."
+        + (f" To fix: {how}." if how else ""))
 
 
 def require_bounds_as_rows(structures, who):
+    """Deprecated alias for :func:`require`, kept for external callers."""
+    return require(structures, who)
+
+
+def _require_bounds_as_rows_legacy(structures, who):
     """Refuse structures whose bounds a backend is about to ignore.
 
     A backend that reads only the rows would silently solve an unbounded

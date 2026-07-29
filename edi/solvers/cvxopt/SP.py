@@ -159,8 +159,8 @@ def pccp_modification(constraintList,penalty_exponent=5.0):
 
 
 def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0, gp_solver=None):
-    from edi.structure.structureDetector import require_bounds_as_rows
-    require_bounds_as_rows(structures, 'solve_SP')
+    from edi.structure.structureDetector import require
+    require(structures, 'solve_SP')
     """Solve a signomial program by PCCP (penalty convex-concave).
 
     Each iteration replaces the non-GP parts with a monomial approximation

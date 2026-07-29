@@ -59,7 +59,7 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
-from edi.structure.detected import as_detected
+from edi.structure.detected import Term, as_detected
 
 class InfeasibleProblem(ValueError):
     """Presolve proved the model infeasible before any solve was attempted."""
@@ -944,34 +944,33 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     gone = {r.index for r in removed}
     keep = [j for j in range(n) if j not in gone]
     pos = {j: t for t, j in enumerate(keep)}
-
     surviving = [i for i in con_idx if i in alive]
-    renum = {old: new for new, old in enumerate(surviving, start=1)}
 
-    def emit(idx, i, out_rows):
-        for c, e, den in terms[i]:
-            row = [(-idx - 1) if den else idx, c] + [0.0] * len(keep)
-            for j, v in e.items():
-                if j in pos:
-                    row[2 + pos[j]] = v
-            out_rows.append(row)
+    def rewrite(i):
+        """The surviving terms of constraint ``i``, renumbered."""
+        out_terms = []
+        for coeff, expo, den in terms[i]:
+            out_terms.append(Term(
+                coeff=float(coeff),
+                exponents={pos[j]: v for j, v in expo.items()
+                           if j in pos and abs(v) > 1e-12},
+                denominator=bool(den)))
+        return out_terms
 
-    new_rows = []
-    emit(0, 0, new_rows)
-    new_ops = []
-    for old in surviving:
-        emit(renum[old], old, new_rows)
-        new_ops.append(op_of(old))
-
-    out = dict(structures)
-    out[key] = [structures[key][0], new_rows, new_ops]
-    out["bounds"] = [bounds[j] for j in keep]
-    if structures.get("variables"):
-        out["variables"] = [structures["variables"][j] for j in keep]
+    st = as_detected(structures)
     info = dict(structures.get("info") or {})
     info["N_vars_substituted"] = len(removed)
     info["N_cons_total"] = len(surviving)
-    out["info"] = info
+    out = st.rebuild(
+        rewrite(0),
+        [rewrite(i) for i in surviving],
+        [op_of(i) for i in surviving],
+        n=len(keep),
+        bounds=[bounds[j] for j in keep],
+        info=info)
+    if structures.get("variables"):
+        out["variables"] = [structures["variables"][j] for j in keep]
+
     # REVERSE elimination order. A pivot's formula is captured at the moment it
     # is eliminated, and it may reference variables eliminated in a later
     # round, so those have to be known first. Recovering forwards instead of
@@ -1093,39 +1092,38 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
     drop = {r.index: r.value for r in removed if r.reason != "output"}
     gone = {r.index for r in removed}
     keep = [j for j in range(n) if j not in gone]
-
-    new_rows, new_ops = [], []
+    pos = {j: t for t, j in enumerate(keep)}
     surviving = [i for i in con_idx if i not in out_cons]
-    renum = {old: new for new, old in enumerate(surviving, start=1)}
 
-    def emit(idx, terms, negate):
-        for coeff, expo in terms:
-            c = float(coeff)
-            for j, val in drop.items():
-                if abs(expo[j]) > 1e-12:
-                    c *= val ** expo[j]
-            new_rows.append([-idx - 1 if negate else idx, c]
-                            + [expo[j] for j in keep])
+    def rewrite(terms):
+        """Fold removed constants into the coefficient, renumber the rest."""
+        out_terms = []
+        for t in terms:
+            coeff = t.coeff
+            expo = {}
+            for j, e in t.exponents.items():
+                if j in drop:
+                    coeff *= drop[j] ** e         # a constant, into the coeff
+                elif j in pos:
+                    expo[pos[j]] = e              # survivor, renumbered
+            out_terms.append(Term(coeff=coeff, exponents=expo,
+                                  denominator=t.denominator))
+        return out_terms
 
-    emit(0, numer.get(0, []), False)
-    for old in surviving:
-        new = renum[old]
-        emit(new, numer.get(old, []), False)
-        emit(new, denom.get(old, []), True)
-        new_ops.append(operators[old - 1]
-                       if 0 <= old - 1 < len(operators) else "<=")
-
-    out = dict(structures)
-    out[key] = [structures[key][0], new_rows, new_ops]
-    out["bounds"] = [bounds[j] if j < len(bounds) else (None, None)
-                     for j in keep]
-    if structures.get("variables"):
-        out["variables"] = [structures["variables"][j] for j in keep]
+    st = as_detected(structures)
     info = dict(structures.get("info") or {})
     info["N_vars_removed"] = len(removed)
     info["N_vars_output"] = len(outputs)
     info["N_cons_total"] = len(surviving)
-    out["info"] = info
+    out = st.rebuild(
+        rewrite(st.terms(0)),
+        [rewrite(st.terms(i)) for i in surviving],
+        [st.operator(i) for i in surviving],
+        n=len(keep),
+        bounds=[bounds[j] if j < len(bounds) else (None, None) for j in keep],
+        info=info)
+    if structures.get("variables"):
+        out["variables"] = [structures["variables"][j] for j in keep]
     return out, removed
 
 

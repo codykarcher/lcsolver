@@ -18,8 +18,8 @@ if not cvxopt_available:
 
 
 def solve_GP(structures):
-    from edi.structure.structureDetector import require_bounds_as_rows
-    require_bounds_as_rows(structures, 'solve_GP')
+    from edi.structure.structureDetector import require
+    require(structures, 'solve_GP')
     # print(structures)
     # cody
     trm_idx = [ structures['Geometric_Program'][1][i][0] for i in range(0,len(structures['Geometric_Program'][1])) ]
