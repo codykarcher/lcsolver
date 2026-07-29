@@ -144,6 +144,52 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
 
     return [True, pyomo_component, N_bound_cons]
 
+#: What each backend can read. A structure carries features -- bounds split
+#: out, equalities condensed, columns substituted away -- and a backend that
+#: cannot read one of them will not fail, it will quietly solve a DIFFERENT
+#: problem. That is the failure mode this repository keeps rediscovering, so
+#: the capability is declared rather than remembered.
+CONSUMES = {
+    'solve_LP':   {'bounds_in_rows'},
+    'solve_QP':   {'bounds_in_rows'},
+    'solve_GP':   {'bounds_in_rows'},
+    'solve_SP':   {'bounds_in_rows'},
+    'solve_slcp': {'bounds_in_rows', 'bounds_split'},
+    'solve_sia':  {'bounds_in_rows', 'bounds_split'},
+}
+
+
+def features(structures):
+    """The set of representation features a detected structure carries."""
+    out = set()
+    out.add('bounds_split' if structures.get('bounds') is not None
+            else 'bounds_in_rows')
+    info = structures.get('info') or {}
+    if info.get('N_vars_substituted'):
+        out.add('columns_substituted')
+    if info.get('N_vars_removed'):
+        out.add('columns_removed')
+    return out
+
+
+def require(structures, who):
+    """Refuse a structure carrying a feature ``who`` cannot read.
+
+    Cheap, and it turns "this backend silently ignored half the problem" into
+    an error naming the feature and the backend.
+    """
+    can = CONSUMES.get(who)
+    if can is None:
+        return
+    missing = features(structures) - can - {'columns_substituted',
+                                            'columns_removed'}
+    if missing:
+        raise ValueError(
+            f"{who} cannot read a structure with {sorted(missing)}. It "
+            f"understands {sorted(can)}. Solving would ignore that part of "
+            "the problem and return an answer to a different question.")
+
+
 def require_bounds_as_rows(structures, who):
     """Refuse structures whose bounds a backend is about to ignore.
 

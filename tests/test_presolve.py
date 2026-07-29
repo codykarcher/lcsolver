@@ -1159,3 +1159,27 @@ def test_the_checker_notices_a_transform_that_lies():
 
     with pytest.raises(AssertionError, match='changed the problem'):
         assert_equivalent(st, broken, x, rtol=1e-6, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# declared capabilities
+# ---------------------------------------------------------------------------
+def test_a_backend_refuses_a_structure_it_cannot_read():
+    """Declared rather than remembered: the whole point of the registry."""
+    from edi.structure.structureDetector import features, require
+
+    rows = _detect(_active_bound_model(), bounds_as_rows=True)
+    split = _detect(_active_bound_model(), bounds_as_rows=False)
+
+    assert features(rows) == {'bounds_in_rows'}
+    assert 'bounds_split' in features(split)
+
+    require(rows, 'solve_GP')            # fine
+    require(split, 'solve_sia')          # fine -- SIA reads bounds
+    with pytest.raises(ValueError, match='cannot read'):
+        require(split, 'solve_GP')       # cvxopt reads only rows
+
+
+def test_an_unknown_consumer_is_not_second_guessed():
+    from edi.structure.structureDetector import require
+    require(_detect(_active_bound_model(), bounds_as_rows=False), 'something_new')
