@@ -44,12 +44,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["Term", "Detected", "as_detected"]
+__all__ = ["Term", "Detected", "as_detected", "DISPATCH_ORDER"]
 
-#: Detected structure kinds, most specific first -- the order the detector
-#: itself resolves ties in.
-KINDS = ("Linear_Program", "Quadratic_Program", "Geometric_Program",
-         "Signomial_Program")
+#: The detector sets a flag for EVERY structure the model satisfies, and they
+#: are not exclusive: `z == x - y` with `x >= 4` is a linear program AND a
+#: valid signomial program, and both flags come back True carrying two
+#: different row encodings of the same problem.
+#:
+#: So "what kind is this?" and "which rows do I read?" are different questions,
+#: and this codebase already answered them differently in two places --
+#: `solver.py` dispatches linear-first, while `_rows_of` and the SLCP bridge
+#: read signomial-first. Conflating them makes a consumer silently parse the
+#: wrong encoding, which is exactly what happened on the first attempt to move
+#: the bridge onto this class.
+DISPATCH_ORDER = ("Linear_Program", "Quadratic_Program", "Geometric_Program",
+                  "Signomial_Program")
+#: Preference when reading term rows: signomial before geometric, matching
+#: every existing consumer. The signomial list is the general one.
+LOG_ORDER = ("Signomial_Program", "Geometric_Program")
+LINEAR_ORDER = ("Linear_Program", "Quadratic_Program")
 
 _SHORT = {"Linear_Program": "LP", "Quadratic_Program": "QP",
           "Geometric_Program": "GP", "Signomial_Program": "SP"}
@@ -103,31 +116,59 @@ class Detected(dict):
     """
 
     # -- what kind of problem is this ------------------------------------
-    @property
-    def key(self):
-        """The detector key that is set, most specific first."""
-        for k in KINDS:
-            if self.get(k, (False,))[0]:
+    def _first(self, order):
+        for k in order:
+            entry = self.get(k)
+            if entry and entry[0] and entry[1] is not None:
                 return k
         return None
 
     @property
+    def log_key(self):
+        """The row list to read for GP/SP work: signomial before geometric."""
+        return self._first(LOG_ORDER)
+
+    @property
+    def linear_key(self):
+        """The payload to read for LP/QP work."""
+        return self._first(LINEAR_ORDER)
+
+    @property
+    def key(self):
+        """The row list this structure's terms live in.
+
+        Prefers the log encoding, because that is what every term-reading
+        consumer here wants. Use :attr:`dispatch_kind` to choose a solver.
+        """
+        return self.log_key or self.linear_key
+
+    @property
+    def dispatch_kind(self):
+        """The most specific kind, for choosing a backend.
+
+        An LP is also a QP is also a GP; this reports the narrowest, which is
+        the cheapest to solve. Deliberately NOT the same question as
+        :attr:`key`.
+        """
+        k = self._first(DISPATCH_ORDER)
+        return _SHORT[k] if k else None
+
+    @property
     def kind(self):
-        """``'LP'``, ``'QP'``, ``'GP'``, ``'SP'``, or None if unstructured."""
+        """``'LP'``, ``'QP'``, ``'GP'`` or ``'SP'`` for the encoding in use."""
         k = self.key
         return _SHORT[k] if k else None
 
     @property
     def space(self):
-        """``'natural'`` for an LP or QP, ``'log'`` for a GP or SP.
+        """``'log'`` if the terms in use are monomials, else ``'natural'``.
 
-        The space the problem is *linear* in, and therefore the space every
-        linear-algebraic pass should work in.
+        Follows :attr:`key`, so a model that is both linear and signomial
+        reports ``'log'`` -- the encoding its terms are actually stored in.
         """
-        k = self.kind
-        if k in ("LP", "QP"):
-            return "natural"
-        return "log" if k else None
+        if self.log_key:
+            return "log"
+        return "natural" if self.linear_key else None
 
     # -- the pieces -------------------------------------------------------
     @property

@@ -1205,8 +1205,35 @@ def test_detected_names_what_the_dict_only_implied():
     f.Objective(x + y)
     f.Constraint(x - y >= 2.0)
     lp = _detect(f, bounds_as_rows=False)
-    assert lp.kind == 'LP'
-    assert lp.space == 'natural'
+    assert lp.dispatch_kind == 'LP'          # narrowest kind, for the solver
+
+
+def test_kind_and_dispatch_kind_answer_different_questions():
+    """A model can be several kinds at once, and the two must not be conflated.
+
+    `z == x - y` with `x >= 4` is a linear program AND a valid signomial
+    program: the detector sets both flags, carrying two different encodings of
+    the same problem. `dispatch_kind` picks the narrowest (cheapest to solve);
+    `key`/`space` name the encoding the terms actually live in, which is what
+    a row reader needs. Conflating them made the SLCP bridge parse the wrong
+    row list.
+    """
+    f = Formulation()
+    x = f.Variable('x', 5.0, '', 'x', bounds=[0.1, 100.0])
+    y = f.Variable('y', 1.5, '', 'y', bounds=[1.0, 2.0])
+    z = f.Variable('z', 3.0, '', 'z', bounds=[0.1, 100.0])
+    f.Objective(z)
+    f.Constraint(z == x - y)
+    f.Constraint(x >= 4.0)
+    st = _detect(f, bounds_as_rows=False)
+
+    assert st['Linear_Program'][0] and st['Signomial_Program'][0]
+    assert st.dispatch_kind == 'LP'           # narrowest
+    assert st.key == 'Signomial_Program'      # where the terms are
+    assert st.space == 'log'
+    # and the terms really are readable from that encoding
+    assert st.terms(0)
+    assert st.constraint_indices
 
 
 def test_terms_reproduce_the_positional_row_format():

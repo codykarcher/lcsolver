@@ -34,23 +34,11 @@ than silently dropped.
 
 import numpy as np
 
+from edi.structure.detected import as_detected
 from edi.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
                                     Posynomial,
                                     PosynomialRatio, Problem, Signomial,
                                     solve as _slcp_solve)
-
-
-def _group(rows):
-    """Group rows by constraint index, splitting numerator from denominator."""
-    numerator, denominator = {}, {}
-    for r in rows:
-        idx = int(r[0])
-        term = (float(r[1]), [float(e) for e in r[2:]])
-        if idx >= 0:
-            numerator.setdefault(idx, []).append(term)
-        else:
-            denominator.setdefault(-idx - 1, []).append(term)
-    return numerator, denominator
 
 
 def build_problem(structures, sp_form=True, split_equalities=False):
@@ -72,30 +60,29 @@ def build_problem(structures, sp_form=True, split_equalities=False):
     Turning it off also loses sub-problem caching for those constraints: a
     linearization moves every iteration, so there is nothing to cache.
     """
-    key = ('Signomial_Program' if structures['Signomial_Program'][0]
-           else 'Geometric_Program')
-    if not structures[key][0]:
+    st = as_detected(structures)
+    if st.log_key is None:
         raise ValueError('structure is neither a GP nor an SP')
-    rows, operators = structures[key][1], structures[key][2]
-    numerator, denominator = _group(rows)
 
-    if 0 not in numerator:
+    obj_terms = [t for t in st.terms(0) if not t.denominator]
+    if not obj_terms:
         raise ValueError('no objective rows found in the detected structure')
-    n = max(len(a) for terms in numerator.values() for _, a in terms)
-
-    def pad(a):
-        return list(a) + [0.0] * (n - len(a))
+    # The DENSE row width, not the sparsity pattern: an all-zero column still
+    # occupies its place, and narrowing would renumber every variable after it.
+    n = max(len(r) - 2 for r in st[st.log_key][1])
 
     def posynomial(terms, what):
-        bad = [c for c, _ in terms if c <= 0]
+        bad = [t.coeff for t in terms if t.coeff <= 0]
         if bad:
             raise ValueError(
                 f'{what} has non-positive coefficients {bad}; SLCP needs each '
                 'posynomial part to be positive, so the detector should have '
                 'moved these into a denominator')
-        return Posynomial([(c, pad(a)) for c, a in terms], n)
+        return Posynomial(
+            [(t.coeff, [t.exponents.get(j, 0.0) for j in range(n)])
+             for t in terms], n)
 
-    objective = posynomial(numerator[0], 'objective')
+    objective = posynomial(obj_terms, 'objective')
 
     constraints = []
     n_split = 0
@@ -104,10 +91,11 @@ def build_problem(structures, sp_form=True, split_equalities=False):
         """The monomial 1, for writing ``1/p <= 1``."""
         return Posynomial([(1.0, [0.0] * n)], n)
 
-    for idx in sorted(k for k in numerator if k != 0):
-        op = operators[idx - 1] if (idx - 1) < len(operators) else '<='
-        num = numerator[idx]
-        den = denominator.get(idx)
+    for idx in st.constraint_indices:
+        op = st.operator(idx)
+        all_terms = st.terms(idx)
+        num = [t for t in all_terms if not t.denominator]
+        den = [t for t in all_terms if t.denominator]
 
         def wrap(body):
             """Opaque the body when sp_form is off, so SLCP linearizes it."""
