@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 31 modules, 244 tests
+## Done — 33 modules, 270 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -116,16 +116,30 @@ and you cannot tell which module to look at.
 | `linalg` | `gaussn.f` | literal port |
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
+| `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
 
 ## The job is done
 
-The port sizes a 737 end to end. Handed `wsize.f`'s own dumped input state
-from the real `runs/737/737.tas` run, it converges in the same 18 iterations
-to WTO = 174979.1500 lbf against the program's 174979.1499, and the whole
-converged aircraft agrees to 1.5e-9. `tests/test_wsize.py`.
+```
+$ python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas
+...
+737-800: Baseline technology (Aluminum, CFM56 engine)
+  WTO   =  174979.1500 lbf   (converged in 18 iterations)
+  Wfuel =   47487.2555 lbf
+  PFEI  =     7.849124
+```
+
+The port reads the case file, sizes the aircraft and flies the off-design
+mission, reproducing both convergence tables the shipped program prints. The
+Fortran gets 174979.1499 lbf and `PFEI = 7.8491`.
+
+Three tests hold that up: `test_tasfile.py` (the reader produces the exact
+state the program hands to `wsize` — every array entry, no tolerance),
+`test_wsize.py` (that state sizes to the same aircraft, 1.5e-9) and
+`test_woper.py` (the off-design loop, 1.2e-10).
 
 ## What is left, and why none of it is on the sizing path
 
@@ -134,16 +148,20 @@ converged aircraft agrees to 1.5e-9. `tests/test_wsize.py`.
 | `fobj.f`, `gradop.f`, `simpop.f` | the optimiser wrapper around `wsize` |
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
-| `getparm.f`, `getsave.f` | reading `.tas` input files |
+| `getsave.f` | optimiser restart files |
+| `output.f` | the `.out` report, and `engwrt` |
 
 The optimiser is the natural next piece: `fobj` is a thin wrapper that
 perturbs design variables, calls `wsize` then `woper` for each mission, and
 returns a fuel-burn objective, and `simpop`/`gradop` drive it. It reads
 `pare(ieu8)` for a jet-velocity-ratio constraint, which `tfcalc` now stores.
 
-`getparm` is what would let the port read `737.tas` directly rather than
-being handed a dumped state — worth doing before the optimiser if the point is
-to run new cases rather than to reproduce this one.
+Two things it needs that do not exist yet: the `i`/`j` parameter sweeps
+(`tasfile` reads and returns `ispars`/`parsi` but nothing applies them — see
+the guarded block around `tasopt.f:424`), and `getsave` for restart files.
+
+`output.f` is worth considering before the optimiser if the aim is to compare
+against `737.out` line by line rather than on a handful of numbers.
 
 ## Conventions to keep
 
@@ -315,7 +333,10 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 244 tests, ~40 s (wsize sizes a 737)
+python -m pytest tests/ -q            # 270 tests, ~40 s (wsize sizes a 737)
+
+# run the port itself
+python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas
 
 # build the reference program
 cd /Users/codykarcher/Desktop/Tasopt2.16/src && make tasopt

@@ -37,9 +37,10 @@ precision; the reference drivers use the same flag.
 | `linalg` | `gaussn.f` | literal port |
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
+| `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
 | `model` | `index.inc` | 611 constants, generated |
 
-244 tests. Reference CSVs are committed, so the suite runs without a Fortran
+270 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -70,6 +71,26 @@ layer, structures, engine and mission the whole way. The converged aircraft
 agrees to **1.5e-9** across `parg`, 1.0e-7 across `para` and 5.2e-8 across
 `pare`. The floor is `tfoper`'s numerical Jacobian (see below).
 
+## The port runs as a program
+
+```
+$ python -m tasopt_py /path/to/runs/737/737.tas
+...
+737-800: Baseline technology (Aluminum, CFM56 engine)
+  WTO   =  174979.1500 lbf   (converged in 18 iterations)
+  Wfuel =   47487.2555 lbf
+  PFEI  =     7.849124
+  mission 2: WTO =  174979.1500 lbf   (converged in 3 iterations)
+```
+
+against the shipped program's 174979.1499 lbf and the `PFEI = 7.8491` in
+`737.out`. Both convergence tables are reproduced line for line.
+
+`tasfile.read_tas` is checked hard: it reads `737.tas` and produces the
+parameter state the shipped program handed to `wsize`, **entry for entry with
+no tolerance** — all 27 `pari`, 254 `parg`, 17 `parm`, 51x17 `para` and
+269x17 `pare` values, unset entries included.
+
 ## Still to port
 
 | source | lines | what it is |
@@ -77,10 +98,10 @@ agrees to **1.5e-9** across `parg`, 1.0e-7 across `para` and 5.2e-8 across
 | `fobj.f`, `gradop.f`, `simpop.f` | ~600 | the optimiser wrapper around `wsize` |
 | `noise.f` | 460 | noise estimate |
 | `output.f` (`engwrt`) | — | output formatting only |
+| `getsave.f` | 150 | optimiser restart files |
 
-Nothing that computes an aircraft remains: both the design-mission sizing loop
-and the off-design mission loop are ported and checked against the shipped
-737 run.
+Nothing that computes an aircraft remains. What is left is the optimiser that
+wraps the sizing loop, the noise estimate, and output formatting.
 
 ## Accuracy of the boundary-layer chain
 

@@ -639,6 +639,66 @@ IOT4TO = 14
 IOOPR = 15
 IOTOTAL = 15
 
+#: Parameters a .tas file may sequence over.
+CPARS = [
+    'Range',
+    'Mach',
+    'Nmax',
+    'sigfac',
+    'CL',
+    'AR',
+    'sweep',
+    'etas',
+    'Tt4CR',
+    'Tt4TO',
+    'Tmetal',
+    'OPR',
+    'FPR',
+    'lBFmax',
+    'bmax',
+    'alt',
+]
+
+#: Parameters the optimiser may vary.
+CPARO = [
+    'CL',
+    'AR',
+    'sweep',
+    'hboxo',
+    'hboxs',
+    'lambdas',
+    'lambdat',
+    'rcls',
+    'rclt',
+    'FPR',
+    'BPR',
+    'alt',
+    'Tt4CR',
+    'Tt4TO',
+    'OPR',
+]
+
+#: Two-letter mission-point labels.
+CPLAB = [
+    'ST',
+    'RO',
+    'TO',
+    'CB',
+    'B1',
+    'B2',
+    'B3',
+    'B4',
+    'B5',
+    'C1',
+    'C2',
+    'D1',
+    'D2',
+    'D3',
+    'D4',
+    'D5',
+    'TE',
+]
+
 
 #: Fortran name -> constant name, for porting call sites.
 BY_FORTRAN_NAME = {

@@ -16,6 +16,13 @@ import re
 import sys
 from pathlib import Path
 
+#: ``data cpars / 'Range   ', ... /`` -- the keyword tables that name which
+#: parameters a .tas file may sequence over or optimise. Generated for the
+#: same reason as the indices: a transcribed list that drifts out of step
+#: with index.inc would make the reader silently reject a valid keyword.
+DATA_BLOCK = re.compile(r"^\s*data\s+(cpars|cparo|cplab)\s*/\s*$")
+QUOTED = re.compile(r"'([^']*)'")
+
 ENTRY = re.compile(
     r"^\s*&\s*([A-Za-z_]\w*)\s*=\s*([A-Za-z_0-9+\-* ]+?)\s*(?:,|\))?\s*"
     r"(?:!\s*(.*))?$")
@@ -58,6 +65,25 @@ def parse(path):
     return order, entries, env
 
 
+def parse_tables(path):
+    """Pull the quoted keyword lists out of index.inc's ``data`` blocks."""
+    tables, name, buf = {}, None, []
+    for line in Path(path).read_text().splitlines():
+        if line[:1] in ("c", "C", "*"):
+            continue
+        m = DATA_BLOCK.match(line)
+        if m:
+            name, buf = m.group(1), []
+            continue
+        if name is None:
+            continue
+        buf.extend(QUOTED.findall(line))
+        if "/" in line.split("!")[0].rsplit("'", 1)[-1]:
+            tables[name] = [v.strip() for v in buf]
+            name = None
+    return tables
+
+
 def group_of(name):
     for prefix, array, _ in GROUPS:
         if name.startswith(prefix):
@@ -93,6 +119,19 @@ def generate(path):
         if comment:
             line += f"  # {comment}"
         out.append(line)
+
+    tables = parse_tables(path)
+    for tname, doc in (("cpars", "Parameters a .tas file may sequence over."),
+                       ("cparo", "Parameters the optimiser may vary."),
+                       ("cplab", "Two-letter mission-point labels.")):
+        if tname not in tables:
+            continue
+        out.append("")
+        out.append(f"#: {doc}")
+        out.append(f"{tname.upper()} = [")
+        for v in tables[tname]:
+            out.append(f"    {v!r},")
+        out.append("]")
 
     out.append("")
     out.append("")

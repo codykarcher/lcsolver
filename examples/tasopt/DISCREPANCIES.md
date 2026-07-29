@@ -273,3 +273,36 @@ Two blocks cannot have an effect:
   point about eighty lines later.
 
 All three are ported as written, the last with a test pinning the order.
+
+## §33 — dead input in the `.tas` format
+
+Three things a `.tas` file appears to specify but does not.
+
+**The tail sweep.** `getparm.f` reads it and throws it away one line later:
+
+```fortran
+      call getrval(lu,iline,parg(igsweeph))
+      parg(igsweeph) = parg(igsweep)   ! ###
+```
+
+`737.tas` carries a `sweeph` value with an explanatory comment. Changing it
+has no effect; the horizontal tail is always swept like the wing.
+
+**The number of fuselage webs.** `parg(ignfweb)` is hard-wired to 1.0 and its
+read is commented out, so a double-bubble section always gets one web.
+
+**The mission-varying excrescence factors.** The three lines that would read
+per-mission `fexcdw`/`fexcdt`/`fexcdf` are inside `if(.false.)`, matching a
+commented-out block in `woper.f`. Every mission uses the single set read later
+in the file.
+
+Two smaller notes on the reader itself:
+
+* The airfoil database index is set to 1, a loop reads that one file, and then
+  the count is set to 2 and `airfile(2) = airfile(1)` — so the same file is
+  read a second time into a second, identical table. `iairf` is then 1 for the
+  design mission and 2 for off-design missions, selecting between two copies
+  of the same data. This port reads it once.
+* `getrkey`'s header comment says the keyword must be "at the beginning of
+  line", but the implementation is `index(line(1:kend), key(1:nkey))`, which
+  matches anywhere. Reproduced as implemented.

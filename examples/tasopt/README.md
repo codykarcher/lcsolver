@@ -50,13 +50,18 @@ python -m pytest tests/ -q
 Fortran source, and to what agreement. It is the one place that list is kept,
 so it does not go stale in two files at once.
 
-In short: 31 modules, 244 tests, and **the port sizes a 737 end to end**.
-Given `wsize.f`'s own dumped input state from the shipped `runs/737/737.tas`
-run, it converges in the same 18 iterations to WTO = 174979.1500 lbf against
-the program's 174979.1499, with the whole converged aircraft agreeing to
-1.5e-9. Both the design-mission sizing loop (`wsize`) and the off-design mission
-loop (`woper`) are ported and checked against the shipped run.
-`DISCREPANCIES.md` records what was found in the source along the way.
+In short: 33 modules, 270 tests, and **the port runs**:
+
+```bash
+python -m tasopt_py /path/to/Tasopt2.16/runs/737/737.tas
+```
+
+reads the case file, sizes the aircraft and flies the off-design mission,
+reproducing both of the convergence tables the shipped program prints.
+It converges in the same 18 iterations to WTO = 174979.1500 lbf against the
+program's 174979.1499, with the whole converged aircraft agreeing to 1.5e-9,
+and PFEI = 7.849124 against the 7.8491 in `737.out`. `DISCREPANCIES.md`
+records what was found in the source along the way.
 
 The gas tables (11 gases, ~600 numbers each) are **generated**, not
 transcribed — `fortran_ref/extract_gas_tables.py` parses them out of the
