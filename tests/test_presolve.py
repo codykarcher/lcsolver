@@ -23,8 +23,14 @@ from edi.presolve import (
     degeneracy_report,
     fold_singleton_rows,
     presolve_report,
+    reduce_columns,
+    restore_columns,
 )
-from edi.solvers.ipopt.slcp_bridge import build_problem, solve_sia
+from edi.solvers.ipopt.slcp_bridge import (
+    build_problem,
+    presolve_structures,
+    solve_sia,
+)
 from edi.structure.structureDetector import (
     require_bounds_as_rows,
     structure_detector,
@@ -252,6 +258,139 @@ def test_folding_takes_the_tightest_of_several_rows():
 def test_folding_needs_split_bounds():
     with pytest.raises(ValueError, match='bounds_as_rows'):
         fold_singleton_rows(_detect(_singleton_row_model(), bounds_as_rows=True))
+
+
+# ---------------------------------------------------------------------------
+# removing disconnected and fixed columns
+# ---------------------------------------------------------------------------
+def _disconnected_model():
+    """min x + 1/x  s.t.  x >= 1,  y >= 4.
+
+    `y` appears in no real constraint and in no objective term. Nothing
+    determines it and nothing depends on it, so it can be fixed at 4 and
+    dropped without touching the answer.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
+    y = f.Variable('y', 5.0, '', 'y', bounds=[1e-30, 1e30])
+    f.Objective(x + 1.0 / x)
+    f.Constraint(x >= 1.0)
+    f.Constraint(y >= 4.0)
+    return f
+
+
+def _reduced(f):
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    return st, reduce_columns(st)
+
+
+def test_disconnected_variable_is_identified_and_removed():
+    st, (small, removed) = _reduced(_disconnected_model())
+
+    assert [(nm, why) for _j, nm, _v, why in removed] == [('y', 'disconnected')]
+    assert removed[0][2] == pytest.approx(4.0, rel=1e-9)   # its tightest bound
+    assert len(small['variables']) == len(st['variables']) - 1
+    assert 'y' not in [str(v) for v in small['variables']]
+
+
+def test_removing_it_does_not_change_the_answer():
+    st, (small, removed) = _reduced(_disconnected_model())
+
+    full = solve_sia(st, x0=np.array([2.0, 5.0]))
+    cut = solve_sia(small, x0=np.array([2.0]))
+
+    assert cut.objective == pytest.approx(full.objective, rel=1e-8)
+    assert cut.objective == pytest.approx(2.0, rel=1e-6)   # min of x + 1/x
+
+
+def test_removed_values_come_back_in_the_solution():
+    st, (small, removed) = _reduced(_disconnected_model())
+    cut = solve_sia(small, x0=np.array([2.0]))
+
+    x = restore_columns(removed, cut.x, n_original=len(st['variables']))
+    names = [str(v) for v in st['variables']]
+    assert len(x) == len(names)
+    assert x[names.index('y')] == pytest.approx(4.0, rel=1e-9)
+    # x + 1/x is flat at its minimum, so the location is recovered far less
+    # precisely than the value -- the objective is right to 8 figures while x
+    # is only good to about 1e-4. That is curvature, not the reduction.
+    assert x[names.index('x')] == pytest.approx(1.0, rel=1e-3)
+
+
+def test_a_fixed_variable_is_folded_into_the_coefficients():
+    """Equal bounds make it a constant; the answer must not move."""
+    def model(as_variable):
+        f = Formulation()
+        x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
+        f.Objective(x)
+        if as_variable:
+            k = f.Variable('k', 3.0, '', 'k', bounds=[3.0, 3.0])
+            f.Constraint(x >= k * 2.0)
+        else:
+            f.Constraint(x >= 6.0)
+        return f
+
+    st = fold_singleton_rows(_detect(model(True), bounds_as_rows=False))
+    small, removed = reduce_columns(st)
+
+    assert [(nm, why) for _j, nm, _v, why in removed] == [('k', 'fixed')]
+    assert solve_sia(small, x0=np.array([2.0])).objective == \
+        pytest.approx(6.0, rel=1e-6)
+
+
+def test_a_variable_in_a_real_constraint_is_never_removed():
+    """Even when it is slack, and even when the objective ignores it.
+
+    This is the boundary: `y` here is degenerate at the optimum, but it sits
+    in a genuine constraint that would bind at a different design point.
+    Removing it would delete that constraint too.
+    """
+    f = Formulation()
+    x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
+    y = f.Variable('y', 5.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(x)
+    f.Constraint(x >= 1.0)
+    f.Constraint(x * y >= 0.2)          # slack at the optimum, but real
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    _small, removed = reduce_columns(st)
+
+    assert [nm for _j, nm, _v, _why in removed] == []
+
+
+def test_presolve_is_on_by_default_and_is_invisible_to_the_caller():
+    """The default path reduces, solves, and hands back the original layout.
+
+    Both the reduced and unreduced solves must agree, and `result.x` must
+    still be indexed by the original variable ordering -- a caller should not
+    have to know whether anything was removed.
+    """
+    st = _detect(_disconnected_model())
+    names = [str(v) for v in st['variables']]
+
+    on = solve_sia(st, x0=np.array([2.0, 5.0]))
+    off = solve_sia(_detect(_disconnected_model()), x0=np.array([2.0, 5.0]),
+                    presolve=False)
+
+    assert on.objective == pytest.approx(off.objective, rel=1e-6)
+    assert len(on.x) == len(names)
+    assert [nm for _j, nm, _v, _why in on.removed] == ['y']
+    assert on.x[names.index('y')] == pytest.approx(4.0, rel=1e-9)
+    assert off.removed == []
+
+
+def test_presolve_works_when_bounds_are_still_rows():
+    """The default detector output has bounds as rows; presolve must cope."""
+    st = _detect(_disconnected_model(), bounds_as_rows=True)
+    assert st['bounds'] is None
+    reduced, removed = presolve_structures(st)
+
+    assert reduced['bounds'] is not None
+    assert [nm for _j, nm, _v, _why in removed] == ['y']
+
+
+def test_reduction_needs_split_bounds():
+    with pytest.raises(ValueError, match='bounds_as_rows'):
+        reduce_columns(_detect(_disconnected_model(), bounds_as_rows=True))
 
 
 # ---------------------------------------------------------------------------

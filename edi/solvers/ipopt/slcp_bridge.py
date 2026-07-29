@@ -160,28 +160,98 @@ def build_problem(structures, sp_form=True):
                    bounds=bounds)
 
 
+def presolve_structures(structures, verbose=False):
+    """Shrink a detected structure before handing it to a solver.
+
+    Folds rows that are really bounds into the bounds, then drops columns
+    nothing refers to -- variables fixed by equal bounds, and variables that
+    appear in no real constraint and no objective term. Both reductions are
+    exact: the optimal objective is unchanged and every removed variable gets
+    a value that is feasible for the original problem.
+
+    Returns ``(reduced, removed)``. ``removed`` is in
+    :func:`~edi.presolve.reduce_columns` form and is what
+    :func:`~edi.presolve.restore_columns` needs to rebuild a full solution.
+
+    Unlike ``structure_detector(bounds_as_rows=False)``, this works on a
+    structure whose bounds are still rows: it synthesizes the empty bounds
+    array to fold them into. That is a deliberate choice made here rather than
+    in ``edi.presolve``, because this is the point that knows the consumer --
+    SLCP and SIA both read variable bounds -- whereas the cvxopt backends do
+    not, and ``edi.presolve`` refuses the conversion for exactly that reason.
+    """
+    from edi.presolve import fold_singleton_rows, reduce_columns
+
+    st = dict(structures)
+    if st.get('bounds') is None:
+        key = ('Signomial_Program' if st['Signomial_Program'][0]
+               else 'Geometric_Program')
+        width = max((len(r) - 2 for r in st[key][1]), default=0)
+        st['bounds'] = [(None, None)] * max(width,
+                                            len(st.get('variables') or []))
+    st = fold_singleton_rows(st)
+    st, removed = reduce_columns(st)
+    if verbose and removed:
+        import collections
+        why = collections.Counter(w for *_rest, w in removed)
+        print(f"presolve: removed {len(removed)} variables "
+              f"({dict(why)}); {st['info']['N_cons_total']} constraints remain")
+    return st, removed
+
+
+def _apply_presolve(structures, x0):
+    """``(reduced_structures, reduced_x0, removed, n_original)``."""
+    n_original = len(structures.get('variables') or [])
+    reduced, removed = presolve_structures(structures)
+    if x0 is not None and removed:
+        dropped = {j for j, *_rest in removed}
+        x0 = [v for j, v in enumerate(x0) if j not in dropped]
+    return reduced, x0, removed, n_original
+
+
+def _restore(result, removed, n_original):
+    """Put presolved-away variables back, so callers see the original layout."""
+    from edi.presolve import restore_columns
+
+    result.removed = removed
+    if removed and getattr(result, 'x', None) is not None:
+        result.x = restore_columns(removed, result.x, n_original=n_original)
+    return result
+
 def solve_slcp(structures, x0=None, method='slcp', options=None,
-               sp_form=True):
+               sp_form=True, presolve=True):
     """Solve a detected GP/SP with SLCP.
 
     ``x0`` is in the natural (not log) variables and must be strictly
     positive; it defaults to the current values of ``structures['variables']``.
     Returns the SLCP :class:`~edi.solvers.ipopt.slcp.Result`.
+
+    ``presolve`` (default True) shrinks the problem first via
+    :func:`presolve_structures` and puts the removed variables back into
+    ``result.x`` afterwards, so the result is indexed by the original variable
+    ordering either way. ``result.removed`` records what was taken out.
     """
     import pyomo.environ as pyo
 
-    problem = build_problem(structures, sp_form=sp_form)
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
+    removed, n_original = [], len(structures.get('variables') or [])
+    if presolve:
+        structures, x0, removed, n_original = _apply_presolve(structures, x0)
+
+    problem = build_problem(structures, sp_form=sp_form)
     x0 = np.asarray(x0, dtype=float)
     if len(x0) < problem.n:
         # PCCP-style slack columns, if any, start at 1.
         x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])
     x0 = np.where(x0 > 0, x0, 1.0)
-    return _slcp_solve(problem, x0[:problem.n], method=method, options=options)
+    result = _slcp_solve(problem, x0[:problem.n], method=method,
+                         options=options)
+    return _restore(result, removed, n_original)
 
 
-def solve_sia(structures, x0=None, options=None, sp_form=True):
+def solve_sia(structures, x0=None, options=None, sp_form=True,
+              presolve=True):
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
@@ -194,11 +264,16 @@ def solve_sia(structures, x0=None, options=None, sp_form=True):
 
     from edi.solvers.ipopt.sia import solve_sia as _sia_solve
 
-    problem = build_problem(structures, sp_form=sp_form)
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
+    removed, n_original = [], len(structures.get('variables') or [])
+    if presolve:
+        structures, x0, removed, n_original = _apply_presolve(structures, x0)
+
+    problem = build_problem(structures, sp_form=sp_form)
     x0 = np.asarray(x0, dtype=float)
     if len(x0) < problem.n:
         x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])
     x0 = np.where(x0 > 0, x0, 1.0)
-    return _sia_solve(problem, x0[:problem.n], options=options)
+    result = _sia_solve(problem, x0[:problem.n], options=options)
+    return _restore(result, removed, n_original)

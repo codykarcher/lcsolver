@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 
 __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "cancellation_report", "fold_singleton_rows",
+           "reduce_columns", "restore_columns",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -388,6 +389,123 @@ def fold_singleton_rows(structures):
     info["N_cons_total"] = len(keep)
     info["N_cons_folded"] = len(folded)
     out["info"] = info
+    return out
+
+
+def reduce_columns(structures, guess=None):
+    """Remove variables the model does not connect to anything.
+
+    Two reductions, both exact -- the optimal objective is unchanged and the
+    removed variables are given values that are feasible for the original
+    problem.
+
+    **Disconnected.** In ``min x**2 s.t. x >= 1, y >= 4`` the variable ``y``
+    appears in no real constraint and in no objective term. Nothing determines
+    it, nothing is affected by it, and carrying it through the solve only costs
+    time. It is fixed at its tightest finite bound and dropped.
+
+    **Fixed.** A variable whose bounds are equal is a constant wearing a
+    variable's clothing. Its value is folded into the coefficient of every term
+    it appears in -- ``c * v**a`` -- and the column goes.
+
+    This is structural, which is the whole point: it happens before the solve,
+    unlike :func:`degeneracy_report`, which can only report after one. The two
+    do not overlap much. A degenerate variable typically sits in several real
+    constraints that all happen to go slack at this particular optimum, and
+    removing it would delete those constraints along with it -- they would bind
+    at a different design point. Nothing here touches a variable that appears
+    in a real constraint.
+
+    Requires ``structures['bounds']``; run :func:`fold_singleton_rows` first so
+    that rows which are really bounds have already been recognised as such,
+    otherwise ``y >= 4`` still counts as a constraint and ``y`` is not seen as
+    disconnected.
+
+    Returns ``(reduced_structures, removed)``, where ``removed`` is a list of
+    ``(original_index, name, value, reason)`` ordered by index. Feed it to
+    :func:`restore_columns` to put the values back into a solution vector.
+    """
+    if structures.get("bounds") is None:
+        raise ValueError(
+            "reduce_columns needs structures['bounds']; run structure_detector "
+            "with bounds_as_rows=False (and fold_singleton_rows) first")
+
+    rows, operators, key = _rows_of(structures)
+    names = [str(v) for v in structures.get("variables", [])]
+    bounds = list(structures["bounds"])
+    n = max([len(r) - 2 for r in rows] + [len(bounds)])
+
+    in_objective, in_constraint = set(), set()
+    for r in rows:
+        target = in_objective if int(r[0]) == 0 else in_constraint
+        for j, e in enumerate(r[2:]):
+            if abs(float(e)) > 1e-12:
+                target.add(j)
+
+    removed = []
+    for j in range(n):
+        lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
+
+        if (lo is not None and hi is not None and lo > 0
+                and hi <= lo * (1.0 + 1e-9)):
+            removed.append((j, nm_at(names, j), float(lo), "fixed"))
+            continue
+
+        if j in in_constraint or j in in_objective:
+            continue
+        # Nothing refers to it. Any feasible value will do, so take the
+        # tightest bound that means anything; failing that, the user's guess.
+        if lo is not None and lo > VACUOUS_LO:
+            val = float(lo)
+        elif hi is not None and hi < VACUOUS_HI:
+            val = float(hi)
+        elif guess is not None and j < len(guess) and guess[j] > 0:
+            val = float(guess[j])
+        else:
+            val = 1.0
+        removed.append((j, nm_at(names, j), val, "disconnected"))
+
+    if not removed:
+        return structures, []
+
+    drop = {j: v for j, _nm, v, _why in removed}
+    keep = [j for j in range(n) if j not in drop]
+
+    new_rows = []
+    for r in rows:
+        coeff = float(r[1])
+        expo = [float(e) for e in r[2:]] + [0.0] * (n - (len(r) - 2))
+        # Fold each removed variable's constant value into the coefficient.
+        for j, val in drop.items():
+            if abs(expo[j]) > 1e-12:
+                coeff *= val ** expo[j]
+        new_rows.append([r[0], coeff] + [expo[j] for j in keep])
+
+    out = dict(structures)
+    out[key] = [structures[key][0], new_rows, list(operators)]
+    out["bounds"] = [bounds[j] if j < len(bounds) else (None, None)
+                     for j in keep]
+    if structures.get("variables"):
+        out["variables"] = [structures["variables"][j] for j in keep
+                            if j < len(structures["variables"])]
+    info = dict(structures.get("info") or {})
+    info["N_vars_removed"] = len(removed)
+    out["info"] = info
+    return out, removed
+
+
+def restore_columns(removed, x_reduced, n_original=None):
+    """Put removed variables back into a reduced solution vector."""
+    import numpy as np
+
+    x_reduced = np.asarray(x_reduced, dtype=float)
+    if n_original is None:
+        n_original = len(x_reduced) + len(removed)
+    dropped = {j: v for j, _nm, v, _why in removed}
+    out = np.empty(n_original, dtype=float)
+    it = iter(x_reduced)
+    for j in range(n_original):
+        out[j] = dropped[j] if j in dropped else next(it)
     return out
 
 
