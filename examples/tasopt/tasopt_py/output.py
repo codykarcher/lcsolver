@@ -837,7 +837,12 @@ def report(case, result, *, Lfblwrite: bool = True) -> str:
     out.append(" Airfoil database used:  " + name)
     out.append(" Airfoil database used:  " + name)
 
+    # outwrt is where the *fleet* PFEI gets stored, and everything else that
+    # wants it reads parg afterwards -- notably pltwrt, whose PFEI column is
+    # populated only because the report happens to be written first. With
+    # Loutwrite off, that column would carry the "unset" fill value.
     PFEI = sum(m.parm[I.IMWOPT] * m.parm[I.IMPFEI] for m in case.missions)
+    parg[I.IGPFEI] = PFEI
     out.append(_blank())
     out.append(RULE2)
     out.append(f" Fleet PFEI ={PFEI:8.4f} KJ/kg-km")

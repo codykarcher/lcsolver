@@ -27,7 +27,7 @@ Inside the port:
 ```
 tasopt_py/          the port, by subsystem (gas, aero, engine, structures,
                     sizing, model)
-tests/              pytest suite, 202 tests
+tests/              pytest suite, 338 tests
 tests/data/         committed reference CSVs — the suite runs with no compiler
 fortran_ref/        the Fortran drivers that regenerate those CSVs
 tools/gen_indices.py  generates tasopt_py/model/indices.py from index.inc
@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 39 modules, 317 tests
+## Done — 41 modules, 338 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -120,6 +120,8 @@ and you cannot tell which module to look at.
 | `output` | `output.f` (report) | **737.out byte-identical** |
 | `sizing.noise` | `noise.f` | real 737 run |
 | `acoustics` | `tfnoise.f`, `freq.inc` | three dB values, exact |
+| `savefile` | `getsave.f` | header and body, exact |
+| `planview` | `airpic.f`, `pltwrt` | both .plt files, exact |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc` | 611 constants, generated |
 
@@ -155,22 +157,20 @@ state the program hands to `wsize` — every array entry, no tolerance),
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
 | `aswout.f`, `aswio.f` | ASWING export, 2795 lines |
-| `airpic.f`, `pltwrt`, `picwrt`, `picidr` | Matlab and gnuplot plot files |
-| `getsave.f` | optimiser restart (`.sav`) files |
+| `picwrt`, `picidr` | gnuplot and idraw drawing commands, ~190 lines |
 
-Nothing that computes a number remains. All four are output formats:
+Nothing that computes a number remains. What is left is output formats:
 
-* **ASWING export** (2795 lines) is much the largest, and is a file-format
-  translation -- write the aircraft as an ASWING `.asw` input deck. Behind
-  `Laswwrite`, which `737.tas` sets to F.
-* **Matlab and gnuplot plot files** (~500 lines), behind the plotting flags.
-* **`getsave`** (127 lines) reads and writes the optimiser's `.sav` restart
-  files, so a search can be resumed. Behind a second command-line argument.
-* **Trefftz and BL plot files** (154 lines), behind `Ltrpwrite`.
-
-If the point of the port is to run and compare cases, none of these is needed;
-if it is to be a drop-in replacement for the shipped program, ASWING is the
-one real gap.
+* **ASWING export** (`aswout`/`aswio`, 2795 lines) -- write the aircraft as an
+  ASWING `.asw` input deck. Behind `Laswwrite`, which `737.tas` sets to F.
+  Much the largest of these, and the one real gap if the port is meant to be a
+  drop-in replacement.
+* **gnuplot and idraw drawing commands** (`picwrt`/`picidr`, ~190 lines).
+  `tasopt_py.planview.airpic` already gives the geometry these draw, so this
+  is emitting a plotting syntax rather than computing anything -- in Python
+  you would reach for matplotlib against `airpic` instead.
+* **Trefftz and BL plot files** (`blfwrt2`, `trpwrt`, `trpwrt2`, 154 lines),
+  behind `Ltrpwrite`.
 
 ## Conventions to keep
 
@@ -342,7 +342,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 317 tests, ~90 s
+python -m pytest tests/ -q            # 338 tests, ~110 s
 TASOPT_SLOW=1 python -m pytest tests/  # + the 18-evaluation optimiser check
 
 # run the port itself

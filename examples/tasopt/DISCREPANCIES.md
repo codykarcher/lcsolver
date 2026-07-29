@@ -453,3 +453,52 @@ If the blade-passing frequency were low enough for 23 harmonics to fit under
 computed, and the caller would read an uninitialised level. No engine of
 interest gets near that — a 737 breaks out at the seventh harmonic — and this
 port returns only the pairs it computed.
+
+## §42 — the save file is closed before anything is written to it
+
+`tasopt.f` opens the optimiser restart file, writes its two header lines with
+`wrtsave0`, and closes it — *before* the optimisation that produces the data
+has run:
+
+```fortran
+       open(lusav,file=fname,status='unknown')
+       call wrtsave0(lusav, ... )
+       close(lusav)
+      endif
+```
+
+Every later `wrtsave1` therefore writes to a closed unit 8, which gfortran
+silently redirects to a file called `fort.8` in the working directory. Running
+the 737 with `Lopt = T` and `Lsavwrite = T` produces:
+
+* `737.sav` — two header lines and nothing else;
+* `fort.8` — every simplex, unnamed and unmentioned.
+
+Reading the `.sav` back gets no grid points at all and fails `getsave`'s
+i/j-count check, so a restart cannot work. The bug is in the driver, not in
+the `getsave`/`wrtsave` routines, and this port does not reproduce it — it
+writes both halves to the same file. Both halves are checked against the real
+Fortran output: the header against the `.sav`, the body against the `fort.8`.
+
+## §43 — `pltwrt`'s PFEI column depends on the report having been written
+
+The Matlab parameter file's first column is `parg(igPFEI)`, and the only place
+that is ever assigned outside the optimiser is inside `outwrt` — the routine
+that writes the `.out` report. `outwrt` happens to be called before `pltwrt`
+in the `i`,`j` loop, so the column is populated.
+
+Turn `Loutwrite` off and leave `Lplot`-style output on, and the column carries
+the `2**1023` "unset" fill value instead. Ported as written, with the ordering
+made explicit in `tasopt_py.output.report`.
+
+## §44 — the drawn planform is pinned differently from the modelled one
+
+`airpic.f` places the spanwise axis at a hard-wired 40% chord
+(`xax = 0.40`, `xaxh = 0.40`) for both wing and tail. `parg(igXaxis)` — what
+`surfcm` and the structural sizing use — is never read. The 737 sets `Xaxis`
+to 0.40 as well so the two coincide there, but on any case that does not, the
+picture and the model disagree about where the surfaces are pinned.
+
+`airpic` also computes `clp` and `cmp` from a hard-wired `CL = 0.70` and
+`cm = -0.1` and then never uses either, and a block that would walk the tail
+root back along the fuselage contour sits inside `if(.false.)`.

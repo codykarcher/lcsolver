@@ -41,10 +41,12 @@ precision; the reference drivers use the same flag.
 | `output` | `output.f` (report) | **737.out byte-identical** |
 | `sizing.noise` | `noise.f` | real 737 run |
 | `acoustics` | `tfnoise.f`, `freq.inc` | three dB values, exact |
+| `savefile` | `getsave.f` | header and body, exact |
+| `planview` | `airpic.f`, `pltwrt` | both .plt files, exact |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc` | 611 constants, generated |
 
-317 tests. Reference CSVs are committed, so the suite runs without a Fortran
+338 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -112,13 +114,14 @@ objective.
 | source | lines | what it is |
 |---|---|---|
 | `aswout.f`, `aswio.f` | 2795 | ASWING input-file export |
-| `airpic.f`, `pltwrt`, `picwrt`, `picidr` | ~500 | Matlab and gnuplot plot files |
-| `getsave.f` | 127 | optimiser restart (`.sav`) files |
+| `picwrt`, `picidr` | ~190 | gnuplot and idraw drawing commands |
 | `blfwrt2`, `trpwrt`, `trpwrt2` | 154 | Trefftz and BL plot files |
 | `gradop.f` | 40 | an empty shell — see `DISCREPANCIES.md` §34 |
 
-Everything that computes, optimises or reports on an aircraft is ported. What
-is left is four export formats — none of them physics.
+Everything that computes, optimises or reports on an aircraft is ported, and
+so are the optimiser's restart files and the plan-view geometry. What is left
+is the ASWING export and three plotting-syntax emitters — none of them
+physics.
 
 ## Accuracy of the boundary-layer chain
 
