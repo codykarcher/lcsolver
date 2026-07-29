@@ -27,7 +27,7 @@ Inside the port:
 ```
 tasopt_py/          the port, by subsystem (gas, aero, engine, structures,
                     sizing, model)
-tests/              pytest suite, 389 tests
+tests/              pytest suite, 393 tests
 tests/data/         committed reference CSVs — the suite runs with no compiler
 fortran_ref/        the Fortran drivers that regenerate those CSVs
 tools/gen_indices.py  generates tasopt_py/model/indices.py from index.inc
@@ -85,7 +85,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 44 modules, 389 tests
+## Done — 44 modules, 393 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -371,7 +371,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 389 tests, ~4 min
+python -m pytest tests/ -q            # 393 tests, ~4 min
 TASOPT_SLOW=1 python -m pytest tests/  # + the 18-evaluation optimiser check
 
 # run the port itself

@@ -50,7 +50,7 @@ python -m pytest tests/ -q
 Fortran source, and to what agreement. It is the one place that list is kept,
 so it does not go stale in two files at once.
 
-In short: 44 modules, 389 tests, and **the port runs**:
+In short: 44 modules, 393 tests, and **the port runs**:
 
 ```bash
 python -m tasopt_py /path/to/Tasopt2.16/runs/737/737.tas \

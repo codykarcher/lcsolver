@@ -50,7 +50,7 @@ precision; the reference drivers use the same flag.
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
 
-389 tests. Reference CSVs are committed, so the suite runs without a Fortran
+393 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
