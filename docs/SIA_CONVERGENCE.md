@@ -64,6 +64,31 @@ pairs**, recovering PCCP's hyperplane there while leaving genuine inequalities
 exact and conservative. `condense_numerator` currently applies to every ratio,
 which gives up conservatism on inequalities that never needed it.
 
+## Result of the fix
+
+`split_equalities=False` on SPaircraft, 250 iterations:
+
+| | objective | violation | stationarity | time |
+|---|---|---|---|---|
+| PCCP (reference) | 93,141.76 | 3.3e-06 | -- | 179.7 s |
+| split pair (old) | 121,355.61 | 1.5e-07 | 0.42206 | 65.9 s |
+| **one equality (new)** | **95,559.98** | **1.6e-07** | 0.53966 | **23.3 s** |
+
+The **step** problem is largely solved. The gap to PCCP closes from 30% to
+2.6%, the iterate is *more* feasible than PCCP's, and the run is 7.7x faster
+than PCCP and 2.8x faster than the old SIA path -- the extra speed coming from
+both the smaller constraint count and the cache, which now handles the
+condensed equality.
+
+The **certificate** problem is not solved. Stationarity is unchanged at ~0.5
+even though the degenerate pairs are gone. So the dual-degeneracy account
+explains the step collapse, and it is confirmed on a three-variable
+reproduction where multipliers fall from 3611 to 2 -- but on SPaircraft
+something else holds the KKT residual up, and it is still outstanding. The
+same is visible in miniature: the three-variable case reaches the exact
+optimum and still reports `stat=2`, there because `y` sits at a bound and
+`_kkt` ignores bound multipliers.
+
 ## The trace
 
 Feasible from iteration 1, monotone throughout, and crawling:
