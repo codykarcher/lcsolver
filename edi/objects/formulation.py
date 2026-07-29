@@ -15,6 +15,7 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
+import numpy as _np
 import pyomo
 import pyomo.environ as pyo
 from pyomo.util.check_units import assert_units_consistent
@@ -22,6 +23,16 @@ from pyomo.environ import ConcreteModel
 from pyomo.environ import Var, Param, Objective, Constraint, Set
 from pyomo.environ import maximize, minimize
 from pyomo.environ import units as pyomo_units
+from pyomo.core.base.var import IndexedVar
+from pyomo.core.base.param import IndexedParam
+
+from edi.objects.vector import (
+    VectorComponent,
+    VectorArray,
+    as_array,
+    broadcast_cols,
+    broadcast_rows,
+)
 from pyomo.common.dependencies import attempt_import
 
 egb, egb_available = attempt_import(
@@ -100,6 +111,30 @@ class _Unset:
 
 
 UNSET = _Unset()
+
+
+def _unwrap_0d(result):
+    """A full reduction gives a 0-d array; hand back the expression itself.
+
+    numpy keeps the array type through `.sum()`, so `f.sum(x)` would otherwise
+    return a 0-d array that Pyomo tries to treat as an indexed rule.
+    """
+    if isinstance(result, _np.ndarray) and result.ndim == 0:
+        return result.item()
+    return result
+
+
+class EDIVar(VectorComponent, IndexedVar):
+    """An indexed Variable that also reads as a vector.
+
+    The behaviour is in :class:`~edi.objects.vector.VectorComponent`; this is
+    only the pairing with Pyomo's class. Declared here rather than there so
+    that the vector module stays free of Pyomo component internals.
+    """
+
+
+class EDIParam(VectorComponent, IndexedParam):
+    """An indexed Constant that also reads as a vector."""
 
 
 class Group:
@@ -189,6 +224,18 @@ class Group:
 
     def ConstraintList(self, conList):
         return self._formulation.ConstraintList(conList)
+
+    def sum(self, vector, axis=None):
+        return self._formulation.sum(vector, axis=axis)
+
+    def prod(self, vector, axis=None):
+        return self._formulation.prod(vector, axis=axis)
+
+    def broadcast_rows(self, vector, n):
+        return self._formulation.broadcast_rows(vector, n)
+
+    def broadcast_cols(self, vector, n):
+        return self._formulation.broadcast_cols(vector, n)
 
     def __getattr__(self, item):
         if item.startswith('_'):
@@ -417,7 +464,7 @@ class Formulation(ConcreteModel):
                 st.construct()
                 self.add_component(
                     name,
-                    pyo.Var(
+                    EDIVar(
                         st,
                         name=name,
                         initialize=guess,
@@ -427,6 +474,7 @@ class Formulation(ConcreteModel):
                         units=decodeUnits(units),
                     ),
                 )
+                self.component(name)._edi_shape = tuple(size)
             else:
                 if isinstance(size, int):
                     # if size == 1 or size == 0:
@@ -447,7 +495,7 @@ class Formulation(ConcreteModel):
                         st.construct()
                         self.add_component(
                             name,
-                            pyo.Var(
+                            EDIVar(
                                 st,
                                 name=name,
                                 initialize=guess,
@@ -457,6 +505,7 @@ class Formulation(ConcreteModel):
                                 units=decodeUnits(units),
                             ),
                         )
+                        self.component(name)._edi_shape = (size,)
                 else:
                     raise ValueError(
                         'Invalid size.  Must be an integer or list/tuple of integers'
@@ -503,7 +552,7 @@ class Formulation(ConcreteModel):
                 st.construct()
                 self.add_component(
                     name,
-                    pyo.Param(
+                    EDIParam(
                         st,
                         name=name,
                         initialize=value,
@@ -513,6 +562,7 @@ class Formulation(ConcreteModel):
                         mutable=True,
                     ),
                 )
+                self.component(name)._edi_shape = tuple(size)
             else:
                 if isinstance(size, int):
                     if size == 1 or size == 0:
@@ -532,7 +582,7 @@ class Formulation(ConcreteModel):
                         st.construct()
                         self.add_component(
                             name,
-                            pyo.Param(
+                            EDIParam(
                                 st,
                                 name=name,
                                 initialize=value,
@@ -542,6 +592,7 @@ class Formulation(ConcreteModel):
                                 mutable=True,
                             ),
                         )
+                        self.component(name)._edi_shape = (size,)
                 else:
                     raise ValueError(
                         'Invalid size.  Must be an integer or list/tuple of integers'
@@ -665,7 +716,45 @@ class Formulation(ConcreteModel):
             black_box, inputs=inputs_unwrapped, outputs=outputs_unwrapped
         )  # ,operators=operators_unwrapped)
 
+    # -- vector operations ---------------------------------------------
+    # Explicit functions rather than more operator overloading: a reduction or
+    # a broadcast has to say which axis it means, and an operator cannot.
+    def sum(self, vector, axis=None):
+        """Sum a vector or matrix, optionally along one axis.
+
+        The reason this exists rather than plain ``sum``: iterating an indexed
+        Pyomo component yields its index KEYS, so ``sum(x)`` returns
+        ``0 + 1 + 2``. EDI refuses that now, and this is what it points at.
+        """
+        return _unwrap_0d(as_array(vector).sum(axis=axis))
+
+    def prod(self, vector, axis=None):
+        """Product of a vector or matrix, optionally along one axis."""
+        return _unwrap_0d(_np.prod(as_array(vector), axis=axis))
+
+    def broadcast_rows(self, vector, n):
+        """``vector`` repeated as each of ``n`` rows -> ``(n, len(vector))``.
+
+        EDI never broadcasts silently, so this is how a per-column limit is
+        compared against a matrix.
+        """
+        return broadcast_rows(vector, n)
+
+    def broadcast_cols(self, vector, n):
+        """``vector`` repeated as each of ``n`` columns -> ``(len(vector), n)``."""
+        return broadcast_cols(vector, n)
+
     def ConstraintList(self, conList):
+        # An elementwise comparison produces an array of constraints, of
+        # whatever shape the operands had. Flatten it, so that
+        # `f.ConstraintList(M >= f.broadcast_rows(cap, n))` reads the way it
+        # should rather than handing a matrix row to Constraint.
+        if isinstance(conList, _np.ndarray):
+            conList = list(conList.ravel())
+        else:
+            conList = [c for item in conList
+                       for c in (item.ravel().tolist()
+                                 if isinstance(item, _np.ndarray) else [item])]
         for i in range(0, len(conList)):
             con = conList[i]
             if isinstance(con, (tuple, list)):
