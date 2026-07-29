@@ -234,6 +234,15 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     m.J = pyo.RangeSet(0, n - 1)
     m.I = pyo.RangeSet(0, len(cons) - 1)
     m.d = pyo.Var(m.J, initialize=0.0)
+    # Variable bounds ride on the variable. The sub-problem works in log space
+    # about x_k -- x = x_k * exp(d) -- so `lo <= x <= hi` is just
+    # `log(lo/x_k) <= d <= log(hi/x_k)`, which is exact and costs nothing.
+    if problem.bounds is not None:
+        for j, (lo, hi) in enumerate(problem.bounds[:n]):
+            if lo is not None and lo > 0:
+                m.d[j].setlb(math.log(lo) - log_xk[j])
+            if hi is not None and hi > 0:
+                m.d[j].setub(math.log(hi) - log_xk[j])
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     if minimize_violation:
         m.t = pyo.Var(initialize=float(_violation(problem, x_k)))
@@ -301,17 +310,29 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
 
     # Stay in the positive orthant.
+    # The positivity floor and the trust region are both simple bounds on d, so
+    # they go on the variable rather than into m.cons -- 3n fewer rows on every
+    # sub-problem, and IPOPT handles a bound more cheaply than a row besides.
+    # Intersect with whatever the model's own bounds already put there.
     floor = math.log(options.x_min)
+
+    def tighten(j, lo=None, hi=None):
+        if lo is not None:
+            cur = m.d[j].lb
+            m.d[j].setlb(lo if cur is None else max(cur, lo))
+        if hi is not None:
+            cur = m.d[j].ub
+            m.d[j].setub(hi if cur is None else min(cur, hi))
+
     for j in range(n):
-        m.cons.add(m.d[j] >= floor - log_xk[j])
+        tighten(j, lo=floor - log_xk[j])
 
     # Trust region -- ONLY when something had to be linearized. With every
     # constraint exact or conservative the step is safe by construction and a
     # region would only slow it down.
     if has_blackbox:
         for j in range(n):
-            m.cons.add(m.d[j] <= radius)
-            m.cons.add(m.d[j] >= -radius)
+            tighten(j, lo=-radius, hi=radius)
 
     opt = pyo.SolverFactory("ipopt")
     if not opt.available(exception_flag=False):

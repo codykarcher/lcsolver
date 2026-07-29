@@ -1,0 +1,204 @@
+"""Structural checks, and the bounds-as-bounds path through the detector.
+
+Two things are under test here and they fail in opposite ways.
+
+:mod:`edi.presolve` is diagnostic -- it never changes the problem, so the way
+it goes wrong is by reporting nothing useful. The check that matters is that
+it *finds* the defect it is looking for and stays quiet on a clean model.
+
+``bounds_as_rows=False`` does change how the problem is carried, and there the
+failure mode is severe and silent: bounds that go into
+``structures['bounds']`` and are then read by nobody simply vanish, and the
+solver happily returns the optimum of an unbounded relaxation. So the central
+test uses an **active** bound -- one holding the optimum away from where the
+objective wants to go -- because a bound that is slack at the solution proves
+nothing when it is dropped.
+"""
+import numpy as np
+import pytest
+
+from edi import Formulation
+from edi.presolve import degeneracy_report, presolve_report
+from edi.solvers.ipopt.slcp_bridge import build_problem, solve_sia
+from edi.structure.structureDetector import (
+    require_bounds_as_rows,
+    structure_detector,
+)
+from edi.units.unitCorrector import unit_corrector
+
+
+def _detect(f, bounds_as_rows=True):
+    return structure_detector(unit_corrector(f), bounds_as_rows=bounds_as_rows)
+
+
+def _active_bound_model():
+    """min 1/x  s.t.  x*y >= 1,  with x declared in [0.1, 3].
+
+    Minimising 1/x pushes x up, and nothing in the constraints stops it -- the
+    only thing holding x at 3 is its declared upper bound. So the optimum is
+    1/3 with the bound and 0 without it, and losing the bound is unmissable.
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 3.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
+    f.Objective(1.0 / x)
+    f.Constraint(x * y >= 1.0)
+    return f
+
+
+# ---------------------------------------------------------------------------
+# bounds carried as bounds
+# ---------------------------------------------------------------------------
+def test_bounds_are_published_and_rows_drop():
+    """Splitting bounds out removes rows and publishes the same numbers."""
+    rows_st = _detect(_active_bound_model(), bounds_as_rows=True)
+    split_st = _detect(_active_bound_model(), bounds_as_rows=False)
+
+    assert rows_st['bounds'] is None            # unchanged for every old caller
+    assert split_st['bounds'] is not None
+
+    # Same variables, and the declared box comes through untouched.
+    assert len(split_st['bounds']) == len(split_st['variables'])
+    assert (0.1, 3.0) in split_st['bounds']
+    assert (0.1, 10.0) in split_st['bounds']
+
+    # Four bound rows (two per variable) are gone.
+    assert (rows_st['info']['N_cons_total']
+            - split_st['info']['N_cons_total']) == 4
+    assert rows_st['info']['N_cons_bounds'] == 4
+    assert split_st['info']['N_cons_bounds'] == 0
+
+
+def test_active_bound_survives_the_split():
+    """The optimum is the same either way -- the bound is not lost.
+
+    This is the whole point. The bound is active, so if the split dropped it
+    the objective would fall to 0 and read as a better answer.
+    """
+    a = solve_sia(_detect(_active_bound_model(), bounds_as_rows=True),
+                  x0=np.array([1.0, 1.0]))
+    b = solve_sia(_detect(_active_bound_model(), bounds_as_rows=False),
+                  x0=np.array([1.0, 1.0]))
+
+    assert a.objective == pytest.approx(1.0 / 3.0, rel=1e-6)
+    assert b.objective == pytest.approx(a.objective, rel=1e-8)
+
+
+def test_problem_carries_bounds_only_when_split():
+    assert build_problem(_detect(_active_bound_model(), True)).bounds is None
+    assert build_problem(_detect(_active_bound_model(), False)).bounds is not None
+
+
+def test_backends_that_ignore_bounds_refuse_them():
+    """A backend reading only rows must fail loudly, not solve a relaxation."""
+    split = _detect(_active_bound_model(), bounds_as_rows=False)
+    with pytest.raises(ValueError, match='bounds_as_rows'):
+        require_bounds_as_rows(split, 'solve_GP')
+    require_bounds_as_rows(_detect(_active_bound_model(), True), 'solve_GP')
+
+
+# ---------------------------------------------------------------------------
+# structural checks
+# ---------------------------------------------------------------------------
+def test_unbounded_above_is_reported():
+    """max-like variable with nothing holding it down.
+
+    ``w`` appears only as ``w >= 1``, which is a floor. Nothing bounds it
+    above, and the objective does not mention it. That is exactly gpkit's
+    "w is not upper bounded".
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    w = f.Variable('w', 1.0, '', 'w')
+    f.Objective(x)
+    f.Constraint(x >= 2.0)
+    f.Constraint(w >= 1.0)
+    rep = presolve_report(_detect(f))
+
+    assert 'w' in rep.unbounded_above
+    assert 'w' not in rep.unbounded_below     # the floor bounds it below
+    assert not rep.clean
+
+
+def test_the_default_box_does_not_rescue_an_unbounded_variable():
+    """1e-30..1e30 is not a bound, but a real box is.
+
+    Every EDI variable carries a box, so counting it would make the check
+    vacuous -- that is the mistake this test exists to prevent. The same model
+    with a meaningful upper bound must come back clean, which is what
+    distinguishes "ignore the value" from "ignore the default".
+    """
+    def model(hi):
+        f = Formulation()
+        x = f.Variable('x', 1.0, '', 'x', bounds=[1e-30, 1e30])
+        w = f.Variable('w', 1.0, '', 'w', bounds=[1e-30, hi])
+        f.Objective(x)
+        f.Constraint(x * w >= 1.0)      # bounds both below, neither above
+        return f
+
+    vacuous = presolve_report(_detect(model(1e30)))
+    assert 'w' in vacuous.unbounded_above
+    assert 'w' not in vacuous.unbounded_below    # the constraint floors it
+
+    real = presolve_report(_detect(model(50.0)))
+    assert 'w' not in real.unbounded_above
+
+
+def test_clean_model_reports_clean():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    y = f.Variable('y', 1.0, '', 'y')
+    f.Objective(x + y)
+    f.Constraint(x * y >= 1.0)
+    f.Constraint(x >= 0.1)
+    f.Constraint(y >= 0.1)
+    rep = presolve_report(_detect(f))
+
+    assert not rep.empty_columns
+    assert rep.clean, str(rep)
+
+
+def test_singleton_rows_are_counted_not_confused_with_real_ones():
+    """`x >= 2` is a bound in disguise; `x*y >= 1` is a real constraint."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x')
+    y = f.Variable('y', 1.0, '', 'y')
+    f.Objective(x + y)
+    f.Constraint(x * y >= 1.0)
+    f.Constraint(x >= 2.0)
+    f.Constraint(y >= 0.5)
+    rep = presolve_report(_detect(f))
+
+    assert len(rep.singleton_rows) == 2
+    # each variable is in exactly one *real* constraint, so both are singletons
+    assert set(rep.singleton_columns) == {'x', 'y'}
+
+
+def test_report_is_printable():
+    rep = presolve_report(_detect(_active_bound_model()))
+    assert 'presolve:' in str(rep)
+
+
+# ---------------------------------------------------------------------------
+# post-solve degeneracy
+# ---------------------------------------------------------------------------
+def test_degeneracy_finds_a_variable_the_optimum_does_not_determine():
+    """`u` is real, constrained, and completely free at the optimum.
+
+    It sits in a constraint that is slack there, so no structural check sees
+    anything wrong -- which is why the post-solve test has to exist.
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+    u = f.Variable('u', 1.0, '', 'u', bounds=[0.5, 2.0])
+    f.Objective(x)
+    f.Constraint(x >= 2.0)
+    f.Constraint(x * u >= 0.2)          # slack at x=2, u anywhere in [0.5, 2]
+    st = _detect(f)
+    problem = build_problem(st)
+    res = solve_sia(st, x0=np.array([1.0, 1.0]))
+
+    names = [str(v) for v in st['variables']]
+    free = dict(degeneracy_report(problem, res.x, names=names))
+    assert 'u' in free
+    assert 'x' not in free

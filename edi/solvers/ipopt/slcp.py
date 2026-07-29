@@ -319,11 +319,17 @@ class Constraint:
 class Problem:
     """A signomial program in the standard form of paper Equation 12."""
 
-    def __init__(self, n, objective, constraints, names=None):
+    def __init__(self, n, objective, constraints, names=None, bounds=None):
         self.n = int(n)
         self.objective = objective
         self.constraints = list(constraints)
         self.names = list(names) if names else [f'x{i + 1}' for i in range(n)]
+        # Optional per-variable ``(lower, upper)``, either bound possibly None.
+        # These belong on the sub-problem variable, not in ``constraints``: a
+        # bound costs a solver nothing, while the same statement written as a
+        # row is one more log-sum-exp to build and differentiate every
+        # iteration. On SPaircraft that is 2346 rows that need not exist.
+        self.bounds = list(bounds) if bounds is not None else None
 
     def objective_value(self, x):
         return self.objective(x)

@@ -17,6 +17,8 @@ if not cvxopt_available:
 
 
 def solve_LP(structures):
+    from edi.structure.structureDetector import require_bounds_as_rows
+    require_bounds_as_rows(structures, 'solve_LP')
 
     c = cvxopt.matrix(structures['Linear_Program'][1][0][0])
     objective_shift = structures['Linear_Program'][1][1]

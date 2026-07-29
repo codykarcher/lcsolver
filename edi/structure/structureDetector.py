@@ -55,7 +55,7 @@ from edi.structure.detectorSupportFunctions import (
      unstructured_dict,
 )
 
-def implementVariableBound(vr,pyomo_component,N_bound_cons):
+def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
     """
     This function finds any upper or lower bounds declared in the variable declaration and implemnts 
     them as constraints in the optimization problem
@@ -63,6 +63,14 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons):
     if variables are not continuous, returns [False, None, None] which is detected and parsed at the layer above
 
     otherwise, returns [True, updated_pyomo_component, N_bounds_cons]
+
+    If ``collect`` is a ComponentMap, the resolved ``(lower, upper)`` pair is
+    recorded there and **no** Pyomo constraint is built. The bounds then travel
+    as bounds rather than as rows, which is what a solver actually wants: IPOPT
+    and cvxopt both take variable bounds natively, and writing ``x <= c`` as a
+    row makes every downstream stage pay for it -- the expression walker parses
+    it, the row list carries it, and an SP sub-problem rebuilds it as a
+    log-sum-exp once per iteration. On SPaircraft that is 4859 of 6126 rows.
     """
     # Reject if variable is not continuous
     if vr.domain.name not in ['Reals','NonNegativeReals','NonPositiveReals']:
@@ -89,6 +97,11 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons):
         else:
             # otherwise take the tighter upper bound
             var_upper_bound = min([0,var_upper_bound])
+
+    # Hand the bounds back as bounds instead of materializing them as rows.
+    if collect is not None:
+        collect[vr] = (var_lower_bound, var_upper_bound)
+        return [True, pyomo_component, N_bound_cons]
 
     # Now that bounds are set, need to add them to the pyomo object
     # only do if lower bound is present
@@ -131,7 +144,45 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons):
 
     return [True, pyomo_component, N_bound_cons]
 
-def structure_detector(pyomo_component):
+def require_bounds_as_rows(structures, who):
+    """Refuse structures whose bounds a backend is about to ignore.
+
+    A backend that reads only the rows would silently solve an unbounded
+    relaxation if handed ``bounds_as_rows=False`` output -- the bounds are in
+    ``structures['bounds']`` and nothing would look at them. Failing loudly is
+    the only safe default; a silently relaxed problem still returns an answer,
+    and that answer can look entirely reasonable.
+    """
+    if structures.get('bounds') is not None:
+        raise ValueError(
+            f"{who} reads variable bounds from the constraint rows, but these "
+            "structures were built with bounds_as_rows=False, which puts them "
+            "in structures['bounds'] instead. Solving would ignore every "
+            "bound. Re-run structure_detector with bounds_as_rows=True.")
+
+
+def structure_detector(pyomo_component, bounds_as_rows=True):
+    """Detect the optimization structure of a Pyomo model.
+
+    ``bounds_as_rows`` selects how bounds declared on a variable are carried.
+
+    ``True`` (default)
+        Each bound becomes a Pyomo constraint and then a row, as it always
+        has. Every existing caller sees exactly what it saw before.
+
+    ``False``
+        Bounds are published as ``structures['bounds']`` -- a list of
+        ``(lower, upper)`` aligned with ``structures['variables']`` -- and no
+        rows are emitted for them. A solver that takes variable bounds
+        natively should prefer this: it is the same problem with far fewer
+        rows, and the reduction is large (SPaircraft goes from 6126 rows to
+        1267).
+
+    Nothing is tightened or dropped when bounds are split out; the values pass
+    through unchanged. That matters here, because SPaircraft needs the full
+    1e-30..1e30 box for the reference solution to be inside it, and a presolve
+    that "cleaned up" those limits would cut off the answer.
+    """
     # Various setup things
 
     if not isinstance(pyomo_component, BlockData):
@@ -143,6 +194,7 @@ def structure_detector(pyomo_component):
     # Walk through all the variables and ensure that their domains are compatible with optimization structure
     # Eg, no discrete, no weird sets, etc
     N_bound_cons = 0
+    boundCollector = None if bounds_as_rows else ComponentMap()
     for vr in variableList:
         # check if it's a vector, matrix, etc...
         if isinstance(vr,pyomo.core.base.var.IndexedVar):
@@ -151,12 +203,12 @@ def structure_detector(pyomo_component):
             ix_st = list(vr.index_set())
             # Iterate for all the variables in the indexed set (eg elements in the vector)
             for ix in ix_st:
-                [success, pyomo_component, N_bound_cons] = implementVariableBound(vr[ix],pyomo_component,N_bound_cons)
+                [success, pyomo_component, N_bound_cons] = implementVariableBound(vr[ix],pyomo_component,N_bound_cons,boundCollector)
                 if not success:
                     return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) } 
 
         else: #variable is scalar
-            [success, pyomo_component, N_bound_cons] = implementVariableBound(vr,pyomo_component,N_bound_cons)
+            [success, pyomo_component, N_bound_cons] = implementVariableBound(vr,pyomo_component,N_bound_cons,boundCollector)
             if not success:
                 return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) } 
 
@@ -521,6 +573,12 @@ def structure_detector(pyomo_component):
     # The solution vector returned by the cvxopt backends is indexed in exactly
     # this order, so downstream code (notably solution write-back) needs it.
     structures['variables'] = list(unwrappedVariables)
+    # Variable bounds, in the same order, when they were not turned into rows.
+    # `None` distinguishes "bounds are in the rows, as always" from "bounds are
+    # here and there are none on this variable", which is an empty list.
+    structures['bounds'] = (
+        None if boundCollector is None
+        else [boundCollector.get(v, (None, None)) for v in unwrappedVariables])
     # Keep a strong reference to the model the variables came from. Callers
     # routinely write `structure_detector(unit_corrector(m))`, which leaves the
     # clone unreferenced; once it is collected, the IndexedVar components die

@@ -147,7 +147,17 @@ def build_problem(structures, sp_form=True):
             else:
                 constraints.append(Constraint(body, '<='))
 
-    return Problem(n, objective, constraints)
+    # Carry variable bounds as bounds when the detector split them out. They
+    # are padded rather than trusted blindly: `bounds` is aligned with
+    # structures['variables'], and `n` comes from the widest exponent row, so
+    # the two can disagree if a trailing variable appears in no row at all.
+    bounds = structures.get('bounds')
+    if bounds is not None:
+        bounds = list(bounds[:n]) + [(None, None)] * max(0, n - len(bounds))
+
+    names = [str(v) for v in structures.get('variables', [])][:n]
+    return Problem(n, objective, constraints, names=names or None,
+                   bounds=bounds)
 
 
 def solve_slcp(structures, x0=None, method='slcp', options=None,
