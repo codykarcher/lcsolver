@@ -67,6 +67,45 @@ at `x_k` — so the sub-problem's duals still certify the *original* problem and
 the KKT termination test stays honest. That is the intended use of the flag:
 PCCP's step length with SIA's stopping rule, for anyone who wants it.
 
+## The reported residual is a multiplier bug, not a distance from the optimum
+
+The stationarity SIA reports sits at 0.4-0.5 *wherever it is* -- 0.4221 from a
+cold start 30% away from the optimum, 0.5372 started at PCCP's own answer,
+0.4977 at its own final point. A residual that does not shrink as the iterate
+approaches the optimum is not measuring optimality.
+
+Testing it directly, at SIA's own final point, by asking what the **best
+possible** multipliers could achieve there:
+
+```
+SIA's own multipliers          : 0.497732
+best any-sign multipliers      : 0.008744
+best SIGN-VALID multipliers    : 0.020847   (NNLS: lambda >= 0 on inequalities,
+                                             free on equalities)
+```
+
+KKT-legal multipliers exist at that point giving a stationarity of 0.021, and
+SIA reports 0.498 -- **24x worse**. The residual is dominated by how the duals
+are extracted from the sub-problem, not by how far the point is from optimal.
+
+That accounts for every symptom at once: the residual pinned near 0.5
+regardless of the iterate, `converged=False` on every run, and every run going
+to `max_iterations`. **SIA's termination test cannot fire on this problem**, so
+it never stops early, and it is far closer to optimality than it can prove.
+
+The caveat is that 0.021 is still well above the 1e-6 tolerance, so the point
+is not a converged KKT point either. There is genuine headroom, just an order
+of magnitude less than the reported figure suggested.
+
+Where to look next: the active set at that point is 1024 constraints, 648 of
+them equalities. Each signomial equality enters the sub-problem as a *pair* --
+`p/q <= 1` and `q/p <= 1`, both condensed -- and that pair is exactly where an
+inequality multiplier would want to take a negative value, the two directions
+of one equality pulling against each other. Comparing SIA's extracted duals
+against the NNLS solution element-wise, looking for sign flips or a systematic
+scale factor on the paired constraints, is the diagnostic that should isolate
+it.
+
 ## What is still unexplained
 
 **Neither variant converges on SPaircraft.** Conservative reaches 124,666 (34%
