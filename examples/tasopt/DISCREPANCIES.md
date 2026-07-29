@@ -786,3 +786,32 @@ calculation; `fuel_thermo.jl` uses `p_atm = 101325.0` to convert pressure to
 atmospheres for the NIST fits. Both are in use and they differ by 5 Pa.
 Harmless at the precision anything here is claimed to, but pinned so it is
 not "tidied" into one and quietly shifted.
+
+## §58 — the outer-vessel buckling residual has a pole the reference does not guard
+
+`TASOPT.jl/src/cryo_tank/tankWmech.jl`, `size_outer_tank`. The vacuum jacket's
+wall thickness comes from a critical-buckling condition that is implicit in
+the thickness ratio `t/D`:
+
+```julia
+pressure_res(t_D) = 2.42*Eouter*(t_D)^(5/2) /
+                    ( (1 - poiss^2)^(3/4) * (L_Do - 0.45*sqrt(t_D)) ) - pc
+t_Do = find_zero(pressure_res, 1e-3)
+```
+
+The denominator vanishes at `t/D = (L_Do/0.45)^2`, and the residual changes
+sign across that pole for no physical reason — so the expression has a second,
+spurious sign change with no root behind it.
+
+On a closely stiffened vessel the pole is not far away. Six intermediate rings
+over a 12 m tank give `L/Do = 0.418` and a pole at `t/D = 0.863`, while the
+physical root is at 0.0037 — two orders of magnitude below it.
+
+`Roots.find_zero(f, 1e-3)` starts from a guess and is unbracketed, so nothing
+stops it crossing. It happens to converge correctly on every case checked
+here, but that is a property of the starting guess rather than of the method.
+
+This port brackets strictly below the pole and refuses a bracket that spans
+one, which is a departure. It agrees with the reference to 5e-15 on all three
+checked configurations, so the guard costs nothing where the reference is
+right and fails loudly where it would be luck.

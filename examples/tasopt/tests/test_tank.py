@@ -21,7 +21,8 @@ import pytest
 
 from tasopt_py.cryo.geometry import CrossSection
 from tasopt_py.cryo.material_data import MATERIALS
-from tasopt_py.cryo.tank import (FuselageTank, material, size_inner_tank)
+from tasopt_py.cryo.tank import (FuselageTank, material, size_inner_tank,
+                                 size_outer_tank)
 
 REF = Path(__file__).parent / "data" / "inner_tank_ref.csv"
 
@@ -173,3 +174,98 @@ def test_an_unknown_material_is_refused():
 def test_mismatched_insulation_lists_are_refused():
     with pytest.raises(ValueError, match="thicknesses but"):
         FuselageTank(t_insul=[0.05, 0.1], material_insul=["polyurethane27"])
+
+
+# --- the outer vacuum-jacket vessel ---------------------------------------
+
+OUTER_REF = Path(__file__).parent / "data" / "outer_tank_ref.csv"
+OUTER_OUTPUTS = ("Wtank", "Wcyl", "Whead", "Wstiff", "Souter", "Shead",
+                 "Scyl", "t_cyl", "t_head", "l_outer")
+
+
+def _outer_from_row(r):
+    cs = CrossSection(float(r["Rfuse"]), float(r["dRfuse"]),
+                      float(r["wfb"]), int(r["nwebs"]))
+    tank = FuselageTank(
+        clearance_fuse=float(r["clear"]), ARtank=float(r["AR"]),
+        ftankadd=float(r["ftankadd"]),
+        theta_outer=(float(r["th1"]), float(r["th2"])),
+        outer_material="Al-2219-T87")
+    return (float(r["Rfuse"]), cs, tank, float(r["Winner"]),
+            float(r["l_cyl"]), float(r["Ninterm"]))
+
+
+@pytest.mark.skipif(not OUTER_REF.exists(), reason="outer reference absent")
+def test_outer_vessel_matches_tasopt_jl():
+    n = 0
+    for r in csv.DictReader(OUTER_REF.open()):
+        g = size_outer_tank(*_outer_from_row(r))
+        for name in OUTER_OUTPUTS:
+            assert getattr(g, name) == pytest.approx(float(r[name]),
+                                                     rel=1e-13), (
+                r["case"], name)
+        n += 1
+    assert n == 3
+
+
+def test_the_outer_vessel_is_sized_against_collapse_not_burst():
+    """It holds vacuum against the cabin, so it is loaded from outside. The
+    wall comes from a buckling condition that is implicit in t/D and has to
+    be solved, unlike the inner vessel's closed-form burst thickness."""
+    cs = CrossSection(1.9)
+    tank = FuselageTank(clearance_fuse=0.1, ARtank=2.0, ftankadd=0.1,
+                        theta_outer=(1.0, 2.2), outer_material="Al-2219-T87")
+    thin = size_outer_tank(1.9, cs, tank, 3.0e5, 6.0, 0.0)
+    # More intermediate rings shorten the unsupported span, so the wall can
+    # be thinner -- which is the whole reason to have them.
+    many = size_outer_tank(1.9, cs, tank, 3.0e5, 6.0, 6.0)
+    assert many.t_cyl < thin.t_cyl
+
+
+def test_intermediate_rings_carry_no_load():
+    """`stiffener_weight(..., 0.0, ...)` for them -- they exist only to
+    shorten the span. So each one is lighter than a main ring."""
+    cs = CrossSection(1.9)
+    tank = FuselageTank(clearance_fuse=0.1, ARtank=2.0, ftankadd=0.0,
+                        theta_outer=(1.0, 2.2), outer_material="Al-2219-T87")
+    none = size_outer_tank(1.9, cs, tank, 3.0e5, 6.0, 0.0)
+    one = size_outer_tank(1.9, cs, tank, 3.0e5, 6.0, 1.0)
+    per_interm = one.Wstiff - none.Wstiff
+    assert 0.0 < per_interm < none.Wstiff / 2.0
+
+
+def test_the_buckling_residual_has_a_pole_that_must_be_bracketed_below():
+    """§58. The denominator `L/Do - 0.45 sqrt(t/D)` vanishes at
+    `t/D = (L/Do / 0.45)^2`, and the residual changes sign across it for no
+    physical reason. On a closely stiffened vessel that pole sits well below
+    t/D = 1, so a bracket of [0, 1] straddles it.
+
+    The 'many' reference case is exactly that: 6 intermediate rings over 12 m
+    gives L/Do = 0.418 and a pole at t/D = 0.863, while the physical root is
+    at 0.0037. This checks the port brackets below the pole rather than
+    across it.
+    """
+    import math
+
+    from tasopt_py.cryo.tank import _solve_thickness_ratio
+
+    Do = 2.0 * (2.2 - 0.15)
+    L = 12.0 / (2.0 + 6.0 - 1.0)
+    L_Do = L / Do
+    pole = (L_Do / 0.45) ** 2
+    assert 0.4 < L_Do < 0.45
+    assert 0.8 < pole < 0.9
+
+    cs = CrossSection(2.2)
+    tank = FuselageTank(clearance_fuse=0.15, ARtank=2.4, ftankadd=0.15,
+                        theta_outer=(0.6, 2.6), outer_material="Al-2219-T87")
+    g = size_outer_tank(2.2, cs, tank, 8.0e5, 12.0, 6.0)
+    assert g.t_cyl / Do < 0.01                # the physical root, far below
+    assert g.t_cyl > 0.0
+
+    # ...and a bracket that spans the pole is refused rather than silently
+    # returning the wrong side of it.
+    def bad(t_D):
+        return 1.0 / (L_Do - 0.45 * math.sqrt(t_D)) - 1.0e6
+    with pytest.raises(ValueError, match="does not change sign"):
+        _solve_thickness_ratio(bad, 1e-9, 1.0)

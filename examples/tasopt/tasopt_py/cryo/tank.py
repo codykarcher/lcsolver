@@ -43,13 +43,15 @@ Verified against TASOPT.jl; see ``tests/test_tank.py``.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from .geometry import CrossSection, scaled_cross_section
 from .material_data import MATERIALS
-from .stiffeners import GEE, stiffener_weight
+from .stiffeners import GEE, PREF, find_K1_head, stiffener_weight
 
-__all__ = ["FuselageTank", "InnerTank", "size_inner_tank", "material"]
+__all__ = ["FuselageTank", "InnerTank", "size_inner_tank", "material",
+           "OuterTank", "size_outer_tank"]
 
 
 def material(name: str) -> dict:
@@ -91,6 +93,10 @@ class FuselageTank:
     theta_inner: float = 0.0
     #: Inner-vessel material name, into :data:`MATERIALS`.
     inner_material: str = "Al-2219-T87"
+    #: Outer (vacuum jacket) vessel material.
+    outer_material: str = "Al-2219-T87"
+    #: Angular positions of the outer vessel's two support rings, rad.
+    theta_outer: tuple = (1.0, 2.0)
     #: Insulation layer thicknesses, m, innermost first.
     t_insul: list = field(default_factory=list)
     #: Insulation material names, one per layer.
@@ -206,3 +212,130 @@ def size_inner_tank(Rfuse: float, cross_section: CrossSection,
     return InnerTank(Wtank=Wtank, Winsul_sum=Winsul_sum, Vfuel=Vfuel,
                      Shead_insul=Shead_insul, Rtank_outer=Rtank_outer,
                      l_tank=l_tank, l_cyl=l_cyl)
+
+
+@dataclass(frozen=True)
+class OuterTank:
+    """What :func:`size_outer_tank` works out for the vacuum jacket."""
+    Wtank: float          # total outer-vessel weight, N
+    Wcyl: float           # cylindrical portion, N
+    Whead: float          # one elliptical head, N
+    Wstiff: float         # all stiffeners, N
+    Souter: float         # total surface area, m^2
+    Shead: float          # one head, m^2
+    Scyl: float           # cylindrical portion, m^2
+    t_cyl: float          # cylinder wall thickness, m
+    t_head: float         # head thickness, m
+    l_outer: float        # overall length, m
+
+
+def _solve_thickness_ratio(f, lo: float = 1.0e-9, hi: float = 1.0) -> float:
+    """The wall thickness ratio that makes the buckling residual vanish.
+
+    A bracketed bisection, where the reference uses ``Roots.find_zero(f,
+    1e-3)`` -- Order0, a secant/Steffensen hybrid started from a guess.
+
+    Using a different algorithm is safe *here* in a way it was not for
+    ``blax``: this is a genuine root of a smooth monotonic function, not a
+    capped iteration stopped on step size, so any solver that converges lands
+    on the same number. The port's own tests confirm agreement to 1e-14.
+
+    Bracketing rather than guessing also means it cannot wander past the
+    **pole**. The residual's denominator, ``L/Do - 0.45 sqrt(t/D)``, vanishes
+    at ``t/D = (L/Do / 0.45)^2`` and the expression changes sign across it
+    for no physical reason. On a closely stiffened vessel -- short spans, so
+    small ``L/Do`` -- that pole sits at ``t/D`` well below 1, so a naive
+    bracket of ``[0, 1]`` straddles it and either fails or converges to
+    nonsense. The caller passes ``hi`` just below it.
+    """
+    flo, fhi = f(lo), f(hi)
+    if flo * fhi > 0.0:
+        raise ValueError(
+            f"the buckling residual does not change sign on [{lo}, {hi}] "
+            f"(f = {flo:.4g}, {fhi:.4g}); no wall thickness satisfies the "
+            "collapse condition for this geometry")
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        fm = f(mid)
+        if fm == 0.0 or (hi - lo) < 1.0e-16 * max(1.0, mid):
+            return mid
+        if flo * fm < 0.0:
+            hi = mid
+        else:
+            lo, flo = mid, fm
+    return 0.5 * (lo + hi)
+
+
+def size_outer_tank(Rfuse: float, cross_section: CrossSection,
+                    tank: FuselageTank, Winnertank: float, l_cyl: float,
+                    Ninterm: float) -> OuterTank:
+    """Size the outer vacuum-jacket vessel.
+
+    Unlike the inner vessel, which is pressurised from within, this one is
+    loaded from *outside* -- it holds vacuum against the cabin -- so it is
+    sized against **collapse**, not burst. The wall thickness comes from the
+    critical buckling pressure of a stiffened cylinder (Barron 1985, Eq.
+    (7.11) at four atmospheres), which is implicit in ``t/D`` and has to be
+    solved for.
+
+    ``Ninterm`` is the number of intermediate stiffener rings, on top of the
+    two main ones. Those intermediate rings carry **no load** -- they exist
+    only to shorten the unsupported span and so allow a thinner wall -- which
+    is what makes the number of them worth optimising.
+    """
+    alloy = material(tank.outer_material)
+    poiss = alloy["nu"]
+    Eouter = alloy["E"]
+    rho_outer = alloy["rho"]
+    s_a = alloy["UTS"] / 4.0
+
+    theta1, theta2 = tank.theta_outer
+    Nmain = 2.0
+    pc = 4.0 * PREF                     # Barron Eq. (7.11)
+
+    Rtank_outer = Rfuse - tank.clearance_fuse
+    Do = 2.0 * Rtank_outer
+    Nstiff = Nmain + Ninterm
+    # Two of the stiffeners are at the ends, so the skin is divided into
+    # Nstiff - 1 spans.
+    L = l_cyl / (Nstiff - 1.0)
+    L_Do = L / Do
+
+    def residual(t_D):
+        return (2.42 * Eouter * t_D ** 2.5
+                / ((1.0 - poiss ** 2) ** 0.75
+                   * (L_Do - 0.45 * math.sqrt(t_D)))
+                - pc)
+
+    # The denominator vanishes here; search strictly below it.
+    t_D_pole = (L_Do / 0.45) ** 2
+    t_Do = _solve_thickness_ratio(residual, hi=min(1.0, 0.999 * t_D_pole))
+    t_cyl = t_Do * Do
+
+    K1 = find_K1_head(tank.ARtank)
+    t_head = K1 * Do * math.sqrt(pc * math.sqrt(3.0 * (1.0 - poiss ** 2))
+                                 / (0.5 * Eouter))
+
+    perim_vessel, Avessel = scaled_cross_section(cross_section, Rtank_outer)
+    Shead = (2.0 * Avessel
+             * (0.333 + 0.667 * (1.0 / tank.ARtank) ** 1.6) ** 0.625)
+    Scyl = perim_vessel * l_cyl
+    Souter = Scyl + 2.0 * Shead
+
+    Wcyl = Scyl * t_cyl * rho_outer * GEE
+    Whead = Shead * t_head * rho_outer * GEE
+
+    common = (Rtank_outer, perim_vessel, s_a, rho_outer, theta1, theta2,
+              Nstiff, l_cyl, Eouter)
+    # Each main ring carries half the inner vessel; the intermediate rings
+    # carry nothing at all.
+    Wmainstiff = stiffener_weight("outer", Winnertank / Nmain, *common)
+    Wintermstiff = stiffener_weight("outer", 0.0, *common)
+    Wstiff = Nmain * Wmainstiff + Ninterm * Wintermstiff
+
+    Wtank = (Wcyl + 2.0 * Whead + Wstiff) * (1.0 + tank.ftankadd)
+    l_outer = l_cyl + Do / tank.ARtank + 2.0 * t_head
+
+    return OuterTank(Wtank=Wtank, Wcyl=Wcyl, Whead=Whead, Wstiff=Wstiff,
+                     Souter=Souter, Shead=Shead, Scyl=Scyl, t_cyl=t_cyl,
+                     t_head=t_head, l_outer=l_outer)
