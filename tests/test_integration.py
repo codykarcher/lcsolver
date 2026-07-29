@@ -224,6 +224,10 @@ def test_spaircraft_end_to_end():
     eliminations, variables reaching their bounds, a model that is both linear
     and signomial. It takes about half a minute, which is why it carries its
     own marker.
+
+    It also caught the iteration cap: SPaircraft converges in 149 iterations
+    and the default was 100, so a converging run was being stopped three fifths
+    of the way through and reported as a failure.
     """
     build = _example('spaircraft')
 
@@ -309,3 +313,35 @@ def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
     assert obj == pytest.approx(got, abs=1e-4), (
         f'{name}: evaluate gave {obj}, solver gave {got}')
     assert viol <= 1e-6
+
+
+def test_quadratic_objective_convention_is_consistent():
+    """A QP with a LINEAR term, where a stray factor of two moves the optimum.
+
+    EDI stores the quadratic COEFFICIENT matrix, so the objective is
+    x'Px + q'x. cvxopt.solvers.qp minimises (1/2) x'Px + q'x, and solve_QP
+    passes 2*P to compensate. With q = 0 a missing factor would be invisible --
+    a positive scaling leaves the argmin alone -- so this uses q != 0, where
+    minimising (1/2)(x^2+y^2) - 4x lands at x=4 instead of x=2.
+    """
+    from edi.presolve import evaluate
+
+    def make():
+        f = Formulation()
+        x = f.Variable('x', 0.0, '', 'x', bounds=[-10.0, 10.0])
+        y = f.Variable('y', 0.0, '', 'y', bounds=[-10.0, 10.0])
+        f.Objective(x ** 2 + y ** 2 - 4.0 * x)
+        f.Constraint(x + y >= 1.0)
+        return f
+
+    for backend in ('cvxopt', 'ipopt'):
+        f = make()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            solver_module.solve(f, solver=backend)
+        assert pyo.value(f.x) == pytest.approx(2.0, abs=1e-4), backend
+        assert pyo.value(f.y) == pytest.approx(0.0, abs=1e-4), backend
+
+    st = structure_detector(unit_corrector(make()), bounds_as_rows=False)
+    obj, _viol = evaluate(st, [2.0, 0.0])
+    assert obj == pytest.approx(-4.0, abs=1e-6)

@@ -72,6 +72,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
+           "diagnose",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -156,6 +157,8 @@ class PresolveReport:
     bound_only_columns: list = field(default_factory=list)
     fixed_columns: list = field(default_factory=list)
     output_columns: list = field(default_factory=list)
+    degenerate: list = field(default_factory=list)
+    cancelling: list = field(default_factory=list)
     bounds: dict = field(default_factory=dict)
     unbounded_above: list = field(default_factory=list)
     unbounded_below: list = field(default_factory=list)
@@ -218,6 +221,28 @@ class PresolveReport:
         if self.clean:
             L.append("  no empty columns and every variable is bounded "
                      "both ways")
+        return "\n".join(L)
+
+    def post_solve_text(self):
+        """The checks that need a solution, if one was supplied."""
+        L = []
+        if self.degenerate:
+            L.append(f"  {len(self.degenerate)} variables the optimum does not "
+                     "determine (moving them changes neither the objective nor "
+                     "feasibility):")
+            for nm, val in self.degenerate[:12]:
+                L.append(f"    {nm} = {val:.6g}")
+            if len(self.degenerate) > 12:
+                L.append(f"    ... and {len(self.degenerate) - 12} more")
+        if self.cancelling:
+            L.append(f"  {len(self.cancelling)} signomial terms contribute "
+                     "essentially nothing to their constraint, so the quantity "
+                     "they carry is disconnected:")
+            for i, side, share, vs in self.cancelling[:8]:
+                L.append(f"    constraint {i} ({side}): {', '.join(vs[:4])} "
+                         f"at {share:.1e} of the total")
+            if len(self.cancelling) > 8:
+                L.append(f"    ... and {len(self.cancelling) - 8} more")
         return "\n".join(L)
 
 
@@ -347,7 +372,13 @@ def presolve_report(structures, names=None) -> PresolveReport:
     # in one genuine constraint plus its own box is a singleton column, and
     # counting the box would hide it.
     for j in range(n):
-        if not in_rows[j]:
+        # A variable whose only rows were folded into bounds has no rows left,
+        # but it is not unconstrained -- calling it "appears in no constraint"
+        # is both alarming and wrong. Distinguish by whether anything
+        # meaningful bounds it.
+        bounded = ((box_lo[j] is not None and box_lo[j] > VACUOUS_LO)
+                   or (box_hi[j] is not None and box_hi[j] < VACUOUS_HI))
+        if not in_rows[j] and not bounded:
             rep.empty_columns.append(nm(j))
         elif not in_real[j]:
             rep.bound_only_columns.append(nm(j))
@@ -1272,15 +1303,14 @@ def evaluate(structures, x):
         obj = float(shift or 0.0) + sum(float(ci) * x[i]
                                         for i, ci in enumerate(c) if i < len(x))
         if parts.hessian is not None:
-            # EDI stores the quadratic COEFFICIENT matrix, not the Hessian, so
-            # the objective is x'Px + q'x + shift with no factor of a half:
+            # EDI stores the quadratic COEFFICIENT matrix, not the Hessian,
+            # so the objective is x'Px + q'x + shift with no factor of a half:
             # `x**2 + y**2` gives P = I, and x'Ix = 2 at (1,1), matching the
-            # Pyomo objective. Note this is NOT cvxopt.solvers.qp's convention,
-            # which minimises (1/2) x'Px + q'x -- solve_QP hands P straight
-            # over, so the two disagree by a factor of two on the objective
-            # VALUE. Harmless while q is zero, since a positive scaling leaves
-            # the argmin alone, but worth knowing before trusting a QP
-            # objective with a linear term in it.
+            # Pyomo objective. cvxopt.solvers.qp minimises (1/2) x'Px + q'x,
+            # and solve_QP passes `2.0*P` for exactly that reason, so the two
+            # agree -- verified on `min x**2 + y**2 - 4x s.t. x + y >= 1`,
+            # whose optimum is at x=2 and where a missing factor of two would
+            # put it at x=4. cvxopt and IPOPT both return x=2.
             #
             # Omitting the quadratic term altogether, as this did at first,
             # reports the objective of the LP left by deleting it: 0 instead
@@ -1441,6 +1471,61 @@ class PresolveLog:
             if len(removed) > limit:
                 L.append(f"    ... and {len(removed) - limit} more")
         return "\n".join(L)
+
+
+def diagnose(structures, x=None, problem=None, names=None, quiet=False):
+    """Every structural check, in one call, as one report.
+
+    The individual checks are expert tools: each needs the structure detected a
+    particular way and read in a particular order, which means in practice
+    nobody runs them. This is the entry point that makes them the default.
+
+    ``x`` and ``problem``, when given, enable the two checks that can only run
+    after a solve -- degeneracy and signomial cancellation. Without them only
+    the structural half runs, which is the half that needs nothing.
+
+    Returns a :class:`PresolveReport` with ``degenerate`` and ``cancelling``
+    filled in when a solution was supplied. ``quiet`` suppresses the printout
+    and returns the report for a caller to inspect.
+    """
+    from edi.structure.detected import as_detected
+
+    st = as_detected(structures)
+    if st.bounds is None:
+        # The interesting checks need bounds separated from rows. Fold a copy
+        # rather than making the caller know that.
+        try:
+            st = fold_singleton_rows(_with_empty_bounds(st))
+        except Exception:
+            pass
+
+    rep = presolve_report(st)
+    if x is not None and problem is not None:
+        try:
+            rep.degenerate = degeneracy_report(problem, x, names=names)
+        except Exception:
+            rep.degenerate = []
+        try:
+            rep.cancelling = cancellation_report(st, x, names=names)
+        except Exception:
+            rep.cancelling = []
+    if not quiet:
+        text = str(rep)
+        extra = rep.post_solve_text()
+        print(text + ("\n" + extra if extra else ""))
+    return rep
+
+
+def _with_empty_bounds(structures):
+    """A copy carrying an empty bounds array, so rows can be folded into it."""
+    st = dict(structures)
+    if st.get("bounds") is None:
+        rows, _ops, key = _rows_of(st)
+        width = max((len(r) - 2 for r in rows), default=0)
+        n = max(width, len(st.get("variables") or []))
+        st["bounds"] = [(None, None)] * n
+    from edi.structure.detected import as_detected
+    return as_detected(st)
 
 
 def presolve(structures, fold=True, eliminate=True, propagate=False,

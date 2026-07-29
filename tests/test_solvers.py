@@ -536,3 +536,29 @@ class TestGPObjectiveForm(unittest.TestCase):
         st = structure_detector(unit_corrector(self._box()))
         with self.assertRaises(ValueError):
             solve_gp_ipopt(st, form="nonsense")
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+class TestWritebackFailureIsAnnounced(unittest.TestCase):
+    """A failed write-back must not look like a successful solve."""
+
+    def test_writeback_failure_warns(self):
+        import warnings
+        from edi.solvers import solver as solver_module
+
+        def _boom(*a, **k):
+            raise RuntimeError('writeback exploded')
+
+        original = solver_module.write_solution
+        solver_module.write_solution = _boom
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                res = solver_module.cvxopt_solve(_gp_known_optimum())
+            messages = [str(w.message) for w in caught]
+            self.assertTrue(
+                any('writing the solution back' in m for m in messages),
+                msg=f'no warning issued; got {messages}')
+            self.assertIn('writeback_error', res)
+        finally:
+            solver_module.write_solution = original

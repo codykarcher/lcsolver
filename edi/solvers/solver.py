@@ -84,11 +84,64 @@ def cvxopt_solve(m, write_back=True):
         except Exception as e:                      # never lose a good solve
             res['solution'] = None
             res['writeback_error'] = f"{type(e).__name__}: {e}"
+            # Say so. A failed write-back leaves the model holding its initial
+            # guess while the solve reports success, so `pyo.value(m.x)` gives
+            # a plausible wrong number and nothing anywhere indicates it. The
+            # error was recorded in a dict key that nothing reads.
+            import warnings
+            warnings.warn(
+                f"the solve succeeded but writing the solution back onto the "
+                f"model failed ({type(e).__name__}: {e}). pyo.value() will "
+                f"return the initial guess, not the solution; the values are "
+                f"in result['x'].", RuntimeWarning, stacklevel=2)
 
     return res
 
 
-def solve(m, solver='auto', convex_backend='ipopt', **kwargs):
+def _run_diagnostics(structures, level):
+    """Structural checks on the way into a solve.
+
+    `level` is 'warn' (default), 'print', or 'off'. The checks cost a fraction
+    of a second and catch the modelling errors that otherwise present as a
+    strange answer: a variable nothing bounds, one nothing determines, one
+    computed and never read. Running them by default is the point -- as
+    opt-in tools nobody ran them.
+
+    'warn' reports only what is actionable, so a clean model stays silent.
+    """
+    if level in (None, 'off', False):
+        return None
+    import warnings
+
+    from edi.presolve import diagnose
+
+    try:
+        rep = diagnose(structures, quiet=True)
+    except Exception:
+        return None                      # never fail a solve over a check
+    if level == 'print':
+        print(rep)
+        return rep
+    problems = []
+    if rep.empty_columns:
+        problems.append(f"{len(rep.empty_columns)} variables appear in no "
+                        f"constraint ({', '.join(rep.empty_columns[:3])})")
+    if rep.unbounded_above:
+        problems.append(f"{len(rep.unbounded_above)} variables are not upper "
+                        f"bounded ({', '.join(rep.unbounded_above[:3])})")
+    if rep.unbounded_below:
+        problems.append(f"{len(rep.unbounded_below)} variables are not lower "
+                        f"bounded ({', '.join(rep.unbounded_below[:3])})")
+    if problems:
+        warnings.warn(
+            "model diagnostics: " + "; ".join(problems)
+            + ". Call edi.presolve.diagnose(structures) for the full report.",
+            RuntimeWarning, stacklevel=3)
+    return rep
+
+
+def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
+          **kwargs):
     """Solve an EDI Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -108,10 +161,24 @@ def solve(m, solver='auto', convex_backend='ipopt', **kwargs):
     boxes these models carry far better. cvxopt remains available and is still
     the faster choice on a small, well-scaled program.
 
+    ``diagnostics`` runs the structural checks before solving: ``'warn'``
+    (the default) reports only what is actionable, so a clean model stays
+    silent; ``'print'`` shows the full report; ``'off'`` skips them. They cost
+    a fraction of a second and catch the modelling errors that otherwise
+    present as a strange answer rather than as an error.
+
     In every case the solution is written back onto the model, so
     ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
     from edi.solvers.ipopt import ipopt_solve
+
+    if diagnostics not in (None, 'off', False):
+        try:
+            _run_diagnostics(structure_detector(unit_corrector(m),
+                                                bounds_as_rows=False),
+                             diagnostics)
+        except Exception:
+            pass                         # a check must never block a solve
 
     if solver == 'cvxopt':
         return cvxopt_solve(m, **kwargs)

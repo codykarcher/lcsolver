@@ -106,7 +106,12 @@ class SIAOptions:
     """Algorithm parameters."""
 
     def __init__(self, **kw):
-        self.max_iterations = 100
+        self.max_iterations = 400
+        # 400 rather than 100. SPaircraft converges in 149, so the old default
+        # stopped a converging run three fifths of the way through and reported
+        # it as not converged. The cost of a high cap is nothing when the KKT
+        # test fires -- the run stops on its own -- and the cost of a low one is
+        # a correct answer thrown away.
         # --- KKT termination, all on the TRUE problem ---------------------
         self.feasibility_tolerance = 1e-6     # max_i log g_i(x)
         self.stationarity_tolerance = 1e-6    # ||grad log L||_inf in log space
