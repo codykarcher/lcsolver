@@ -1067,3 +1067,40 @@ function cannot be called at all as shipped.
 The port keeps the *model* -- a linear temperature derating, which is real
 physics and is what the docstring promises -- but takes its coefficients as
 arguments rather than off a struct that does not carry them.
+
+## §69 — TASOPT.jl's cost model is disclaimed by its own authors, and half of it cannot run
+
+Both `cost_est.jl` and `cost_val.jl` carry a warning in their own docstrings:
+
+> **Unused and Unvetted.** This legacy function is not used elsewhere in the
+> code but has been retained for reference ... it has not been vetted, and is
+> not endorsed by the current dev team. Read the reference before using it!
+
+`CostVal`'s adds, in full: *"Honestly, not a clue."*
+
+They are in different states of disrepair.
+
+**`CostVal` runs, but is a function of production quantity alone.** Every
+other input is a literal in the body — fuselage weight 20183.2, tails 1202.0
+and 793.3, wing 11813.0, max speed 855, 220 passengers, and so on. It is the
+737 MAX9 and nothing else.
+
+**`CostEst` cannot be called.** It indexes `parpt[ipt_Ptshaft]` and
+`parpt[ipt_nTshaft]`, turboelectric parameters that have been removed:
+`isdefined(TASOPT, :ipt_Ptshaft)` is `false`, so any call raises immediately.
+Its own `@warn` says as much — "it refers to turboelectric aircraft
+parameters that have been removed from the model".
+
+The correlations underneath are real and worth having — DAPCA IV as published
+in Raymer, Birkler's gas-turbine model, and newer fits for electric and
+hydrogen components — so `tasopt_py.cost` ports them **with their inputs as
+arguments**, which is what makes them applicable to an aircraft other than
+the hard-wired one. `cost_val_baseline` reproduces the reference's case
+exactly, since it is the only thing to verify against.
+
+Two properties of the model worth knowing before trusting a number from it:
+Birkler's turbine correlation carries a `-2228` constant and goes **negative**
+for a small enough engine, and the airframe cost is multiplied by an
+adjustment factor `cA = 4/3` chosen "such that avionics costs are around 25%
+of flyaway cost" — a number picked to make an answer come out, not a
+correlation.
