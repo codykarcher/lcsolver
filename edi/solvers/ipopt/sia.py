@@ -110,7 +110,11 @@ class SIAOptions:
         self.feasibility_tolerance = 1e-6     # max_i log g_i(x)
         self.stationarity_tolerance = 1e-6    # ||grad log L||_inf in log space
         self.complementarity_tolerance = 1e-6  # max_i |lambda_i log g_i(x)|
-        # --- penalty CCP, only active while infeasible --------------------
+        # --- Phase I: find a feasible point before optimizing --------------
+        self.phase1 = True             # False falls back to penalty CCP
+        self.phase1_max_iterations = 50
+        self.phase1_margin = 1e-8      # aim for STRICTLY feasible
+        # --- penalty CCP, used only if phase1 is off or fails --------------
         self.tau0 = 1.0
         self.tau_factor = 5.0
         self.tau_max = 1e12
@@ -151,6 +155,8 @@ class SIAResult:
         self.objectives = []
         self.conservative = False   # True if no constraint had to be linearized
         self.slacks_active = False  # True if the run ended with slack > 0
+        self.phase1_iterations = 0  # cost of finding a feasible start
+        self.phase1_feasible = None # None if phase 1 was not needed
 
 
 def classify(problem):
@@ -197,8 +203,23 @@ def _kkt(problem, x, mults):
     return float(np.max(np.abs(g))), viol, comp
 
 
-def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
-    """Assemble and solve the inner-approximation sub-problem in log space."""
+def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
+                minimize_violation=False, use_slacks=True):
+    """Assemble and solve the inner-approximation sub-problem in log space.
+
+    ``minimize_violation`` selects PHASE I: the objective becomes the worst
+    constraint violation ``t``, every constraint is written ``... <= t``, and
+    the true objective is ignored. That problem is feasible by construction
+    (raise ``t``), its objective is a single variable so there is no scaling
+    contest between cost and feasibility, and the same conservative
+    representations apply -- so ``t`` decreases monotonically. When it reaches
+    zero the iterate is feasible for the true problem and Phase II can run with
+    no slacks and no penalty at all.
+
+    Otherwise it is PHASE II: no slacks, no penalty. The iterate is feasible,
+    every constraint is exact or conservative, so the sub-problem's optimum is
+    feasible for the true problem and cannot be worse than the current point.
+    """
     n = problem.n
     cons = problem.constraints
     log_xk = np.log(x_k)
@@ -207,8 +228,11 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
     m.J = pyo.RangeSet(0, n - 1)
     m.I = pyo.RangeSet(0, len(cons) - 1)
     m.d = pyo.Var(m.J, initialize=0.0)
-    m.s = pyo.Var(m.I, domain=pyo.NonNegativeReals, initialize=0.0)
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+    if minimize_violation:
+        m.t = pyo.Var(initialize=float(_violation(problem, x_k)))
+    if use_slacks and not minimize_violation:
+        m.s = pyo.Var(m.I, domain=pyo.NonNegativeReals, initialize=0.0)
 
     def lse(terms):
         """log sum_k c_k exp(a_k . (d + log x_k)) -- exact, convex."""
@@ -217,17 +241,32 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
                                       for j in range(n)))
             for c, a in terms))
 
-    # --- objective: exact when posynomial, linearized otherwise -----------
-    if isinstance(problem.objective, Posynomial):
+    # --- objective ---------------------------------------------------------
+    if minimize_violation:
+        # Phase I: drive the worst violation down and nothing else.
+        m.obj = pyo.Objective(expr=m.t, sense=pyo.minimize)
+        rhs = lambda i: m.t
+    elif use_slacks:
+        rhs = lambda i: m.s[i]
+    else:
+        # Phase II proper: the iterate is feasible and every constraint is
+        # exact or conservative, so the constraint is imposed AS IT STANDS.
+        # No slack variable, no penalty, nothing to distort the objective --
+        # this is the pure inner approximation the guarantees are stated for.
+        rhs = lambda i: 0.0
+    if minimize_violation:
+        pass
+    elif isinstance(problem.objective, Posynomial):
         obj = lse(problem.objective.terms)
     else:
         f_k = problem.objective_value(x_k)
         gf = problem.objective.log_grad(x_k)
         obj = math.log(f_k) + sum(gf[j] * m.d[j] for j in range(n))
 
-    m.obj = pyo.Objective(
-        expr=obj + tau * sum(m.s[i] for i in range(len(cons))),
-        sense=pyo.minimize)
+    if not minimize_violation:
+        penalty = (tau * sum(m.s[i] for i in range(len(cons)))
+                   if use_slacks else 0.0)
+        m.obj = pyo.Objective(expr=obj + penalty, sense=pyo.minimize)
 
     m.cons = pyo.ConstraintList()
     for i, con in enumerate(cons):
@@ -237,23 +276,23 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
                 c, a = body.terms[0]
                 e = math.log(c) + sum(a[j] * (m.d[j] + log_xk[j])
                                       for j in range(n))
-                m.cons.add(e == m.s[i] if op == "==" else e <= m.s[i])
+                m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
             else:
-                m.cons.add(lse(body.terms) <= m.s[i])
+                m.cons.add(lse(body.terms) <= rhs(i))
         elif isinstance(body, PosynomialRatio):
             # log p  <=  log q_hat, with q_hat the AGM monomial under-estimator.
             # q_hat <= q everywhere, so this is HARDER than the true constraint.
             cq, aq = body.condensed_q(x_k)
             log_qhat = math.log(cq) + sum(aq[j] * (m.d[j] + log_xk[j])
                                           for j in range(n))
-            m.cons.add(lse(body.p.terms) - log_qhat <= m.s[i])
+            m.cons.add(lse(body.p.terms) - log_qhat <= rhs(i))
         else:
             # Black box: value and gradient only, so no conservative model
             # exists. Linearize, and let the trust region below carry it.
             v = body(x_k)
             gl = body.log_grad(x_k)
             e = math.log(max(v, 1e-300)) + sum(gl[j] * m.d[j] for j in range(n))
-            m.cons.add(e == m.s[i] if op == "==" else e <= m.s[i])
+            m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
 
     # Stay in the positive orthant.
     floor = math.log(options.x_min)
@@ -282,7 +321,8 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
     m.solutions.load_from(results)
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
-    s = np.array([pyo.value(m.s[i]) for i in range(len(cons))])
+    s = (np.array([pyo.value(m.s[i]) for i in range(len(cons))])
+         if (use_slacks and not minimize_violation) else np.zeros(len(cons)))
 
     # Multipliers. An INEQUALITY multiplier is non-negative by definition, so
     # its magnitude is the quantity wanted. An EQUALITY multiplier is not --
@@ -305,7 +345,70 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox):
         # and only the equality signs were inverted.
         mults[i] = (-float(lam) if cons[i].operator == '=='
                     else abs(float(lam)))
+    if minimize_violation:
+        return d, s, mults, float(pyo.value(m.t))
     return d, s, mults, float(pyo.value(obj))
+
+
+def _phase1(problem, x, options, has_blackbox):
+    """Find a feasible point by minimizing the worst constraint violation.
+
+    Solves ``min t  s.t.  log g_i(x) <= t`` by the same inner approximation.
+    Three things make this a much better-behaved problem than the penalty
+    formulation it replaces:
+
+    * it is **always feasible** -- raise ``t`` -- so the sub-problem can never
+      be unreachable and there is no penalty parameter to tune;
+    * its objective is a single variable, so there is no scaling contest
+      between cost and feasibility. That contest is what wrecked the penalty
+      version: with an objective of order log(20000) and tau = 1, the first
+      sub-problem effectively ignored 6077 constraints and took a step of
+      e^59, landing in a basin it never left;
+    * the same conservative representations apply, so ``t`` decreases
+      monotonically.
+
+    Returns ``(x, iterations, feasible)``. The margin asks for *strictly*
+    feasible, so Phase II starts inside the set rather than on its boundary
+    where round-off can push it out.
+    """
+    it = 0
+    radius = options.trust_radius
+    for it in range(1, options.phase1_max_iterations + 1):
+        viol = _violation(problem, x)
+        if viol <= -options.phase1_margin:
+            return x, it - 1, True
+        try:
+            d, _, _, t = _subproblem(problem, x, 0.0, radius, options,
+                                     has_blackbox, minimize_violation=True)
+        except RuntimeError:
+            # Unreachable rather than bad: widen, as in Phase II.
+            if has_blackbox and radius < options.trust_max:
+                radius = min(options.trust_max, radius * options.trust_expand)
+                continue
+            return x, it, viol <= 0.0
+        x_new = x * np.exp(d)
+        new_viol = _violation(problem, x_new)
+
+        if has_blackbox and new_viol > viol:
+            # The black box is only LINEARIZED, so Phase I is not conservative
+            # for it and a step can genuinely make things worse. That is a
+            # trust-region signal, not a reason to give up: shrink and retry.
+            radius *= options.trust_shrink
+            if options.verbose:
+                print(f"  phase1 {it:3d}  step worsened "
+                      f"{viol:+.3e} -> {new_viol:+.3e}, "
+                      f"radius -> {radius:.3g}")
+            if radius < options.trust_min:
+                return x, it, viol <= 0.0
+            continue
+
+        if options.verbose:
+            print(f"  phase1 {it:3d}  max log g: {viol:+.3e} -> "
+                  f"{new_viol:+.3e}   (model t = {t:+.3e})")
+        x = x_new
+        if has_blackbox:
+            radius = min(options.trust_max, radius * options.trust_expand)
+    return x, it, _violation(problem, x) <= 0.0
 
 
 def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
@@ -332,10 +435,40 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
               + ("" if has_blackbox else "  -> fully conservative, "
                                          "no globalization needed"))
 
+    # --- Phase I ----------------------------------------------------------
+    # The conservative guarantees -- feasible iterates, monotone descent --
+    # hold FROM A FEASIBLE POINT. Rather than blend cost and feasibility into
+    # one penalized objective and hope, get feasible first on its own terms,
+    # then optimize with the guarantees switched on and no penalty at all.
+    if options.phase1 and _violation(problem, x) > -options.phase1_margin:
+        x, res.phase1_iterations, feasible = _phase1(
+            problem, x, options, has_blackbox)
+        res.history.append(x.copy())
+        res.phase1_feasible = feasible
+        if options.verbose:
+            print(f"  phase 1: {res.phase1_iterations} iterations, "
+                  f"{'FEASIBLE' if feasible else 'still infeasible'}, "
+                  f"max log g = {_violation(problem, x):+.3e}")
+        if not feasible:
+            res.status = (f"phase 1 could not find a feasible point after "
+                          f"{res.phase1_iterations} iterations "
+                          f"(max log g = {_violation(problem, x):.3e})")
+            res.x, res.objective = x, problem.objective_value(x)
+            stat, viol, comp = _kkt(problem, x, mults)
+            res.stationarity, res.max_violation, res.complementarity = (
+                stat, viol, comp)
+            return res
+        # Feasible now, so no slack is needed and the penalty is switched off.
+        # tau only ever existed to buy feasibility.
+        use_slacks = False
+    else:
+        use_slacks = not options.phase1
+
     for k in range(options.max_iterations):
         try:
             d, s, mults, model_obj = _subproblem(
-                problem, x, tau, radius, options, has_blackbox)
+                problem, x, tau, radius, options, has_blackbox,
+                use_slacks=use_slacks)
         except RuntimeError as exc:
             # An INFEASIBLE sub-problem is not a bad step -- it means the
             # trust region is too tight for the relaxed feasible set to be
