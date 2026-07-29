@@ -744,3 +744,45 @@ reproduces the Fortran exactly (and is what keeps `737.out` byte-identical).
 
 For liquid hydrogen it is about 446 kJ/kg, roughly 0.4% of the lower heating
 value: small, but a real charge that scales with fuel flow.
+
+## §56 — the coded stiffener moment distribution is discontinuous at the support
+
+`TASOPT.jl/src/cryo_tank/tankWmech.jl`, `stiffeners_bendingM`. Barron's
+Eqs. (7.4) and (7.5) give the ring bending moment either side of the support
+angle `θ`, and as coded the two do not agree where they meet:
+
+| θ (rad) | k just below θ | k at θ | jump |
+|---|---|---|---|
+| 0.5 | +0.491 | +0.752 | **+0.260** |
+| 1.0 | +0.232 | +0.391 | +0.159 |
+| 1.2 | +0.167 | +0.249 | +0.082 |
+| 2.5 | −0.376 | +0.627 | **+1.004** |
+
+A bending moment around a continuous ring cannot be discontinuous, so one of
+the two expressions is wrong. The reference suspects as much — it carries
+
+```julia
+      #TODO this equation is Eq. (7.5) in Barron; however, this equation does
+      #not match the curves in Fig. 7.3. Suspect error in Barron.
+```
+
+and uses it anyway.
+
+**It is not academic.** The branch test is `0 ≤ ϕ < θ`, strictly less, so
+`ϕ = θ` evaluates on the *upper* branch — the larger of the two — and `θ`
+itself is the first entry in the search list. For support angles below about
+1.4 rad the maximum is found exactly at `ϕ = θ`, which means **the stiffener
+sizing lands precisely on the discontinuity**. Every inner-tank stiffener
+weight rests on which side of the jump the code happens to take.
+
+Reproduced as written, because a deck that differs from the reference's is
+not a port of it, and pinned by `tests/test_stiffeners.py` so that if anyone
+corrects it the effect on tank weight is visible rather than silent.
+
+## §57 — two atmospheric constants, five pascals apart, both live
+
+`constants.jl` defines `pref = 101320.0`, used by the tank collapse-pressure
+calculation; `fuel_thermo.jl` uses `p_atm = 101325.0` to convert pressure to
+atmospheres for the NIST fits. Both are in use and they differ by 5 Pa.
+Harmless at the precision anything here is claimed to, but pinned so it is
+not "tidied" into one and quietly shifted.
