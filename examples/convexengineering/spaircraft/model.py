@@ -481,18 +481,19 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     ]
 
 
-    # These three say nothing about the segment, so the loop makes N identical
-    # copies of each. Left as they were for now: removing the duplicates is a
-    # change to how many rows the model has, and belongs in its own step.
-    for i in range(N):
-        cons += [
-            ht.AR_ht >= 4.,
-            ht.dx_trail_ht <= (vt.dx_lead_vt + vt.b_vt / tan(SWEEP_VT * pi / 180)
-                               + fu.w_fuse / tan(SWEEP_HT * pi / 180)
-                               + ht.c_root_ht),
-            SMmin + dxCG / wing.mac + cmw / CLwmax
-                <= ht.V_ht * ht.m_ratio + ht.V_ht * ht.C_L_ht_max / CLwmax,
-        ]
+    # Aircraft-level geometry and stability limits. These mention no segment,
+    # so the source's per-segment loop stated each of them N times over; they
+    # are stated once here. Identical rows constrain nothing extra -- presolve
+    # would drop the copies anyway -- so this removes 3*(N-1) rows and leaves
+    # the feasible set alone.
+    cons += [
+        ht.AR_ht >= 4.,
+        ht.dx_trail_ht <= (vt.dx_lead_vt + vt.b_vt / tan(SWEEP_VT * pi / 180)
+                           + fu.w_fuse / tan(SWEEP_HT * pi / 180)
+                           + ht.c_root_ht),
+        SMmin + dxCG / wing.mac + cmw / CLwmax
+            <= ht.V_ht * ht.m_ratio + ht.V_ht * ht.C_L_ht_max / CLwmax,
+    ]
 
     # ---- mission stitching ------------------------------------------------------
     cons += [
