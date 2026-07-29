@@ -192,6 +192,47 @@ to look for it, since LP has no signomials, but on a signomial program it is
 the check most likely to find a real modelling error: a subtraction that
 silently disconnects the quantity it was meant to size.
 
+### Cross-check: the checks agree with gpkit on the same model
+
+Run against the pinned SPaircraft, the cancellation check finds the pi-tail
+constraint on its own, with no prior knowledge of it:
+
+```
+pinned: con 1051  denominator share=5.29e-24  HT_c_root_ht, HT_box_M_r
+fixed:  (gone)
+```
+
+That is `M_r * c_root` contributing 5e-24 of its group — the disconnected term
+itself, rather than the 1e-30 symptom.
+
+It also flags a second constraint that survives both variants, `A_tri >=
+0.5*(1-taper)*c_root*b`, and there all three checks converge: `Wing_A_tri` is
+the one remaining degenerate variable *and* the one variable reported "not
+upper bounded". The cause is that `A_tri` is defined by that constraint and
+consumed by nothing, so it floats upward until the subtracted term is
+negligible beside it.
+
+The upstream SPaircraft agrees. Its own notebook output records
+
+```
+A_{tri} : 1e+30 [m²]
+value near upper bound: M_{r_{out}}..., A_{tri}..., d_{nacelle}..., \alpha_{max}...
+```
+
+— the same four variables, from gpkit's own diagnostics. Upstream `wing.py`
+also carries `Atri <= 1e10*units('m**2')` on the line after the definition,
+which this port does not; that bound exists only to silence the warning, and
+`A_tri` reaches 1e+30 upstream regardless.
+
+### A limitation this exposes
+
+`VACUOUS_HI` is unit-blind. A wing area of 1e10 m² is exactly as meaningless
+as 1e30, but only the latter trips the threshold — so upstream's `Atri <= 1e10`
+would count as a real bound and silence the check, even though it says nothing
+about any aircraft. Catching that needs a bound compared against the
+variable's own scale rather than against an absolute number, which is not
+implemented.
+
 ## What is not checked
 
 `fold_singleton_rows` is the only reduction that actually transforms the
