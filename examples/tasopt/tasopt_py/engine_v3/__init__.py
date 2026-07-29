@@ -21,3 +21,13 @@ from .hx_size import (HXGas, HXTubular, hx_size, hx_operate,  # noqa: F401,E501
 
 __all__ += ["HXGas", "HXTubular", "hx_size", "hx_operate", "hx_optimize",
             "hx_objective", "tube_geometry", "gas_tset_single"]
+from .maps import (CompressorMap, FAN_MAP, LPC_MAP, HPC_MAP,  # noqa: F401,E501
+                   MAP_BY_NAME, find_NR_inverse,
+                   compressor_speed_and_efficiency)
+from .ducted_fan_cycle import (DuctedFanState, ducted_fan_size,  # noqa: F401,E501
+                               ducted_fan_operate, V3_CMAPF)
+
+__all__ += ["CompressorMap", "FAN_MAP", "LPC_MAP", "HPC_MAP", "MAP_BY_NAME",
+            "find_NR_inverse", "compressor_speed_and_efficiency",
+            "DuctedFanState", "ducted_fan_size", "ducted_fan_operate",
+            "V3_CMAPF"]

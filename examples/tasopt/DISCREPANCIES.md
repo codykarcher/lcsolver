@@ -1333,3 +1333,38 @@ Separately, the reference accepts NLsolve's default `ftol = 1e-8`. At the
 HPC point (pratio 6, mb 0.8) its solution leaves a residual of 8.7e-9; the
 port's leaves 1.8e-15. The ninth-digit differences in `N` and `R` between
 the two are the reference's tolerance, not the port's error.
+
+
+## §80 -- the ducted fan reads two different fan models at once
+
+`ductedfanoper!` gets the fan **efficiency** from the tabulated pyCycle map
+(§77) and the fan **speed** from 2.16's analytic `Ncmap` -- in the same
+function, at the same operating point:
+
+```julia
+_, epf, ... = calculate_compressor_speed_and_efficiency(FanMap, pf, mf, ...)
+...
+Nbf, _, _ = Ncmap(pf, mf, pifD, mbfD, NbfD, Cmapf)
+```
+
+`calculate_compressor_speed_and_efficiency` returns a speed as its *first*
+value, from the same table the efficiency came from. It is discarded, and
+the analytic correlation is called instead.
+
+The two were not fitted to each other, and v3's `Cmapf` is not 2.16's
+either -- it is a refit:
+
+| | 2.16 shipped | v3 |
+|---|---|---|
+| `Cmapf[1]` | 3.50 | 3.31140687 |
+| `Cmapf[4]` | 0.95 | 0.57042461 |
+| `Cmapf[8:9]` | 0.0, 0.0 | 2.95705214, 0.61792148 |
+
+The last pair matters most: 2.16 ships with the efficiency-map terms zeroed,
+which degenerates `ecmap` to a straight line. v3 turns them back on. So the
+port keeps both constant sets, and `V3_CMAPF` is used only by the ducted fan.
+
+Nothing here is wrong in the sense of producing a bad number -- the speed is
+consistent with 2.16's map and the efficiency with pyCycle's. But a reported
+fan speed and a reported fan efficiency at the same point come from two
+unrelated fits, and should not be treated as one operating point on one map.
