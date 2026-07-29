@@ -294,6 +294,80 @@ the inboard share of the load as its share of the span, justified by the
 section being untapered over that stretch. With real taper the inboard carries
 somewhat more, so this slightly under-predicts the fixed-end moment.
 
+## Bound propagation
+
+`propagate_bounds` tightens variable bounds by interval propagation, and works
+on an **LP, a QP, a GP or an SP**. The GP case is the interesting one: a
+monomial `c * prod x_j**a_j <= 1` is *linear* once written in `y = log x`, as
+`a . y <= -log c`, so the ordinary LP propagation applies with nothing changed
+but the space. The arithmetic is therefore shared; only the translation in and
+out differs.
+
+A posynomial gives more than it looks like it should. Every term of
+`sum_k c_k m_k <= 1` is strictly positive, so each separately satisfies
+`c_k m_k <= 1` — one linear implication per term, for free. Without that this
+would be nearly useless on a GP, where most constraints are posynomials rather
+than bare monomials.
+
+On SPaircraft: **2478 tightenings in 0.07 s**, fully vacuous 1e-30…1e30 boxes
+down from 1025 to 359, and three more variables discovered to be constants
+(52 → 55 fixed columns). The one genuinely unbounded variable stays unbounded —
+it must not invent bounds, and there is a test for that.
+
+Ratios are skipped: `p <= q` bounds neither side without a point to evaluate
+at, and guessing there would be silent.
+
+**An equality needs both endpoints.** It bounds `v_k` above using the *minimum*
+of the other terms and below using their *maximum*, and those are different
+sums. Reusing the minimum for both manufactures contradictions between
+unrelated equalities — the first version declared SPaircraft infeasible,
+"proving" a variable with a wide-open box both `<= 1.6e7` and `>= 2.6e-15` from
+two monomial equalities that happened to share it.
+
+## Monomial equality elimination
+
+`eliminate_monomial_equalities` substitutes out variables that a monomial
+equality already determines. In log space such an equality is *linear*, so it
+can be solved for one variable and eliminated everywhere else — Gaussian
+elimination on the exponent matrix. Solving for a pivot gives
+
+    x_p = c**(-1/a_p) * prod_{j != p} x_j**(-a_j/a_p)
+
+which is itself a monomial with a positive coefficient, so every term it lands
+in stays a monomial. **Posynomial structure survives untouched** — nothing
+becomes signomial, no approximation enters, the reduction is exact.
+
+On SPaircraft:
+
+| | variables | constraints | nonzeros |
+|---|---|---|---|
+| before | 1172 | 1217 | 5392 |
+| **after** | **559** | **604** | **4524** |
+
+Both dimensions roughly halved *and* the matrix 16% sparser, in 0.1 s.
+
+That sparsity gain is not automatic. Elimination normally costs fill-in, and it
+does here if permitted: at `max_fill=64` it removes 42 more variables but
+nonzeros climb to 5883, worse than the original. Pivots are chosen by a
+Markowitz estimate, `(row_nnz-1)*(col_nnz-1)`, and the default cap of 16 is
+where measurement put the optimum.
+
+Verified against the reference solution: objective 93141.764922 and worst
+violation +3.304e-06, identical on the full and reduced problems, with a
+back-substitution round-trip of 6.0e-10.
+
+Only variables whose **declared** bounds are vacuous are eliminated. A real
+bound does not disappear when its variable does — it becomes a constraint on
+the survivors, and re-adding it as two monomial rows hands back most of the
+saving.
+
+Recovery runs in **reverse** elimination order, for the same reason the
+output-only peel does: a pivot's formula is captured when it is eliminated and
+may name a variable eliminated in a later round. Getting this backwards leaves
+the reduced problem exactly right — objective correct to 12 figures — while
+returning recovered values off by 4.3e+03 relative. A single elimination cannot
+expose it; it takes a chain.
+
 ## Signomial cancellation
 
 `cancellation_report` looks for the pi-tail failure directly, rather than
@@ -363,6 +437,11 @@ implemented.
 
 ## What is not checked
 
-`fold_singleton_rows` is the only reduction that actually transforms the
-problem. Duplicate rows are reported but not removed, and dominated columns and
-forcing rows are not implemented.
+Duplicate rows are reported but not removed (38 survive on SPaircraft), and
+dominated columns and forcing rows are not implemented.
+
+Elimination runs on declared bounds and does not distinguish them from bounds
+*derived* by propagation. Derived bounds are implied by the constraints and so
+could be discarded on an eliminated variable, which would let propagation run
+first and elimination still reach the variables it tightened. As it stands the
+two are best run in the other order.
