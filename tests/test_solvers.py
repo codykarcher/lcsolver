@@ -453,8 +453,10 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         def _boom(*a, **k):
             raise RuntimeError('structured backend exploded')
 
-        original = solver_module.cvxopt_solve
-        solver_module.cvxopt_solve = _boom
+        # Patch whichever backend `auto` actually reaches. The default convex
+        # backend is ipopt; cvxopt is only used when asked for explicitly.
+        original = solver_module._convex_ipopt
+        solver_module._convex_ipopt = _boom
         try:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
@@ -466,7 +468,16 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
             self.assertTrue(any('structured backend exploded' in msg for msg in messages),
                             msg=f'no explanatory warning was issued; got {messages}')
         finally:
-            solver_module.cvxopt_solve = original
+            solver_module._convex_ipopt = original
+
+    def test_cvxopt_is_still_reachable_on_request(self):
+        """Changing the default must not remove the backend."""
+        from edi.solvers import solver as solver_module
+
+        f = _gp_known_optimum()
+        solver_module.solve(f, solver='auto', convex_backend='cvxopt')
+        self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
+        self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
 
 
 class TestGPObjectiveForm(unittest.TestCase):

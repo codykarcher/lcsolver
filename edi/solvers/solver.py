@@ -88,15 +88,28 @@ def cvxopt_solve(m, write_back=True):
     return res
 
 
-def solve(m, solver='auto', convex_backend='cvxopt', **kwargs):
+def solve(m, solver='auto', convex_backend='ipopt', **kwargs):
     """Solve an EDI Formulation, choosing a backend automatically.
 
-    solver='auto' routes to cvxopt when the formulation is detected as an LP,
-    QP, GP, or SP, and to IPOPT otherwise (including any formulation containing
-    black-box constraints). Pass solver='cvxopt' or solver='ipopt' to force one.
+    ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
+    named by ``convex_backend``, and everything else -- including any
+    formulation with a black-box constraint -- to IPOPT. Pass
+    ``solver='cvxopt'``, ``'ipopt-convex'`` or ``'ipopt'`` to force one.
 
-    In every case the solution is written back onto the model, so pyo.value(m.x)
-    returns the optimum after a successful solve.
+    ``convex_backend`` defaults to **ipopt**. A geometric program is solved in
+    log space where it is convex, so the global-optimality guarantee is the
+    same either way, and a signomial program runs the same PCCP loop with an
+    IPOPT geometric-program solve underneath instead of a cvxopt one.
+
+    The default used to be cvxopt, and was changed because cvxopt fails on
+    models this repository is built around: on SPaircraft it returns
+    ``status='unknown'`` and ``solve_GP`` raises, where the IPOPT route solves
+    it. An interior-point method in log space also tolerates the wide variable
+    boxes these models carry far better. cvxopt remains available and is still
+    the faster choice on a small, well-scaled program.
+
+    In every case the solution is written back onto the model, so
+    ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
     from edi.solvers.ipopt import ipopt_solve
 
