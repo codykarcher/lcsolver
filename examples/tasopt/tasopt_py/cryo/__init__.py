@@ -12,6 +12,8 @@ produce the reference values and ``tests/test_fuel_thermo.py`` onward.
 from .fuel_thermo import (SaturatedPhase, gas_properties,  # noqa: F401
                           liquid_properties)
 from .geometry import CrossSection, scaled_cross_section  # noqa: F401
+from .thermal import (freestream_heat_coeff, gas_Pr,  # noqa: F401
+                      tank_heat_coeff, vacuum_resistance)
 from .material_data import MATERIALS  # noqa: F401
 from .tank import (FuselageTank, InnerTank, OuterTank,  # noqa: F401
                    material, optimize_outer_tank,
@@ -27,4 +29,6 @@ __all__ = ["gas_properties", "liquid_properties", "SaturatedPhase",
            "FuselageTank", "InnerTank", "OuterTank", "material",
            "size_inner_tank", "size_outer_tank",
            "optimize_outer_tank",
+           "gas_Pr", "freestream_heat_coeff", "tank_heat_coeff",
+           "vacuum_resistance",
            "MATERIALS"]

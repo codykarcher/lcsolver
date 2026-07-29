@@ -815,3 +815,35 @@ This port brackets strictly below the pole and refuses a bracket that spans
 one, which is a departure. It agrees with the reference to 5e-15 on all three
 checked configurations, so the guard costs nothing where the reference is
 right and fails loudly where it would be luck.
+
+
+## §59 — the cryogenic tank uses a different air model from the rest of TASOPT
+
+`tankWthermal.jl` calls `gasPr("air_simple", T)`, which returns a constant
+`cp = 1005` and `R = 287.1`. The sibling `gasPr("air", T)` sums the real
+five-species mixture that every other part of TASOPT uses. The reference
+chooses the simple one deliberately and says why:
+
+```julia
+#The simple model should be used when results are not very sensitive to cp
+#but a speedup is desired
+```
+
+The consequence is a seam. `R = 287.1` against the 286.857 that
+`mission.py` derives from sea-level conditions — 0.08% — so the tank's
+air-side film coefficient is computed in a slightly different atmosphere from
+the aircraft flying through it. Small, confined to one film coefficient, and
+reproduced; recorded because it is the kind of thing that looks like a
+porting error when someone finds it later.
+
+## §60 — `atmos` gains a non-standard-day offset in v3
+
+TASOPT 2.16's `atmos.f` takes altitude alone and always returns the standard
+atmosphere. TASOPT.jl's takes an optional `ΔT`, applied to the temperature
+after the tropopause blend and not to the pressure, so density and speed of
+sound follow from a shifted temperature at unchanged pressure.
+
+It exists because a cryogenic tank has to be designed for a hot day on the
+ground — `fuse_tank.TSLtank` is a *vector* of sea-level design temperatures.
+The port takes the argument with a default of zero, which reproduces the
+Fortran exactly and is what keeps `737.out` byte-identical.

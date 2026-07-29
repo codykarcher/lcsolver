@@ -56,15 +56,27 @@ class AtmosphereState:
     mu: float     # kg/(m s)
 
 
-def atmos(h: float) -> AtmosphereState:
-    """Atmospheric state at altitude *h* in kilometres."""
+def atmos(h: float, dT: float = 0.0) -> AtmosphereState:
+    """Atmospheric state at altitude *h* in kilometres.
+
+    ``dT`` offsets the temperature from the standard day, in K. **TASOPT
+    2.16 has no such argument** -- ``atmos.f`` takes altitude alone and
+    always returns the standard atmosphere. It is TASOPT.jl's, added because
+    a cryogenic tank has to be designed for a hot day on the ground, and the
+    default of zero reproduces the Fortran exactly.
+
+    The offset is applied to the temperature *after* the tropopause blend
+    and does not touch the pressure, so density and speed of sound follow
+    from the shifted temperature at unchanged pressure -- which is what a
+    hot-day atmosphere means.
+    """
     x = (T_SL + T_LAPSE * h - T_PAUSE) / T_BLEND
     # log1p(exp(x)) overflows for large x; it is asymptotically x there.
     # The Fortran does not guard this, but at h well below the tropopause
     # x grows and exp(x) overflows in double precision past x ~ 709.
     # Keeping the guard costs nothing and makes the function total.
     softplus = x + math.log1p(math.exp(-x)) if x > 0.0 else math.log1p(math.exp(x))
-    T = softplus * T_BLEND + T_PAUSE
+    T = softplus * T_BLEND + T_PAUSE + dT
 
     p = P_SL * math.exp(
         -0.11800 * h / (1.0 + 0.0020 * h)
