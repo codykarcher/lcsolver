@@ -38,6 +38,24 @@ where the direct form leaves the cone:
   fuel, and minimising weight makes it tight.
 * **Boil-off** is a heat leak divided by latent heat -- monomial once the
   insulation resistance is a variable.
+* **Support rings.** The first version of this module had none, and the
+  verification against ``size_inner_tank`` found the tank 22% light --
+  every piece the SP modelled was within 13% (erring heavy), and the entire
+  gap was the two stiffener rings that carry the vessel and its fuel into
+  the fuselage. The port's ring sizing (a fixed-section I-beam solved for
+  height) fits a monomial to 4.2%:
+
+      W_stiff = 309.6 (W_sup / 1 N)^0.069 (R / 1 m)^1.08   [N]
+
+  with the near-zero load exponent saying the ring is mostly its own
+  perimeter mass. That exponent is then dropped: carrying ``W_sup^0.069``
+  as a constraint made SIA's phase-1 subproblem ill-conditioned (the
+  documented cases stopped solving cold), and freezing the load term at a
+  nominal 15 kN costs at most 8% on the rings across a 3x load range --
+  on a component that is itself ~25% of the tank. The solver's fragility
+  priced the refinement honestly: not worth it.
+
+      W_stiff = 599.4 (R / 1 m)^1.08   [N]
 
 Everything else -- weights as density x area x thickness, volumes as area x
 length -- is monomial by construction.
@@ -107,7 +125,8 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
     W_skin = V("W_skin", 7e2, "N", "cylinder skin weight")
     W_head = V("W_head", 1.9e3, "N", "head weight, both ends")
     W_insul = V("W_insul", 1.2e3, "N", "insulation weight")
-    W_tank = V("W_tank", 3.8e3, "N", "total dry tank weight")
+    W_stiff = V("W_stiff", 9.2e2, "N", "support ring weight, both rings")
+    W_tank = V("W_tank", 4.7e3, "N", "total dry tank weight")
     W_fuel = V("W_fuel", 1.41e4, "N", "usable fuel weight in tank")
 
     # ---- thermal ----------------------------------------------------------
@@ -128,6 +147,9 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
     dT = C("dT", 273.0, "K", "ambient-to-cryogen temperature difference")
     k_insul = C("k_insul", 0.011, "W/(m*K)", "foam conductivity at mean temp")
     h_lat = C("h_lat", LH2_LATENT_HEAT, "J/kg", "latent heat of vaporisation")
+    # Support-ring fit against the port's stiffener_weight; see docstring.
+    k_stiff = C("k_stiff", 599.4, "N", "ring weight fit at 15 kN load")
+    R_ref = C("R_ref", 1.0, "m", "reference radius for the fit")
 
     cons = [
         # -- pressure vessel, from cryo.tank.size_inner_tank ----------------
@@ -166,7 +188,10 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
         W_skin >= rho_skin * g * S_cyl * t_skin,
         W_head >= rho_skin * g * S_head * t_head,
         W_insul >= rho_insul * g * S_tank * t_insul,
-        W_tank >= W_skin + W_head + W_insul,
+        # Rings carry the vessel and its fuel; nearly all their weight is
+        # their own perimeter, so the load term is frozen (see docstring).
+        W_stiff >= k_stiff * (R / R_ref) ** 1.0823,
+        W_tank >= W_skin + W_head + W_insul + W_stiff,
 
         # -- thermal, from cryo.thermal ---------------------------------------
         # One lumped conduction resistance. Monomial: heat leak falls as
@@ -181,6 +206,6 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9):
                S_cyl=S_cyl, S_head=S_head, S_tank=S_tank,
                V_fuel=V_fuel, V_head=V_head,
                W_skin=W_skin, W_head=W_head, W_insul=W_insul,
-               W_tank=W_tank, W_fuel=W_fuel,
+               W_stiff=W_stiff, W_tank=W_tank, W_fuel=W_fuel,
                Q_leak=Q_leak, m_boil=m_boil)
     return out, cons

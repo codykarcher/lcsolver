@@ -85,7 +85,7 @@ def run(mission=None, tee=True):
         material_insul=["polyurethane32"])
     it = size_inner_tank(R_fuse, xs, tk)
     cmp("tank dry mass [kg]", V["Tank_W_tank"] / G, it.Wtank / G,
-        "lumped insulation, AR-fixed heads")
+        "support rings now modelled (were the whole gap)")
     cmp("tank length [m]", V["Tank_l_tank"], it.l_tank, "same")
 
     # --- ducted fan: the port's full gas path at matched thrust and u_j ----

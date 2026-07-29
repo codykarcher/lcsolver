@@ -19,7 +19,7 @@ build, the solve, and the self-checks.
 | boil-off | 69 kg | the tank's thermal design, visible in the mission |
 | wing | 81 m², AR 9.9, 2.4 t | loading 489 kg/m², transport range |
 | L/D (incl. cooling drag) | 14.0 | cooling drag costs ~1.2 L/D points |
-| tank | 265 kg for 1654 kg H2 | gravimetric 0.81, in the published 0.6–0.85 band |
+| tank | gravimetric ≈0.77 | in the published 0.6–0.85 band; includes support rings |
 | stack | 5.8 t at 8.1 MW | 1.39 kW/kg, inside the PEM system band |
 | fan | D = 1.47 m per side | interior optimum — see "the bypass valley" below |
 | current density | 10 000 A/m² | **at the fit's validity cap** — see caveats |
@@ -106,17 +106,28 @@ was fitted. E175-class mission:
 |---|---|---|---|---|
 | cell voltage | 0.7509 V | 0.7532 V | −0.3% | monomial fit, at its cap |
 | stack cells / area / heat | — | — | ≤0.8% | follows the fit |
-| tank dry mass | 258 kg | 330 kg | **−22%** | lumped insulation, AR-fixed heads |
+| tank dry mass | 353 kg | 331 kg | +6.5% | support rings now modelled — they *were* the gap |
 | tank length | 2.97 m | 3.09 m | −4% | same |
 | fan shaft power | 4.22 MW | 4.74 MW | **−11%** | ideal disc vs `epf = 0.9` gas path |
 | fan mass flow | 207 kg/s | 204 kg/s | +1.6% | momentum closure |
 | fan diameter | 1.13 m | 1.33 m | −15% | disc area vs M 0.6 fan face |
 | motor mass | 211 kg | 1137 kg | **−81%** | 10 kW/kg flat vs sized PMSM, direct drive |
 
-Reading it: the *derived* constraints hold to ~1% at the optimum; the
-*idealizations* cost 11–22% and are each understood (the fan gap is almost
-exactly the polytropic efficiency the disc omits); and the **motor is the
-model's weakest claim** — the port's PMSM cannot reach 10 kW/kg at 2.1 MW at
+Reading it: the *derived* constraints hold to ~1% at the optimum. The tank
+row is a story worth keeping: the verification first read **−22%**, blamed
+on "lumped insulation" — a wrong diagnosis. Decomposing piece by piece
+showed every modelled component within 13% (erring heavy: skin −1%, heads
++13%, insulation +13%) and the entire gap was **support rings the SP did not
+model at all** — 93 kg of stiffeners carrying the vessel and its fuel, the
+same class of finding as SPaircraft's missing torsion constraint. A monomial
+fitted to the port's ring sizing (4.2% worst error; the load exponent of
+0.07 says a ring is mostly its own perimeter mass) closed it to +6.5%
+conservative — after SIA's phase 1 priced the load term out of the model:
+carrying ``W^0.069`` made the subproblem ill-conditioned and the documented
+cases stopped solving cold, so the load is frozen at nominal for 8% on a
+component that is a quarter of the tank. The *idealizations* cost 11–15%
+and are each understood (the fan gap is almost exactly the polytropic
+efficiency the disc omits); and the **motor is the model's weakest claim** — the port's PMSM cannot reach 10 kW/kg at 2.1 MW at
 any speed (the shaft binds at 8.6 kW/kg near 60 krpm), so the flat constant
 silently assumes several smaller machines per fan. A corrected powertrain
 would add roughly 1–2 t to the E175-class MTOW.
@@ -134,7 +145,7 @@ it through a fuel cell.
 |---|---|---|---|
 | MTOW | 76.0 t | 47.3 t | not comparable headline: see rows below |
 | block H2 | 9,634 kg | 3,707 kg | ~1.55x fuel-cell chain efficiency x ~1.35x full mission vs cruise-only |
-| tank dry / gravimetric | 3,426 kg / **73.8%** (their printout) | 838 kg / 81.6% | 8-point gap, mostly the already-measured −22% tank idealization |
+| tank dry / gravimetric | 3,426 kg / **73.8%** (their printout) | ≈1,000 kg / 78.9% | 5-point gap with rings modelled; remainder is their `ftankadd` support extras and heavier insulation stack |
 | wing / MTOW | 16.1% (12.2 t, with flaps, slats, ribs) | 5.5% (bare box x1.2) | their buildup shows secondary structure ~doubles a bare box |
 | fuselage / MTOW | 26.6% | 25.4% | closer than the crude k_fuse deserves |
 | empty fraction | 55.5% | 55.1% | **coincidence**: missing gear/systems offset by the 10 t stack |
