@@ -15,6 +15,10 @@ as success rather than as a bug.
 import numpy as np
 import pytest
 
+# The SIA solver is held back pending publication; without it these exercise
+# nothing, so skip rather than error on a checkout that does not have it.
+pytest.importorskip("edi.solvers.ipopt.sia")
+
 from edi import Formulation
 from edi.solvers.ipopt.sia import SIAOptions, solve_sia
 from edi.solvers.ipopt.slcp import Posynomial, PosynomialRatio

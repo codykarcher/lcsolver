@@ -12,3 +12,13 @@
 *ESP/*
 docs/_build/
 .pytest_cache/
+
+# --- SIA: held back pending publication -----------------------------------
+# NOTE: .gitignore only affects UNTRACKED files. These were committed earlier
+# in this branch's history, so ignoring them now keeps them out of FUTURE
+# commits but does NOT remove them from the history already recorded here.
+# This branch has no upstream and has never been pushed, which is what
+# actually keeps the work private -- do not push it until the paper is out.
+edi/solvers/ipopt/sia.py
+tests/test_sia.py
+docs/SIA_CONVERGENCE.md

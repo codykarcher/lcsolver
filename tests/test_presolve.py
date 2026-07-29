@@ -17,6 +17,10 @@ nothing when it is dropped.
 import numpy as np
 import pytest
 
+# The SIA solver is held back pending publication; without it these exercise
+# nothing, so skip rather than error on a checkout that does not have it.
+pytest.importorskip("edi.solvers.ipopt.sia")
+
 from edi import Formulation
 from edi.presolve import (
     cancellation_report,

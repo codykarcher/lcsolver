@@ -53,7 +53,7 @@ def _group(rows):
     return numerator, denominator
 
 
-def build_problem(structures, sp_form=True, split_equalities=True):
+def build_problem(structures, sp_form=True, split_equalities=False):
     """Translate a detected structure into an SLCP :class:`Problem`.
 
     ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
@@ -269,7 +269,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
 
 
 def solve_sia(structures, x0=None, options=None, sp_form=True,
-              presolve=True, split_equalities=True):
+              presolve=True, split_equalities=False):
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
