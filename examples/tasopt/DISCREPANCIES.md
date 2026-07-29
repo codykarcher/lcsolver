@@ -1263,3 +1263,73 @@ with no gradient information at all; the port returns 1e30 instead, which
 carries the same "go away" signal while remaining differenceable. Feasible
 objectives here are of order 1e4, so the substitution cannot affect the
 optimum.
+
+
+## §77 -- v3's compressor maps are pyCycle's, and they are tabulated
+
+The single sharpest difference between 2.16 and v3's turbomachinery. 2.16's
+`ecmap` is an analytic surface: a handful of fitted constants give pressure
+ratio and efficiency as smooth closed-form functions of corrected mass flow
+and speed. v3 discards that and bilinearly interpolates **pyCycle's tabulated
+maps** (Apache 2.0, modified) on a (corrected speed, R-line) grid -- 14 x 11
+nodes for each of Fan, LPC and HPC.
+
+This is not a refinement of the same model; it is a different object from a
+different code, and three consequences follow:
+
+* **The map is no longer smooth.** Bilinear interpolation is C0. The
+  gradient is piecewise constant and jumps across every grid line, so
+  anything differentiating the cycle sees a discontinuous Jacobian.
+* **The coordinates changed.** The cycle solves in mass flow and pressure
+  ratio; the map is tabulated in speed and R-line, a parameterisation
+  coordinate with no direct physical meaning. Every single map evaluation
+  therefore carries a nested 2-D Newton inverse.
+* **Off-map behaviour is invented.** Each grid is padded with an
+  extrapolation border. `Wc` gets zeros on the low side and 1.5x its maximum
+  on the high side; `PR` gets 0.99 and 1.5x; `polyeff` gets **zero on all
+  four edges**, so efficiency falls linearly to nothing the moment an
+  iterate leaves the tabulated region. That is a fence for the optimiser,
+  not a model of anything, and a converged design sitting near an edge is
+  reading made-up numbers.
+
+## §78 -- the design-point derivative is two-valued
+
+Every map's design point sits **exactly on a grid line** (Fan: Nc = 0.99,
+Rline = 2.2). Because the interpolant is C0, the derivative there depends on
+which side you approach from -- and the root find lands on whichever side a
+1e-16 rounding error puts it.
+
+TASOPT.jl stops at N = 0.99 + 1.1e-16 and reads the cell above; this port
+stops at N = 0.99 - 1.1e-16 and reads the cell below. The results:
+
+| | dWc/dR | dN/dPR |
+|---|---|---|
+| below the knot | 18.54 | 0.1567 |
+| above the knot | 0.32 | 0.00303 |
+
+A factor of 58 and 52 respectively, across a step of one part in 1e16.
+
+Neither answer is wrong -- both are correct readings of a function with two
+derivatives at that point. It matters because the engine is *always* sized at
+its design point, so this is the most-used point in the whole model, and
+these derivatives feed a Newton solve. Physically the knot sits where the
+map flattens into choke, which is precisely where the sensitivity should be
+handled carefully rather than read off a corner.
+
+Away from the grid lines the port and the reference agree to 1e-9 or better
+on all eight outputs.
+
+## §79 -- the map inverse needs clamping, and converges loosely
+
+`find_NR_inverse_with_derivatives` clamps its iterates into the padded grid
+(`N` to [1e-4, 1.9999], `R` to [1e-4, 3.9999]) by mutating the solver's own
+state vector inside the residual and Jacobian callbacks. That is a hack --
+NLsolve does not expect its iterate to be rewritten underneath it -- but it
+is load-bearing: without the projection, **17 of 48** reference operating
+points diverge immediately from the default guess of (0.5, 2.0), including
+every high-pressure-ratio HPC point. The port projects explicitly instead.
+
+Separately, the reference accepts NLsolve's default `ftol = 1e-8`. At the
+HPC point (pratio 6, mb 0.8) its solution leaves a residual of 8.7e-9; the
+port's leaves 1.8e-15. The ninth-digit differences in `N` and `R` between
+the two are the reference's tolerance, not the port's error.
