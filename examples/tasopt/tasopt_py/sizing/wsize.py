@@ -108,6 +108,9 @@ class WSizeResult:
     mission: MissionResult = None
     takeoff: TakeoffResult = None
     history: list = field(default_factory=list)   # per-iteration print rows
+    #: The one fuselage BL solve, kept for the report. Nothing numerical
+    #: reads it; see tasopt_py.output.blfwrt.
+    fuselage_bl: object = None
 
 
 # --------------------------------------------------------------------------
@@ -305,7 +308,7 @@ def wsize(pari, parg, parm, para, pare, *,
     # ---- fuselage BL, once, at start of cruise -------------------------
     ip = I.IPCRUISE1
     col = para.column(ip)
-    fusebl(pari, parg, col)
+    fuselage_bl = fusebl(pari, parg, col)
     para.set_column(ip, col)
 
     # Assume the K.E., dissipation and drag areas are the same at every point.
@@ -1172,4 +1175,4 @@ def wsize(pari, parg, parm, para, pare, *,
 
     return WSizeResult(converged=Lconv, iterations=iterw, errw=errw,
                        fsum=fsum, mission=m_result, takeoff=t_result,
-                       history=history)
+                       history=history, fuselage_bl=fuselage_bl)

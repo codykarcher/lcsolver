@@ -112,6 +112,9 @@ class TasCase:
     casename: tuple = ()
     settings: RunSettings = field(default_factory=RunSettings)
     airfoil_file: str = ""
+    #: The name exactly as the file gives it, which is what the
+    #: report echoes back.
+    airfoil_name: str = ""
     nmission: int = 1
     pari: object = None
     parg: object = None
@@ -521,7 +524,8 @@ def read_tas(path) -> TasCase:
         parg[idx] = r.real()
 
     # One airfoil database, read twice into two identical tables upstream.
-    case.airfoil_file = str((path.parent / r.text().strip()).resolve())
+    case.airfoil_name = r.text().strip()
+    case.airfoil_file = str((path.parent / case.airfoil_name).resolve())
 
     drag = [r.real() for _ in range(13)]
     (cdfw, cdpw, Rerefw, cdft, cdpt, Rereft, cdfs, cdps, Rerefs,

@@ -38,9 +38,10 @@ precision; the reference drivers use the same flag.
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
+| `output` | `output.f` (summary sections) | **byte-exact vs 737.out** |
 | `model` | `index.inc` | 611 constants, generated |
 
-270 tests. Reference CSVs are committed, so the suite runs without a Fortran
+276 tests. Reference CSVs are committed, so the suite runs without a Fortran
 compiler; the drivers in `fortran_ref/` regenerate them.
 
 `tfoper` is the one module at 1e-10 rather than 1e-13: it differentiates
@@ -91,13 +92,19 @@ parameter state the shipped program handed to `wsize`, **entry for entry with
 no tolerance** — all 27 `pari`, 254 `parg`, 17 `parm`, 51x17 `para` and
 269x17 `pare` values, unset entries included.
 
+So is the report. `python -m tasopt_py 737.tas --out port.out` writes the
+summary sections of the `.out` file and they come out **byte-identical** to
+the reference program's own `737.out` — 345 of 355 lines, every value at its
+printed precision in its printed column. The ten that differ are the five per
+mission that `noise.f` fills, and `noise.f` is not ported.
+
 ## Still to port
 
 | source | lines | what it is |
 |---|---|---|
 | `fobj.f`, `gradop.f`, `simpop.f` | ~600 | the optimiser wrapper around `wsize` |
-| `noise.f` | 460 | noise estimate |
-| `output.f` (`engwrt`) | — | output formatting only |
+| `noise.f`, `tfnoise.f` | ~700 | noise estimate — five report lines depend on it |
+| `output.f` (`airwrt`, `engwrt`) | ~620 | the per-point engine dump, 2100 lines of `737.out` |
 | `getsave.f` | 150 | optimiser restart files |
 
 Nothing that computes an aircraft remains. What is left is the optimiser that
@@ -131,16 +138,19 @@ solve to **1.4e-15**. `tests/test_fusebl.py` pins the four numbers.
 Recorded because they change what the results mean, and none is visible from
 a call site.
 
-**Three bugs a converged-state test could not see.** Writing the end-to-end
+**Four bugs a converged-state test could not see.** Writing the end-to-end
 `wsize` test found three omissions in `mission` — a missing `pare(ieM0)`
 assignment in the climb loop, a missing `tfcalc` call at end-of-cruise, and a
-missing descent-CL interpolation. All three are invisible when the port is
+missing descent-CL interpolation. A fourth turned up when the `.out` report
+was ported: range, time, weight fraction and buoyancy are zeroed at four
+ground points and this port only did one, which nothing but the report reads.
+All four are invisible when the port is
 handed a *converged* 737 state, because the value it should have computed is
 already sitting in the array; they only appear when the arrays start unset, as
 they do in a real sizing. `mission`'s agreement went from 5.7e-6 to 9.8e-11
 once they were fixed, which retracts the "ill-conditioned fixed point at
 `ipclimb1`" explanation this file used to carry for that 5.7e-6. There was no
-ill-conditioning; there were three bugs. See `tests/test_mission.py`.
+ill-conditioning; there were bugs. See `tests/test_mission.py`.
 
 **`tfoper.f` is not robust off the shipped engine envelope.** On the shipped
 737 it is fine — 552 converged calls in one sizing, worst residual 1.8e-10,

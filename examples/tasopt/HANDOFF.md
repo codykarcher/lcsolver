@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 33 modules, 270 tests
+## Done — 34 modules, 276 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -117,6 +117,7 @@ and you cannot tell which module to look at.
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
+| `output` | `output.f` (summary) | **byte-exact vs 737.out** |
 | `model` | `index.inc` | 611 constants, generated |
 
 ---
@@ -124,7 +125,9 @@ and you cannot tell which module to look at.
 ## The job is done
 
 ```
-$ python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas
+$ python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas \
+      --out /tmp/port.out
+diff /tmp/port.out /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.out
 ...
 737-800: Baseline technology (Aluminum, CFM56 engine)
   WTO   =  174979.1500 lbf   (converged in 18 iterations)
@@ -149,7 +152,8 @@ state the program hands to `wsize` — every array entry, no tolerance),
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
 | `getsave.f` | optimiser restart files |
-| `output.f` | the `.out` report, and `engwrt` |
+| `output.f` (`airwrt`, `engwrt`) | the per-point engine dump — 2100 lines of `737.out` |
+| `noise.f`, `tfnoise.f` | the noise estimate — five report lines per mission |
 
 The optimiser is the natural next piece: `fobj` is a thin wrapper that
 perturbs design variables, calls `wsize` then `woper` for each mission, and
@@ -160,8 +164,10 @@ Two things it needs that do not exist yet: the `i`/`j` parameter sweeps
 (`tasfile` reads and returns `ispars`/`parsi` but nothing applies them — see
 the guarded block around `tasopt.f:424`), and `getsave` for restart files.
 
-`output.f` is worth considering before the optimiser if the aim is to compare
-against `737.out` line by line rather than on a handful of numbers.
+The report's summary sections are ported and diff byte-identically against
+`737.out`. Finishing it means `airwrt`/`engwrt` (mechanical -- a flat dump of
+`para`/`pare` per mission point) and `noise.f` (which is not: it re-runs
+`cdsum` and `tfcalc` at the takeoff and cutback points, and needs `tfnoise`).
 
 ## Conventions to keep
 
@@ -333,10 +339,12 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 270 tests, ~40 s (wsize sizes a 737)
+python -m pytest tests/ -q            # 276 tests, ~40 s (sizes a 737 twice)
 
 # run the port itself
-python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas
+python -m tasopt_py /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas \
+      --out /tmp/port.out
+diff /tmp/port.out /Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.out
 
 # build the reference program
 cd /Users/codykarcher/Desktop/Tasopt2.16/src && make tasopt

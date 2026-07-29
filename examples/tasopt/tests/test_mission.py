@@ -37,6 +37,13 @@ All three were found by ``tests/test_wsize.py``, which starts from unset
 arrays and so has to compute what this test was handed. That is the argument
 for end-to-end tests in one paragraph.
 
+A fourth, of the same kind, turned up later: range, time, weight fraction and
+buoyancy are zeroed at **four** ground points -- rotation, takeoff, cutback
+and start of climb -- and this port only did the last. Nothing in the mission
+march or the sizing loop reads the other three, so neither this test nor
+``test_wsize`` could see it; ``tests/test_output.py`` did, because the
+``.out`` report prints them.
+
 ``test_engine_reproduces_fortran_at_climb1`` below is still a useful check --
 the engine does reproduce the Fortran's thrust from its own state -- but it
 was never evidence for the amplification story it was written to support.
@@ -136,6 +143,17 @@ def test_takeoff_weight_and_fuel(flown, reference):
     assert r.WTO == pytest.approx(WTO, rel=1e-9)
     assert r.Wfuel == pytest.approx(Wfuel, rel=1e-8)
     assert r.gamV_converged
+
+
+def test_ground_points_are_zeroed(flown):
+    """Range, time and weight fraction at rotation, takeoff and cutback --
+    which only the report reads, and which this port once left unset."""
+    ac, _ = flown
+    for ip in (I.IPROTATE, I.IPTAKEOFF, I.IPCUTBACK, I.IPCLIMB1):
+        assert ac.para[I.IARANGE, ip] == 0.0
+        assert ac.para[I.IATIME, ip] == 0.0
+        assert ac.para[I.IAWBUOY, ip] == 0.0
+        assert 0.5 < ac.para[I.IAFRACW, ip] <= 1.0
 
 
 def test_trajectory_matches_through_cruise(flown, reference):

@@ -49,13 +49,14 @@ Verified against the compiled Fortran; see ``tests/test_fusebl.py``.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from ..atmosphere import atmos
 from ..model import indices as I
 from .axisol import axisol
 from .blax import blax
 
-__all__ = ["fusebl", "NC", "GAMSL"]
+__all__ = ["fusebl", "FuselageBL", "NC", "GAMSL"]
 
 #: Control points for the potential-flow problem. Fixed in the source.
 NC = 30
@@ -65,11 +66,39 @@ GAMSL = 1.4
 NBLDIM = 60
 
 
-def fusebl(pari, parg, para) -> None:
+@dataclass
+class FuselageBL:
+    """The station-by-station solution, for reporting.
+
+    The Fortran leaves these in the ``fbl.inc`` ``COMMON`` block, where
+    ``blfwrt`` picks them up to write the "Fuselage BL+Wake development"
+    section of the ``.out`` file. Nothing numerical reads them.
+    """
+    nbl: int = 0
+    iblte: int = 0
+    x: list = None          # body x
+    z: list = None          # body r
+    s: list = None          # arc length
+    b: list = None          # transverse width
+    uinv: list = None       # inviscid edge velocity
+    ue: list = None         # actual edge velocity
+    ds: list = None
+    th: list = None
+    ts: list = None
+    dc: list = None
+    ct: list = None
+    cf: list = None
+    cd: list = None
+    hk: list = None
+    ph: list = None
+
+
+def fusebl(pari, parg, para) -> FuselageBL:
     """Solve the fuselage BL at one mission point and store the four areas.
 
     ``para`` is a single mission-point column, as ``fusebl(pari, parg,
-    para(1,ip))`` passes it.
+    para(1,ip))`` passes it. The four areas go into ``para``; the returned
+    station arrays are what ``blfwrt`` reports and are otherwise unused.
     """
     ifclose = pari[I.IIFCLOSE]
 
@@ -183,3 +212,7 @@ def fusebl(pari, parg, para) -> None:
     para[I.IADAFWAKE] = Difwake / (qinf * Vinf)
     para[I.IAKAFTE] = KTE / (qinf * Vinf)
     para[I.IAPAFINF] = Pinf / qinf
+
+    return FuselageBL(nbl=nbl, iblte=iblte, x=xbl, z=zbl, s=sbl, b=bbl,
+                      uinv=g.q, ue=r.ue, ds=r.ds, th=r.th, ts=r.ts, dc=r.dc,
+                      ct=r.ct, cf=r.cf, cd=r.cd, hk=r.hk, ph=r.ph)

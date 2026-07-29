@@ -5,7 +5,7 @@ and save files, five output formats. This is only the path a plain
 ``tasopt 737`` takes with ``Lopt = F``: read the file, size the aircraft for
 the design mission, then fly each remaining mission off-design.
 
-    python -m tasopt_py /path/to/737.tas
+    python -m tasopt_py /path/to/737.tas [--out 737.out]
 
 or, from Python::
 
@@ -34,6 +34,10 @@ class RunResult:
     case: TasCase
     sized: WSizeResult
     off_design: list = field(default_factory=list)   # one WOperResult each
+
+    @property
+    def fuselage_bl(self):
+        return self.sized.fuselage_bl
 
     @property
     def WTO_lbf(self) -> float:
@@ -80,10 +84,24 @@ def run_case(path, *, Litprint: bool = False,
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    out_path = None
+    if "--out" in argv:
+        k = argv.index("--out")
+        if k + 1 >= len(argv):
+            print("--out needs a filename", file=sys.stderr)
+            return 2
+        out_path = argv[k + 1]
+        del argv[k:k + 2]
     if not argv:
-        print("usage: python -m tasopt_py <case.tas>", file=sys.stderr)
+        print("usage: python -m tasopt_py <case.tas> [--out <report>]",
+              file=sys.stderr)
         return 2
     r = run_case(argv[0], Litprint=True)
+    if out_path is not None:
+        from .output import report
+        with open(out_path, "w") as fh:
+            fh.write(report(r.case, r))
+        print(f"\n Writing output file:  {out_path}")
     print()
     print(f"{r.case.configname}: {' '.join(r.case.casename)}")
     print(f"  WTO   = {r.WTO_lbf:12.4f} lbf"

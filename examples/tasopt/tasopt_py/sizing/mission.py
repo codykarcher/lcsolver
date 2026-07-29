@@ -270,9 +270,16 @@ def mission(pari, parg, parm, para, pare, table, initeng: int = 0,
         Tfrac = fT1 * (1.0 - frac) + fTn * frac
         pare[I.IETT4, ip] = Tt4TO * (1.0 - Tfrac) + Tt4CR * Tfrac
 
-    para[I.IARANGE, I.IPCLIMB1] = 0.0
-    para[I.IATIME, I.IPCLIMB1] = 0.0
-    para[I.IAFRACW, I.IPCLIMB1] = WTO / WMTO
+    # Initial range, time, weight fraction and buoyancy, at all four ground
+    # points -- not just at the start of climb. Nothing in the mission march
+    # reads the first three at rotation, takeoff or cutback; the ``.out``
+    # report does, and so does ``takeoff``, which differences the static
+    # point off the takeoff one.
+    for ip in (I.IPROTATE, I.IPTAKEOFF, I.IPCUTBACK, I.IPCLIMB1):
+        para[I.IARANGE, ip] = 0.0
+        para[I.IATIME, ip] = 0.0
+        para[I.IAFRACW, ip] = WTO / WMTO
+        para[I.IAWBUOY, ip] = 0.0
 
     FoW = {}
     FFC = {}
