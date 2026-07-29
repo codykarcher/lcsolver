@@ -494,13 +494,12 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     # pins the engine's absolute size.
     (TtH, PtH, TtL, PtL, Ttlc, Ptlc, Tthc, Pthc,
      flo, fhi, Ptfan) = ONDESIGN[engine]
-    for i in range(N):
-        cons += [
-            mhtD <= 1.3 * fp1[i] * Mtakeoff * mCoreD * (TtH / 288) ** 0.5 / (PtH / 101.325),
-            mhtD >= 0.7 * fp1[i] * Mtakeoff * mCoreD * (TtH / 288) ** 0.5 / (PtH / 101.325),
-            mltD <= 1.3 * fp1[i] * Mtakeoff * mCoreD * (TtL / 288) ** 0.5 / (PtL / 101.325),
-            mltD >= 0.7 * fp1[i] * Mtakeoff * mCoreD * (TtL / 288) ** 0.5 / (PtL / 101.325),
-        ]
+    cons += [
+        mhtD <= 1.3 * fp1 * Mtakeoff * mCoreD * (TtH / 288) ** 0.5 / (PtH / 101.325),
+        mhtD >= 0.7 * fp1 * Mtakeoff * mCoreD * (TtH / 288) ** 0.5 / (PtH / 101.325),
+        mltD <= 1.3 * fp1 * Mtakeoff * mCoreD * (TtL / 288) ** 0.5 / (PtL / 101.325),
+        mltD >= 0.7 * fp1 * Mtakeoff * mCoreD * (TtL / 288) ** 0.5 / (PtL / 101.325),
+    ]
     cons += [
         mlcD >= 0.7 * mCoreD * (Ttlc / 288) ** 0.5 / (Ptlc / 101.325),
         mlcD <= 1.3 * mCoreD * (Ttlc / 288) ** 0.5 / (Ptlc / 101.325),

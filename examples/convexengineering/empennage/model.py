@@ -182,8 +182,7 @@ def build(Ntail: int = 3, Nboom: int = 2, tip_relax: float = 1e-3) -> Formulatio
             # NACA 0008 polar; Re is built on the mean chord S/b
             Re == V * rho * S / b / mu,
         ]
-        for i in range(Nseg):
-            cons.append(cave[i] == cbave[i] * S / b)
+        cons.append(cave == cbave * S / b)
         cons += fit_constraints(TAIL_FIT, Cd, [Re, tau],
                                 mfac=1.0 + TAIL_FIT["rms_err"])
         surfaces[tag] = dict(S=S, b=b, croot=croot, cmac=cmac_t, W=W, Cd=Cd, Re=Re)
@@ -204,13 +203,12 @@ def build(Ntail: int = 3, Nboom: int = 2, tip_relax: float = 1e-3) -> Formulatio
     Retb  = V_(name="Retb",  guess=1.3e6, units="-",  description="boom Reynolds number")
 
     KFAC = 1.0 - 0.8 / 2.0          # k = 0.8 taper index
-    for i in range(Nbseg):
-        cons += [
-            Iboom[i] <= pi * tboom[i] * dboom[i]**3 / 8.0,
-            Syboom[i] <= 2 * Iboom[i] / dboom[i],
-            dmboom[i] >= pi * rho_fab * dboom[i] * detab * tboom[i] * KFAC * lboom,
-            tboom[i] >= CFRPFABRIC["tmin"] * units.mm,
-        ]
+    cons += [
+        Iboom <= pi * tboom * dboom**3 / 8.0,
+        Syboom <= 2 * Iboom / dboom,
+        dmboom >= pi * rho_fab * dboom * detab * tboom * KFAC * lboom,
+        tboom >= CFRPFABRIC["tmin"] * units.mm,
+    ]
     cons += [
         Wboom >= G_U * sum(dmboom[i] for i in range(Nbseg)),
         Sboom == lboom * pi * dboom[0],
@@ -244,21 +242,20 @@ def build(Ntail: int = 3, Nboom: int = 2, tip_relax: float = 1e-3) -> Formulatio
         EIbar = V_(name=f"{tag}_EIbar", guess=100.0, units="-", size=Nbseg, description=f"{tag} normalized EI")
         Mr    = V_(name=f"{tag}_Mr",  guess=1000.0, units="N*m", size=Nbseg, description=f"{tag} section root moment")
         cons.append(Fb >= qne * surf["S"])
-        for i in range(Nboom - 1):
-            cons += [
-                Mbar[i] >= Mbar[i + 1] + 0.5 * detab * (1.0 + 1.0),
-                thbar[i + 1] >= thbar[i] + 0.5 * detab * (Mbar[i + 1] + Mbar[i]) / EIbar[i],
-                dbar[i + 1] >= dbar[i] + 0.5 * detab * (thbar[i + 1] + thbar[i]),
-            ]
+        # Beam recursion along the boom: each station against the next.
+        cons += [
+            Mbar[:-1] >= Mbar[1:] + 0.5 * detab * (1.0 + 1.0),
+            thbar[1:] >= thbar[:-1] + 0.5 * detab * (Mbar[1:] + Mbar[:-1]) / EIbar,
+            dbar[1:] >= dbar[:-1] + 0.5 * detab * (thbar[1:] + thbar[:-1]),
+        ]
         cons += [Mbar[Nboom - 1] >= tip_relax,
                  thbar[0] >= tip_relax, dbar[0] >= tip_relax,
                  dbar[Nboom - 1] * CLMAX * NSAFETY <= KAPPA]
-        for i in range(Nbseg):
-            cons += [
-                EIbar[i] <= E_fab * Iboom[i] / Fb / lboom**2 / 2,
-                Mr[i] >= Mbar[i] * Fb * lboom,
-                sig_fab >= Mr[i] / Syboom[i],
-            ]
+        cons += [
+            EIbar <= E_fab * Iboom / Fb / lboom**2 / 2,
+            Mr >= Mbar[:Nbseg] * Fb * lboom,
+            sig_fab >= Mr / Syboom,
+        ]
 
     f.ConstraintList(cons)
     return f

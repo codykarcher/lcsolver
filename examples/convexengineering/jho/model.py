@@ -181,62 +181,66 @@ def _cap_spar(f, tag, N, cave, tau, b):
     """CapSpar over N-1 segments (the gplibrary default spar)."""
     Nseg = N - 1
     deta = np.diff(np.linspace(0.0, 1.0, N))
-    V = f.Variable
-    I  = V(name=f"{tag}_I",  guess=1e-6, units="m^4", size=Nseg, description=f"{tag} spar inertia")
-    Sy = V(name=f"{tag}_Sy", guess=1e-5, units="m^3", size=Nseg, description=f"{tag} section modulus")
-    dm = V(name=f"{tag}_dm", guess=0.1,  units="kg",  size=Nseg, description=f"{tag} segment mass")
-    w  = V(name=f"{tag}_wsp", guess=0.3, units="in",  size=Nseg, description=f"{tag} cap width")
-    t  = V(name=f"{tag}_t",  guess=0.02, units="in",  size=Nseg, description=f"{tag} cap thickness")
-    ts = V(name=f"{tag}_tsh", guess=0.02, units="in", size=Nseg, description=f"{tag} shear web thickness")
-    hin = V(name=f"{tag}_hin", guess=0.4, units="in", size=Nseg, description=f"{tag} height between caps")
-    W  = V(name=f"{tag}_Wspar", guess=3.0, units="lbf", description=f"{tag} spar weight")
+    # The spar is a region of its surface, so it nests inside that group.
+    # Its weight is `W` in its own namespace -- `wing.spar.W` beside
+    # `wing.W` -- rather than a `Wspar` renamed to dodge a collision.
+    g = f.group(tag, prefix=f"{tag}_").group("spar")
+    I   = g.Variable("I",   1e-6, "m^4", f"{tag} spar inertia",        size=Nseg)
+    Sy  = g.Variable("Sy",  1e-5, "m^3", f"{tag} section modulus",     size=Nseg)
+    dm  = g.Variable("dm",  0.1,  "kg",  f"{tag} segment mass",        size=Nseg)
+    w   = g.Variable("w",   0.3,  "in",  f"{tag} cap width",           size=Nseg)
+    t   = g.Variable("t",   0.02, "in",  f"{tag} cap thickness",       size=Nseg)
+    ts  = g.Variable("ts",  0.02, "in",  f"{tag} shear web thickness", size=Nseg)
+    hin = g.Variable("hin", 0.4,  "in",  f"{tag} height between caps", size=Nseg)
+    W   = g.Variable("W",   3.0,  "lbf", f"{tag} spar weight")
 
     rho_ud = CFRPUD["rho"] * units.g / units.cm**3
     rho_fb = CFRPFABRIC["rho"] * units.g / units.cm**3
     rho_fm = FOAMHD["rho"] * units.g / units.cm**3
     cons = []
-    for i in range(Nseg):
-        cav = cave[i] if isinstance(cave, IndexedVar) else cave
-        cons += [
-            # cap spar section, NOT the box form used in ../solar/
-            I[i] / 0.97 <= 2 * w[i] * t[i] * (hin[i] / 2)**2,
-            dm[i] >= (rho_ud * (2 * w[i] * t[i])
-                      + 2 * ts[i] * rho_fb * (hin[i] + 2 * t[i])
-                      + rho_fm * w[i] * hin[i]) * b / 2 * deta[i],
-            w[i] <= 0.15 * cav,
-            cav * tau >= hin[i] + 2 * t[i],
-            Sy[i] * (hin[i] / 2 + t[i]) <= I[i],
-            ts[i] >= CFRPFABRIC["tmin"] * units.mm,
-        ]
-    cons.append(W >= 2 * sum(dm[i] for i in range(Nseg)) * G_U)
-    return dict(I=I, Sy=Sy, W=W, w=w, t=t, hin=hin), cons
+    # `cave` is either a vector of panel chords or a single chord shared by
+    # every panel; both combine with the vectors below.
+    cav = cave[:Nseg] if isinstance(cave, IndexedVar) else cave
+    cons += [
+        # cap spar section, NOT the box form used in ../solar/
+        I / 0.97 <= 2 * w * t * (hin / 2)**2,
+        dm >= (rho_ud * (2 * w * t)
+               + 2 * ts * rho_fb * (hin + 2 * t)
+               + rho_fm * w * hin) * b / 2 * deta,
+        w <= 0.15 * cav,
+        cav * tau >= hin + 2 * t,
+        Sy * (hin / 2 + t) <= I,
+        ts >= CFRPFABRIC["tmin"] * units.mm,
+    ]
+    cons.append(W >= 2 * f.sum(dm) * G_U)
+    return g, cons
 
 
 def _beam(f, tag, N, b, I, Sy, load_expr, kappa=0.2, tiny=1e-2):
     deta = np.diff(np.linspace(0.0, 1.0, N))
-    V = f.Variable
-    Sh = V(name=f"{tag}_S",  guess=50.0, units="N",   size=N, description=f"{tag} shear")
-    M  = V(name=f"{tag}_M",  guess=50.0, units="N*m", size=N, description=f"{tag} moment")
-    th = V(name=f"{tag}_th", guess=0.05, units="-",   size=N, description=f"{tag} angle")
-    wd = V(name=f"{tag}_w",  guess=0.1,  units="m",   size=N, description=f"{tag} deflection")
-    q  = V(name=f"{tag}_q",  guess=20.0, units="N/m", size=N, description=f"{tag} load")
+    g = f.group(tag, prefix=f"{tag}_")
+    Sh = g.Variable("S",  50.0, "N",   f"{tag} shear",      size=N)
+    M  = g.Variable("M",  50.0, "N*m", f"{tag} moment",     size=N)
+    th = g.Variable("th", 0.05, "-",   f"{tag} angle",      size=N)
+    wd = g.Variable("w",  0.1,  "m",   f"{tag} deflection", size=N)
+    q  = g.Variable("q",  20.0, "N/m", f"{tag} load",       size=N)
     E_ud, sig_ud = CFRPUD["E"] * units.Pa, CFRPUD["sigma"] * units.Pa
     cons = []
-    for i in range(N - 1):
-        cons += [
-            Sh[i] >= Sh[i + 1] + 0.5 * deta[i] * (b / 2) * (q[i] + q[i + 1]),
-            M[i] >= M[i + 1] + 0.5 * deta[i] * (b / 2) * (Sh[i] + Sh[i + 1]),
-            th[i + 1] >= th[i] + 0.5 * deta[i] * (b / 2) * (M[i + 1] + M[i]) / E_ud / I[i],
-            wd[i + 1] >= wd[i] + 0.5 * deta[i] * (b / 2) * (th[i + 1] + th[i]),
-        ]
+    # Beam recursion outboard along the span: shear and moment accumulate
+    # inboard, slope and deflection outboard.
+    cons += [
+        Sh[:-1] >= Sh[1:] + 0.5 * deta * (b / 2) * (q[:-1] + q[1:]),
+        M[:-1] >= M[1:] + 0.5 * deta * (b / 2) * (Sh[:-1] + Sh[1:]),
+        th[1:] >= th[:-1] + 0.5 * deta * (b / 2) * (M[1:] + M[:-1]) / E_ud / I,
+        wd[1:] >= wd[:-1] + 0.5 * deta * (b / 2) * (th[1:] + th[:-1]),
+    ]
     cons += [Sh[N - 1] >= tiny * units.N, M[N - 1] >= tiny * units.N * units.m,
              th[0] >= tiny, wd[0] >= tiny * units.m,
              wd[N - 1] / (b / 2) <= kappa]
-    for i in range(N - 1):
-        cons.append(sig_ud >= M[i] / Sy[i])
+    cons.append(sig_ud >= M[:N - 1] / Sy)
     for i in range(N):
         cons.append(q[i] >= load_expr(i))
-    return dict(S=Sh, M=M, th=th, w=wd, q=q), cons
+    return g, cons
 
 
 def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
@@ -277,34 +281,31 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
         Wcore >= 2 * sum(G_U * rho_fm * 0.0753449 * cavew[i]**2 * bw / 2 * deta[i]
                          for i in range(Nwing - 1)),
     ]
-    for i in range(Nwing - 1):
-        cons.append(cavew[i] == cbave[i] * Sw / bw)
+    cons.append(cavew == cbave * Sw / bw)
     spar, c = _cap_spar(f, "wing", Nwing, cavew, tauw, bw); cons += c
-    cons.append(Wwing / 1.2 >= Wskin + Wcore + spar["W"])
+    cons.append(Wwing / 1.2 >= Wskin + Wcore + spar.W)
 
     # ================= empennage =========================================
     def tail(tag, tau_val, AR_val):
-        S = V_(name=f"{tag}_S", guess=1.0, units="ft^2", description=f"{tag} area")
-        b = V_(name=f"{tag}_b", guess=2.2, units="ft",   description=f"{tag} span")
-        croot = V_(name=f"{tag}_croot", guess=0.5, units="ft", description=f"{tag} root chord")
-        cave = V_(name=f"{tag}_cave", guess=0.45, units="ft", size=Ntail - 1, description=f"{tag} mid chord")
-        W = V_(name=f"{tag}_W", guess=0.5, units="lbf", description=f"{tag} weight")
-        Wsk = V_(name=f"{tag}_Wskin", guess=0.3, units="lbf", description=f"{tag} skin weight")
+        # The surface and its spar share one namespace, so the spar's own
+        # weight is `Wspar` and the surface's is `W` -- distinct names rather
+        # than two dictionaries merged under a renaming rule. The collision
+        # that silently broke ../solar/ (see DISCREPANCIES.md) cannot arise:
+        # declaring the same name twice in a group is an error.
+        g = f.group(tag, prefix=f"{tag}_")
+        S = g.Variable("S", 1.0, "ft^2", f"{tag} area")
+        b = g.Variable("b", 2.2, "ft", f"{tag} span")
+        croot = g.Variable("croot", 0.5, "ft", f"{tag} root chord")
+        cave = g.Variable("cave", 0.45, "ft", f"{tag} mid chord", size=Ntail - 1)
+        W = g.Variable("W", 0.5, "lbf", f"{tag} weight")
+        Wsk = g.Variable("Wskin", 0.3, "lbf", f"{tag} skin weight")
         cc = [b**2 == S * AR_val, croot == S / b * cbart[0],
               Wsk >= rho_fab * S * 2 * (CFRPFABRIC["tmin"] * units.mm) * G_U]
-        for i in range(Ntail - 1):
-            cc.append(cave[i] == cbavet[i] * S / b)
+        cc.append(cave == cbavet * S / b)
         sp, c2 = _cap_spar(f, tag, Ntail, cave, tau_val, b)
         cc += c2
-        cc.append(W / 1.1 >= Wsk + sp["W"])
-        # NOTE: sp also carries a "W" (the *spar* weight). Merging it under
-        # its own name would shadow the surface weight above -- the same
-        # collision that silently broke ../solar/ (see DISCREPANCIES.md).
-        # dict(**sp) raises on the duplicate where .update() would not, which
-        # is the only reason it was caught immediately here.
-        out = dict(S=S, b=b, croot=croot, cave=cave, W=W)
-        out.update({("Wspar" if k == "W" else k): v for k, v in sp.items()})
-        return out, cc
+        cc.append(W / 1.1 >= Wsk + sp.W)
+        return g, cc
 
     htail, c = tail("htail", 0.08, 5.0); cons += c
     vtail, c = tail("vtail", 0.08, 4.0); cons += c
@@ -326,9 +327,9 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     ]
     Wemp = V_(name="Wemp", guess=2.5, units="lbf", description="empennage weight")
     cons += [
-        Wemp >= htail["W"] + vtail["W"] + Wboom,
-        0.45 <= htail["S"] * lboom / Sw**2 * bw,     # Vh
-        0.04 <= vtail["S"] * lboom / Sw / bw,        # Vv
+        Wemp >= htail.W + vtail.W + Wboom,
+        0.45 <= htail.S * lboom / Sw**2 * bw,     # Vh
+        0.04 <= vtail.S * lboom / Sw / bw,        # Vv
     ]
 
     # ---- boom bending from both tail loads -------------------------------
@@ -441,8 +442,7 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     BSFC_MIN = 0.3162 * units.kg / units.kW / units.hr
     etaprop = 0.8
     cons += [Wstart[0] == MTOW, Wend[n - 1] >= Wzfw]
-    for i in range(n - 1):
-        cons.append(Wend[i] >= Wstart[i + 1])
+    cons.append(Wend[:-1] >= Wstart[1:])
 
     for i, (kind, k, rho_i, mu_i, vw_i) in enumerate(segs):
         rho_u = rho_i * units.kg / units.m**3
@@ -460,8 +460,8 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
             # coefficients: profile drag has to respond to Reynolds number or
             # the wing sizing comes out ~35% small.
             Rew[i] == rho_u * Vseg[i] * cmacw / mu_u,
-            Reh[i] == rho_u * Vseg[i] * htail["S"] / htail["b"] / mu_u,
-            Rev[i] == rho_u * Vseg[i] * vtail["S"] / vtail["b"] / mu_u,
+            Reh[i] == rho_u * Vseg[i] * htail.S / htail.b / mu_u,
+            Rev[i] == rho_u * Vseg[i] * vtail.S / vtail.b / mu_u,
             Reb[i] == rho_u * Vseg[i] * lboom / mu_u,
             Ref[i] == rho_u * Vseg[i] * lfuse / mu_u,
             Cfb[i] >= 0.455 / Reb[i]**0.3,
@@ -477,8 +477,8 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
             # reproduced here because it is load-bearing for the reference
             # numbers -- CDA is 0.010314 with it and 0.006441 without.
             CDAseg[i] >= (cdf[i] * Sfuse / Sw + Cff[i] * Sfuse / Sw
-                          + cdh[i] * htail["S"] / Sw
-                          + cdv[i] * vtail["S"] / Sw + Cfb[i] * Sboom / Sw),
+                          + cdh[i] * htail.S / Sw
+                          + cdv[i] * vtail.S / Sw + Cfb[i] * Sboom / Sw),
             CDseg[i] >= CDAseg[i] + cdw[i],
             # engine: power lapse with altitude, and BSFC penalty at part power
             Pmax[i] == Pslmax * Leng,
@@ -507,9 +507,8 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     # constraint (of 397) that pushed this model out of GP and into SP.
     # Dividing the requirement equally is the same device the wind turbine
     # uses with its equal-power spanwise bins.
-    for i in range(Nclimb, n):
-        cons.append(tseg[i] >= t_loiter_days / Nloiter * units.day)
-    cons.append(Wfuel >= sum(Wfs[i] for i in range(n)))
+    cons.append(tseg[Nclimb:] >= t_loiter_days / Nloiter * units.day)
+    cons.append(Wfuel >= f.sum(Wfs))
 
     # ================= wing loading ======================================
     # Load factors: manoeuvre Nmax = 2, gust Nmax = 5.
@@ -528,7 +527,7 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     #
     # Reproduced as the source behaves, since that is what the reference
     # numbers come from. See DISCREPANCIES.md.
-    _, c = _beam(f, "wingg", Nwing, bw, spar["I"], spar["Sy"],
+    _, c = _beam(f, "wingg", Nwing, bw, spar.I, spar.Sy,
                  lambda i: 2.0 * Wcent / bw * cbar[i])
     cons += c
 
@@ -545,7 +544,7 @@ def build(Nwing: int = 5, Ntail: int = 5, t_loiter_days: float = 6.0,
     for i in range(Nwing):
         cons += fit_constraints(ARCTAN, agust[i], [cosm1[i] * vgust / Vref],
                                 mfac=1.0 + ARCTAN["rms_err"])
-    _, c = _beam(f, "winggust", Nwing, bw, spar["I"], spar["Sy"],
+    _, c = _beam(f, "winggust", Nwing, bw, spar.I, spar.Sy,
                  lambda i: 5.0 * Wcent / bw * cbar[i]
                  * (1 + 2 * pi * agust[i] / CLref * (1 + Wwing / Wcent)))
     cons += c

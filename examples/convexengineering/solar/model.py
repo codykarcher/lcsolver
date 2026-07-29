@@ -71,7 +71,7 @@ model work moved it; the same model converges immediately on
 fixed, and two real defects were misattributed to the model in the meantime.
 
 **2. A dict-key collision.** ``_lifting_surface`` merged the spar dict into
-the surface dict and both carry a ``"W"``, so ``wing["W"]`` silently became
+the surface dict and both carry a ``"W"``, so ``wing.W`` silently became
 the *spar* weight. The total-weight constraint then used the spar weight
 while the real surface-weight variable kept only a lower bound — free to run
 to 1e36 while the model stayed feasible and the solver stayed happy.
@@ -157,39 +157,40 @@ def _box_spar(f, tag, N, cave, tau_expr, b, wlim=0.15):
     """BoxSpar over N-1 segments. cave may be an indexed var or a scalar."""
     Nseg = N - 1
     deta = np.diff(np.linspace(0.0, 1.0, N))
-    V = f.Variable
-    I   = V(name=f"{tag}_I",   guess=1e-6, units="m^4", size=Nseg, description=f"{tag} spar inertia")
-    Sy  = V(name=f"{tag}_Sy",  guess=1e-5, units="m^3", size=Nseg, description=f"{tag} section modulus")
-    dm  = V(name=f"{tag}_dm",  guess=0.2,  units="kg",  size=Nseg, description=f"{tag} segment mass")
-    w   = V(name=f"{tag}_wsp", guess=0.5,  units="in",  size=Nseg, description=f"{tag} spar width")
-    t   = V(name=f"{tag}_t",   guess=0.02, units="in",  size=Nseg, description=f"{tag} cap thickness")
-    ts  = V(name=f"{tag}_tsh", guess=0.02, units="in",  size=Nseg, description=f"{tag} shear web thickness")
-    tc  = V(name=f"{tag}_tc",  guess=0.02, units="in",  size=Nseg, description=f"{tag} core thickness")
-    hin = V(name=f"{tag}_hin", guess=0.5,  units="in",  size=Nseg, description=f"{tag} height between caps")
-    W   = V(name=f"{tag}_Wspar", guess=5.0, units="lbf", description=f"{tag} spar weight")
+    # The spar is a region of its surface, so it nests inside that group:
+    # `wing.spar.W` beside `wing.W`, each weight in its own namespace.
+    g = f.group(tag, prefix=f"{tag}_").group("spar")
+    I   = g.Variable("I",   1e-6, "m^4", f"{tag} spar inertia",        size=Nseg)
+    Sy  = g.Variable("Sy",  1e-5, "m^3", f"{tag} section modulus",     size=Nseg)
+    dm  = g.Variable("dm",  0.2,  "kg",  f"{tag} segment mass",        size=Nseg)
+    w   = g.Variable("w",   0.5,  "in",  f"{tag} spar width",          size=Nseg)
+    t   = g.Variable("t",   0.02, "in",  f"{tag} cap thickness",       size=Nseg)
+    ts  = g.Variable("ts",  0.02, "in",  f"{tag} shear web thickness", size=Nseg)
+    tc  = g.Variable("tc",  0.02, "in",  f"{tag} core thickness",      size=Nseg)
+    hin = g.Variable("hin", 0.5,  "in",  f"{tag} height between caps", size=Nseg)
+    W   = g.Variable("W",   5.0,  "lbf", f"{tag} spar weight")
 
     rho_ud = CFRPUD["rho"] * units.g / units.cm**3
     rho_fb = CFRPFABRIC["rho"] * units.g / units.cm**3
     rho_fm = FOAMHD["rho"] * units.g / units.cm**3
     cons = []
-    for i in range(Nseg):
-        # a scalar Pyomo Var has __getitem__ but raises on use, so test
-        # the component type rather than duck-typing it
-        cav = cave[i] if isinstance(cave, IndexedVar) else cave
-        cons += [
-            I[i] / 0.97 <= w[i] * t[i] * hin[i]**2,
-            dm[i] >= (rho_ud * 4 * w[i] * t[i]
-                      + 4 * ts[i] * rho_fb * (hin[i] + w[i])
-                      + 2 * rho_fm * tc[i] * (w[i] + hin[i])) * b / 2 * deta[i],
-            w[i] <= wlim * cav,
-            cav * tau_expr >= hin[i] + 4 * t[i] + 2 * tc[i],
-            t[i] >= CFRPUD["tmin"] * units.mm,
-            Sy[i] * (hin[i] / 2 + 2 * t[i] + tc[i]) <= I[i],
-            ts[i] >= CFRPFABRIC["tmin"] * units.mm,
-            tc[i] >= 0.02 * cav * tau_expr,
-        ]
-    cons.append(W >= 2 * sum(dm[i] for i in range(Nseg)) * G_U)
-    return dict(I=I, Sy=Sy, W=W, w=w, t=t, hin=hin), cons
+    # `cave` is either a vector of panel chords or one chord shared by every
+    # panel; both combine with the vectors below.
+    cav = cave[:Nseg] if isinstance(cave, IndexedVar) else cave
+    cons += [
+        I / 0.97 <= w * t * hin**2,
+        dm >= (rho_ud * 4 * w * t
+               + 4 * ts * rho_fb * (hin + w)
+               + 2 * rho_fm * tc * (w + hin)) * b / 2 * deta,
+        w <= wlim * cav,
+        cav * tau_expr >= hin + 4 * t + 2 * tc,
+        t >= CFRPUD["tmin"] * units.mm,
+        Sy * (hin / 2 + 2 * t + tc) <= I,
+        ts >= CFRPFABRIC["tmin"] * units.mm,
+        tc >= 0.02 * cav * tau_expr,
+    ]
+    cons.append(W >= 2 * f.sum(dm) * G_U)
+    return g, cons
 
 
 def _beam(f, tag, N, b, I, Sy, load_expr, Nsafety_kappa=0.2, tiny=1e-2):
@@ -198,65 +199,65 @@ def _beam(f, tag, N, b, I, Sy, load_expr, Nsafety_kappa=0.2, tiny=1e-2):
     Identical chain to ``../wing/``, which is verified against its reference.
     """
     deta = np.diff(np.linspace(0.0, 1.0, N))
-    V = f.Variable
-    Sh = V(name=f"{tag}_S",  guess=100.0, units="N",   size=N, description=f"{tag} shear")
-    M  = V(name=f"{tag}_M",  guess=100.0, units="N*m", size=N, description=f"{tag} moment")
-    th = V(name=f"{tag}_th", guess=0.05,  units="-",   size=N, description=f"{tag} angle")
-    wd = V(name=f"{tag}_w",  guess=0.1,   units="m",   size=N, description=f"{tag} deflection")
-    q  = V(name=f"{tag}_q",  guess=50.0,  units="N/m", size=N, description=f"{tag} load")
+    g = f.group(tag, prefix=f"{tag}_")
+    Sh = g.Variable("S",  100.0, "N",   f"{tag} shear",      size=N)
+    M  = g.Variable("M",  100.0, "N*m", f"{tag} moment",     size=N)
+    th = g.Variable("th", 0.05,  "-",   f"{tag} angle",      size=N)
+    wd = g.Variable("w",  0.1,   "m",   f"{tag} deflection", size=N)
+    q  = g.Variable("q",  50.0,  "N/m", f"{tag} load",       size=N)
     E_ud, sig_ud = CFRPUD["E"] * units.Pa, CFRPUD["sigma"] * units.Pa
     cons = []
-    for i in range(N - 1):
-        cons += [
-            Sh[i] >= Sh[i + 1] + 0.5 * deta[i] * (b / 2) * (q[i] + q[i + 1]),
-            M[i] >= M[i + 1] + 0.5 * deta[i] * (b / 2) * (Sh[i] + Sh[i + 1]),
-            th[i + 1] >= th[i] + 0.5 * deta[i] * (b / 2) * (M[i + 1] + M[i]) / E_ud / I[i],
-            wd[i + 1] >= wd[i] + 0.5 * deta[i] * (b / 2) * (th[i + 1] + th[i]),
-        ]
+    # Beam recursion outboard along the span.
+    cons += [
+        Sh[:-1] >= Sh[1:] + 0.5 * deta * (b / 2) * (q[:-1] + q[1:]),
+        M[:-1] >= M[1:] + 0.5 * deta * (b / 2) * (Sh[:-1] + Sh[1:]),
+        th[1:] >= th[:-1] + 0.5 * deta * (b / 2) * (M[1:] + M[:-1]) / E_ud / I,
+        wd[1:] >= wd[:-1] + 0.5 * deta * (b / 2) * (th[1:] + th[:-1]),
+    ]
     cons += [Sh[N - 1] >= tiny * units.N, M[N - 1] >= tiny * units.N * units.m,
              th[0] >= tiny, wd[0] >= tiny * units.m,
              wd[N - 1] / (b / 2) <= Nsafety_kappa]
-    for i in range(N - 1):
-        cons.append(sig_ud >= M[i] / Sy[i])
+    cons.append(sig_ud >= M[:N - 1] / Sy)
     for i in range(N):
         cons.append(q[i] >= load_expr(i))
-    return dict(S=Sh, M=M, th=th, w=wd, q=q), cons
+    return g, cons
 
 
 def _lifting_surface(f, tag, N, lam, rhoA, mfac, wlim=0.15):
     """Planform + areal-density skin + box spar. Used for wing and both tails."""
     _, cbar, cbave, deta, cbarmac = planform_constants(N, lam)
-    V = f.Variable
-    S     = V(name=f"{tag}_S",     guess=50.0, units="ft^2", description=f"{tag} area")
-    AR    = V(name=f"{tag}_AR",    guess=15.0, units="-",    description=f"{tag} aspect ratio")
-    b     = V(name=f"{tag}_b",     guess=25.0, units="ft",   description=f"{tag} span")
-    croot = V(name=f"{tag}_croot", guess=2.5,  units="ft",   description=f"{tag} root chord")
-    cmac  = V(name=f"{tag}_cmac",  guess=2.0,  units="ft",   description=f"{tag} MAC")
-    cave  = V(name=f"{tag}_cave",  guess=2.0,  units="ft", size=N - 1, description=f"{tag} mid chord")
-    tau   = V(name=f"{tag}_tau",   guess=0.12, units="-",    description=f"{tag} thickness ratio")
-    Wsk   = V(name=f"{tag}_Wskin", guess=5.0,  units="lbf",  description=f"{tag} skin weight")
-    W     = V(name=f"{tag}_W",     guess=15.0, units="lbf",  description=f"{tag} weight")
+    g = f.group(tag, prefix=f"{tag}_")
+    S     = g.Variable("S",     50.0, "ft^2", f"{tag} area")
+    AR    = g.Variable("AR",    15.0, "-",    f"{tag} aspect ratio")
+    b     = g.Variable("b",     25.0, "ft",   f"{tag} span")
+    croot = g.Variable("croot", 2.5,  "ft",   f"{tag} root chord")
+    cmac  = g.Variable("cmac",  2.0,  "ft",   f"{tag} MAC")
+    cave  = g.Variable("cave",  2.0,  "ft",   f"{tag} mid chord", size=N - 1)
+    tau   = g.Variable("tau",   0.12, "-",    f"{tag} thickness ratio")
+    Wsk   = g.Variable("Wskin", 5.0,  "lbf",  f"{tag} skin weight")
+    W     = g.Variable("W",     15.0, "lbf",  f"{tag} weight")
 
     cons = [b**2 == S * AR,
             croot == S / b * cbar[0],
             cmac == croot * cbarmac,
             Wsk >= rhoA * units.kg / units.m**2 * S * G_U]
-    for i in range(N - 1):
-        cons.append(cave[i] == cbave[i] * S / b)
+    cons.append(cave == cbave * S / b)
 
     spar, spar_cons = _box_spar(f, tag, N, cave, tau, b, wlim=wlim)
     cons += spar_cons
-    cons.append(W / mfac >= Wsk + spar["W"])   # no foam core in the solar build
+    cons.append(W / mfac >= Wsk + spar.W)   # no foam core in the solar build
 
-    surf = dict(S=S, AR=AR, b=b, croot=croot, cmac=cmac, cave=cave,
-                tau=tau, W=W, Wskin=Wsk, cbar=cbar, deta=deta)
-    # NOTE: _box_spar also returns a "W" (the *spar* weight). Merging it
-    # wholesale would clobber the surface weight above, and the total-weight
-    # constraint would then silently use the spar weight while the real
-    # surface-weight variable kept only a lower bound -- free to run to 1e36
-    # without ever showing up as infeasible. Merge under distinct keys.
-    surf.update({("Wspar" if k == "W" else k): v for k, v in spar.items()})
-    return surf, cons
+    # The surface and its spar share one namespace, so the spar's weight is
+    # `Wspar` and the surface's is `W`. There is nothing to merge and nothing
+    # to rename: declaring a name twice in a group is an error, where the two
+    # dictionaries this replaces could clobber one another silently -- the
+    # total-weight constraint would then use the spar weight while the real
+    # surface weight kept only a lower bound, free to run to 1e36 without ever
+    # looking infeasible.
+    #
+    # `cbar` and `deta` are the planform's fixed fractions, not model
+    # quantities, so they are returned alongside rather than declared.
+    return g, cbar, deta, cons
 
 
 def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
@@ -274,10 +275,13 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     # the tail load case, so it is declared before the airframe
     qne_ph = V_(name="qne", guess=400.0, units="kg/s^2/m", description="never-exceed dynamic pressure")
 
-    wing, cons = _lifting_surface(f, "wing", Nwing, 0.5, rhoA=0.35, mfac=1.0)
-    htail, c = _lifting_surface(f, "htail", Ntail, 0.8, rhoA=0.4, mfac=1.1); cons += c
-    vtail, c = _lifting_surface(f, "vtail", Ntail, 0.8, rhoA=0.4, mfac=1.1); cons += c
-    cons += [htail["AR"] == 4.0, vtail["AR"] == 4.0]
+    wing, wing_cbar, wing_deta, cons = _lifting_surface(
+        f, "wing", Nwing, 0.5, rhoA=0.35, mfac=1.0)
+    htail, htail_cbar, _, c = _lifting_surface(
+        f, "htail", Ntail, 0.8, rhoA=0.4, mfac=1.1); cons += c
+    vtail, vtail_cbar, _, c = _lifting_surface(
+        f, "vtail", Ntail, 0.8, rhoA=0.4, mfac=1.1); cons += c
+    cons += [htail.AR == 4.0, vtail.AR == 4.0]
 
     # ---- tail boom: box spar with a secondary areal weight ---------------
     lboom = V_(name="lboom", guess=15.0, units="ft",   description="tail boom length")
@@ -295,13 +299,12 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
                description="tail boom box chord")
     boom, c = _box_spar(f, "boom", Nboom, caveb, 1.0, 2 * lboom, wlim=1.0)
     cons += c
-    cons += [Sboom == lboom * pi * boom["w"][0],
-             Wboom >= boom["W"] + 0.15 * units.kg / units.m**2 * Sboom * G_U]
-    for i in range(Nboom - 2):
-        cons.append(caveb[i] >= caveb[i + 1])      # boom tapers inboard-out
+    cons += [Sboom == lboom * pi * boom.w[0],
+             Wboom >= boom.W + 0.15 * units.kg / units.m**2 * Sboom * G_U]
+    cons.append(caveb[:-1] >= caveb[1:])          # boom tapers inboard-out
 
     Wemp = V_(name="Wemp", guess=15.0, units="lbf", description="empennage weight")
-    cons.append(Wemp / 1.0 >= htail["W"] + vtail["W"] + Wboom)
+    cons.append(Wemp / 1.0 >= htail.W + vtail.W + Wboom)
 
     # ---- boom bending under the tail loads -------------------------------
     # Without this the boom is unbounded *below*: a thinner boom is lighter
@@ -316,21 +319,19 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     Mr    = V_(name="Mr",    guess=100.0, units="N*m", size=Nboom - 1, description="section root moment")
     detab = 1.0 / (Nboom - 1)
     E_ud, sig_ud = CFRPUD["E"] * units.Pa, CFRPUD["sigma"] * units.Pa
-    cons.append(Fbend >= qne_ph * htail["S"] * 1.39)   # qne * S * CLmax
-    for i in range(Nboom - 1):
-        cons += [
-            Mbar[i] >= Mbar[i + 1] + 0.5 * detab * 2.0,          # unit tip shear
-            thbar[i + 1] >= thbar[i] + 0.5 * detab * (Mbar[i + 1] + Mbar[i]) / EIbar[i],
-            dbar[i + 1] >= dbar[i] + 0.5 * detab * (thbar[i + 1] + thbar[i]),
-        ]
+    cons.append(Fbend >= qne_ph * htail.S * 1.39)   # qne * S * CLmax
+    cons += [
+        Mbar[:-1] >= Mbar[1:] + 0.5 * detab * 2.0,               # unit tip shear
+        thbar[1:] >= thbar[:-1] + 0.5 * detab * (Mbar[1:] + Mbar[:-1]) / EIbar,
+        dbar[1:] >= dbar[:-1] + 0.5 * detab * (thbar[1:] + thbar[:-1]),
+    ]
     cons += [Mbar[Nboom - 1] >= 1e-10, thbar[0] >= 1e-10, dbar[0] >= 1e-10,
              dbar[Nboom - 1] * 1.39 * 1.5 <= 0.1]
-    for i in range(Nboom - 1):
-        cons += [
-            EIbar[i] <= E_ud * boom["I"][i] / Fbend / lboom**2 / 2,
-            Mr[i] >= Mbar[i] * Fbend * lboom,
-            sig_ud >= Mr[i] / boom["Sy"][i],
-        ]
+    cons += [
+        EIbar <= E_ud * boom.I / Fbend / lboom**2 / 2,
+        Mr >= Mbar[:Nboom - 1] * Fbend * lboom,
+        sig_ud >= Mr / boom.Sy,
+    ]
 
     # ================= power system =====================================
     Ssolar  = V_(name="Ssolar",  guess=150.0, units="ft^2", description="solar cell area")
@@ -339,11 +340,11 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     Wbatt   = V_(name="Wbatt",   guess=150.0, units="lbf",  description="battery weight")
     Volbatt = V_(name="Volbatt", guess=0.05,  units="m^3",  description="battery volume")
     cons += [
-        Ssolar <= wing["S"],
+        Ssolar <= wing.S,
         Wsolar >= 0.3 * units.kg / units.m**2 * Ssolar * G_U,
         Wbatt >= Ebatt * 1.03 / (350 * units.W * units.hr / units.kg) / 0.95 / 0.85 * G_U,
         Volbatt >= Ebatt / (800 * units.W * units.hr / units.liter),
-        Volbatt <= wing["cmac"]**2 * 0.5 * wing["tau"] * wing["b"],   # Npod = 0
+        Volbatt <= wing.cmac**2 * 0.5 * wing.tau * wing.b,   # Npod = 0
     ]
 
     # ================= flight state =====================================
@@ -382,22 +383,22 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     Retb = V_(name="Retb", guess=1e6, units="-", description="tail boom Reynolds number")
 
     cons += [
-        Rew == rho * V * wing["cmac"] / mu,
+        Rew == rho * V * wing.cmac / mu,
         # DAI1336a profile drag: (cdp/mfac)^a >= sum_k c_k CL^e0 Re^e1 tau^e2.
         # This is the link that makes flying faster cost power.
-        cdw >= cdp + CL**2 / pi / wing["AR"] / 0.95,
+        cdw >= cdp + CL**2 / pi / wing.AR / 0.95,
         CL <= 1.5,
-        Reht == rho * V * htail["S"] / htail["b"] / mu,
-        Revt == rho * V * vtail["S"] / vtail["b"] / mu,
+        Reht == rho * V * htail.S / htail.b / mu,
+        Revt == rho * V * vtail.S / vtail.b / mu,
         Retb == rho * V * lboom / mu,
         Cftb >= 0.455 / Retb**0.3,
-        cda >= (cdht * htail["S"] / wing["S"] + cdvt * vtail["S"] / wing["S"]
-                + Cftb * Sboom / wing["S"]),
+        cda >= (cdht * htail.S / wing.S + cdvt * vtail.S / wing.S
+                + Cftb * Sboom / wing.S),
         CD / 1.05 >= cda + cdw,
     ]
-    cons += fit_constraints(DAI1336A, cdp, [CL, Rew, wing["tau"]],
+    cons += fit_constraints(DAI1336A, cdp, [CL, Rew, wing.tau],
                             mfac=1.0 + DAI1336A["rms_err"])
-    for cd, Re, t in ((cdht, Reht, htail["tau"]), (cdvt, Revt, vtail["tau"])):
+    for cd, Re, t in ((cdht, Reht, htail.tau), (cdvt, Revt, vtail.tau)):
         cons += fit_constraints(NACA0008, cd, [Re, t],
                                 mfac=1.0 + NACA0008["rms_err"])
 
@@ -475,20 +476,20 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
 
     f.Objective(Wtotal)
     cons += [
-        Wtotal <= 0.5 * rho * V**2 * CL * wing["S"],
-        Thrust >= 0.5 * rho * V**2 * CD * wing["S"],
+        Wtotal <= 0.5 * rho * V**2 * CL * wing.S,
+        Thrust >= 0.5 * rho * V**2 * CD * wing.S,
     ]
 
     # ================= tail sizing and geometry =========================
     cons += [
-        0.45 <= htail["S"] * lboom / wing["S"] / wing["cmac"],   # Vh
-        0.02 <= vtail["S"] * lboom / wing["S"] / wing["b"],      # Vv
-        boom["w"][0] <= wing["tau"] * wing["croot"],
-        vtail["tau"] >= 0.09,
-        htail["tau"] >= 0.06,
-        wing["tau"] <= 0.144,
-        wing["tau"] >= DAI1336A["bounds"]["tau"][0],
-        wing["tau"] <= DAI1336A["bounds"]["tau"][1],
+        0.45 <= htail.S * lboom / wing.S / wing.cmac,   # Vh
+        0.02 <= vtail.S * lboom / wing.S / wing.b,      # Vv
+        boom.w[0] <= wing.tau * wing.croot,
+        vtail.tau >= 0.09,
+        htail.tau >= 0.06,
+        wing.tau <= 0.144,
+        wing.tau >= DAI1336A["bounds"]["tau"][0],
+        wing.tau <= DAI1336A["bounds"]["tau"][1],
     ]
 
     # ================= wing loading =====================================
@@ -498,8 +499,8 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     # tau pinned at the bottom of its range rather than the top).
     #
     # Manoeuvre: N-g on the centre weight, distributed by chord.
-    _, c = _beam(f, "wingg", Nwing, wing["b"], wing["I"], wing["Sy"],
-                 lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i])
+    _, c = _beam(f, "wingg", Nwing, wing.b, wing.spar.I, wing.spar.Sy,
+                 lambda i: 2.0 * 1.5 * Wcent / wing.b * wing_cbar[i])
     cons += c
 
     # Gust: adds the incremental lift from the gust angle of attack. Ww is the
@@ -516,8 +517,8 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     for i in range(Nwing):
         cons += fit_constraints(ARCTAN_FIT, agust[i], [cosm1[i] * vgust / V],
                                 mfac=1.0 + ARCTAN_FIT["rms_err"])
-    _, c = _beam(f, "winggust", Nwing, wing["b"], wing["I"], wing["Sy"],
-                 lambda i: 2.0 * 1.5 * Wcent / wing["b"] * wing["cbar"][i]
+    _, c = _beam(f, "winggust", Nwing, wing.b, wing.spar.I, wing.spar.Sy,
+                 lambda i: 2.0 * 1.5 * Wcent / wing.b * wing_cbar[i]
                  * (1 + 2 * pi * agust[i] / CL * (1 + Wwing / Wcent)))
     cons += c
 
@@ -525,21 +526,22 @@ def build(latitude: int = 20, Nwing: int = 20, Ntail: int = 5,
     # Each tail carries its own max-download case, W = qne*S*CLmax, through
     # the same beam chain as the wing. Without it the tail spars are sized
     # only by minimum gauge and the empennage comes out light.
-    for tag, surf in (("htailg", htail), ("vtailg", vtail)):
+    for tag, surf, cbar_t in (("htailg", htail, htail_cbar),
+                              ("vtailg", vtail, vtail_cbar)):
         Wt_ = V_(name=f"{tag}_W", guess=50.0, units="lbf",
                  description=f"{tag} load")
-        cons.append(Wt_ == qne_ph * surf["S"] * 1.39)      # CLmax = 1.39
-        _, c = _beam(f, tag, Ntail, surf["b"], surf["I"],
-                     surf["Sy"], lambda i, W=Wt_, sf=surf:
-                     W / sf["b"] * sf["cbar"][i])
+        cons.append(Wt_ == qne_ph * surf.S * 1.39)      # CLmax = 1.39
+        _, c = _beam(f, tag, Ntail, surf.b, surf.spar.I,
+                     surf.spar.Sy, lambda i, W=Wt_, sf=surf, cb=cbar_t:
+                     W / sf.b * cb[i])
         cons += c
 
     # ================= weight buildup ===================================
     cons += [
         Wland >= 0.02 * Wtotal,
-        Wwing >= wing["W"] + Wbatt + Wsolar,
+        Wwing >= wing.W + Wbatt + Wsolar,
         Wcent >= Wpay + Wavn + Wemp + Wmotor * Nprop,
-        Wtotal / 1.05 >= (Wpay + Wavn + Wland + Wsolar + wing["W"] + Wbatt
+        Wtotal / 1.05 >= (Wpay + Wavn + Wland + Wsolar + wing.W + Wbatt
                           + Wemp + Nprop * (Wmotor + Wprop)),
     ]
 

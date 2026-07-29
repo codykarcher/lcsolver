@@ -256,13 +256,14 @@ def build(N: int = 5, cvxopt_tip_relax: bool = True) -> Formulation:
 
     # ---- loading (manoeuvre and gust share the beam structure) -----------
     def loading_vars(tag):
-        return dict(
-            q  = f.Variable(name=f"{tag}_q",  guess=50.0, units="N/m", size=N,   description="distributed load"),
-            Sh = f.Variable(name=f"{tag}_S",  guess=200.0, units="N",  size=N,   description="shear"),
-            M  = f.Variable(name=f"{tag}_M",  guess=200.0, units="N*m", size=N,  description="moment"),
-            th = f.Variable(name=f"{tag}_th", guess=0.05, units="-",   size=N,   description="deflection angle"),
-            w  = f.Variable(name=f"{tag}_w",  guess=0.5,  units="m",   size=N,   description="deflection"),
-        )
+        """One load case's beam unknowns, as a group rather than a dict."""
+        g = f.group(tag, prefix=f"{tag}_")
+        g.Variable("q",  50.0,  "N/m", "distributed load",  size=N)
+        g.Variable("S",  200.0, "N",   "shear",             size=N)
+        g.Variable("M",  200.0, "N*m", "moment",            size=N)
+        g.Variable("th", 0.05,  "-",   "deflection angle",  size=N)
+        g.Variable("w",  0.5,   "m",   "deflection",        size=N)
+        return g
 
     man = loading_vars("SparLoading")
     gus = loading_vars("GustL")
@@ -291,8 +292,7 @@ def build(N: int = 5, cvxopt_tip_relax: bool = True) -> Formulation:
         croot == S / b * cbar[0],
         cmac == croot * cbarmac,
     ]
-    for i in range(Nseg):
-        cons.append(cave[i] == cbave[i] * S / b)
+    cons.append(cave == cbave * S / b)
 
     # ---- skin -------------------------------------------------------------
     rho_fab = CFRPFABRIC["rho"] * units.g / units.cm**3
@@ -309,29 +309,27 @@ def build(N: int = 5, cvxopt_tip_relax: bool = True) -> Formulation:
     rho_ud   = CFRPUD["rho"] * units.g / units.cm**3
     rho_core = FOAMHD["rho"] * units.g / units.cm**3
     wlim, mfac_s, tcoret = 0.15, 0.97, 0.02
-    for i in range(Nseg):
-        cons += [
-            Ispar[i] / mfac_s <= wspar[i] * tcap[i] * hin[i]**2,
-            dm[i] >= (rho_ud * 4 * wspar[i] * tcap[i]
-                      + 4 * tshear[i] * rho_fab * (hin[i] + wspar[i])
-                      + 2 * rho_core * tcore[i] * (wspar[i] + hin[i])) * b / 2 * deta[i],
-            wspar[i] <= wlim * cave[i],
-            cave[i] * tau >= hin[i] + 4 * tcap[i] + 2 * tcore[i],
-            tcap[i] >= CFRPUD["tmin"] * units.mm,
-            Sy[i] * (hin[i] / 2 + 2 * tcap[i] + tcore[i]) <= Ispar[i],
-            tshear[i] >= CFRPFABRIC["tmin"] * units.mm,
-            tcore[i] >= tcoret * cave[i] * tau,
-        ]
-    cons.append(Wspar >= 2 * sum(dm[i] for i in range(Nseg)) * (G * units.m / units.s**2))
+    cons += [
+        Ispar / mfac_s <= wspar * tcap * hin**2,
+        dm >= (rho_ud * 4 * wspar * tcap
+               + 4 * tshear * rho_fab * (hin + wspar)
+               + 2 * rho_core * tcore * (wspar + hin)) * b / 2 * deta,
+        wspar <= wlim * cave,
+        cave * tau >= hin + 4 * tcap + 2 * tcore,
+        tcap >= CFRPUD["tmin"] * units.mm,
+        Sy * (hin / 2 + 2 * tcap + tcore) <= Ispar,
+        tshear >= CFRPFABRIC["tmin"] * units.mm,
+        tcore >= tcoret * cave * tau,
+    ]
+    cons.append(Wspar >= 2 * f.sum(dm) * (G * units.m / units.s**2))
 
     # ---- core -------------------------------------------------------------
     # WingCore: foam fills the section. Abar is the *normalized* cross section
     # area of the airfoil (a fixed 0.0753449 in the source), so the section
     # area is Abar*cave^2 — it is not a function of tau.
     ABAR = 0.0753449
-    cons.append(Wcore >= 2 * sum(
-        (G * units.m / units.s**2) * rho_core * ABAR * cave[i]**2 * b / 2 * deta[i]
-        for i in range(Nseg)))
+    cons.append(Wcore >= 2 * f.sum(
+        (G * units.m / units.s**2) * rho_core * ABAR * cave**2 * b / 2 * deta))
 
     # ---- wing weight buildup ---------------------------------------------
     cons.append(Wwing / mfac_w >= Wskin + Wspar + Wcore)
@@ -347,20 +345,21 @@ def build(N: int = 5, cvxopt_tip_relax: bool = True) -> Formulation:
     # ---- beam loading, shared by both load cases -------------------------
     def beam(v, qexpr):
         c = []
-        for i in range(N - 1):
-            c += [
-                v["Sh"][i] >= v["Sh"][i + 1] + 0.5 * deta[i] * (b / 2) * (v["q"][i] + v["q"][i + 1]),
-                v["M"][i] >= v["M"][i + 1] + 0.5 * deta[i] * (b / 2) * (v["Sh"][i] + v["Sh"][i + 1]),
-                v["th"][i + 1] >= v["th"][i] + 0.5 * deta[i] * (b / 2) * (v["M"][i + 1] + v["M"][i]) / E / Ispar[i],
-                v["w"][i + 1] >= v["w"][i] + 0.5 * deta[i] * (b / 2) * (v["th"][i + 1] + v["th"][i]),
-            ]
-        c += [v["Sh"][N - 1] >= Stip, v["M"][N - 1] >= Mtip,
-              v["th"][0] >= throot, v["w"][0] >= wroot,
-              v["w"][N - 1] / (b / 2) <= kappa]
-        for i in range(Nseg):
-            c += [sigma >= v["M"][i] / Sy[i]]
+        # Beam recursion outboard along the span.
+        Sh, Mo, th, wd, q = v.S, v.M, v.th, v.w, v.q
+        c += [
+            Sh[:-1] >= Sh[1:] + 0.5 * deta * (b / 2) * (q[:-1] + q[1:]),
+            Mo[:-1] >= Mo[1:] + 0.5 * deta * (b / 2) * (Sh[:-1] + Sh[1:]),
+            th[1:] >= th[:-1] + 0.5 * deta * (b / 2) * (Mo[1:] + Mo[:-1]) / E / Ispar,
+            wd[1:] >= wd[:-1] + 0.5 * deta * (b / 2) * (th[1:] + th[:-1]),
+        ]
+        c += [v.S[N - 1] >= Stip, v.M[N - 1] >= Mtip,
+              v.th[0] >= throot, v.w[0] >= wroot,
+              v.w[N - 1] / (b / 2) <= kappa]
+        # M carries N stations; the spar constraint is over the Nseg panels.
+        c += [sigma >= v.M[:Nseg] / Sy]
         for i in range(N):
-            c.append(v["q"][i] >= qexpr(i))
+            c.append(v.q[i] >= qexpr(i))
         return c
 
     # manoeuvre: uniform N-g load distributed by chord

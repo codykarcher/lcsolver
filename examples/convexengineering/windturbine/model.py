@@ -141,8 +141,8 @@ def build(N: int = 10, lam: float = 3.0, eps: float = 0.05,
 
     # ---- equal-power bins must tile the span without overlap -------------
     cons.append(1.0 >= y[N - 1] + dy[N - 1] / 2.0)             # (20)
-    for i in range(N - 1):
-        cons.append(y[i + 1] >= y[i] + dy[i] / 2.0 + dy[i + 1] / 2.0)  # (21)
+    # (21) station spacing: each station beyond the one before it.
+    cons.append(y[1:] >= y[:-1] + dy[:-1] / 2.0 + dy[1:] / 2.0)
 
     f.ConstraintList(cons)
     return f
