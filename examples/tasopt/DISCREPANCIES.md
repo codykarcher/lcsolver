@@ -1104,3 +1104,36 @@ for a small enough engine, and the airframe cost is multiplied by an
 adjustment factor `cA = 4/3` chosen "such that avionics costs are around 25%
 of flyaway cost" — a number picked to make an answer come out, not a
 correlation.
+
+## §70 — the ducted fan's nacelle is counted about 1.9 times
+
+`ductedfanweight.jl`:
+
+```julia
+    Wfan = (mfan*9.81 + Wnace*0.8)*(1+fpylon)
+    Weng = (Wfan + Wnace) * neng
+    Webare = Wfan * neng
+```
+
+`Wnace` enters `Weng` twice: once inside `Wfan`, scaled by `0.8(1 + fpylon)`,
+and once again on its own. The total is `1 + 0.8(1 + fpylon)` nacelles per
+engine — **1.88** at the default `fpylon = 0.1`.
+
+TASOPT 2.16's `tfweight.f` does not do this. There the nacelle appears once:
+
+```fortran
+      Weng1 = (Wcore + Wfan + Wcomb + Wnace + Wnozz)/lb_N
+      Weng = (Weng1 + Wpylon)*neng
+```
+
+That is evidence rather than proof — `Wfan` in the ducted-fan routine may be
+intended as "fan module including its share of nacelle structure", in which
+case the second term is a different nacelle and the arithmetic is right. But
+nothing in the source says so, and the naming does not suggest it.
+
+`Webare` has the mirror problem: it is `Wfan * neng`, which *excludes* the
+nacelle proper while *including* 0.8 of it, so the "bare engine" weight
+contains nacelle mass.
+
+Reproduced exactly and pinned by `tests/test_ducted_fan.py`, so that if
+anyone does correct it the effect on electric-aircraft weight is visible.
