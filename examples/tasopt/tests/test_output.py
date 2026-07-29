@@ -21,11 +21,12 @@ from pathlib import Path
 
 import pytest
 
-from tasopt_py.output import _efmt, _ffmt, _gfmt, report
+from tasopt_py.output import _efmt, _ffmt, _gfmt, prfwrt, report
 from tasopt_py.run import run_case
 
 TAS = Path("/Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.tas")
 OUT = Path("/Users/codykarcher/Desktop/Tasopt2.16/runs/737/737.out")
+PROF = Path(__file__).parent / "data" / "prof_800.dat"
 
 pytestmark = pytest.mark.skipif(
     not TAS.exists() or not OUT.exists(),
@@ -58,6 +59,21 @@ def test_the_whole_file_is_identical(lines):
     """Stated the blunt way: the two files are the same bytes."""
     got, want = lines
     assert "\n".join(got) == "\n".join(want)
+
+
+@pytest.mark.skipif(not PROF.exists(), reason="prof file not present")
+def test_the_standalone_profile_file_matches_too():
+    """``prfwrt`` also writes ``prof_MMM.dat`` on its own, behind
+    ``Lpfwrite`` -- which is hard-wired ``.false.`` and unreachable from a
+    ``.tas`` file (``DISCREPANCIES.md`` §45). This reference was made by
+    flipping the source line and rebuilding. It is a second, independent
+    check of the same 17 lines: the ``.out`` embeds them in a report, this is
+    the file on its own.
+    """
+    r = run_case(TAS, off_design=False)
+    m = r.case.missions[0]
+    got = prfwrt(r.case.parg, m.parm, m.para, m.pare)
+    assert got == PROF.read_text().splitlines()
 
 
 # --- Fortran's edit descriptors -------------------------------------------

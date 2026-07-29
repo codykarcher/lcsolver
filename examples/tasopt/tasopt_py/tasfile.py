@@ -57,7 +57,8 @@ from .model import Aircraft
 from .model import indices as I
 
 __all__ = ["read_tas", "apply_sweep", "TasCase", "RunSettings",
-           "TasFormatError", "BIGNUM", "LINE_WIDTH", "NMISX"]
+           "TasFormatError", "BIGNUM", "LINE_WIDTH", "NMISX",
+           "read_tase", "EngineGrid"]
 
 #: ``tasopt.f``'s fill value for "not set". Every parameter array starts here.
 BIGNUM = 2.0 ** 1023
@@ -706,3 +707,60 @@ def apply_sweep(case, name: str, value: float) -> None:
     else:
         raise TasFormatError(f"cannot sweep over {name!r}; "
                              f"valid keywords are {I.CPARS}")
+
+
+# --------------------------------------------------------------------------
+# The engine operating-point grid -- tasopt.f's optional `.tase` file
+# --------------------------------------------------------------------------
+
+#: ``tasopt.f``'s array bounds on the three grid axes.
+NEADIM = NEMDIM = NEFDIM = 21
+
+
+@dataclass
+class EngineGrid:
+    """The altitude x Mach x throttle grid an ``.oute`` engine deck is run on.
+
+    Read from a separate ``<case>.tase`` file, which ``tasopt.f`` opens next
+    to the ``.tas`` and quietly ignores if it is not there. Three lines, one
+    per axis, each read with ``getrkey`` -- so each takes the ``* factor``
+    and ``/ factor`` suffixes, which is how the 737's altitudes are written
+    in feet and converted to metres on the spot.
+    """
+    #: Altitudes, metres.
+    alt: list = field(default_factory=list)
+    mach: list = field(default_factory=list)
+    #: Throttle settings, as a *fraction of the maximum thrust available at
+    #: that altitude and Mach* -- not of sea-level static thrust.
+    fset: list = field(default_factory=list)
+
+    def __bool__(self):
+        """``Lengoper``: all three axes must be non-empty."""
+        return bool(self.alt) and bool(self.mach) and bool(self.fset)
+
+    @property
+    def shape(self):
+        return len(self.alt), len(self.mach), len(self.fset)
+
+    @property
+    def npoints(self):
+        n, m, f = self.shape
+        return n * m * f
+
+
+def read_tase(path) -> EngineGrid:
+    """Read a ``.tase`` engine operating-point grid.
+
+    A missing file gives an empty grid rather than an error, which is what
+    ``tasopt.f`` does with its ``err=15`` branch -- the deck is optional.
+    """
+    path = Path(path)
+    if not path.exists():
+        return EngineGrid()
+
+    r = _Reader(path.read_text())
+    axes = []
+    for nmax in (NEADIM, NEMDIM, NEFDIM):
+        vals, n = _rkey(r.text(), " ", nmax)
+        axes.append(vals if n > 0 else [])
+    return EngineGrid(alt=axes[0], mach=axes[1], fset=axes[2])

@@ -16,14 +16,24 @@ header, ``Fleet PFEI``               ``tasopt.f``
 ``Cruise performance...``            ``tasopt.f``
 ``Takeoff performance...``           ``tofwrt``
 ``Mission profile summary...``       ``prfwrt``
+``Aero, Engine parameters...``       ``airwrt``, ``engwrt``
 ===================================  ==========================
 
-Not covered: the ``Aero, Engine parameters...`` section, which is ``airwrt``
-and ``engwrt`` writing about 124 lines for each of the 17 mission points --
-some 2100 of ``737.out``'s 4565 lines. It is a flat dump of ``para``/``pare``
-entries and would be mechanical to add; nothing else needs it.
-:func:`report` therefore produces a *prefix* of the reference file, and
-``tests/test_output.py`` diffs it against the corresponding lines.
+All of it: :func:`report` reproduces the reference program's ``737.out``
+byte for byte, all 4565 lines.
+
+Two more writers live here that the shipped program cannot reach
+------------------------------------------------------------------
+:func:`mapwrt` (compressor operating points, ``tfan_MMM.dat``) and
+:func:`prfwrt` (the mission profile, ``prof_MMM.dat``) are guarded by
+``Ltfwrite`` and ``Lpfwrite``, and **both are hard-wired ``.false.``** in
+``tasopt.f`` with the ``.true.`` line commented out directly beneath. Their
+``getLval`` reads are commented out of ``getparm.f`` as well, so no ``.tas``
+file can switch them on either. Reaching them means editing the source and
+recompiling; see ``DISCREPANCIES.md`` §45. Both are ported here and both are
+verified against files produced by doing exactly that. ``prfwrt`` also
+appears inside the ``.out`` report, so only ``mapwrt`` is otherwise
+unreachable.
 
 Reproducing Fortran's formatted output
 --------------------------------------
@@ -45,12 +55,13 @@ whole program is SI internally and the report is in feet and pounds.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from .atmosphere import atmos
 from .model import indices as I
 
 __all__ = ["report", "geowrt", "tofwrt", "prfwrt", "blfwrt", "airwrt",
-           "engwrt", "VERSION",
+           "engwrt", "mapwrt", "map_point", "MapPoint", "tfwrt", "VERSION",
            "LB_N", "FT_M", "KFT_M", "IN_M", "PSI_PA", "NMI_M", "HR_S"]
 
 VERSION = 2.16
@@ -452,6 +463,100 @@ def blfwrt(bl, Mach: float, Reunit: float) -> list:
             + f"{dis * lunit:10.6f}{tau * lunit:10.6f}")
         if i == bl.iblte - 1:
             out.append(_blank())
+    return out
+
+
+@dataclass
+class MapPoint:
+    """Where the three compressors sit on their maps, at one mission point.
+
+    Corrected speed and mass flow are each given as a *fraction of the design
+    value*, which is the form the maps are written in and the form you plot.
+    ``mapwrt`` writes exactly these numbers.
+    """
+    #: Fan: corrected mass flow / design, pressure ratio, corrected speed /
+    #: design, polytropic efficiency.
+    fan: tuple = ()
+    lpc: tuple = ()
+    hpc: tuple = ()
+    OPR: float = 0.0
+    #: Specific thrust, and TSFC in 1/hr -- the units ``mapwrt`` prints.
+    Fsp: float = 0.0
+    TSFC: float = 0.0
+
+
+def map_point(pare) -> MapPoint:
+    """The compressor map coordinates at one mission point.
+
+    ``pare`` is a single column. The corrected quantities are formed the way
+    ``mapwrt`` forms them, which is *not* quite the way ``tfoper`` does: the
+    fan's corrected mass flow is scaled by the bypass ratio and the turbines'
+    by ``1 + ff``, so each number is the flow through that component rather
+    than the core flow.
+    """
+    Tt2, Tt19, Tt25 = pare[I.IETT2], pare[I.IETT19], pare[I.IETT25]
+    pt2, pt19, pt25 = pare[I.IEPT2], pare[I.IEPT19], pare[I.IEPT25]
+    BPR = pare[I.IEBPR]
+    mcore = pare[I.IEMCORE]
+
+    Nbf = pare[I.IENF] / math.sqrt(Tt2 / _TREF)
+    Nblc = pare[I.IEN1] / math.sqrt(Tt19 / _TREF)
+    Nbhc = pare[I.IEN2] / math.sqrt(Tt25 / _TREF)
+    mbf = mcore * math.sqrt(Tt2 / _TREF) / (pt2 / _PREF) * BPR
+    mblc = mcore * math.sqrt(Tt19 / _TREF) / (pt19 / _PREF)
+    mbhc = mcore * math.sqrt(Tt25 / _TREF) / (pt25 / _PREF)
+
+    pif, pilc, pihc = pare[I.IEPIF], pare[I.IEPILC], pare[I.IEPIHC]
+    return MapPoint(
+        fan=(mbf / pare[I.IEMBFD], pif, Nbf / pare[I.IENBFD], pare[I.IEEPF]),
+        lpc=(mblc / pare[I.IEMBLCD], pilc, Nblc / pare[I.IENBLCD],
+             pare[I.IEEPLC]),
+        hpc=(mbhc / pare[I.IEMBHCD], pihc, Nbhc / pare[I.IENBHCD],
+             pare[I.IEEPHC]),
+        OPR=pilc * pihc,
+        Fsp=pare[I.IEFSP],
+        TSFC=pare[I.IETSFC] / HR_S)
+
+
+def mapwrt(pare, ilabel: int = 0) -> list:
+    """``mapwrt`` -- one row of compressor map coordinates.
+
+    With ``ilabel`` non-zero the two-line comment header comes first, as it
+    does for the first row of the file. ``chp`` is an argument in the Fortran
+    but is never written, so this does not take it.
+    """
+    m = map_point(pare)
+    out = []
+    if ilabel != 0:
+        out.append("#")
+        out.append("#   mf/mfD    pif     Nf/NfD   epolf    "
+                   "  mlc/mlcD   pilc   Nlc/NlcD  epollc   "
+                   "  mhc/mhcD   pihc   Nhc/NhcD  epolhc   "
+                   "    OPR      Fsp      TSFC  ")
+    row = " "
+    for group in (m.fan, m.lpc, m.hpc):
+        row += "".join(f"{v:9.5f}" for v in group) + "   "
+    row += "".join(f"{v:9.5f}" for v in (m.OPR, m.Fsp, m.TSFC))
+    out.append(row)
+    return out
+
+
+def tfwrt(parg, para, pare) -> list:
+    """The whole ``tfan_MMM.dat`` file -- the engine's track over the mission.
+
+    Static, rotation, takeoff and cutback first, then a blank line before each
+    of climb, cruise and descent, which is what separates the segments for a
+    plotting program.
+    """
+    out = mapwrt(pare.column(I.IPSTATIC), 1)
+    for ip in (I.IPROTATE, I.IPTAKEOFF, I.IPCUTBACK):
+        out += mapwrt(pare.column(ip))
+    for first, last in ((I.IPCLIMB1, I.IPCLIMBN),
+                        (I.IPCRUISE1, I.IPCRUISEN),
+                        (I.IPDESCENT1, I.IPDESCENTN)):
+        out.append(_blank())
+        for ip in range(first, last + 1):
+            out += mapwrt(pare.column(ip))
     return out
 
 

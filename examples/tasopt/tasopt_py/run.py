@@ -7,10 +7,16 @@ search of :mod:`tasopt_py.optimise`, sizing an aircraft per objective
 evaluation. With ``i``/``j`` sequence values in the file it sweeps over them,
 sizing one aircraft per grid point.
 
-Not covered, of what ``tasopt.f`` also does: the Matlab and gnuplot plot
-files, the ASWING export, and the ``.sav`` optimiser restart files.
+With a ``<case>.tase`` file alongside, ``--deck`` also writes the off-design
+engine deck (:mod:`tasopt_py.enginedeck`), as ``tasopt.f`` does whenever it
+finds one.
 
-    python -m tasopt_py /path/to/737.tas [--out 737.out] [--optimise]
+Not covered, of what ``tasopt.f`` also does: the ASWING export. The Matlab
+and gnuplot plot files are :mod:`tasopt_py.planview`, and drawing them is
+:mod:`tasopt_py.plot`.
+
+    python -m tasopt_py /path/to/737.tas [--out 737.out] [--deck 737.oute]
+                                         [--optimise]
 
 or, from Python::
 
@@ -22,6 +28,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .aero.airfoil import airtable
 from .model import indices as I
@@ -149,6 +156,24 @@ def run_prepared(case, *, Litprint: bool = False, off_design: bool = True,
                      optimum=optimum)
 
 
+def engine_deck_text(result, tase_path):
+    """The ``.oute`` engine deck for a completed run, or None if no grid.
+
+    ``tasopt.f`` looks for a ``<case>.tase`` next to the ``.tas`` and writes
+    the deck only if it finds one with all three axes populated.
+    """
+    from .enginedeck import engine_deck, eopwrt
+    from .tasfile import read_tase
+
+    grid = read_tase(tase_path)
+    if not grid:
+        return None
+    m = result.case.missions[0]
+    deck = engine_deck(result.case.pari, result.case.parg, m.para, m.pare,
+                       grid)
+    return eopwrt(result.case, deck)
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     out_path = None
@@ -163,9 +188,17 @@ def main(argv=None) -> int:
     if "--optimise" in argv:
         argv.remove("--optimise")
         opt = True
+    deck_path = None
+    if "--deck" in argv:
+        k = argv.index("--deck")
+        if k + 1 >= len(argv):
+            print("--deck needs a filename", file=sys.stderr)
+            return 2
+        deck_path = argv[k + 1]
+        del argv[k:k + 2]
     if not argv:
         print("usage: python -m tasopt_py <case.tas> [--out <report>] "
-              "[--optimise]", file=sys.stderr)
+              "[--deck <engine deck>] [--optimise]", file=sys.stderr)
         return 2
     r = run_case(argv[0], Litprint=True, optimise_it=opt)
     if out_path is not None:
@@ -173,6 +206,15 @@ def main(argv=None) -> int:
         with open(out_path, "w") as fh:
             fh.write(report(r.case, r))
         print(f"\n Writing output file:  {out_path}")
+    if deck_path is not None:
+        text = engine_deck_text(r, Path(argv[0]).with_suffix(".tase"))
+        if text is None:
+            print(" No .tase file -- no engine deck written",
+                  file=sys.stderr)
+        else:
+            with open(deck_path, "w") as fh:
+                fh.write(text)
+            print(f" Writing engine operating points file:  {deck_path}")
     print()
     print(f"{r.case.configname}: {' '.join(r.case.casename)}")
     print(f"  WTO   = {r.WTO_lbf:12.4f} lbf"
