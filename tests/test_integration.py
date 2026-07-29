@@ -239,3 +239,73 @@ def test_spaircraft_end_to_end():
     assert res.stationarity <= 1e-5
     assert len(res.x) == n_vars, 'presolve must restore the full solution'
     assert res.objective == pytest.approx(95559.91, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# the linear payload, whose two layouts are easy to confuse
+# ---------------------------------------------------------------------------
+def _lp():
+    """min x + y  s.t.  x - y >= 2, x >= 1, both in [-10, 10].
+
+    `x - y >= 2` gives `y <= x - 2`, so both want to be as small as allowed:
+    x = 1 at its constraint, y = -10 at its bound, objective -9.
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[-10.0, 10.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[-10.0, 10.0])
+    f.Objective(x + y)
+    f.Constraint(x - y >= 2.0)
+    f.Constraint(x >= 1.0)
+    return f, -9.0
+
+
+def _qp():
+    """min x**2 + y**2  s.t.  x + y >= 2.  Optimum 2 at (1, 1)."""
+    f = Formulation()
+    x = f.Variable('x', 0.0, '', 'x', bounds=[-10.0, 10.0])
+    y = f.Variable('y', 0.0, '', 'y', bounds=[-10.0, 10.0])
+    f.Objective(x ** 2 + y ** 2)
+    f.Constraint(x + y >= 2.0)
+    return f, 2.0
+
+
+@pytest.mark.parametrize('name,make', [('lp', _lp), ('qp', _qp)])
+def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
+    """LP and QP store their payload in DIFFERENT layouts.
+
+        LP   [[c], shift, A, b]      the objective nested one deeper
+        QP   [P, q, shift, A, b]
+
+    Reading a QP with the LP layout yields the Hessian where the objective
+    belongs and the constraint matrix where the right-hand side does -- which
+    both `evaluate` and `propagate_bounds` did until `linear_parts` existed.
+    """
+    from edi.presolve import evaluate, propagate_bounds
+
+    f, expected = make()
+    st = structure_detector(unit_corrector(f), bounds_as_rows=False)
+    parts = st.linear_parts()
+    assert parts.A is not None
+    assert (parts.hessian is None) == (name == 'lp')
+
+    # propagation must not raise, and must not change the problem
+    out, _n = propagate_bounds(st)
+    assert out['bounds'] is not None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        res = solver_module.solve(f, solver='cvxopt')
+    got = _objective_of(f)
+    assert got == pytest.approx(expected, abs=1e-4), (
+        f'{name}: cvxopt gave {got}, expected {expected}')
+
+    # `evaluate` must agree with the solved objective at the solved point.
+    # Read the values from the SOLUTION, not from st['variables']: unit
+    # correction clones the model, so a separately detected structure holds a
+    # different clone's variables and reading those returns the initial guess.
+    solution = res['solution']
+    xs = [float(solution[str(v)]) for v in st['variables']]
+    obj, viol = evaluate(st, xs)
+    assert obj == pytest.approx(got, abs=1e-4), (
+        f'{name}: evaluate gave {obj}, solver gave {got}')
+    assert viol <= 1e-6

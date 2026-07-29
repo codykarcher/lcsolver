@@ -729,13 +729,11 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
 
     if lp:
         # Natural variables: rows are AG . x <= b, and x may be negative.
-        key = ("Linear_Program" if structures["Linear_Program"][0]
-               else "Quadratic_Program")
-        payload = structures[key][1]
-        AG, bh = payload[2], payload[3]
+        parts = as_detected(structures).linear_parts()
+        AG, bh = parts.A, parts.b
         if AG is None:
             return structures, 0
-        operators = structures[key][2]
+        operators = parts.operators
         n = max(len(bounds), max(len(r) for r in AG))
         while len(bounds) < n:
             bounds.append((None, None))
@@ -1268,17 +1266,32 @@ def evaluate(structures, x):
 
     st = as_detected(structures)
     if lp:
-        key = st.linear_key
-        payload = st[key][1]
-        # The objective coefficients are nested one deeper than the rest:
-        # solve_LP reads payload[0][0]. Unpacking payload[:4] positionally
-        # yields the wrapper, not the vector, and every element then fails to
-        # convert. This path had no test until now, which is why it survived.
-        c = payload[0][0]
-        shift, AG, bh = payload[1], payload[2], payload[3]
-        operators = st[key][2]
+        parts = st.linear_parts()
+        c, shift, AG, bh = parts.linear, parts.shift, parts.A, parts.b
+        operators = parts.operators
         obj = float(shift or 0.0) + sum(float(ci) * x[i]
                                         for i, ci in enumerate(c) if i < len(x))
+        if parts.hessian is not None:
+            # EDI stores the quadratic COEFFICIENT matrix, not the Hessian, so
+            # the objective is x'Px + q'x + shift with no factor of a half:
+            # `x**2 + y**2` gives P = I, and x'Ix = 2 at (1,1), matching the
+            # Pyomo objective. Note this is NOT cvxopt.solvers.qp's convention,
+            # which minimises (1/2) x'Px + q'x -- solve_QP hands P straight
+            # over, so the two disagree by a factor of two on the objective
+            # VALUE. Harmless while q is zero, since a positive scaling leaves
+            # the argmin alone, but worth knowing before trusting a QP
+            # objective with a linear term in it.
+            #
+            # Omitting the quadratic term altogether, as this did at first,
+            # reports the objective of the LP left by deleting it: 0 instead
+            # of 2 on `min x**2 + y**2 s.t. x + y >= 2`.
+            P = parts.hessian
+            for i, row in enumerate(P):
+                if i >= len(x):
+                    continue
+                for j, pij in enumerate(row):
+                    if j < len(x):
+                        obj += float(pij) * x[i] * x[j]
         for i, row in enumerate([] if AG is None else AG):
             lhs = sum(float(v) * x[j] for j, v in enumerate(row) if j < len(x))
             r = lhs + float(bh[i])

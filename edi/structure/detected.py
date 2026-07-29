@@ -42,9 +42,11 @@ on it.
 """
 from __future__ import annotations
 
+from collections import namedtuple
 from dataclasses import dataclass, field
 
-__all__ = ["Term", "Detected", "as_detected", "DISPATCH_ORDER"]
+__all__ = ["Term", "Detected", "as_detected", "DISPATCH_ORDER",
+           "LinearParts"]
 
 #: The detector sets a flag for EVERY structure the model satisfies, and they
 #: are not exclusive: `z == x - y` with `x >= 4` is a linear program AND a
@@ -106,6 +108,10 @@ class Term:
                 return 0.0 if self.coeff > 0 else 0.0
         return math.exp(acc) if -700 < acc < 700 else (
             0.0 if acc <= -700 else float("inf"))
+
+
+LinearParts = namedtuple(
+    "LinearParts", "hessian linear shift A b operators")
 
 
 class Detected(dict):
@@ -196,6 +202,38 @@ class Detected(dict):
     def operators(self):
         k = self.key
         return list(self[k][2]) if k else []
+
+    # -- the linear payload ------------------------------------------------
+    def linear_parts(self):
+        """``(hessian, linear, shift, A, b, operators)`` for an LP or QP.
+
+        The two store their payload in **different layouts**, which is not
+        written down anywhere and is easy to miss because both are "the linear
+        one":
+
+            LP   [[c], shift, A, b]        the objective nested one deeper
+            QP   [P, q, shift, A, b]
+
+        Reading a QP with the LP layout silently yields the Hessian where the
+        objective belongs and the constraint matrix where the right-hand side
+        does. Both `evaluate` and `propagate_bounds` did exactly that until this
+        existed.
+
+        The semantics ARE shared, and worth stating since neither backend does:
+        constraint ``i`` is ``A[i] . x + b[i] <= 0`` (or ``== 0``). Both
+        backends negate ``b`` on the way into cvxopt, from opposite starting
+        points, which is what makes the convention hard to read off the code.
+
+        ``hessian`` is None for an LP.
+        """
+        k = self.linear_key
+        if k is None:
+            raise ValueError("not a linear or quadratic program")
+        p = self[k][1]
+        ops = list(self[k][2])
+        if k == "Linear_Program":
+            return LinearParts(None, p[0][0], p[1], p[2], p[3], ops)
+        return LinearParts(p[0], p[1], p[2], p[3], p[4], ops)
 
     # -- terms ------------------------------------------------------------
     def _grouped(self):

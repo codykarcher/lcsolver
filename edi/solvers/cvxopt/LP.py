@@ -20,13 +20,15 @@ def solve_LP(structures):
     from edi.structure.structureDetector import require
     require(structures, 'solve_LP')
 
-    c = cvxopt.matrix(structures['Linear_Program'][1][0][0])
-    objective_shift = structures['Linear_Program'][1][1]
-    AG = structures['Linear_Program'][1][2]
+    from edi.structure.detected import as_detected
+    parts = as_detected(structures).linear_parts()
+    c = cvxopt.matrix(parts.linear)
+    objective_shift = parts.shift
+    AG = parts.A
     if AG is None:
         raise ValueError('Linear Program with no constraints is unbounded')
-    bh = -1*structures['Linear_Program'][1][3]
-    operators = structures['Linear_Program'][2]
+    bh = -1*parts.b
+    operators = parts.operators
 
     A = None
     G = None

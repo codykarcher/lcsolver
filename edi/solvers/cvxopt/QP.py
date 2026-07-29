@@ -20,12 +20,14 @@ def solve_QP(structures):
     from edi.structure.structureDetector import require
     require(structures, 'solve_QP')
 
-    P = cvxopt.matrix( structures['Quadratic_Program'][1][0] )
-    q = cvxopt.matrix(structures['Quadratic_Program'][1][1])
-    objective_shift = structures['Quadratic_Program'][1][2]
-    AG = structures['Quadratic_Program'][1][3]
-    bh = structures['Quadratic_Program'][1][4]
-    operators = structures['Quadratic_Program'][2]
+    from edi.structure.detected import as_detected
+    parts = as_detected(structures).linear_parts()
+    P = cvxopt.matrix(parts.hessian)
+    q = cvxopt.matrix(parts.linear)
+    objective_shift = parts.shift
+    AG = parts.A
+    bh = parts.b
+    operators = parts.operators
 
     A = None
     G = None

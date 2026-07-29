@@ -56,6 +56,30 @@ from edi.structure.detectorSupportFunctions import (
      unstructured_dict,
 )
 
+def _divide_or_disqualify(structures, numerator, denominator):
+    """``gpRow_divide``, unless there is no numerator left to divide.
+
+    Subtracting the negative monomials leaves NOTHING when every monomial is
+    negative, which is what a bound like ``x >= -10`` becomes. Such a
+    constraint has no positive part, so it is not a posynomial ratio and is not
+    expressible as a geometric or signomial program at all -- but it is a
+    perfectly ordinary linear constraint, and the model may well be a valid LP
+    or QP.
+
+    Before this, ``gpRow_divide`` indexed ``gr1[0]`` on the empty list and the
+    whole detector raised, so **any LP or QP with a negative variable bound
+    could not be detected** through the default path where bounds are
+    materialized as rows. Disqualifying the log-space structures and carrying
+    on lets the linear ones through.
+    """
+    if not numerator:
+        for k in ('Geometric_Program', 'Signomial_Program'):
+            structures[k][0] = False
+            structures[k][1] = None
+        return []
+    return gpRow_divide(numerator, denominator)
+
+
 def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
     """
     This function finds any upper or lower bounds declared in the variable declaration and implemnts 
@@ -573,14 +597,16 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         posMonomial = copy.deepcopy(negMonomial)
                         posMonomial[1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, [negMonomial])
-                        lhs_final = gpRow_divide(lhs_inter, [posMonomial])
+                        lhs_final = _divide_or_disqualify(structures, lhs_inter,
+                                                          [posMonomial])
                     else:
                         negPosynomial = [ copy.deepcopy(lhs_zeroed[nmi]) for nmi in negative_monomial_indices ]
                         posPosynomial = copy.deepcopy(negPosynomial)
                         for ii in range(0,len(posPosynomial)):
                             posPosynomial[ii][1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, negPosynomial)
-                        lhs_final = gpRow_divide(lhs_inter, posPosynomial)
+                        lhs_final = _divide_or_disqualify(structures, lhs_inter,
+                                                          posPosynomial)
                     # this is where the else indent should be if present
 
                     if not all([rw[1]>0.0 for rw in lhs_final]):
