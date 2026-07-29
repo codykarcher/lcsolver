@@ -82,7 +82,7 @@ and you cannot tell which module to look at.
 
 ---
 
-## Done — 37 modules, 297 tests
+## Done — 39 modules, 317 tests
 
 | module | source | agreement |
 |---|---|---|
@@ -117,8 +117,9 @@ and you cannot tell which module to look at.
 | `sizing.wsize` | `wsize.f` | **real 737 sizing, 1.5e-9** |
 | `sizing.woper` | `woper.f` | real 737 off-design run, 1.2e-10 |
 | `tasfile` | `getparm.f`, `getval.f` | **737.tas read exactly** |
-| `output` | `output.f` (report) | **4553/4565 lines byte-exact** |
-| `sizing.noise` | `noise.f` (engine + geometry) | real 737 run |
+| `output` | `output.f` (report) | **737.out byte-identical** |
+| `sizing.noise` | `noise.f` | real 737 run |
+| `acoustics` | `tfnoise.f`, `freq.inc` | three dB values, exact |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc` | 611 constants, generated |
 
@@ -153,22 +154,23 @@ state the program hands to `wsize` — every array entry, no tolerance),
 | `fobj.f`, `gradop.f`, `simpop.f` | the optimiser wrapper around `wsize` |
 | `noise.f` | noise estimate |
 | `output.f` (`engwrt`) | output formatting |
-| `tfnoise.f` | the acoustic model — six numbers in the report |
 | `aswout.f`, `aswio.f` | ASWING export, 2795 lines |
 | `airpic.f`, `pltwrt`, `picwrt`, `picidr` | Matlab and gnuplot plot files |
 | `getsave.f` | optimiser restart (`.sav`) files |
 
-`tfnoise.f` is the only remaining piece that computes anything. It is a
-self-contained acoustic model -- SAE/ESDU jet noise, ESDU 98008 fan broadband,
-discrete-tone and combination-tone, third-octave banding, A-weighting and
-atmospheric attenuation -- in 14 routines with a few polynomial coefficient
-tables. `tasopt_py.sizing.noise` already computes everything around it and
-takes the model as an injected callable, so porting it is self-contained:
-implement the one `tfnoise(...)` signature in that module's docstring and pass
-it in as `run._TFNOISE`. That closes the last six numbers in the report.
+Nothing that computes a number remains. All four are output formats:
 
-The rest is export formats. ASWING (2795 lines) is much the largest and is a
-file-format translation rather than physics.
+* **ASWING export** (2795 lines) is much the largest, and is a file-format
+  translation -- write the aircraft as an ASWING `.asw` input deck. Behind
+  `Laswwrite`, which `737.tas` sets to F.
+* **Matlab and gnuplot plot files** (~500 lines), behind the plotting flags.
+* **`getsave`** (127 lines) reads and writes the optimiser's `.sav` restart
+  files, so a search can be resumed. Behind a second command-line argument.
+* **Trefftz and BL plot files** (154 lines), behind `Ltrpwrite`.
+
+If the point of the port is to run and compare cases, none of these is needed;
+if it is to be a drop-in replacement for the shipped program, ASWING is the
+one real gap.
 
 ## Conventions to keep
 
@@ -340,7 +342,7 @@ Fuller list in `STATUS.md`. The ones that change what results *mean*:
 
 ```bash
 cd /Users/codykarcher/Dropbox/research/edi/examples/tasopt
-python -m pytest tests/ -q            # 297 tests, ~75 s
+python -m pytest tests/ -q            # 317 tests, ~90 s
 TASOPT_SLOW=1 python -m pytest tests/  # + the 18-evaluation optimiser check
 
 # run the port itself

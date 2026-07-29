@@ -8,13 +8,7 @@ zero-length records Fortran writes for ``write(lu,*)``.
 
 Coverage
 --------
-The whole file: 4565 lines, of which **4553 match byte for byte**. The twelve
-that do not are the three rows of the ``Noise...`` table in each of the two
-missions, and only the decibel column of those -- the observer positions on
-the same lines are computed and do match. The decibels need ``tfnoise.f``, a
-full ESDU/Heidmann fan-and-jet acoustic model, which is not ported.
-
-Those six lines are identified by content, skipped and counted.
+**The whole file, every line.** 4565 lines, byte for byte, same MD5.
 
 The report is regenerated with::
 
@@ -52,38 +46,18 @@ def lines():
     return got, want
 
 
-def _needs_tfnoise(want, i):
-    """True if reference line ``i`` carries a decibel value."""
-    for k in range(1, 4):
-        if i - k >= 0 and want[i - k].startswith("    x [m]   z [m]"):
-            return True
-    return False
-
-
 def test_report_matches_the_reference_byte_for_byte(lines):
     got, want = lines
     assert len(got) == len(want) == 4565
-
-    compared = skipped = 0
     for i in range(len(want)):
-        if _needs_tfnoise(want, i):
-            skipped += 1
-            # The observer position on the same line *is* computed.
-            assert got[i][:16] == want[i][:16], f"line {i + 1} position"
-            continue
         assert got[i] == want[i], (
             f"line {i + 1}\n  port: {got[i]!r}\n  ref : {want[i]!r}")
-        compared += 1
-    assert (compared, skipped) == (4559, 6)
 
 
-def test_the_noise_table_positions_are_computed(lines):
-    """noise.f's geometry needs no acoustics, so only the dB column is
-    missing -- the sideline, cutback and flyover positions are all there."""
+def test_the_whole_file_is_identical(lines):
+    """Stated the blunt way: the two files are the same bytes."""
     got, want = lines
-    i = want.index("    x [m]   z [m]     dB")
-    for k, where in enumerate(("sideline", "cutback", "flyover"), start=1):
-        assert got[i + k][:16] == want[i + k][:16], where
+    assert "\n".join(got) == "\n".join(want)
 
 
 # --- Fortran's edit descriptors -------------------------------------------

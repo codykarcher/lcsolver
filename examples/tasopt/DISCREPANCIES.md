@@ -390,3 +390,66 @@ above it. So the HPC pressure ratio is worked out once, from the
 start-of-cruise LPC ratio of the first mission, and written to every point of
 every mission — and any point whose LPC ratio differs ends up at a different
 overall pressure ratio than the one swept for. Reproduced, with a test.
+
+## §38 — `noise.f` passes the angle of attack in two different units
+
+```fortran
+      alpha = 5.0             ! line 187, sideline
+      alpha = 5.0 * pi/180.0  ! line 272, cutback
+      alpha = 5.0 * pi/180.0  ! line 381, flyover
+```
+
+The sideline calculation is handed 5 **radians** — 286 degrees — where the
+other two get 5 degrees. It reaches `jet_noise` as `cos(alpha)` in the
+effective-velocity and convective-Mach-number terms, and `cos(5 rad) = 0.28`
+against `cos(5 deg) = 0.996`, so the sideline jet is computed with a much
+weaker flight-velocity correction than the two points either side of it.
+
+Not a rounding matter: reproducing it is what makes all three certification
+levels come out right. Ported with the two values named separately so the
+asymmetry is visible rather than looking like a typo in the port.
+
+## §39 — `fpfun` is always evaluated at 110 degrees
+
+`tfnoise.f`'s jet spectrum shape takes the corrected directivity angle in
+degrees — its own comment says so — and clamps it:
+
+```fortran
+      tl = max( 110.0, min( 250.0 , t ) )
+```
+
+Its only caller passes `thetap`, which is an angle in **radians** and so never
+exceeds about 3.5. `min(250, 3.5)` is 3.5, and `max(110, 3.5)` is 110. The
+clamp therefore fires on every call and the jet spectral *shape* is frozen at
+the 110-degree column of the table `fpfun` represents, whichever way the
+observer lies.
+
+The overall jet level still varies with angle — that is `UOL`, computed
+separately — so this affects the distribution of energy across the frequency
+bands rather than the total by very much. Reproduced.
+
+## §40 — a convective Mach number its author flagged
+
+```fortran
+cc    Mc = 0.62*(u8-u0*cos(alpha))/c0   !%% BUG???
+      Mc = 0.62*(u6-u0*cos(alpha))/c0
+```
+
+Somebody suspected the *fan* jet should set the convection velocity rather
+than the core jet, wrote the alternative down, commented it out, and left the
+question mark in. The core-jet form is what ships and is what this port does.
+
+## §41 — the tone series stops one harmonic late
+
+`esdu98008discretetone_total` appends the next blade-passing harmonic *before*
+testing whether the current one is past 10 kHz, so the series it returns
+always ends above the limit. Whether that last harmonic counts is then an
+accident of where it falls: the top third-octave band runs to 11220 Hz, so a
+harmonic between 10 and 11.2 kHz is still added in and one above 11.2 kHz is
+dropped.
+
+If the blade-passing frequency were low enough for 23 harmonics to fit under
+10 kHz the loop would fall out with `nf` one larger than the number of levels
+computed, and the caller would read an uninitialised level. No engine of
+interest gets near that — a 737 breaks out at the seventh harmonic — and this
+port returns only the pairs it computed.

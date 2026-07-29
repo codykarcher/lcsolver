@@ -6,10 +6,12 @@ routine in the program that runs the engine there -- and it works out the
 **three certification observer positions**. Both are checked here against the
 reference program's ``737.out``, which reports all of them.
 
-The decibels themselves come from ``tfnoise.f``, which is not ported. What
-this test shows is that everything *around* the acoustic model is right: the
+The decibels themselves come from ``tfnoise.f``, ported in
+:mod:`tasopt_py.acoustics` and checked in ``tests/test_acoustics.py``. What
+this file shows is that everything *around* the acoustic model is right: the
 engine states at the two points, their flight-path angles, and where the
-observers are.
+observers are -- and that the model is injected, so leaving it out leaves the
+decibels alone rather than defaulting them.
 
 The full byte-for-byte comparison is in ``tests/test_output.py``; this file
 pins the individual numbers so a failure says which one moved.
@@ -98,12 +100,29 @@ def test_takeoff_climb_angle_matches_the_report(flown):
                                                                abs=0.005)
 
 
-def test_the_decibels_need_an_acoustic_model(flown):
-    """Without tfnoise the three dB values are left exactly as they were --
-    at the 'unset' fill value -- rather than defaulted to something."""
+def test_the_decibels_are_computed(flown):
+    """tasopt_py.acoustics is wired in by default, so the three
+    certification levels are real -- see tests/test_acoustics.py."""
     parm = flown.case.missions[0].parm
     for idx in (I.IMDBSL, I.IMDBCB, I.IMDBFO):
-        assert parm[idx] > 1e300
+        assert 50.0 < parm[idx] < 120.0
+
+
+def test_without_an_acoustic_model_the_decibels_are_left_alone(flown):
+    """The model is injected, and omitting it leaves the three parm entries
+    exactly as they were rather than defaulting them to something -- so a
+    missing acoustic model reads as missing, not as silence."""
+    from tasopt_py.sizing.noise import noise
+
+    case = flown.case
+    m = case.missions[0]
+    before = [m.parm[idx] for idx in (I.IMDBSL, I.IMDBCB, I.IMDBFO)]
+    g = noise(case.pari, case.parg, m.parm, m.para, m.pare, initeng=1,
+              table=None, tfnoise=None)
+    assert [m.parm[idx] for idx in (I.IMDBSL, I.IMDBCB, I.IMDBFO)] == before
+    assert (g.dBSL, g.dBCB, g.dBFO) == (None, None, None)
+    # ...but the geometry is still worked out.
+    assert g.xCB > 0.0 and g.zCB > 0.0
 
 
 def test_the_hard_wired_fan_geometry():

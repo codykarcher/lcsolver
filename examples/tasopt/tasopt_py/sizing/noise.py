@@ -39,6 +39,15 @@ Things in the source worth knowing
 * ``Mt = 1.2``, ``Mtr = 1.38``, ``Mtrd = 1.30``, 20 rotor blades, 44 stator
   vanes, rotor-stator spacing ``0.2 dfan``: all hard-wired, and the source
   notes the fan geometry came from the SAX-40 design.
+* **The angle of attack is passed in different units at different points.**
+  ``alpha = 5.0`` for the sideline and ``alpha = 5.0*pi/180`` for the cutback
+  and flyover, so the sideline calculation is handed 5 *radians* -- 286
+  degrees -- and the other two 5 degrees. It reaches the jet-noise
+  correlation as ``cos(alpha)`` in the effective-velocity and convective-Mach
+  terms, and 5 radians gives 0.28 where 5 degrees gives 0.996 -- so the
+  sideline jet is computed with a much weaker flight-velocity correction than
+  the other two points. Reproduced: without it the cutback and flyover come
+  out about 1 dB from the reference, with it the whole report matches.
 * ``type = 0`` (unmixed exhaust) and ``method = 2`` (Heidmann, as in ANOPP)
   are the live settings; mixed exhaust and the ESDU and Allied Signal variants
   are commented out beside them.
@@ -75,7 +84,12 @@ class FanNoiseGeometry:
     Mtrd: float = 1.30     # relative tip Mach number at design
     B: float = 20.0        # rotor blades
     V: float = 44.0        # stator vanes
-    alpha_deg: float = 5.0
+    #: Angle of attack passed to the acoustic model. The source writes
+    #: ``alpha = 5.0`` for the sideline point and ``alpha = 5.0*pi/180`` for
+    #: the other two, so the sideline is given 5 *radians* -- 286 degrees --
+    #: where the others get 5 degrees. See the module docstring.
+    alpha_sideline: float = 5.0
+    alpha_other: float = 5.0 * math.pi / 180.0
     vector: float = 0.0
 
 
@@ -108,7 +122,9 @@ def noise(pari, parg, parm, para, pare, initeng: int, table=None,
                 A6, A8, u6, u8, T6, T8, M0, etaf, FPR, mdot, BPR,
                 Mtrd, Mtr, Mt, RPM, rss, B, V, htr, neng, type, method)
 
-    returning the total A-weighted SPL. Omit it and the decibels are left
+    returning either the total A-weighted SPL or an object carrying it as
+    ``.total`` -- :func:`tasopt_py.acoustics.tfnoise` returns the latter, with
+    the six components broken out. Omit it and the decibels are left
     untouched.
     """
     W = parm[I.IMWTO]
@@ -192,23 +208,26 @@ def noise(pari, parg, parm, para, pare, initeng: int, table=None,
                              / (1.0 + 0.5 * (GAMSL - 1.0) * M2 ** 2))
         return FAN.Mt * c2 / (0.5 * dfan) * 30.0 / math.pi
 
-    def call_tfnoise(x, y, z, climb, rho0_, p0_, T0_, mu0_, c0_, RPM, s):
+    def call_tfnoise(x, y, z, climb, rho0_, p0_, T0_, mu0_, c0_, RPM, s,
+                     alpha):
         if tfnoise is None:
             return None
-        return tfnoise(x, y, z, climb, FAN.alpha_deg, FAN.vector,
+        out = tfnoise(x, y, z, climb, alpha, FAN.vector,
                        rho0_, p0_, T0_, mu0_, c0_,
                        s["A6"], s["A8"], s["u6"], s["u8"], s["T6"], s["T8"],
                        s["M0"], s["etaf"], s["FPR"], s["mdot"], s["BPR"],
                        FAN.Mtrd, FAN.Mtr, FAN.Mt, RPM,
-                       rss, FAN.B, FAN.V, htr, neng,
-                       EXHAUST_UNMIXED, METHOD_HEIDMANN)
+                      rss, FAN.B, FAN.V, htr, neng,
+                      EXHAUST_UNMIXED, METHOD_HEIDMANN)
+        return getattr(out, "total", out)
 
     # ---- sideline: 450 m abeam, at the takeoff point ---------------------
     # Note `climb` here is the raw angle, while the two below are asin(sin g)
     # -- the same number by a different route, as in the source.
     g.xSL, g.zSL = 0.0, 0.0
     dB = call_tfnoise(0.0, SIDELINE_Y, 0.0, parm[I.IMGAMVTO],
-                      rho0, p0, T0, mu0, c0, rpm_at(c0), src)
+                      rho0, p0, T0, mu0, c0, rpm_at(c0), src,
+                      FAN.alpha_sideline)
     if dB is not None:
         parm[I.IMDBSL] = dB
         g.dBSL = dB
@@ -239,7 +258,8 @@ def noise(pari, parg, parm, para, pare, initeng: int, table=None,
     g.xCB, g.zCB = x, z
     parm[I.IMXCB], parm[I.IMZCB], parm[I.IMLCB] = x, z, lCB
     dB = call_tfnoise(x, 0.0, z, math.asin(singTO),
-                      rho0, p0, T0, mu0, c0, rpm_at(c0), src)
+                      rho0, p0, T0, mu0, c0, rpm_at(c0), src,
+                      FAN.alpha_other)
     if dB is not None:
         parm[I.IMDBCB] = dB
         g.dBCB = dB
@@ -275,7 +295,8 @@ def noise(pari, parg, parm, para, pare, initeng: int, table=None,
     x, z = -xa, za
     g.xFO, g.zFO = x, z
     parm[I.IMXFO], parm[I.IMZFO] = x, z
-    dB = call_tfnoise(x, 0.0, z, climb, rho0, p0, T0, mu0, c0, RPM, src)
+    dB = call_tfnoise(x, 0.0, z, climb, rho0, p0, T0, mu0, c0, RPM, src,
+                      FAN.alpha_other)
     if dB is not None:
         parm[I.IMDBFO] = dB
         g.dBFO = dB

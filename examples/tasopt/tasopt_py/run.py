@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from .aero.airfoil import airtable
 from .model import indices as I
+from .acoustics import tfnoise
 from .optimise import OptResult, optimise
 from .sizing.noise import noise
 from .sizing.woper import WOperResult, woper
@@ -34,11 +35,9 @@ from .tasfile import TasCase, apply_sweep, read_tas
 __all__ = ["run_case", "RunResult", "LB_N"]
 
 LB_N = 1.0 / 4.44822
-#: The acoustic model, if one is available. ``tfnoise.f`` is not ported, so
-#: the three certification decibel values stay unset; every other quantity
-#: noise.f produces -- the takeoff and cutback engine points, and the observer
-#: positions -- is computed.
-_TFNOISE = None
+#: The acoustic model handed to ``noise``. Set to None to skip it, which
+#: leaves the three certification decibel values unset.
+_TFNOISE = tfnoise
 
 
 @dataclass
