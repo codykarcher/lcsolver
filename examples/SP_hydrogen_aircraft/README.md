@@ -93,6 +93,34 @@ allowed to see an arbitrarily light aircraft; wing area too cheap; cruise at
 C_Lmax) — **ten model defects total, every one surfaced by a diagnostic
 rather than by reading the answer and squinting.**
 
+## Verification against TASOPT.jl
+
+`verify_against_tasopt.py` closes the derivation loop: it solves the SP, then
+feeds the **solved design** back through the port's high-fidelity routines
+(machine-precision-verified against TASOPT.jl; the fuel-cell chain re-run in
+Julia directly, agreeing to every printed digit). This measures what each
+reformulation costs at the optimum — where the model is used, not where it
+was fitted. E175-class mission:
+
+| quantity | SP | TASOPT | diff | what the difference is |
+|---|---|---|---|---|
+| cell voltage | 0.7509 V | 0.7532 V | −0.3% | monomial fit, at its cap |
+| stack cells / area / heat | — | — | ≤0.8% | follows the fit |
+| tank dry mass | 258 kg | 330 kg | **−22%** | lumped insulation, AR-fixed heads |
+| tank length | 2.97 m | 3.09 m | −4% | same |
+| fan shaft power | 4.22 MW | 4.74 MW | **−11%** | ideal disc vs `epf = 0.9` gas path |
+| fan mass flow | 207 kg/s | 204 kg/s | +1.6% | momentum closure |
+| fan diameter | 1.13 m | 1.33 m | −15% | disc area vs M 0.6 fan face |
+| motor mass | 211 kg | 1137 kg | **−81%** | 10 kW/kg flat vs sized PMSM, direct drive |
+
+Reading it: the *derived* constraints hold to ~1% at the optimum; the
+*idealizations* cost 11–22% and are each understood (the fan gap is almost
+exactly the polytropic efficiency the disc omits); and the **motor is the
+model's weakest claim** — the port's PMSM cannot reach 10 kW/kg at 2.1 MW at
+any speed (the shaft binds at 8.6 kW/kg near 60 krpm), so the flat constant
+silently assumes several smaller machines per fan. A corrected powertrain
+would add roughly 1–2 t to the E175-class MTOW.
+
 ## Caveats — read before quoting numbers
 
 * **`j` sits at the polarisation fit's validity cap (10 000 A/m²).** The

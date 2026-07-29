@@ -73,8 +73,15 @@ N_CRUISE = 4
 PI = 3.141592653589793
 
 
-def build(N: int = N_CRUISE) -> Formulation:
-    """Build the aircraft. Returns an EDI ``Formulation``."""
+def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
+          R_fuse: float = 1.9, l_cabin: float = 26.0) -> Formulation:
+    """Build the aircraft. Returns an EDI ``Formulation``.
+
+    The mission is parameterised so the same model can fly other aircraft
+    classes: ``W_pay`` payload (N), ``R_req`` range (m), ``R_fuse`` fuselage
+    radius (m), ``l_cabin`` cabin length (m). Defaults are the 180-pax,
+    3000 km case the README documents.
+    """
     f = Formulation()
     Vb = lambda n, g, u, d, bd: f.Variable(name=n, guess=g, units=u,
                                            description=d, bounds=bd)
@@ -111,10 +118,10 @@ def build(N: int = N_CRUISE) -> Formulation:
     V_inf = C("V_inf", 232.0, "m/s", "cruise speed, M 0.78 at 11 km")
     e_osw = C("e", 0.85, "-", "Oswald efficiency")
     C_f = C("C_f", 0.0032, "-", "equivalent skin friction coefficient")
-    W_pay = C("W_pay", 1.8e5, "N", "payload, 180 passengers")
-    R_req = C("R_req", 3.0e6, "m", "required range, 3000 km")
-    R_fuse = C("R_fuse", 1.9, "m", "fuselage radius")
-    l_cabin = C("l_cabin", 26.0, "m", "cabin length for the payload")
+    W_pay = C("W_pay", W_pay, "N", "payload weight")
+    R_req = C("R_req", R_req, "m", "required range")
+    R_fuse = C("R_fuse", R_fuse, "m", "fuselage radius")
+    l_cabin = C("l_cabin", l_cabin, "m", "cabin length for the payload")
     k_fuse = C("k_fuse", 260.0, "N/m^2", "fuselage weight per wetted area")
     k_rad = C("k_rad", 0.12, "-", "cooling drag power over heat rejected")
     N_ult = C("N_ult", 3.0, "-", "ultimate load factor")
@@ -188,7 +195,8 @@ def build(N: int = N_CRUISE) -> Formulation:
     return f
 
 
-def verify(max_iterations: int = 400, tee: bool = False) -> dict:
+def verify(max_iterations: int = 400, tee: bool = False,
+           **mission) -> dict:
     """Build, solve under SIA defaults, and run the self-checks.
 
     Returns a dict of headline quantities. Raises if the solve does not
@@ -207,7 +215,7 @@ def verify(max_iterations: int = 400, tee: bool = False) -> dict:
     from edi.solvers.ipopt.sia import SIAOptions, classify
     from edi.units.unitCorrector import unit_corrector
 
-    fm = build()
+    fm = build(**mission)
     unit_corrector(fm)
     st = structure_detector(fm)
 
@@ -239,7 +247,8 @@ def verify(max_iterations: int = 400, tee: bool = False) -> dict:
     eta_chain = 0.995 * 0.96 * 0.99
     eta_prop = 2 * 232.0 / (232.0 + vals["PT_u_j[0]"])
     LoD_eff = W0 / D0
-    z = 3.0e6 / (eta_fc * eta_chain * eta_prop * 1.2e8 / g * LoD_eff)
+    R_m = mission.get("R_req", 3.0e6)
+    z = R_m / (eta_fc * eta_chain * eta_prop * 1.2e8 / g * LoD_eff)
     breguet_kg = (1 - math.exp(-z)) * W0 / g
     burn_kg = sum((vals[f"FC_mdot_H2[{i}]"] + vals["Tank_m_boil"])
                   * vals[f"t_seg[{i}]"] for i in range(N_CRUISE))
