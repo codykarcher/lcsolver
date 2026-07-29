@@ -63,7 +63,8 @@ class TestSolution(unittest.TestCase):
         text = str(self._solved().solution)
         for heading in ('Objective', 'Variables', 'Constants', 'Sensitivities'):
             self.assertIn(heading, text)
-        self.assertIn('wing_S', text)
+        self.assertIn('wing.S', text)          # dotted for display
+        self.assertNotIn('wing_S', text)
         self.assertIn('wing area', text)
 
     def test_sensitivities_are_attached_and_correct(self):
@@ -76,6 +77,42 @@ class TestSolution(unittest.TestCase):
         self.assertAlmostEqual(sol.sensitivities['k_area'], 1.0, places=3)
         self.assertAlmostEqual(sol.sensitivities['AR_max'], -1.0, places=3)
         self.assertIn('k_area', str(sol))
+
+    def test_grouped_names_print_dotted_and_sort_after_ungrouped(self):
+        """`wing_box_t_cap` shows as `wing.box.t_cap`, and a model's own
+        quantities come first so they are not buried among namespaced ones."""
+        f = Formulation()
+        f.Variable('W_total', 1000.0, 'N', 'total weight', bounds=[1.0, 1e6])
+        w = f.group('wing')
+        w.Variable('AR', 11.0, '-', 'aspect ratio', bounds=[1.0, 20.0])
+        w.group('box').Variable('t_cap', 0.01, 'm', 'cap', bounds=[1e-4, 1.0])
+        lg = f.group('landing_gear')
+        lg.Variable('d_strut', 0.1, 'm', 'strut', bounds=[0.01, 1.0])
+        f.Objective(f.W_total)
+        f.Constraint(f.W_total >= 1000.0 * units.N)
+
+        sol = f.solution
+        self.assertEqual(sol.display_name('wing_box_t_cap'), 'wing.box.t_cap')
+        # a group whose own name contains an underscore must keep it
+        self.assertEqual(sol.display_name('landing_gear_d_strut'),
+                         'landing_gear.d_strut')
+        self.assertEqual(sol.display_name('W_total'), 'W_total')
+
+        shown = [ln for ln in str(sol).splitlines() if '  :  ' in ln]
+        order = [ln.split('  :  ')[0].strip() for ln in shown]
+        self.assertEqual(order[0], 'W_total')       # ungrouped first
+        self.assertEqual(order[1:], ['landing_gear.d_strut', 'wing.AR',
+                                     'wing.box.t_cap'])
+
+    def test_indexing_still_uses_the_real_name(self):
+        """Dots are for reading. The stored name is what everything else uses."""
+        f = Formulation()
+        w = f.group('wing')
+        w.Variable('AR', 11.0, '-', 'aspect ratio', bounds=[1.0, 20.0])
+        f.Objective(f.wing_AR)
+        sol = f.solution
+        self.assertAlmostEqual(sol['wing_AR'], 11.0)
+        self.assertIn('wing_AR', sol)
 
     def test_missing_names_raise_rather_than_return_none(self):
         sol = self._solved().solution

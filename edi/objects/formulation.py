@@ -134,12 +134,13 @@ class Group:
     tree to keep consistent with the first.
     """
 
-    __slots__ = ('_formulation', '_prefix', '_name', '_groups')
+    __slots__ = ('_formulation', '_prefix', '_name', '_groups', '_path')
 
-    def __init__(self, formulation, name, prefix):
+    def __init__(self, formulation, name, prefix, path=None):
         object.__setattr__(self, '_formulation', formulation)
         object.__setattr__(self, '_name', name)
         object.__setattr__(self, '_prefix', prefix)
+        object.__setattr__(self, '_path', path or name)
         object.__setattr__(self, '_groups', {})
 
     @property
@@ -150,11 +151,22 @@ class Group:
     def prefix(self):
         return self._prefix
 
+    @property
+    def path(self):
+        """The dotted path used when printing, e.g. ``wing.box``.
+
+        Carried rather than derived from the prefix: a group named
+        ``landing_gear`` has prefix ``landing_gear_``, and turning underscores
+        into dots would render it ``landing.gear``.
+        """
+        return self._path
+
     def group(self, name):
         """A nested group, named ``<this>_<name>``."""
         if name not in self._groups:
             self._groups[name] = Group(self._formulation, name,
-                                       f'{self._prefix}{name}_')
+                                       f'{self._prefix}{name}_',
+                                       f'{self._path}.{name}')
         return self._groups[name]
 
     def Variable(self, name, guess=UNSET, units=None, description='', **kw):

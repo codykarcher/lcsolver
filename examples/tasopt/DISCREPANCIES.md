@@ -1212,3 +1212,54 @@ v3 (with §58 the tank buckling pole, §63 the two thermal ones, §67 the
 windage solver). They are not the same bug, but they are the same *habit* —
 an expression or a solve written for the design region and used inside an
 optimiser that leaves it.
+
+
+## §74 -- the heat exchanger optimum is nearly flat in the stage count
+
+`hxoptim!` minimises total pumping power over four variables. The reference,
+using NLopt's COBYLA, stops at `n_stages = 16.02`; this port, using SciPy's,
+stops at `19.31`. The objective differs by 0.09%.
+
+That is not two answers to one question -- it is one flat floor. Sweeping
+`n_stages` from 14 to 20 with the other three variables held at the
+reference's optimum moves the objective by 0.18% total, and it is monotone
+*down* across that range. So the reference's stopping point is about 0.06%
+above the actual minimum, and this port's is essentially on it.
+
+The model underneath is not in question: evaluated at the reference's own
+design vector, `hx_size` reproduces `Pl_p`, `Pl_c`, `n_passes`, `N_t`,
+`Dp_p` and `Dp_c` to zero relative error. Only the stopping point differs.
+The reference's own test anticipates this and checks the objective value
+rather than the design vector, which is what `tests/test_hx_size.py` does.
+
+Worth knowing for anyone reading a `n_stages` figure out of TASOPT.jl as
+though it were determined: over 14-20 stages it is not.
+
+## §75 -- the optimiser's constraints read stale state
+
+The seven inequality constraints are registered as closures that **ignore
+their `x` argument** and read the mutable `HXgas`/`HXgeom` structs:
+
+```julia
+inequality_constraint!(opt, (x, grad) -> MinPassesCstr(HXgeom), tol)
+```
+
+`HXgeom.n_passes` is whatever the last `hxsize!` call left there. This works
+only because NLopt's COBYLA evaluates the objective before the constraints at
+each trial point, which is an implementation detail rather than a documented
+contract -- and it is silently wrong for any optimiser that evaluates them in
+the other order, or that evaluates constraints at points where the objective
+was never called.
+
+The port evaluates the objective and all seven constraints from a single
+cached solve keyed on the design vector, so the constraint values always
+belong to the point being asked about.
+
+## §76 -- `hxobjf` returns `Inf` on a failed solve
+
+A design that fails to size returns `Inf` rather than a large finite penalty.
+For a derivative-free method that differences the objective this is a cliff
+with no gradient information at all; the port returns 1e30 instead, which
+carries the same "go away" signal while remaining differenceable. Feasible
+objectives here are of order 1e4, so the substitution cannot affect the
+optimum.

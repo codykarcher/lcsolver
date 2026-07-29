@@ -19,6 +19,11 @@ from pyomo.core.base.block import BlockData
 from pyomo.common.collections.component_map import ComponentMap
 from pyomo.core.base.var import ScalarVar, VarData, IndexedVar
 from pyomo.core.expr.visitor import identify_variables
+try:
+    from pyomo.core.expr.visitor import identify_mutable_parameters
+except Exception:  # pragma: no cover - older Pyomo
+    def identify_mutable_parameters(expr):
+        return []
 from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
@@ -320,9 +325,42 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         if datas and not any(list(identify_variables(c.expr)) for c in datas):
             try:
                 if not all(bool(pyo.value(c.expr)) for c in datas):
+                    # A constraint with no variables that evaluates false is a
+                    # proof of infeasibility, and the cheapest one available --
+                    # available before any solve is attempted. Flag it as such
+                    # rather than only as "unstructured": callers otherwise
+                    # read the absence of structure as "send it to a general
+                    # NLP solver", which then reports a bare
+                    # termination_condition=infeasible and loses the sentence
+                    # that says WHICH constraint and why.
+                    # Only the model's own constants; the expression also
+                    # carries Pyomo unit parameters, and "dimensionless = 1"
+                    # is noise in a message meant to say what is wrong.
+                    try:
+                        own = {c.name for c in pyomo_component.get_constants()}
+                    except Exception:
+                        own = None
+                    seen, parts = set(), []
+                    for c in datas:
+                        for v in identify_mutable_parameters(c.expr):
+                            nm = getattr(v, 'name', None)
+                            if nm is None or nm in seen:
+                                continue
+                            if own is not None and nm not in own:
+                                continue
+                            seen.add(nm)
+                            try:
+                                parts.append(f'{nm} = {pyo.value(v):g}')
+                            except Exception:
+                                pass
+                    vals = ', '.join(parts)
                     return unstructured_dict() | {
-                        "message": "Constraint %s involves no variables and is false "
-                                   "as written; the model is infeasible" % (con.name,)}
+                        "infeasible": True,
+                        "message": "Constraint %s involves no variables and is "
+                                   "false as written, so the model has no "
+                                   "feasible point%s" % (
+                                       con.name,
+                                       f' ({vals})' if vals else '')}
             except Exception:
                 # Not evaluable (mismatched units, say) -- that is the unit
                 # checker's job to report, not something to guess at here.

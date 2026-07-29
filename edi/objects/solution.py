@@ -72,7 +72,7 @@ class Solution:
 
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
-                 solver=None, structure=None):
+                 solver=None, structure=None, groups=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
@@ -81,6 +81,8 @@ class Solution:
         self.status = status
         self.solver = solver
         self.structure = structure
+        #: ``[(flat_prefix, dotted_path)]``, longest first, for display only.
+        self.groups = sorted(groups or [], key=lambda p: -len(p[0]))
 
     # -- access ------------------------------------------------------------
     def __getitem__(self, name):
@@ -110,18 +112,42 @@ class Solution:
         return out
 
     # -- presentation ------------------------------------------------------
+    def display_name(self, name):
+        """``wing_box_t_cap`` shown as ``wing.box.t_cap``.
+
+        Groups namespace by flat prefix so that nothing downstream has to know
+        about them, but a reader wants the hierarchy back. The dotted path is
+        carried from the group rather than derived by swapping underscores for
+        dots, which would turn a group named ``landing_gear`` into
+        ``landing.gear``.
+        """
+        for prefix, path in self.groups:
+            if name.startswith(prefix):
+                return path + '.' + name[len(prefix):]
+        return name
+
+    def _order(self, names):
+        """Ungrouped first, then grouped, each alphabetically.
+
+        A model's own quantities are the ones its author is looking for, and
+        they get buried when a hundred namespaced ones sort in among them.
+        """
+        return sorted(names, key=lambda n: (self.display_name(n) != n,
+                                            self.display_name(n)))
+
     def _table(self, entries, ndecimal):
         if not entries:
             return []
-        names = sorted(entries)
+        names = self._order(entries)
+        shown = [self.display_name(n) for n in names]
         vals = [_fmt(entries[n].value, ndecimal) for n in names]
         uts = [_units(entries[n].units) for n in names]
         des = [entries[n].description for n in names]
-        w = (max(len(s) for s in names), max(len(s) for s in vals),
+        w = (max(len(s) for s in shown), max(len(s) for s in vals),
              max(len(s) for s in uts), max((len(s) for s in des), default=0))
         return ['   ' + n.ljust(w[0]) + '  :  ' + v.rjust(w[1]) + '   '
                 + u.center(w[2]) + ('   ' + d.ljust(w[3]) if d else '')
-                for n, v, u, d in zip(names, vals, uts, des)]
+                for n, v, u, d in zip(shown, vals, uts, des)]
 
     def summary(self, ndecimal=2, sensitivity_tol=1e-8):
         """The table, as a string."""
@@ -146,14 +172,17 @@ class Solution:
         else:
             items = [(n, v) for n, v in self.sensitivities.items()
                      if v == v and abs(v) >= sensitivity_tol]
-            items.sort(key=lambda kv: -abs(kv[1]))
+            # Ungrouped first as elsewhere, then by magnitude within each half,
+            # so the table reads the same way as the ones above it.
+            items.sort(key=lambda kv: (self.display_name(kv[0]) != kv[0],
+                                       -abs(kv[1])))
             if not items:
                 L += [f'   all below {sensitivity_tol:g}', '']
             else:
-                wn = max(len(n) for n, _ in items)
+                wn = max(len(self.display_name(n)) for n, _ in items)
                 for n, v in items:
                     bar = ('+' if v > 0 else '-') * min(int(abs(v) * 20) + 1, 24)
-                    L.append('   ' + n.ljust(wn) + '  :  '
+                    L.append('   ' + self.display_name(n).ljust(wn) + '  :  '
                              + f'{v:+.4f}'.rjust(9) + '   ' + bar)
                 omitted = len(self.sensitivities) - len(items)
                 if omitted:
@@ -175,6 +204,15 @@ class Solution:
                 + (', sensitivities' if self.sensitivities else '') + '>')
 
     # -- construction ------------------------------------------------------
+    @staticmethod
+    def _group_paths(groups):
+        """``[(flat_prefix, dotted_path)]`` for every group, recursively."""
+        out = []
+        for g in (groups or {}).values():
+            out.append((g.prefix, g.path))
+            out.extend(Solution._group_paths(getattr(g, '_groups', {})))
+        return out
+
     @classmethod
     def from_model(cls, model, sensitivities=None, status=None, solver=None,
                    structure=None):
@@ -215,4 +253,5 @@ class Solution:
         return cls(objective=objective, objective_units=objective_units,
                    variables=variables, constants=constants,
                    sensitivities=sensitivities, status=status, solver=solver,
-                   structure=structure)
+                   structure=structure,
+                   groups=cls._group_paths(getattr(model, '_groups', {})))

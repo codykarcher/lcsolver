@@ -562,3 +562,40 @@ class TestWritebackFailureIsAnnounced(unittest.TestCase):
             self.assertIn('writeback_error', res)
         finally:
             solver_module.write_solution = original
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+class TestConstantOnlyConstraints(unittest.TestCase):
+    """A constraint with no variables is either redundant or a proof."""
+
+    @staticmethod
+    def _model(rhs):
+        f = Formulation()
+        x = f.Variable('x', 2.0, '-', 'x', bounds=[0.1, 10.0])
+        c = f.Constant('c', 3.0, '-', 'a constant')
+        f.Objective(x)
+        f.Constraint(x >= 2.0)
+        f.Constraint(c >= rhs)
+        return f
+
+    def test_a_true_constant_constraint_is_filtered_out(self):
+        from edi.solvers import solver as solver_module
+        f = self._model(1.0)                      # c = 3 >= 1, always true
+        solver_module.solve(f, diagnostics='off')
+        self.assertAlmostEqual(pyo.value(f.x), 2.0, places=4)
+
+    def test_a_false_one_is_reported_as_infeasible_before_solving(self):
+        """It is a proof, and the cheapest one available -- no solve needed.
+
+        Falling through to a general NLP solver replaces "constraint X is false
+        as written" with a bare termination_condition=infeasible.
+        """
+        from edi.presolve import InfeasibleProblem
+        from edi.solvers import solver as solver_module
+
+        with self.assertRaises(InfeasibleProblem) as ctx:
+            solver_module.solve(self._model(99.0), diagnostics='off')
+        msg = str(ctx.exception)
+        self.assertIn('no feasible point', msg)
+        self.assertIn('c = 3', msg)               # names the value
+        self.assertNotIn('dimensionless', msg)    # not the unit parameters

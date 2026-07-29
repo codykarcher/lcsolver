@@ -15,3 +15,9 @@ __all__ = ["ducted_fan_weight", "DuctedFanWeight",
            "stack_operate", "stack_weight",
            "colburn_j_pipe", "nusselt_staggered",
            "pressure_drop_staggered", "tube_thickness", "hx_weight"]
+from .hx_size import (HXGas, HXTubular, hx_size, hx_operate,  # noqa: F401,E501
+                      hx_optimize, hx_objective, tube_geometry,
+                      gas_tset_single)
+
+__all__ += ["HXGas", "HXTubular", "hx_size", "hx_operate", "hx_optimize",
+            "hx_objective", "tube_geometry", "gas_tset_single"]
