@@ -127,7 +127,7 @@ and you cannot tell which module to look at.
 | `planview` | `airpic.f`, `pltwrt` | both .plt files, exact |
 | `plot` | `picwrt`, `picidr` | picwrt's 12 polylines, exact |
 | `enginedeck` | `eopwrt` in `tasopt.f` | **737.oute, 4322/4323 lines** |
-| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw byte-identical** |
+| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw and sd81.asw byte-identical** |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
 
@@ -179,7 +179,10 @@ python -m tasopt_py runs/737/737.tas \
 ```
 
 `port.out` and `port.asw` are byte-identical to the reference program's;
-`port.oute` differs on one line of 4323, a printed rounding boundary.
+`port.oute` differs on one line of 4323, a printed rounding boundary. The
+ASWING export is checked against two aircraft — the 737 and the strut-braced,
+Pi-tailed `runs/D8/sd81.tas` — which between them exercise every branch in
+`aswout.f`.
 
 ### If you are looking for something to do
 
@@ -189,12 +192,14 @@ The port reproduces the reference program. The open questions are now about
 * **The signomial baseline.** That was goal 3 in the README and nothing here
   has been pointed at it yet. `engine_deck()` returning operating points as
   data is the obvious surrogate-fitting input.
-* **A case that is not the 737.** Every verification here is against one
-  aircraft. `runs/` has others; sizing one would exercise paths the 737 never
-  takes — a Pi-tail (§50), a strut-braced wing, `iengloc = 2`.
+* **The port cannot size the D8** (`runs/D8/sd81.tas`) — `tfoper`'s
+  numerical Jacobian produces a complex number at mission point 12. This is
+  §51, and it is the first thing found that the reference program does and
+  this port does not. Worth fixing: it is the only known correctness gap, and
+  a second aircraft is the obvious next verification target.
 * **The five ASWING mistranslations** (§46–§50) are reproduced, not fixed.
-  If anyone means to *use* a deck rather than diff it, §48 and §49 change the
-  structure and should probably be corrected behind a flag.
+  If anyone means to *use* a deck rather than diff it, §48, §49 and §50
+  change the structure and should probably be corrected behind a flag.
 
 ## Conventions to keep
 

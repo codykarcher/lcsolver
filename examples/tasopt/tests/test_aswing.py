@@ -17,6 +17,7 @@ rather than only that the file changed.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -269,23 +270,6 @@ def test_a_sensor_block_cannot_be_produced(built):
         deck.pylons.pop()
 
 
-def test_the_strut_and_pi_tail_paths_have_no_reference():
-    """Said out loud rather than left implicit: none of the eleven cases in
-    ``runs/`` has ``iwplan = 2`` or ``nvtail > 1``, so the strut beam and
-    the Pi-tail cross-member are ported from the source with nothing to diff
-    them against. They are unverified, not verified-and-passing."""
-    runs = Path("/Users/codykarcher/Desktop/Tasopt2.16/runs")
-    if not runs.exists():
-        pytest.skip("run cases not present")
-    cases = sorted(runs.glob("*/*.tas"))
-    assert len(cases) >= 11
-    for tas in cases:
-        for line in tas.read_text().splitlines():
-            if "iwplan" in line and not line.lstrip().startswith("!"):
-                assert line.split()[0] == "0", tas.name
-                break
-
-
 def test_the_beam_indices_are_generated_and_zero_based(built):
     """Unlike index.inc's, ASWING's VARS is declared (0:JBTOT)."""
     assert B.JSA == 0 and B.JXA == 1
@@ -293,3 +277,122 @@ def test_the_beam_indices_are_generated_and_zero_based(built):
     assert len(B.VARS) == B.JBTOT + 1 == len(B.KBREAK)
     assert all(len(v) == 11 for v in B.VARS)
     assert B.VARS[B.JCSH].strip() == "Cshell"
+
+
+# --- the strut-braced and Pi-tail cases -----------------------------------
+#
+# The 737 has neither, so neither of those two paths through aswout.f is
+# exercised above. `runs/D8/sd81.tas` has both -- a strut-braced wing
+# (iwplan = 2, so a fifth beam) and two fins (nvtail = 2, so the vertical
+# tail grows a horizontal cross-member and the tail joints change shape).
+#
+# The port cannot yet *size* the D8 -- tfoper's numerical Jacobian produces
+# a complex number on that engine, see DISCREPANCIES.md 51 -- so the check
+# here is the instrument-the-real-program pattern instead: aswout.f was
+# patched to dump everything it received, sd81 was run, and the port is
+# handed exactly those inputs. That isolates the export from the sizing, and
+# is the same method test_mission.py and test_wsize.py use.
+
+SD81 = DATA / "sd81.asw"
+SD81_IN = DATA / "aswout_in_sd81.txt"
+IN_737 = DATA / "aswout_in_737.txt"
+
+
+def _read_dump(path):
+    """The state aswout.f was handed, as the instrumented copy dumps it."""
+    from tasopt_py.model import Aircraft, ParamArray
+
+    lines = path.read_text().splitlines()
+    pos = 1                                  # a leading '1' marker
+    pari = ParamArray(I.IITOTAL, "pari")
+    for k in range(1, I.IITOTAL + 1):
+        pari[k] = int(lines[pos])
+        pos += 1
+    parg = ParamArray(I.IGTOTAL, "parg")
+    for k in range(1, I.IGTOTAL + 1):
+        parg[k] = _f(lines[pos])
+        pos += 1
+    para = ParamArray(I.IATOTAL, "para")
+    for k in range(1, I.IATOTAL + 1):
+        para[k] = _f(lines[pos])
+        pos += 1
+    # `write(87,'(i6)') nbl, iblte` with a one-descriptor format reverts,
+    # so the two integers land on separate records.
+    nbl, iblte = int(lines[pos]), int(lines[pos + 1])
+    pos += 2
+
+    cols = {}
+    for name in ("x", "ue", "th", "ts", "cd"):
+        cols[name] = [_f(lines[pos + i]) for i in range(nbl)]
+        pos += nbl
+    configname = lines[pos]
+
+    class _BL:
+        pass
+    bl = _BL()
+    bl.nbl, bl.iblte = nbl, iblte
+    for name, v in cols.items():
+        setattr(bl, name, v)
+    return pari, parg, para, configname, bl
+
+
+def _f(tok):
+    """gfortran drops the `E` when the exponent needs three digits."""
+    tok = tok.strip()
+    return float(re.sub(r"(\d)([-+]\d{3})$", r"\1E\2", tok))
+
+
+@pytest.mark.skipif(not SD81.exists() or not SD81_IN.exists(),
+                    reason="strut-braced reference not present")
+def test_the_strut_braced_pi_tail_deck_matches_the_fortran():
+    """All five beams, both fins, the strut and its four extra attachments."""
+    pari, parg, para, name, bl = _read_dump(SD81_IN)
+    assert pari[I.IIWPLAN] == 2 and parg[I.IGNVTAIL] == 2.0
+    text = boutput(aswout(pari, parg, para, name, bl))
+
+    got = text.split("\n")
+    if got and got[-1] == "":
+        got.pop()
+    want = SD81.read_text().split("\n")
+    if want and want[-1] == "":
+        want.pop()
+    assert len(got) == len(want) == 366
+    for i in range(len(want)):
+        assert got[i] == want[i], (
+            f"line {i + 1}\n  port: {got[i]!r}\n  ref : {want[i]!r}")
+
+
+@pytest.mark.skipif(not IN_737.exists(), reason="737 dump not present")
+def test_the_dump_reproduces_the_737_deck_too():
+    """The instrumentation is checked against the case that is already known
+    to be right, so a failure on the D8 is about the D8 and not about the
+    dump format."""
+    pari, parg, para, name, bl = _read_dump(IN_737)
+    assert boutput(aswout(pari, parg, para, name, bl)) == REF.read_text()
+
+
+@pytest.mark.skipif(not SD81_IN.exists(), reason="strut-braced dump absent")
+def test_the_strut_braced_case_has_five_beams_and_five_grounds():
+    pari, parg, para, name, bl = _read_dump(SD81_IN)
+    deck = aswout(pari, parg, para, name, bl)
+    assert [b.name for b in deck.beams] == [
+        "Fuselage", "Wing", "Horizontal Tail", "Vertical Tail", "Strut"]
+    # The strut is aerodynamically part of the wing, as the fin is of the
+    # stabiliser.
+    assert deck.beams[4].kbnum == 5 and deck.beams[4].ibeam == 2
+    # Its two root stations are grounded and its two break stations joined.
+    assert [g.beam for g in deck.grounds] == [1, 2, 2, 5, 5]
+    assert [j.beams for j in deck.joints] == [
+        (1, 4), (4, 3), (4, 3), (5, 2), (5, 2)]
+
+
+@pytest.mark.skipif(not SD81_IN.exists(), reason="strut-braced dump absent")
+def test_the_pi_tail_joins_both_fin_tops_to_the_stabiliser():
+    """Against the conventional pair on the 737: one fuselage-to-fin joint
+    plus *two* fin-to-stabiliser joints, at +/- the fin top."""
+    pari, parg, para, name, bl = _read_dump(SD81_IN)
+    deck = aswout(pari, parg, para, name, bl)
+    tails = [j for j in deck.joints if j.beams == (4, 3)]
+    assert len(tails) == 2
+    assert tails[0].t[0] == -tails[1].t[0]
+    assert tails[0].t[1] == pytest.approx(0.5 * parg[I.IGBOH])

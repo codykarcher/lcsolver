@@ -606,8 +606,33 @@ the fuel *mass*; `mgnnsfuel` is computed just above and never used. On the 737
 that is a factor of 3.5 at the break, and it shows in the deck as a step in
 the `Dmgnn` column across the doubled station, from 0.60510 to 0.17277.
 
-## §50 — the ASWING Pi-tail cross-member's shell width is assigned from itself
+## §50 — the ASWING Pi-tail cross-member is given the horizontal tail's shell width
 
-`Csh = Csh` in the vertical tail's cross-connect loop, which only executes on
-a Pi-tail (`nvtail > 1`). `Cshv` was meant. No shipped case has a Pi-tail, so
-this never fires; ported as written.
+`Csh = Csh` in the vertical tail's cross-connect loop, which runs when
+`nvtail > 1`. `Cshv` was meant.
+
+The value it actually gets is not garbage and not zero: `aswout` is one long
+subroutine, and `Csh` still holds what the *horizontal tail's* taper loop left
+in it — the stabiliser's tip shell width. So the member joining the two fins
+is given a section property from a different surface.
+
+`runs/D8` and `runs/HE` both have Pi-tails, so this does fire; the port
+reproduces it, and `tests/data/sd81.asw` is the reference.
+
+## §51 — the port cannot size the D8
+
+`runs/D8/sd81.tas` sizes in the Fortran (18 iterations, WTO = 134921.77 lbf)
+but not in the port: `tfcalc` fails at mission point 12 with a complex number
+reaching a comparison, which means `tfoper`'s numerical Jacobian has raised a
+negative base to a fractional power somewhere the Fortran does not.
+
+This is a genuine limitation, not a formatting difference, and it is the first
+thing found that the reference program does and this port does not. It is *not*
+what §22 describes — that is about `tfoper` exiting early on a step-size test —
+though both are about the same Newton.
+
+It does not affect the ASWING export, which is checked against the D8 by the
+instrument-the-real-program route instead: `aswout.f` was patched to dump
+everything it received, `sd81` was run, and the port was handed exactly those
+inputs. See `fortran_ref/aswout_instrumented.f` and
+`tests/data/aswout_in_sd81.txt`.

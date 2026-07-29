@@ -29,15 +29,12 @@ What is exported
 ``Beam 1..4``     fuselage, wing, horizontal tail, vertical tail
 ================  =========================================================
 
-What is *not* checked against anything
---------------------------------------
 A fifth beam, the strut, is written for a strut-braced wing
 (``iwplan = 2``), and the vertical tail grows a horizontal cross-member on a
-Pi-tail (``nvtail > 1``). **None of the eleven cases shipped in ``runs/``
-selects either** -- every one of them has ``iwplan = 0`` and a single fin --
-so those two paths are ported from the source but have no reference deck to
-diff against, and should be treated as unverified until one exists. The four
-beams above, and everything else in this module, are checked byte for byte.
+Pi-tail (``nvtail > 1``). The 737 has neither, so both are checked against a
+second case: ``runs/D8/sd81.tas`` has both, and its 366-line deck is
+reproduced byte for byte too. Between the two, every branch in ``aswout`` is
+exercised.
 
 ``Strut``, ``Sensor`` and ``Jangle`` *blocks* exist in ``BOUTPUT`` but
 nothing in ``aswout`` ever creates one -- the strut is a beam, not a strut
@@ -95,8 +92,11 @@ All of these are reproduced, with a test pinning each.
   a discontinuity in the deck: the column steps from 0.60510 to 0.17277
   across the doubled station. §49.
 * **The vertical tail's ``Csh`` is assigned from itself** in the
-  cross-connect loop -- ``Csh = Csh`` -- which only executes on a Pi-tail.
-  §50.
+  cross-connect loop -- ``Csh = Csh`` -- so the horizontal member between
+  two fins is given the **horizontal tail's tip** shell width, left in the
+  variable by the previous beam's loop. It is not garbage, and it is not
+  ``Cshv``; it is a value from a different surface. Only fires on a Pi-tail
+  (``nvtail > 1``), which ``runs/D8`` and ``runs/HE`` have. §50.
 * The ``Unit`` block writes L, T and F but not M, although ``BOUTPUT`` uses
   ``UNITM`` to scale the density on the ``Constant`` line. Harmless here
   because everything is 1.0.
@@ -374,9 +374,10 @@ def aswout(pari, parg, para, configname: str, bl=None) -> Deck:
                                      xblend1, xblend2, xshell1, xshell2,
                                      xupsweep, dupsweep))
     deck.beams.append(_wing_beam(parg, para, iwplan, ifwcen, xwbox, EAfac))
-    deck.beams.append(_htail_beam(parg, para, Lptail, EAfac))
+    htail, csh_left_behind = _htail_beam(parg, para, Lptail, EAfac)
+    deck.beams.append(htail)
     deck.beams.append(_vtail_beam(parg, para, Lptail, yov, ytv, zov, ztv,
-                                  t0v))
+                                  t0v, csh_left_behind))
     if iwplan == 2:
         deck.beams.append(_strut_beam(parg, para, xwbox))
         yo = 0.5 * parg[I.IGBO]
@@ -772,8 +773,13 @@ def _wing_beam(parg, para, iwplan, ifwcen, xwbox, EAfac) -> Beam:
     return beam
 
 
-def _htail_beam(parg, para, Lptail, EAfac) -> Beam:
-    """Beam 3: centre section and one tapered panel."""
+def _htail_beam(parg, para, Lptail, EAfac):
+    """Beam 3: centre section and one tapered panel.
+
+    Returns ``(beam, Csh)``, the second being the shell width left in the
+    Fortran's local variable when this block finishes -- which the vertical
+    tail then picks up. See §50.
+    """
     pi = math.pi
     beam = Beam("Horizontal Tail", 3)
 
@@ -863,10 +869,11 @@ def _htail_beam(parg, para, Lptail, EAfac) -> Beam:
                 B.JCLF2, B.JCMF2, B.JCM, B.JCDF, B.JCDP, B.JMG1, B.JMNN1,
                 B.JCCG1, B.JECC, B.JENN, B.JGJ, B.JEA, B.JCSH, B.JNSH,
                 B.JASH)
-    return beam
+    return beam, beam.q(ni + 5, B.JCSH)
 
 
-def _vtail_beam(parg, para, Lptail, yov, ytv, zov, ztv, t0v) -> Beam:
+def _vtail_beam(parg, para, Lptail, yov, ytv, zov, ztv, t0v,
+                csh_left_behind) -> Beam:
     """Beam 4: the fin, plus a horizontal cross-connect on a Pi-tail.
 
     ``ibeam`` is the horizontal tail's, because the two are aerodynamically
@@ -920,9 +927,10 @@ def _vtail_beam(parg, para, Lptail, yov, ytv, zov, ztv, t0v) -> Beam:
     ni = 0
     if Lptail:
         # The horizontal member joining the two fins. §50: `Csh = Csh`
-        # here, so it carries whatever the variable last held.
+        # here, so it keeps whatever the variable last held -- which is the
+        # *horizontal tail's tip* shell width, not `Cshv`.
         t1v = t0v + yov
-        Csh = 0.0
+        Csh = csh_left_behind
         for i in (1, 2):
             frac = float(i - 1)
             y = yov * frac

@@ -46,7 +46,7 @@ precision; the reference drivers use the same flag.
 | `plot` | `picwrt`, `picidr` | picwrt's 12 polylines, exact |
 | `enginedeck` | `eopwrt` in `tasopt.f` | **737.oute, 4322/4323 lines** |
 | `output.mapwrt` | `mapwrt` in `output.f` | `tfan_800.dat` byte-identical |
-| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw byte-identical** |
+| `aswing` | `aswout.f`, `BOUTPUT` | **737.asw and sd81.asw byte-identical** |
 | `optimise` | `fobj.f`, `simpop.f`, `hsort.f` | **18/18 objective calls** |
 | `model` | `index.inc`, `INDEXB.INC` | 611 + 103 constants, generated |
 
