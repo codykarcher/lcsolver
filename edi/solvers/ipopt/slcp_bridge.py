@@ -97,29 +97,53 @@ def build_problem(structures, sp_form=True):
     objective = posynomial(numerator[0], 'objective')
 
     constraints = []
+    n_split = 0
+
+    def unit():
+        """The monomial 1, for writing ``1/p <= 1``."""
+        return Posynomial([(1.0, [0.0] * n)], n)
+
     for idx in sorted(k for k in numerator if k != 0):
         op = operators[idx - 1] if (idx - 1) < len(operators) else '<='
         num = numerator[idx]
         den = denominator.get(idx)
+
+        def wrap(body):
+            """Opaque the body when sp_form is off, so SLCP linearizes it."""
+            if sp_form or not isinstance(body, PosynomialRatio):
+                return body
+            return Signomial(lambda x, r=body: (r(x), r.grad(x)), n)
+
         if den:
-            ratio = PosynomialRatio(
-                posynomial(num, f'constraint {idx} numerator'),
-                posynomial(den, f'constraint {idx} denominator'), n)
-            if sp_form:
-                body = ratio
-            else:
-                # Hand the same ratio over as an opaque value/gradient
-                # callback, so SLCP linearizes the whole body instead of
-                # keeping the numerator exact.
-                body = Signomial(
-                    lambda x, r=ratio: (r(x), r.grad(x)), n)
-            # An equality over a ratio is not representable: the AGM
-            # condensation is one-sided, so it is only conservative for '<='.
-            constraints.append(Constraint(body, '<='))
+            p_ = posynomial(num, f'constraint {idx} numerator')
+            q_ = posynomial(den, f'constraint {idx} denominator')
+            constraints.append(Constraint(wrap(PosynomialRatio(p_, q_, n)), '<='))
+            if op == '==':
+                # An equality is TWO inequalities. Writing only p/q <= 1
+                # RELAXES the problem -- the solver is then free to drive
+                # p/q below 1, which the equality forbids. The AGM
+                # condensation is one-sided so it cannot represent an
+                # equality directly, but the reverse direction q/p <= 1 is
+                # another ratio and condenses just as well.
+                constraints.append(
+                    Constraint(wrap(PosynomialRatio(q_, p_, n)), '<='))
+                n_split += 1
         else:
             body = posynomial(num, f'constraint {idx}')
             if op == '==' and body.is_monomial:
+                # A monomial equality is affine in log space: exact as is.
                 constraints.append(Constraint(body, '=='))
+            elif op == '==':
+                # A multi-term posynomial equality. p <= 1 is log-convex and
+                # goes in as it stands; the reverse 1/p <= 1 is NOT a
+                # posynomial, so it goes in as a ratio with p underneath and
+                # is condensed. Dropping it -- which is what writing only
+                # p <= 1 does -- relaxes the problem. This is the same device
+                # PCCP uses in cvxopt/SP.py for the identical case.
+                constraints.append(Constraint(body, '<='))
+                constraints.append(
+                    Constraint(wrap(PosynomialRatio(unit(), body, n)), '<='))
+                n_split += 1
             else:
                 constraints.append(Constraint(body, '<='))
 

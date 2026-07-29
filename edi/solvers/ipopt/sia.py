@@ -113,7 +113,13 @@ class SIAOptions:
         # --- Phase I: find a feasible point before optimizing --------------
         self.phase1 = True             # False falls back to penalty CCP
         self.phase1_max_iterations = 50
-        self.phase1_margin = 1e-8      # aim for STRICTLY feasible
+        self.phase1_margin = 1e-8      # target interiority for the Phase I
+                                       # sub-problem. NOT an acceptance test:
+                                       # an ACTIVE EQUALITY is feasible at
+                                       # exactly log g = 0 and can never be
+                                       # strictly interior, so demanding it
+                                       # leaves Phase I spinning forever on
+                                       # any problem with equalities.
         # --- penalty CCP, used only if phase1 is off or fails --------------
         self.tau0 = 1.0
         self.tau_factor = 5.0
@@ -375,7 +381,7 @@ def _phase1(problem, x, options, has_blackbox):
     radius = options.trust_radius
     for it in range(1, options.phase1_max_iterations + 1):
         viol = _violation(problem, x)
-        if viol <= -options.phase1_margin:
+        if viol <= options.feasibility_tolerance:
             return x, it - 1, True
         try:
             d, _, _, t = _subproblem(problem, x, 0.0, radius, options,
@@ -405,6 +411,11 @@ def _phase1(problem, x, options, has_blackbox):
         if options.verbose:
             print(f"  phase1 {it:3d}  max log g: {viol:+.3e} -> "
                   f"{new_viol:+.3e}   (model t = {t:+.3e})")
+        if abs(new_viol - viol) <= 1e-14 * max(1.0, abs(viol)):
+            # Stalled: no further reduction available. Report whether the
+            # point is feasible to tolerance rather than looping to the cap.
+            x = x_new
+            return x, it, _violation(problem, x) <= options.feasibility_tolerance
         x = x_new
         if has_blackbox:
             radius = min(options.trust_max, radius * options.trust_expand)
@@ -440,7 +451,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # hold FROM A FEASIBLE POINT. Rather than blend cost and feasibility into
     # one penalized objective and hope, get feasible first on its own terms,
     # then optimize with the guarantees switched on and no penalty at all.
-    if options.phase1 and _violation(problem, x) > -options.phase1_margin:
+    if options.phase1 and _violation(problem, x) > options.feasibility_tolerance:
         x, res.phase1_iterations, feasible = _phase1(
             problem, x, options, has_blackbox)
         res.history.append(x.copy())
