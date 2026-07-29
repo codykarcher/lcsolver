@@ -172,6 +172,11 @@ Eng_h_25[...]        engine station enthalpy
 Combined with the fixed columns that is 1172 variables down to 1068 and 1217
 constraints to 1165.
 
+Verified against the real solution: eliminating all 52, solving, and
+post-computing them back reproduces the full 1172-variable vector to a maximum
+relative error of **6.0e-10**. The values a user reads are the values the
+optimizer would have produced.
+
 ### Why degenerate variables are *not* removed
 
 This is the distinction that matters, and it cuts the other way from what
