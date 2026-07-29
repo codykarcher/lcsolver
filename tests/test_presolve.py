@@ -28,6 +28,7 @@ from edi.presolve import (
     degeneracy_report,
     fold_singleton_rows,
     presolve_report,
+    propagate_bounds,
     reduce_columns,
     restore_columns,
 )
@@ -795,3 +796,87 @@ def test_crossed_declared_bounds_are_caught_too():
     st['bounds'][names.index('x')] = (5.0, 2.0)      # crossed
     with pytest.raises(InfeasibleProblem, match='no feasible point'):
         reduce_columns(st)
+
+
+# ---------------------------------------------------------------------------
+# bound propagation
+# ---------------------------------------------------------------------------
+def test_propagation_derives_a_bound_in_log_space():
+    """`x*y >= 1` with `y <= 10` implies `x >= 0.1`."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[1e-30, 1e30])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[1e-30, 10.0])
+    f.Objective(x)
+    f.Constraint(x * y >= 1.0)
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    out, n = propagate_bounds(st)
+
+    names = [str(v) for v in out['variables']]
+    lo, _hi = out['bounds'][names.index('x')]
+    assert n >= 1
+    assert lo == pytest.approx(0.1, rel=1e-6)
+
+
+def test_an_equality_uses_both_endpoints_not_just_the_minimum():
+    """The regression for the bug that called SPaircraft infeasible.
+
+    An equality bounds `v_k` above using the MINIMUM of the other terms and
+    below using their MAXIMUM -- different sums. Reusing the minimum for both
+    manufactures contradictions between unrelated equalities and "proves" a
+    perfectly feasible model infeasible.
+    """
+    f = Formulation()
+    a = f.Variable('a', 1.0, '', 'a', bounds=[1e-30, 1e30])
+    b = f.Variable('b', 1.0, '', 'b', bounds=[1.0, 100.0])
+    c = f.Variable('c', 1.0, '', 'c', bounds=[1.0, 100.0])
+    f.Objective(a)
+    f.Constraint(a == 2.0 * b)          # monomial equalities, sharing `a`
+    f.Constraint(a == 3.0 * c)
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+
+    out, _n = propagate_bounds(st)      # must not raise
+    names = [str(v) for v in out['variables']]
+    lo, hi = out['bounds'][names.index('a')]
+    # a = 2b in [2,200] and a = 3c in [3,300}  ->  a in [3,200]
+    assert lo == pytest.approx(3.0, rel=1e-6)
+    assert hi == pytest.approx(200.0, rel=1e-6)
+
+
+def test_propagation_works_on_a_linear_program():
+    """EDI solves LPs too, and the same arithmetic applies in natural space."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[-100.0, 100.0])
+    y = f.Variable('y', 1.0, '', 'y', bounds=[-100.0, 5.0])
+    f.Objective(x + y)
+    f.Constraint(x - y >= 2.0)
+    st = _detect(f, bounds_as_rows=False)
+    assert st['Linear_Program'][0]
+
+    out, n = propagate_bounds(st)
+    names = [str(v) for v in out['variables']]
+    lo, _hi = out['bounds'][names.index('x')]
+    assert n >= 1
+    assert lo == pytest.approx(-98.0, rel=1e-6)   # -x + y <= -2 with y >= -100
+
+
+def test_propagation_proves_an_lp_infeasible():
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[-100.0, 100.0])
+    f.Objective(x)
+    f.Constraint(x >= 10.0)
+    f.Constraint(x <= 1.0)
+    with pytest.raises(InfeasibleProblem, match='no feasible point'):
+        propagate_bounds(_detect(f, bounds_as_rows=False))
+
+
+def test_propagation_leaves_a_genuinely_unbounded_variable_alone():
+    """It must not invent a bound where the model provides none."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[1e-30, 1e30])
+    w = f.Variable('w', 1.0, '', 'w', bounds=[1e-30, 1e30])
+    f.Objective(x)
+    f.Constraint(x >= 2.0)
+    f.Constraint(x * w >= 1.0)          # bounds w below, nothing above
+    st = fold_singleton_rows(_detect(f, bounds_as_rows=False))
+    out, _n = propagate_bounds(st)
+    assert 'w' in presolve_report(out).unbounded_above

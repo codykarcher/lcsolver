@@ -67,6 +67,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "InfeasibleProblem",
            "cancellation_report", "fold_singleton_rows",
            "reduce_columns", "restore_columns", "Removed",
+           "propagate_bounds",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -586,6 +587,191 @@ def _output_only(numer, denom, con_idx, operators, bounds, in_objective, n):
             # only be recovered once that one is known. Callers recover in
             # REVERSE of this order.
             return order
+
+
+def _tighten_linear(linear, L, U, names, max_passes, min_gain):
+    """Interval propagation on ``coeffs . v <= rhs`` (or ``==``).
+
+    ``L`` and ``U`` bound ``v`` in whatever space the caller works in --
+    natural variables for an LP, log variables for a GP. The arithmetic does
+    not care which, which is why this is shared.
+
+    For ``a . v <= b`` and any ``k``, isolate ``a_k v_k <= b - S`` where ``S``
+    is the sum of the other terms. The binding case is ``S`` at its **minimum**,
+    reached at ``L_j`` where ``a_j > 0`` and ``U_j`` where ``a_j < 0``.
+
+    An **equality** additionally gives ``a_k v_k >= b - S`` with ``S`` at its
+    **maximum**, and that is a different sum -- the opposite endpoint of every
+    other variable. Reusing the minimum for both directions manufactures
+    contradictions: on SPaircraft it "proved" a variable with a wide-open box
+    both <= 1.6e7 and >= 2.6e-15 from two unrelated monomial equalities, and
+    declared the model infeasible.
+
+    Mutates ``L``/``U`` in place; returns the number of tightenings.
+    """
+    import math
+
+    NEG, POS = -math.inf, math.inf
+    tightened = 0
+
+    def side(a_j, lo, hi, want_min):
+        """Contribution of one term at whichever endpoint is asked for."""
+        if want_min:
+            return a_j * lo if a_j > 0 else a_j * hi
+        return a_j * hi if a_j > 0 else a_j * lo
+
+    for _pass in range(max_passes):
+        changed = False
+        for rhs, a, nz, eq in linear:
+            # Sum of all terms at their min, and (for an equality) at their max,
+            # each carrying its own count of infinite contributions.
+            sums = {}
+            for want_min in ((True, False) if eq else (True,)):
+                tot, infs, at = 0.0, 0, -1
+                for j in nz:
+                    m = side(a[j], L[j], U[j], want_min)
+                    if m == NEG or m == POS:
+                        infs += 1
+                        at = j
+                        if infs > 1:
+                            break
+                    else:
+                        tot += m
+                sums[want_min] = (tot, infs, at)
+
+            for k in nz:
+                for want_min in ((True, False) if eq else (True,)):
+                    tot, infs, at = sums[want_min]
+                    if infs > 1 or (infs == 1 and k != at):
+                        continue
+                    mk = side(a[k], L[k], U[k], want_min)
+                    rest = tot if (infs == 1 and k == at) else tot - mk
+                    if rest == NEG or rest == POS:
+                        continue
+                    limit = (rhs - rest) / a[k]
+                    # want_min bounds a_k v_k from ABOVE, want_max from BELOW
+                    upper = (a[k] > 0) == want_min
+                    if upper:
+                        if limit < U[k] - min_gain:
+                            U[k] = limit; tightened += 1; changed = True
+                    else:
+                        if limit > L[k] + min_gain:
+                            L[k] = limit; tightened += 1; changed = True
+                    if L[k] > U[k] + 1e-6:
+                        raise InfeasibleProblem(
+                            f"bound propagation drove {nm_at(names, k)} to an "
+                            "empty range; the model has no feasible point")
+        if not changed:
+            break
+    return tightened
+
+
+def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
+    """Tighten variable bounds by interval propagation.
+
+    Works on a linear program, a quadratic program (whose constraints are
+    linear), and a geometric or signomial program. The last is the interesting
+    case: a monomial ``c * prod x_j**a_j <= 1`` is **linear** once written in
+    ``y = log x``, as ``a . y <= -log c``, so the ordinary LP propagation
+    applies unchanged. Only the space differs, so the arithmetic is shared --
+    see :func:`_tighten_linear`.
+
+    A **posynomial** yields more than it looks like it should. Every term of
+    ``sum_k c_k m_k(x) <= 1`` is strictly positive, so each separately
+    satisfies ``c_k m_k(x) <= 1``. Each term is a monomial, so one posynomial
+    hands over one linear implication per term for free. That is what makes
+    this worth running on a GP at all: most constraints are posynomials, and a
+    strictly-monomial rule would skip nearly everything.
+
+    Ratios are left alone -- ``p <= q`` bounds neither side without a point to
+    evaluate at, and being wrong here would be silent.
+
+    Returns ``(structures, n_tightened)`` with a new bounds list; the input is
+    untouched. Raises :class:`InfeasibleProblem` if a range comes out empty.
+    """
+    import math
+
+    if structures.get("bounds") is None:
+        raise ValueError(
+            "propagate_bounds needs structures['bounds']; run "
+            "structure_detector with bounds_as_rows=False first")
+
+    names = [str(v) for v in structures.get("variables", [])]
+    bounds = list(structures["bounds"])
+    NEG, POS = -math.inf, math.inf
+
+    lp = (structures.get("Linear_Program", (False,))[0]
+          or structures.get("Quadratic_Program", (False,))[0])
+
+    if lp:
+        # Natural variables: rows are AG . x <= b, and x may be negative.
+        key = ("Linear_Program" if structures["Linear_Program"][0]
+               else "Quadratic_Program")
+        payload = structures[key][1]
+        AG, bh = payload[2], payload[3]
+        if AG is None:
+            return structures, 0
+        operators = structures[key][2]
+        n = max(len(bounds), max(len(r) for r in AG))
+        while len(bounds) < n:
+            bounds.append((None, None))
+        L = [b[0] if (b and b[0] is not None) else NEG for b in bounds]
+        U = [b[1] if (b and b[1] is not None) else POS for b in bounds]
+        linear = []
+        for i, row in enumerate(AG):
+            a = [float(v) for v in row] + [0.0] * (n - len(row))
+            nz = [j for j in range(n) if abs(a[j]) > 1e-12]
+            if not nz:
+                continue
+            op = operators[i] if i < len(operators) else "<="
+            linear.append((-float(bh[i]), a, nz, op == "=="))
+        k = _tighten_linear(linear, L, U, names, max_passes, min_gain)
+        new_bounds = [(None if L[j] == NEG else L[j],
+                       None if U[j] == POS else U[j]) for j in range(n)]
+    else:
+        rows, operators, _key = _rows_of(structures)
+        n = max([len(r) - 2 for r in rows] + [len(bounds)])
+        while len(bounds) < n:
+            bounds.append((None, None))
+        L = [math.log(b[0]) if (b and b[0] and b[0] > 0) else NEG
+             for b in bounds]
+        U = [math.log(b[1]) if (b and b[1] and b[1] > 0) else POS
+             for b in bounds]
+
+        numer, denom = collections.defaultdict(list), collections.defaultdict(list)
+        for r in rows:
+            idx = int(r[0])
+            (numer if idx >= 0 else denom)[
+                idx if idx >= 0 else -idx - 1].append(r)
+
+        linear = []
+        for i in sorted(kk for kk in set(numer) | set(denom) if kk != 0):
+            if denom.get(i):
+                continue
+            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+            terms = numer.get(i, [])
+            # Only a single-term equality is an equality term-wise; a
+            # multi-term one implies just the <= half per term.
+            eq = (op == "==" and len(terms) == 1)
+            for r in terms:
+                c = float(r[1])
+                if c <= 0:
+                    continue
+                a = [float(e) for e in r[2:]] + [0.0] * (n - (len(r) - 2))
+                nz = [j for j in range(n) if abs(a[j]) > 1e-12]
+                if nz:
+                    linear.append((-math.log(c), a, nz, eq))
+        k = _tighten_linear(linear, L, U, names, max_passes, min_gain)
+        new_bounds = [(None if L[j] == NEG else math.exp(L[j]),
+                       None if U[j] == POS else math.exp(U[j]))
+                      for j in range(n)]
+
+    out = dict(structures)
+    out["bounds"] = new_bounds
+    info = dict(structures.get("info") or {})
+    info["N_bounds_tightened"] = k
+    out["info"] = info
+    return out, k
 
 
 def reduce_columns(structures, guess=None, eliminate_outputs=True):
