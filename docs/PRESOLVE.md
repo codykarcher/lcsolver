@@ -96,6 +96,79 @@ structures outright rather than silently solving an unbounded relaxation — a
 relaxed problem still returns an answer, and that answer can look entirely
 reasonable.
 
+## Removing columns
+
+`reduce_columns` is the one reduction that removes *variables*, and it removes
+only what is provably inert:
+
+* **disconnected** — appears in no real constraint and no objective term. In
+  `min x**2 s.t. x >= 1, y >= 4`, nothing determines `y` and nothing depends on
+  it. Fixed at its tightest finite bound and dropped.
+* **fixed** — equal bounds make it a constant wearing a variable's clothing.
+  Its value is folded into the coefficient of every term it appears in,
+  `c * v**a`, and the column goes.
+
+Both are exact: the optimal objective is unchanged and every removed variable
+gets a value feasible for the original problem.
+
+`solve_slcp` and `solve_sia` take `presolve=True` **by default** and restore the
+removed variables into `result.x`, so a caller sees the original variable
+ordering and need not know anything happened. `result.removed` records what was
+taken out.
+
+On SPaircraft this removes 52 variables, all `fixed` constants
+(`Wing_c_m_w=1.9`, `VT_A_vt=2.2`), and none `disconnected` — every variable is
+either in a real constraint or a constant. Verified exact at the reference
+solution: objective identical to 15 digits, worst violation identical, and the
+restored vector round-trips bit-for-bit.
+
+### Why degenerate variables are *not* removed
+
+This is the distinction that matters, and it cuts the other way from what
+intuition suggests.
+
+A **disconnected** variable is invisible to the model at every design point, so
+dropping it can never change an answer. A **degenerate** variable typically
+sits in several perfectly ordinary constraints that all happen to go slack *at
+this optimum*. Remove it and you remove those constraints too — and they would
+bind at a different payload, range or altitude. That is the same class of error
+as relaxing an equality: the weakened problem still returns a plausible number.
+
+Nothing in `reduce_columns` touches a variable that appears in a real
+constraint. So on SPaircraft `Wing_A_tri` survives, correctly, despite being
+both degenerate *and* unbounded above — it appears in its own defining
+constraint. The fix for it is a modelling one (delete it, or connect it to
+something), not a presolve rule.
+
+Degeneracy also cannot gate the solve that discovers it: it is a property of
+the solution, so it is only knowable afterwards.
+
+## Sub-problem caching
+
+Related, because it attacks the same cost. `SIAOptions.cache_subproblem`
+(default `True`) builds each phase's Pyomo model once and re-points it, instead
+of rebuilding every constraint symbolically each iteration. Each exact term is
+
+    exp( log c_k + a_k . (d + log x_k) ) = exp( [const] + [a_k . d] )
+
+where `a_k . d` is fixed and only the constant follows the iterate, so the
+projections are built once and the constants become mutable Params. The
+AGM-condensed denominator of a ratio reuses the same projections via
+`aq . d = sum_i w_i (a_i . d)`, needing one mutable weight per term rather than
+a full coefficient vector.
+
+Measured: turbofan 23.3 s → 2.0 s (11.7×), windturbine 5.7 s → 1.4 s (4.2×).
+Falls back to rebuilding for a black-box body, which has to be re-linearized
+every iteration regardless.
+
+Caching is a performance change, not a numerical one — but "identical" needs
+care. On simpleac the two paths land 38% apart in `V_f_fuse` and `CDA0`, with
+the objective agreeing to 2.6e-07. Both are degenerate and both sit at the
+positivity floor: a flat direction can land anywhere without either answer
+being wrong. The equivalence test therefore compares the objective and
+constraint values everywhere, and individual variables only where the problem
+determines them.
+
 ## Degenerate variables
 
 A variable is degenerate when it can be moved in **both** directions without
