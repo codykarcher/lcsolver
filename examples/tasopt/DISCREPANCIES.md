@@ -968,3 +968,46 @@ written out explicitly in `tasopt_py.cryo.mission_tank` to give the same
 answer. Both are reproduced and pinned; neither is corrected, because
 correcting one would change every integrated fuel total away from the
 reference's.
+
+## §65 — `inverter.jl` and one copy of `cable.jl` are unreachable in TASOPT.jl
+
+`src/propsys/propsys.jl` includes `cable.jl` and `PMSM.jl` and nothing else.
+`inverter.jl` is included only from *inside* `PMSM.jl`, which opens a
+`module ElectricMachine` on its first line — so `Inverter`,
+`size_inverter!` and `operate_inverter!` end up in
+`TASOPT.propsys.ElectricMachine`, not in `propsys`, and nothing outside
+reaches them.
+
+Worse, the copy of `Cable` that `propsys.jl` includes directly **cannot
+run**. `cable.jl` uses `gee`, and `propsys.jl` never includes
+`constants.jl`; only `PMSM.jl` does. So `TASOPT.propsys.Cable()(P, V, l)`
+fails with
+
+```
+UndefVarError: `gee` not defined in `TASOPT.propsys`
+```
+
+while the identical `TASOPT.propsys.ElectricMachine.Cable` works. Two copies
+of the same type, one of them broken, distinguished only by which module you
+reach it through.
+
+This is the same shape as §-note on `gasburn.f` in 2.16: a file that is
+present, plausible and not on any live path. The port takes the working copy
+and says which one it is.
+
+## §66 — the inverter efficiency fit peaks below full load
+
+`inverter.jl` fits efficiency through three points — 10%, 20% and 100% of
+design power — with
+
+    eta = k1 + k2 (P/Pdes) + k3 (P/Pdes)^-1
+
+The `1/x` term is deliberate and right: it makes a lightly loaded inverter
+inefficient, which a plain polynomial would miss. But the consequence is that
+the fitted curve has an interior maximum, and it does **not** sit at the
+design point. On the shipped coefficients the peak is near 50% load and full
+load is slightly *worse* than half load.
+
+That is a property of a three-point fit, not a claim about power
+electronics, and it means an optimiser given freedom over inverter sizing
+will be pushed toward oversizing. Reproduced and pinned.
