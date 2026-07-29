@@ -27,6 +27,7 @@ from edi.presolve import (
     PresolveLog,
     assert_equivalent,
     cancellation_report,
+    diagnose,
     evaluate,
     degeneracy_report,
     eliminate_monomial_equalities,
@@ -1253,6 +1254,71 @@ def test_terms_reproduce_the_positional_row_format():
         for t in st.terms(i):
             assert isinstance(t.coeff, float)
             assert all(abs(e) > 1e-12 for e in t.exponents.values())
+
+
+def test_diagnose_reads_either_bound_form_the_same_way():
+    """The report must not depend on how the detector carried the bounds.
+
+    `diagnose` folds single-variable rows into bounds so it can read the
+    rows form. It used to skip that fold when the detector had already split
+    the bounds out -- but folding also takes single-variable rows OUT of the
+    row set, and a model writes plenty of those itself. Left in, they count
+    against every variable they touch, so a quantity computed by one equality
+    and bounded by one row looks like it appears twice and never registers as
+    output-only. The form the feature exists for was the one that missed them.
+    """
+    fields = ('empty_columns', 'unbounded_above', 'unbounded_below',
+              'singleton_columns', 'fixed_columns', 'output_columns',
+              'bound_only_columns')
+
+    as_rows = diagnose(_detect(_rich_model(), bounds_as_rows=True), quiet=True)
+    as_split = diagnose(_detect(_rich_model(), bounds_as_rows=False), quiet=True)
+
+    for f in fields:
+        assert (sorted(map(str, getattr(as_rows, f) or []))
+                == sorted(map(str, getattr(as_split, f) or []))), \
+            f'{f} differs between the two bound representations'
+
+
+def test_a_vacuous_singleton_row_does_not_hide_an_output_variable():
+    """x is computed by an equality and read by nobody, so it is output-only.
+
+    The extra row is a bound the model states rather than one declared on the
+    variable, and at 1e30 it restricts nothing. Before the fold ran on the
+    split form, that row still counted as a second appearance of x and the
+    scan skipped it.
+
+    A *tight* singleton row would be a different matter: `x <= 100` against
+    `x == 3y` really does force `y <= 33`, and x is then not free at all.
+    """
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'a reported quantity')
+    y = f.Variable('y', 1.0, '', 'a real unknown')
+    f.Objective(y)
+    f.Constraint(y >= 2.0)
+    f.Constraint(x == 3.0 * y)          # x computed here
+    f.Constraint(x <= 1e30)             # and bounded by nothing in particular
+
+    for flag in (True, False):
+        rep = diagnose(_detect(f, bounds_as_rows=flag), quiet=True)
+        assert 'x' in [str(n) for n in rep.output_columns], \
+            f'x should be output-only with bounds_as_rows={flag}'
+        assert 'y' not in [str(n) for n in rep.output_columns]
+
+
+def test_a_tight_singleton_row_does_keep_a_variable_from_being_output_only():
+    """`x == 3y` with `x <= 100` forces `y <= 33`; x is not free."""
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'a reported quantity')
+    y = f.Variable('y', 1.0, '', 'a real unknown')
+    f.Objective(y)
+    f.Constraint(y >= 2.0)
+    f.Constraint(x == 3.0 * y)
+    f.Constraint(x <= 100.0)
+
+    for flag in (True, False):
+        rep = diagnose(_detect(f, bounds_as_rows=flag), quiet=True)
+        assert 'x' not in [str(n) for n in rep.output_columns]
 
 
 def test_terms_parses_each_row_once_however_often_it_is_asked():

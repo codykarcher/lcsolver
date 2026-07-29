@@ -1555,13 +1555,22 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
     from edi.structure.detected import as_detected
 
     st = as_detected(structures)
-    if st.bounds is None:
-        # The interesting checks need bounds separated from rows. Fold a copy
-        # rather than making the caller know that.
-        try:
-            st = fold_singleton_rows(_with_empty_bounds(st))
-        except Exception:
-            pass
+    # The interesting checks need bounds separated from rows, so fold a copy
+    # rather than making the caller know that. This runs whether or not the
+    # detector already split the declared bounds out: folding does two things,
+    # and only one of them is filling in `bounds`. The other is taking
+    # single-variable rows OUT of the row set, and a model states plenty of
+    # those itself, quite apart from anything declared on a variable. Left in,
+    # they count against every variable they touch, so a quantity computed by
+    # one equality and merely bounded by one row looks like it appears twice
+    # and never registers as output-only. On SPaircraft that hid all 52 of
+    # them -- from the bounds-split form specifically, which is the form the
+    # feature exists for.
+    try:
+        st = fold_singleton_rows(st if st.bounds is not None
+                                 else _with_empty_bounds(st))
+    except Exception:
+        pass
 
     rep = presolve_report(st)
     model = st.get("model")

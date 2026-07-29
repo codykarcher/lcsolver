@@ -186,14 +186,41 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     In every case the solution is written back onto the model, so
     ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
+    import warnings
+
     from edi.presolve import InfeasibleProblem
     from edi.solvers.ipopt import ipopt_solve
 
-    if diagnostics not in (None, 'off', False):
+    # Detect once and use the result for both the checks and the solve. These
+    # used to be two separate walks of the model, because `diagnose` needs
+    # bounds separated from the rows and the structured backends read them out
+    # of the rows -- but `diagnose` folds single-variable rows into bounds
+    # itself, so it reads either form and returns the same report. The walk is
+    # not cheap: on SPaircraft it is four to six seconds, against an
+    # eleven-second solve.
+    want_checks = diagnostics not in (None, 'off', False)
+    # Bind the corrected clone to a local: `structures['variables']` holds only
+    # the VarData objects, and if the clone were collected here their parent
+    # components would go with it.
+    corrected = structures = None
+    detection_failed = None
+    if want_checks or solver == 'auto':
         try:
-            _run_diagnostics(structure_detector(unit_corrector(m),
-                                                bounds_as_rows=False),
-                             diagnostics)
+            corrected = unit_corrector(m)
+            structures = structure_detector(corrected)
+            _raise_if_infeasible(structures)
+        except InfeasibleProblem:
+            # A proof of infeasibility is an answer, not a reason to try a
+            # different solver. Falling back here would replace "constraint X
+            # is false as written" with whatever a general NLP solver says
+            # about a problem that has no solution.
+            raise
+        except Exception as e:
+            detection_failed = e
+
+    if want_checks and structures is not None:
+        try:
+            _run_diagnostics(structures, diagnostics)
         except InfeasibleProblem:
             raise
         except Exception:
@@ -208,29 +235,16 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
-    import warnings
-
-    try:
-        # Bind the corrected clone to a local: `structures['variables']` holds
-        # only the VarData objects, and if the clone were collected here their
-        # parent components would go with it.
-        corrected = unit_corrector(m)
-        structures = structure_detector(corrected)
-        _raise_if_infeasible(structures)
+    if detection_failed is not None:
+        warnings.warn(
+            f"structure detection failed ({type(detection_failed).__name__}: "
+            f"{detection_failed}); solving with IPOPT instead.",
+            RuntimeWarning, stacklevel=2)
+        structured = False
+    else:
         structured = any(structures[k][0] for k in
                          ('Linear_Program', 'Quadratic_Program',
                           'Geometric_Program', 'Signomial_Program'))
-    except InfeasibleProblem:
-        # A proof of infeasibility is an answer, not a reason to try a
-        # different solver. Falling back here would replace "constraint X is
-        # false as written" with whatever a general NLP solver says about a
-        # problem that has no solution.
-        raise
-    except Exception as e:
-        warnings.warn(
-            f"structure detection failed ({type(e).__name__}: {e}); "
-            f"solving with IPOPT instead.", RuntimeWarning, stacklevel=2)
-        structured = False
 
     if structured:
         try:

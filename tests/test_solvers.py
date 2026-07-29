@@ -599,3 +599,46 @@ class TestConstantOnlyConstraints(unittest.TestCase):
         self.assertIn('no feasible point', msg)
         self.assertIn('c = 3', msg)               # names the value
         self.assertNotIn('dimensionless', msg)    # not the unit parameters
+
+
+@unittest.skipIf(not formulation_available, 'EDI import failed')
+class TestSolveDetectsOnce(unittest.TestCase):
+    """`solve` walks the model once, not once per consumer.
+
+    The checks and the structured backends used to each detect for themselves,
+    because `diagnose` wants bounds separated from the rows and the backends
+    read them out of the rows. `diagnose` folds single-variable rows into
+    bounds itself, so it reads either form -- and the walk is the expensive
+    part of a solve on a large model, seconds against seconds.
+    """
+
+    def _count_detections(self, **kwargs):
+        import edi.solvers.solver as solver_mod
+
+        calls = []
+        real = solver_mod.structure_detector
+
+        def counting(*a, **kw):
+            calls.append(1)
+            return real(*a, **kw)
+
+        solver_mod.structure_detector = counting
+        try:
+            solver_mod.solve(_linear_model(), **kwargs)
+        finally:
+            solver_mod.structure_detector = real
+        return sum(calls)
+
+    def test_diagnostics_on_costs_no_extra_walk(self):
+        self.assertEqual(self._count_detections(diagnostics='warn'), 1)
+
+    def test_diagnostics_off_still_detects_for_routing(self):
+        self.assertEqual(self._count_detections(diagnostics='off'), 1)
+
+    def test_the_answer_is_unchanged_either_way(self):
+        for level in ('warn', 'off'):
+            f = _linear_model()
+            from edi.solvers.solver import solve
+            solve(f, diagnostics=level)
+            self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
+            self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
