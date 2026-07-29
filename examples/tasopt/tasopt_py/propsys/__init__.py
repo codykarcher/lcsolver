@@ -7,9 +7,14 @@ an aircraft where electricity is the propulsion.
 
 Verified against a running TASOPT.jl; see ``julia_ref/``.
 """
+from .motor import (airgap_flux, core_loss, eddy_loss,  # noqa: F401
+                    hysteresis_loss, ohmic_loss, remanent_flux,
+                    windage_loss)
 from .electric import (Cable, Inverter, SizedCable,  # noqa: F401
                        operate_inverter, resistivity, size_cable,
                        size_inverter)
 
 __all__ = ["Inverter", "size_inverter", "operate_inverter",
-           "Cable", "size_cable", "SizedCable", "resistivity"]
+           "Cable", "size_cable", "SizedCable", "resistivity",
+           "airgap_flux", "remanent_flux", "ohmic_loss", "hysteresis_loss",
+           "eddy_loss", "core_loss", "windage_loss"]

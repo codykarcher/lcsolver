@@ -1011,3 +1011,59 @@ load is slightly *worse* than half load.
 That is a property of a three-point fit, not a claim about power
 electronics, and it means an optimiser given freedom over inverter sizing
 will be pushed toward oversizing. Reproduced and pinned.
+
+## §67 — the windage solver fails on any aircraft-scale motor
+
+`PMSM.jl`, `windage_loss`. Vrancik (1968) gives the skin friction in the
+rotor's annular gap implicitly:
+
+```julia
+    res(Cf) = 1/sqrt(Cf) - 2.04 - 1.768*log(Re*sqrt(Cf))
+    Cf = find_zero(res, 1e-2)
+```
+
+The residual takes a square root and a logarithm of `Cf`, so it is undefined
+at `Cf <= 0`. `find_zero` with a scalar guess is unbracketed, steps negative,
+and throws:
+
+```
+DomainError with -0.0008502518184679928
+```
+
+Measured over eight representative rotors, it fails for every gap Reynolds
+number above roughly **30 000**:
+
+| Ω (rad/s) | r_gap (m) | gap (m) | Re | `find_zero(res, 1e-2)` |
+|---|---|---|---|---|
+| 500 | 0.15 | 0.002 | 10 000 | 0.005330 |
+| 500 | 0.25 | 0.002 | 16 667 | 0.004757 |
+| 500 | 0.25 | 0.004 | 33 333 | **DomainError** |
+| 1500 | 0.15 | 0.002 | 30 000 | **DomainError** |
+| 1500 | 0.25 | 0.004 | 100 000 | **DomainError** |
+
+This is not an exotic corner. 1500 rad/s is about 14 000 rpm, and 0.15 m is
+an ordinary gap radius for an aircraft propulsion motor — five of the eight
+cases are past the threshold, and the reference dump for this port had to be
+taken with a bracketed solve to produce values at all.
+
+`tasopt_py.propsys.motor` brackets on `[1e-8, 1]`. Where the reference works
+the two agree to 7e-15.
+
+## §68 — `remanent_flux` reads three fields its argument does not have
+
+`PMSM.jl`:
+
+```julia
+function remanent_flux(magnet::AbstractMagnets, T)
+    magnet.remanent_flux * (1 - magnet.α * (T - (273.15 + magnet.Tbase)) / 100.0)
+end
+```
+
+`PermanentMagnet <: AbstractMagnets` has fields `thickness`, `ρ`, `M` and
+`mass` — no `remanent_flux`, no `α`, no `Tbase`. Calling it raises a
+`FieldError`, and no other subtype of `AbstractMagnets` is defined, so the
+function cannot be called at all as shipped.
+
+The port keeps the *model* -- a linear temperature derating, which is real
+physics and is what the docstring promises -- but takes its coefficients as
+arguments rather than off a struct that does not carry them.
