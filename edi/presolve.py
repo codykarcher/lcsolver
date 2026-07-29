@@ -80,6 +80,27 @@ VACUOUS_LO = 1e-29
 VACUOUS_HI = 1e29
 
 
+def _check_width(structures, n, who):
+    """Rows and the variable list must describe the same number of columns.
+
+    Both column-removing passes used to write
+
+        [variables[j] for j in keep if j < len(variables)]
+
+    which silently drops the tail when the rows are wider than the declared
+    variable list, leaving rows and `variables` describing different problems
+    and compounding on the next pass. A guard is better than a mask: if this
+    ever fires, whatever produced the structure is at fault and should be
+    fixed there.
+    """
+    have = structures.get("variables")
+    if have is not None and 0 < len(have) < n:
+        raise ValueError(
+            f"{who}: the rows span {n} columns but only {len(have)} variables "
+            "are declared. The structure is inconsistent -- some earlier pass "
+            "renumbered rows and variables differently.")
+
+
 def _bound_from_row(coeff, expo, j, op):
     """Recover the numeric bound a single-variable monomial row imposes.
 
@@ -828,6 +849,8 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
         bounds.append((None, None))
 
     # Sparse form: constraint -> list of (coeff, {j: exponent}, is_denominator)
+    _check_width(structures, n, "eliminate_monomial_equalities")
+
     terms = collections.defaultdict(list)
     for r in rows:
         idx = int(r[0])
@@ -943,8 +966,7 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     out[key] = [structures[key][0], new_rows, new_ops]
     out["bounds"] = [bounds[j] for j in keep]
     if structures.get("variables"):
-        out["variables"] = [structures["variables"][j] for j in keep
-                            if j < len(structures["variables"])]
+        out["variables"] = [structures["variables"][j] for j in keep]
     info = dict(structures.get("info") or {})
     info["N_vars_substituted"] = len(removed)
     info["N_cons_total"] = len(surviving)
@@ -1001,6 +1023,8 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
     names = [str(v) for v in structures.get("variables", [])]
     bounds = list(structures["bounds"])
     n = max([len(r) - 2 for r in rows] + [len(bounds)])
+
+    _check_width(structures, n, "reduce_columns")
 
     in_objective, in_constraint = set(), set()
     for r in rows:
@@ -1095,8 +1119,7 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
     out["bounds"] = [bounds[j] if j < len(bounds) else (None, None)
                      for j in keep]
     if structures.get("variables"):
-        out["variables"] = [structures["variables"][j] for j in keep
-                            if j < len(structures["variables"])]
+        out["variables"] = [structures["variables"][j] for j in keep]
     info = dict(structures.get("info") or {})
     info["N_vars_removed"] = len(removed)
     info["N_vars_output"] = len(outputs)
