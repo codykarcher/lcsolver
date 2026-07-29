@@ -238,7 +238,7 @@ def _violation_structured(problem, x):
     return worst
 
 
-def _kkt(problem, x, mults):
+def _kkt(problem, x, mults, x_min=None, bound_tol=1e-6):
     """``(stationarity, violation, complementarity)`` on the TRUE problem.
 
     All gradients are the true ones -- for a condensed constraint that means
@@ -246,6 +246,19 @@ def _kkt(problem, x, mults):
     in for ``q`` in the sub-problem. Tangency makes the two equal at the
     iterate, which is exactly why the sub-problem's duals certify the original
     problem.
+
+    Stationarity is the **projected** gradient, which matters as soon as a
+    variable reaches a bound. There the Lagrangian gradient is balanced by the
+    bound's own multiplier and need not vanish: at a lower bound only a
+    negative gradient is a violation, at an upper bound only a positive one.
+    Taking the raw norm instead reports a large residual at a point that is
+    perfectly optimal.
+
+    This is not a corner case here. On SPaircraft the variables that reach a
+    bound are exactly the design limits the model exists to express -- wing
+    thickness at ``tau_max``, engine pressure ratio at 35, taper at its floor.
+    Measured, every one of them carried the sign its bound admits, so the whole
+    apparent residual was this.
     """
     g = np.asarray(problem.objective.log_grad(x), dtype=float)
     comp = 0.0
@@ -257,6 +270,31 @@ def _kkt(problem, x, mults):
         if lam != 0.0:
             g = g + lam * np.asarray(con.body.log_grad(x), dtype=float)
         comp = max(comp, abs(lam * lg))
+
+    # Bound violations count as violations. Since presolve folds a row like
+    # `x >= 6` into a bound, a point below it is infeasible with no constraint
+    # left to say so -- and the projection below would then zero the gradient
+    # and call it optimal.
+    lo_all = [None] * problem.n
+    hi_all = [None] * problem.n
+    if problem.bounds is not None:
+        for j, pair in enumerate(problem.bounds[:problem.n]):
+            if pair:
+                lo_all[j], hi_all[j] = pair
+    for j in range(problem.n):
+        lo, hi = lo_all[j], hi_all[j]
+        if x_min is not None and (lo is None or lo < x_min):
+            lo = x_min           # the positivity floor bounds it too
+        if lo is not None and lo > 0 and x[j] > 0:
+            viol = max(viol, math.log(lo) - math.log(x[j]))
+            if x[j] <= lo * (1.0 + bound_tol):
+                # At a lower bound only a negative gradient is a violation;
+                # a positive one is held by the bound's own multiplier.
+                g[j] = min(g[j], 0.0)
+        if hi is not None and hi > 0 and x[j] > 0:
+            viol = max(viol, math.log(x[j]) - math.log(hi))
+            if x[j] >= hi * (1.0 - bound_tol):
+                g[j] = max(g[j], 0.0)
     return float(np.max(np.abs(g))), viol, comp
 
 
@@ -854,7 +892,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                           f"{res.phase1_iterations} iterations "
                           f"(max log g = {_violation(problem, x):.3e})")
             res.x, res.objective = x, problem.objective_value(x)
-            stat, viol, comp = _kkt(problem, x, mults)
+            stat, viol, comp = _kkt(problem, x, mults, options.x_min)
             res.stationarity, res.max_violation, res.complementarity = (
                 stat, viol, comp)
             return res
@@ -901,7 +939,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # iteration while contributing nothing. Pairing across that gap left
         # stationarity stuck near 0.57 no matter how converged the meaningful
         # variables were.
-        stat, viol, comp = _kkt(problem, x, mults)
+        stat, viol, comp = _kkt(problem, x, mults, options.x_min)
         if options.verbose:
             print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
                   f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
@@ -1019,7 +1057,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
     if res.x is None:
         res.x, res.objective = x, problem.objective_value(x)
-    stat, viol, comp = _kkt(problem, res.x, mults)
+    stat, viol, comp = _kkt(problem, res.x, mults, options.x_min)
     res.stationarity, res.max_violation, res.complementarity = stat, viol, comp
     res.multipliers = mults
     res.slacks_active = viol > options.feasibility_tolerance
