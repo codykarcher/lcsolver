@@ -6,6 +6,10 @@
 
 """Tests for solution write-back and the IPOPT interface."""
 
+import warnings
+
+import pytest
+
 import pyomo.common.unittest as unittest
 import pyomo.environ as pyo
 from pyomo.environ import units
@@ -642,3 +646,56 @@ class TestSolveDetectsOnce(unittest.TestCase):
             solve(f, diagnostics=level)
             self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
             self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
+
+
+class TestIpoptUnavailableFallback:
+    """What `solve()` does when there is no IPOPT to be had.
+
+    IPOPT is the default convex backend, so a machine without it used to fail
+    on models cvxopt could solve perfectly well: the structured path raised,
+    and the fallback was *plain IPOPT on the raw model*, which raised for the
+    same reason. A detected LP/QP/GP/SP does not need IPOPT at all.
+
+    Availability is faked by monkeypatching `_ipopt_available` rather than by
+    editing PATH, so the test is unaffected by what the machine has installed
+    and cannot leak a broken PATH into later tests.
+    """
+
+    @staticmethod
+    def _gp():
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='m', description='y')
+        A = f.Constant(name='A', value=2.0, units='m^2', description='area')
+        f.Objective(x + y)
+        f.ConstraintList([x * y >= A])
+        return f
+
+    def test_structured_model_falls_back_to_cvxopt_and_warns(self, monkeypatch):
+        from edi.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        f = self._gp()
+        with pytest.warns(RuntimeWarning, match='cvxopt instead'):
+            S.solve(f, sensitivities=False)
+        # min x + y subject to x*y >= 2 is 2*sqrt(2) -- the fallback must give
+        # the right answer, not merely avoid raising.
+        assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5, rel=1e-6)
+
+    def test_unstructured_model_raises_a_named_dead_end(self, monkeypatch):
+        from edi.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='-', description='x')
+        f.Objective(x ** 3 - 2 * x + 5)          # not LP, QP, GP or SP
+        f.ConstraintList([x >= 0.1])
+        with pytest.raises(RuntimeError, match='needs IPOPT'):
+            S.solve(f, sensitivities=False)
+
+    def test_ipopt_is_still_preferred_when_present(self, monkeypatch):
+        from edi.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: True)
+        f = self._gp()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            S.solve(f, sensitivities=False)
+        assert not [w for w in caught if 'cvxopt instead' in str(w.message)]

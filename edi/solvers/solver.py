@@ -156,6 +156,28 @@ def _run_diagnostics(structures, level):
     return rep
 
 
+def _ipopt_available():
+    """Is there any usable IPOPT -- the executable, or cyipopt?
+
+    Asked before dispatching rather than discovered by catching the failure,
+    because the two outcomes want different fallbacks. A structured problem
+    with no IPOPT should go to cvxopt; a structured problem whose IPOPT path
+    has a *bug* should not, since cvxopt would likely hit the same modelling
+    error and report it less clearly.
+
+    Cheap and not cached: Pyomo's own availability check is a PATH lookup, and
+    caching it would make an IPOPT installed mid-session invisible.
+    """
+    from edi.solvers.ipopt.ipopt_solver_interface import _executable_available
+    if _executable_available('ipopt'):
+        return True
+    try:
+        import pyomo.environ as pyo
+        return bool(pyo.SolverFactory('cyipopt').available(exception_flag=False))
+    except Exception:
+        return False
+
+
 def _attach_sensitivities(m, res, wanted):
     """Compute sensitivities onto the model, so `f.solution` carries them.
 
@@ -293,20 +315,51 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
                           'Geometric_Program', 'Signomial_Program'))
 
     if structured:
+        backend = convex_backend
+        if backend == 'ipopt' and not _ipopt_available():
+            # A detected LP/QP/GP/SP does not need IPOPT -- cvxopt solves the
+            # same convex problem to the same optimum. Falling back to it is
+            # far better than failing, but say so: IPOPT is the default for
+            # good reasons (it is faster on large models and is the only route
+            # for a black-box constraint), so a silent downgrade would hide a
+            # missing install for as long as the models stayed convex.
+            warnings.warn(
+                'no usable IPOPT installation was found; solving this '
+                'structured problem with cvxopt instead. The answer is the '
+                'same, but IPOPT is the default backend and is required for '
+                'black-box constraints. Install the ipopt executable or '
+                '`pip install cyipopt` -- see docs/ipopt.rst.',
+                RuntimeWarning, stacklevel=2)
+            backend = 'cvxopt'
         try:
-            if convex_backend == 'ipopt':
+            if backend == 'ipopt':
                 return _attach_sensitivities(
                     m, _convex_ipopt(m, structures=structures, **kwargs),
                     sensitivities)
             return _attach_sensitivities(m, cvxopt_solve(m, **kwargs),
                                          sensitivities)
         except Exception as e:
-            # Fall through to plain IPOPT, but say why: a silent fallback turns
-            # a bug in the structured path into a confusing IPOPT failure.
+            # Fall through, but say why: a silent fallback turns a bug in the
+            # structured path into a confusing failure further down.
+            where = ('IPOPT on the raw model' if _ipopt_available()
+                     else 'cvxopt' if backend == 'ipopt' else 'nothing else')
             warnings.warn(
                 f"the structured backend failed ({type(e).__name__}: {e}); "
-                f"falling back to IPOPT on the raw model.",
+                f"falling back to {where}.",
                 RuntimeWarning, stacklevel=2)
+            if not _ipopt_available() and backend == 'ipopt':
+                return _attach_sensitivities(m, cvxopt_solve(m, **kwargs),
+                                             sensitivities)
+
+    if not _ipopt_available():
+        # Nothing left to try. cvxopt cannot take a general NLP, so this is a
+        # real dead end rather than another fallback -- name it as one.
+        raise RuntimeError(
+            'this model needs IPOPT and no usable installation was found. '
+            + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
+               'it. ' if not structured else '')
+            + "Install the 'ipopt' executable and put it on PATH, or "
+              '`pip install cyipopt`. See docs/ipopt.rst.')
     return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
 
 
