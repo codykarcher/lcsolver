@@ -87,6 +87,13 @@ uses `pyomo.contrib.pynumero` and needs `pip install cyipopt`. The default,
 `method='auto'`, prefers the Pyomo route but switches to cyipopt when the model
 contains black-box (grey-box) constraints, which the AMPL route cannot evaluate.
 
+Getting IPOPT itself is worth doing carefully. `conda install -c conda-forge
+ipopt` works and takes a minute, but like every prebuilt IPOPT it is built
+against the MUMPS linear solver — the only one that may be redistributed — and
+MUMPS is not what you want underneath a geometric or signomial program. IPOPT's
+own default is `ma27`. See [docs/ipopt.rst](docs/ipopt.rst) for why, and
+[tools/install_ipopt.sh](tools/install_ipopt.sh) to build against HSL MA27.
+
 ```python
 from edi.solvers.ipopt import ipopt_solve
 res = ipopt_solve(f, options={'tol': 1e-8, 'max_iter': 500}, tee=True)
