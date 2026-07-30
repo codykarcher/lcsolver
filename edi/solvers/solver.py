@@ -222,8 +222,34 @@ def _attach_sensitivities(m, res, wanted):
     return res
 
 
+def _apply_start(m, start):
+    """Put a starting point onto the model.
+
+    Accepts a FeasibilityResult (or anything with an ``x``), or a plain
+    sequence in ``structures['variables']`` order. Writing onto the model is
+    not a shortcut: it is where the backends read their initial point, and it
+    also means `pyo.value(m.x)` agrees with what the solve was told.
+    """
+    import numpy as _np
+
+    from edi.solvers.writeback import write_solution
+
+    x = getattr(start, 'x', start)
+    x = _np.asarray(x, dtype=float).ravel()
+    if x.size == 0:
+        return
+    st = structure_detector(unit_corrector(m))
+    n = len(st.get('variables') or [])
+    if x.size < n:
+        raise ValueError(
+            f"start has {x.size} values but the model has {n} variables. It "
+            f"must be in structures['variables'] order -- a FeasibilityResult "
+            f"already is.")
+    write_solution(st, {'x': x[:n]}, model=m)
+
+
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
-          sensitivities=True, structures=None, **kwargs):
+          sensitivities=True, structures=None, start=None, **kwargs):
     """Solve an EDI Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -276,6 +302,20 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     caught and refused rather than silently solving an unbounded relaxation.
     ``diagnose`` reads either form, so the default is the one to share.
 
+    ``start`` sets the point the solve begins from, which the backends
+    otherwise take from the model's current values. It accepts a
+    :class:`~edi.solvers.feasibility.FeasibilityResult`, so the feasibility
+    solve composes with this one::
+
+        result = feasibility(f)
+        if result:
+            solve(f, start=result)
+
+    -- worth doing on a model where the author's guesses are not feasible, and
+    the only way to start from a feasible point without hand-editing every
+    guess. A plain sequence or array in ``structures['variables']`` order works
+    too.
+
     In every case the solution is written back onto the model, so
     ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
@@ -296,6 +336,12 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     # Bind the corrected clone to a local: `structures['variables']` holds only
     # the VarData objects, and if the clone were collected here their parent
     # components would go with it.
+    if start is not None:
+        # Applied by writing onto the model, because that is where every
+        # backend reads its initial point from. Done before detection so the
+        # detected structures carry the new values.
+        _apply_start(m, start)
+
     corrected = None
     detection_failed = None
     if structures is not None:

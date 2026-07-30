@@ -54,11 +54,14 @@ from edi.solvers.sensitivity import (
     format_sensitivities,
 )
 from edi.presolve import diagnose, structure_report
+from edi.solvers.feasibility import FeasibilityResult, feasibility
 
 __all__ = [
     "Formulation",
     "diagnose",
     "structure_report",
+    "feasibility",
+    "FeasibilityResult",
     "sensitivities",
     "constraint_duals",
     "format_sensitivities",
