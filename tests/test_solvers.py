@@ -699,3 +699,70 @@ class TestIpoptUnavailableFallback:
             warnings.simplefilter('always')
             S.solve(f, sensitivities=False)
         assert not [w for w in caught if 'cvxopt instead' in str(w.message)]
+
+
+class TestSuppliedStructures:
+    """`solve(f, structures=...)` -- run the chain yourself and hand it back.
+
+    The chain a plain solve runs is unit_corrector -> structure_detector ->
+    diagnose -> backend -> sensitivities. Detecting is the expensive step (four
+    to six seconds on SPaircraft against an eleven-second solve), so a caller
+    who has already done it for a diagnose should not pay twice.
+    """
+
+    @staticmethod
+    def _gp():
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='m', description='y')
+        A = f.Constant(name='A', value=2.0, units='m^2', description='area')
+        f.Objective(x + y)
+        f.ConstraintList([x * y >= A])
+        return f
+
+    def test_supplied_structures_give_the_same_answer(self):
+        from edi.solvers.solver import solve
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+
+        a = self._gp()
+        solve(a, sensitivities=False)
+
+        b = self._gp()
+        st = structure_detector(unit_corrector(b))
+        solve(b, structures=st, sensitivities=False)
+
+        assert float(b.solution.objective) == pytest.approx(
+            float(a.solution.objective), rel=1e-9)
+        assert float(b.solution.objective) == pytest.approx(2 * 2 ** 0.5,
+                                                            rel=1e-6)
+
+    def test_diagnose_does_not_consume_the_structures(self):
+        """Detect once, diagnose, then solve -- the whole point of sharing."""
+        from edi.presolve import diagnose
+        from edi.solvers.solver import solve
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+
+        f = self._gp()
+        st = structure_detector(unit_corrector(f))
+        rep = diagnose(st)                       # must not mutate st
+        assert 'Geometric Program' in rep.structure
+        solve(f, structures=st, sensitivities=False)
+        assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5,
+                                                            rel=1e-6)
+
+    def test_the_split_bounds_form_is_refused(self):
+        """The dangerous one: bounds in structures['bounds'], not in the rows.
+
+        A backend reading only rows would solve an unbounded relaxation and
+        return a perfectly reasonable-looking answer to a different question.
+        """
+        from edi.solvers.solver import solve
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+
+        f = self._gp()
+        split = structure_detector(unit_corrector(f), bounds_as_rows=False)
+        with pytest.raises(ValueError, match='bounds_as_rows'):
+            solve(f, structures=split, sensitivities=False)

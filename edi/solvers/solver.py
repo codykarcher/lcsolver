@@ -223,7 +223,7 @@ def _attach_sensitivities(m, res, wanted):
 
 
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
-          sensitivities=True, **kwargs):
+          sensitivities=True, structures=None, **kwargs):
     """Solve an EDI Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -256,6 +256,26 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     skip it, which is worth doing in a loop that solves the same model many
     times and never reads them.
 
+    ``structures`` accepts a structure you have already detected, and skips the
+    detection here. The chain a plain ``solve(f)`` runs is::
+
+        corrected  = unit_corrector(f)          # validate and convert units
+        structures = structure_detector(corrected)
+        diagnose(structures)                    # the pre-solve checks
+        <backend>(f, structures=structures)     # cvxopt / IPOPT / SLCP / SIA
+        sensitivities(f)                        # duals, then write-back
+
+    Running those yourself and passing the result back is worth doing when you
+    want to look at the middle of it, and when the walk is expensive: it is
+    four to six seconds on SPaircraft against an eleven-second solve, so
+    detecting once and reusing it is most of a third off a diagnose-then-solve.
+
+    Pass structures from ``structure_detector(corrected)`` with its default
+    ``bounds_as_rows=True``. The split form is for the presolve, and the
+    backends read bounds out of the rows -- handing them the split form is
+    caught and refused rather than silently solving an unbounded relaxation.
+    ``diagnose`` reads either form, so the default is the one to share.
+
     In every case the solution is written back onto the model, so
     ``pyo.value(m.x)`` returns the optimum after a successful solve.
     """
@@ -276,9 +296,22 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     # Bind the corrected clone to a local: `structures['variables']` holds only
     # the VarData objects, and if the clone were collected here their parent
     # components would go with it.
-    corrected = structures = None
+    corrected = None
     detection_failed = None
-    if want_checks or solver == 'auto':
+    if structures is not None:
+        # Supplied by the caller. Check the form now rather than letting a
+        # backend discover it: the failure mode otherwise is an answer to a
+        # problem with no variable bounds, which looks entirely reasonable.
+        if isinstance(structures, dict) and structures.get('bounds') is not None:
+            raise ValueError(
+                "solve() was given structures built with bounds_as_rows=False. "
+                "The backends read variable bounds out of the constraint rows, "
+                "so solving these would ignore every bound and answer a "
+                "different question. Re-run structure_detector(corrected) with "
+                "its default bounds_as_rows=True; diagnose() reads that form "
+                "too.")
+        _raise_if_infeasible(structures)
+    elif want_checks or solver == 'auto':
         try:
             corrected = unit_corrector(m)
             structures = structure_detector(corrected)
