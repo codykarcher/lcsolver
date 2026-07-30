@@ -21,29 +21,43 @@ its own scale. Those are the right variables to *optimize* -- they are what the
 constraints are naturally posed in, and they keep the problem scale-free -- and
 the wrong ones to read, draw, or hand to anybody.
 
-So this file adds the dimensional recovery: span, chords, spar box, root moment,
-and the actual cap and web thicknesses in metres. That is eight more variables,
-and they cost nothing, because every one is defined by a *monomial equality*.
-The presolve eliminates monomial equalities and back-substitutes them
-afterwards, so they never reach the optimizer. Measured, by running the
-presolve chain on ``build(recover=False)`` and ``build(recover=True)``:
+So this file adds the dimensional recovery: span, chords, taper ratio, spar box,
+root moment, and the actual cap and web thicknesses in metres. That is ten more
+variables and they cost nothing, because every one is *defined* by an equality
+rather than constrained by one. The presolve removes them and back-substitutes
+afterwards, so they never reach the optimizer. Measured, by running the presolve
+chain on ``build(recover=False)`` and ``build(recover=True)``:
 
-    recover=False    61 declared -> 48 at the solver   (13 eliminations)
-    recover=True     69 declared -> 48 at the solver   (21 eliminations)
+    recover=False    61 declared -> 48 at the solver
+    recover=True     71 declared -> 48 at the solver
 
-Same 48 columns either way, and the same optimum to ten digits. Adding readable
-quantities to a geometric program is free as long as they are *defined* rather
-than constrained -- there is no reason to make a model unreadable to keep it
+Same 48 columns either way, same optimum to ten digits, and in the printed
+solution the recovered quantities are indistinguishable from the optimized ones
+-- which is the point. There is no reason to make a model unreadable to keep it
 small.
 
-What is deliberately not here
------------------------------
-The taper ratio. ``lambda = q - 1`` is a difference, not a monomial, and
-Hoburg's (p, q) substitution exists precisely to make the taper terms GP
-compatible -- which costs monomial invertibility. Adding lambda and the tip
-chord as constrained variables would cost two real columns and make the program
-non-GP, to obtain two numbers that one subtraction recovers exactly. So they
-are computed from the solution instead; see :func:`report`.
+Two ways of being free
+----------------------
+The ten split across the two mechanisms EDI has, and the split is instructive.
+
+Nine are **monomial equalities**, eliminated by Gaussian elimination on the
+exponent matrix. ``c_tip == c_root * lambda`` counts: a product of two variables
+is still a monomial.
+
+The taper ratio is not. ``lambda = q - 1`` is a *sum*, and Hoburg's (p, q)
+substitution exists precisely to keep the taper terms GP compatible, which costs
+monomial invertibility. Written the way round that a GP admits, ``q == 1 +
+lambda``, it is a posynomial equality, and the presolve removes it anyway under
+the weaker and more general condition: ``lambda`` appears in exactly one live
+constraint, is absent from the objective, and is unbounded in the direction that
+would matter, so nothing it touches is restricted by it. That is an
+**output-only** variable. Order matters and the two mechanisms feed each other:
+eliminating c_tip also removes the constraint that defined it, and only then
+does lambda sit in a single live constraint and become output-only.
+
+The modelling lesson is that neither mechanism is something to design around.
+Write the quantity you want to read, in whichever direction the algebra is
+natural. Whether it is free is EDI's problem.
 """
 from __future__ import annotations
 
@@ -253,17 +267,26 @@ def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
     ]
 
     # ---- dimensional recovery ----------------------------------------------
-    # Every one of these is a *monomial* equality, so the presolve eliminates
-    # it and the optimizer never sees it. They exist so the answer can be read,
-    # drawn and checked against an aeroplane.
+    # These exist so the answer can be read, drawn and checked against an
+    # aeroplane, and none of them costs anything at solve time: each is
+    # *defined* by an equality rather than constrained by one, so the presolve
+    # removes it and back-substitutes afterwards.
     #
-    # Monomial is the whole trick. `c_root == 2*c_bar/q` is free; the taper
-    # ratio itself, lambda = q - 1, is not -- it is a difference, and Hoburg's
+    # Two kinds appear here, and the difference is worth knowing. Most are
+    # monomial equalities, eliminated by Gaussian elimination on the exponent
+    # matrix. The taper ratio is not: lambda = q - 1 is a *sum*, and Hoburg's
     # (p, q) substitution exists precisely to keep the taper terms GP
-    # compatible, which costs monomial invertibility. So lambda and the tip
-    # chord are arithmetic on the solution rather than constraints; see
-    # `report` below. Adding them here would cost two real variables and make
-    # the program non-GP, for two numbers a division recovers exactly.
+    # compatible, which costs monomial invertibility. Written as q == 1 + lambda
+    # it is a posynomial equality, and the presolve removes it anyway -- as an
+    # output-only variable, which is the weaker and more general condition:
+    # lambda appears in exactly one live constraint, is absent from the
+    # objective, and is otherwise unbounded, so nothing it touches is
+    # restricted by it -- but only once c_tip's monomial elimination has taken
+    # `c_tip == c_root*lambda` away with it. Nine go the first way, lambda the
+    # second.
+    #
+    # So write the quantity you want to read. Whether it is free is EDI's
+    # problem, not the modeller's.
     if not recover:
         f.ConstraintList(cons)
         return f
@@ -276,6 +299,8 @@ def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
     h_spar = V_('h_spar', 0.13,  'm',   'spar box height')
     w_spar = V_('w_spar', 0.60,  'm',   'spar box width')
     M_root = V_('M_root', 1.0e4, 'N*m', 'root bending moment')
+    lam    = V_('lambda', 0.45,  '-',   'taper ratio, c_tip / c_root')
+    c_tip  = V_('c_tip',  0.72,  'm',   'tip chord')
 
     cons += [
         b == (S * AR) ** 0.5,
@@ -286,18 +311,12 @@ def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
         h_spar == r_h * tau * c_bar,      # web height = r_h * (t/c) * chord
         w_spar == w_bar * c_bar,          # box width  = w_bar * chord
         M_root == M_r_bar * c_bar,
+        q == 1 + lam,                     # the (p, q) substitution, inverted
+        c_tip == c_root * lam,
     ]
 
     f.ConstraintList(cons)
     return f
-
-
-def report(f) -> str:
-    """The two quantities the recovery block deliberately leaves out."""
-    v = lambda n: float(f.solution[n])
-    lam = v('q') - 1.0                      # q = 1 + lambda, by construction
-    return (f"taper ratio  lambda = {lam:.4f}\n"
-            f"tip chord    c_tip  = {v('c_root') * lam:.4f} m")
 
 
 if __name__ == '__main__':
@@ -308,5 +327,3 @@ if __name__ == '__main__':
     f = build()
     solve(f)                       # sensitivities are on by default
     print(f.solution.summary(top=12))
-    print()
-    print(report(f))
