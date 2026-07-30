@@ -70,6 +70,7 @@ from pyomo.core.expr.numeric_expr import (
     NPV_DivisionExpression, 
     NPV_ProductExpression,
     NPV_PowExpression,
+    NPV_UnaryFunctionExpression,
     NPV_NegationExpression,
     DivisionExpression as NE_DivisionExpression,
 ) 
@@ -207,13 +208,71 @@ def handle_unit_node(visitor, node):
     K = as_quantity(1.0 * node).to_base_units() # correction factor
     return unitsPack(expr=K.magnitude, units=K.units)
 
+#: What each unary function does to its argument's units. Mirrors Pyomo's own
+#: table in ``pyomo.core.base.units_container`` so that EDI and
+#: ``pyomo.environ.units.get_units`` agree rather than inventing a second
+#: convention.
+#:
+#: ``'dimensionless'``
+#:     the argument must be dimensionless and the result is dimensionless.
+#:     Covers log/log10/exp, and the trigonometric functions too: their
+#:     argument is an angle, and an angle's base unit is the radian, which pint
+#:     reports as dimensionless. The inverse functions return radians, again
+#:     dimensionless in base units. Since this walker converts everything to
+#:     base units before comparing, the one rule covers both directions.
+#: ``'same'``
+#:     the result carries the argument's units (ceil, floor).
+#: ``'sqrt'``
+#:     the result carries the argument's units to the one-half power.
+_UNARY_UNITS = {
+    'log': 'dimensionless', 'log10': 'dimensionless', 'exp': 'dimensionless',
+    'sin': 'dimensionless', 'cos': 'dimensionless', 'tan': 'dimensionless',
+    'sinh': 'dimensionless', 'cosh': 'dimensionless', 'tanh': 'dimensionless',
+    'asin': 'dimensionless', 'acos': 'dimensionless', 'atan': 'dimensionless',
+    'asinh': 'dimensionless', 'acosh': 'dimensionless',
+    'atanh': 'dimensionless',
+    'ceil': 'same', 'floor': 'same',
+    'sqrt': 'sqrt',
+}
+
+
 def handle_unary_node(visitor, node, arg1):
+    """``sin(x)``, ``exp(x)``, ``sqrt(x)`` and friends.
+
+    This used to call ``units.get_units(arg1)`` unconditionally on its way in.
+    ``arg1`` is a :data:`unitsPack`, not a Pyomo expression, so that raised
+    ``AttributeError: 'unitsPack' object has no attribute
+    'is_expression_type'`` for *every* unary function -- including ``sqrt``,
+    which the branch below was written to support. The AttributeError then
+    surfaced through the unit reporter as a mismatch whose two sides agreed,
+    which is a contradiction on the face of it.
+
+    ``x ** 0.5`` was unaffected, being a power node rather than a unary one,
+    which is why models that spell their roots that way never hit this.
+    """
     fcn_handle = node.getname()
-    arg1units = units.get_units(arg1)
-    if fcn_handle == 'sqrt':
-        return handle_pow_node(visitor,node,arg1,unitsPack(expr=0.5,units=units.pint_registry('').units))
-    else:
-        raise ValueError('Function %s cannot handle units %s in Unary Node'%(fcn_handle,arg1units))
+    rule = _UNARY_UNITS.get(fcn_handle)
+    if rule is None:
+        raise ValueError(
+            'unit checking does not know the function %r. Known functions: %s'
+            % (fcn_handle, ', '.join(sorted(_UNARY_UNITS))))
+
+    if rule == 'sqrt':
+        return handle_pow_node(
+            visitor, node, arg1,
+            unitsPack(expr=0.5, units=units.pint_registry('').units))
+
+    if rule == 'same':
+        return unitsPack(expr=node.create_node_with_local_data((arg1.expr,)),
+                         units=arg1.units)
+
+    if not arg1.units.dimensionless:
+        raise ValueError(
+            '%s() requires a dimensionless argument, but its argument has '
+            'units of [%s]. Divide it by a reference quantity in those units '
+            'first.' % (fcn_handle, arg1.units))
+    return unitsPack(expr=node.create_node_with_local_data((arg1.expr,)),
+                     units=units.pint_registry('').units)
 
 def handle_monomialTermExpression_node(visitor, node, arg1, arg2): #?
     return handle_product_node(visitor,node,arg1,arg2)
@@ -326,6 +385,7 @@ class _UnitVisitor(StreamBasedExpressionVisitor):
             PowExpression: handle_pow_node,
             AbsExpression: handle_abs_node,
             UnaryFunctionExpression: handle_unary_node,
+            NPV_UnaryFunctionExpression: handle_unary_node,
             Expr_ifExpression: handle_exprif_node,
             EqualityExpression: handle_equality_node,
             InequalityExpression: handle_inequality_node,
