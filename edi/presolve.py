@@ -289,7 +289,16 @@ def _rows_of(structures):
     """
     from edi.structure.detected import as_detected
 
-    st = as_detected(structures)
+    from edi.units.unitCorrector import UnitMismatch
+    model = None if isinstance(structures, dict) else structures
+    try:
+        st = as_detected(_as_structures(structures))
+    except UnitMismatch as exc:
+        rep = PresolveReport()
+        rep.structure = _units_diagnosis(exc)
+        if not quiet:
+            print(rep.structure)
+        return rep
     key = st.log_key
     if key is None:
         raise ValueError("presolve needs a detected GP or SP structure")
@@ -1596,6 +1605,38 @@ def _constraint_bodies(structures):
         return {}
 
 
+def _as_structures(obj):
+    """Accept either the detector's output or the formulation itself.
+
+    Detecting structure means unit-correcting a clone and walking it, which is
+    a detail of how this runs, not of what the caller wants. `diagnose(f)` is
+    the call people try first; making it work costs one isinstance.
+
+    `Detected` is a dict subclass and a `Formulation` is not, which is the
+    whole test.
+    """
+    if isinstance(obj, dict):
+        return obj
+    from edi.structure.structureDetector import structure_detector
+    from edi.units.unitCorrector import unit_corrector
+    return structure_detector(unit_corrector(obj), bounds_as_rows=False)
+
+
+def _units_diagnosis(exc):
+    """A unit failure, formatted as a finding rather than raised as an error.
+
+    Asking what is wrong with a model is exactly when it is most likely to be
+    wrong, so `diagnose` must not fall over on the commonest fault it exists
+    to find. Nothing downstream can run -- the detector reads the
+    unit-corrected model and there is not one -- so this is the whole report,
+    and it says so.
+    """
+    return ('units\n-----\n' + str(exc).rstrip() + '\n\n'
+            '  Nothing further can be checked until the units balance: the\n'
+            '  structure detector reads the unit-corrected model, and this one\n'
+            '  has no correction. Fix the above and run this again.')
+
+
 def _rows_after_presolve(structures):
     """Constraint indices that still exist once the presolve has run.
 
@@ -1643,7 +1684,11 @@ def structure_report(structures, top=5, simplify=True) -> str:
     ``top`` caps how many blocking constraints are listed per class; the rest
     are counted. Set ``top=None`` for all of them.
     """
-    st = as_detected(structures)
+    from edi.units.unitCorrector import UnitMismatch
+    try:
+        st = as_detected(_as_structures(structures))
+    except UnitMismatch as exc:
+        return _units_diagnosis(exc)
     blockers = (st.get('blockers') or {}) if hasattr(st, 'get') else {}
     bodies = _constraint_bodies(st)
 
@@ -1767,7 +1812,21 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
     """
     from edi.structure.detected import as_detected
 
-    st = as_detected(structures)
+    # Accept the formulation itself. Detecting structure is how this runs, not
+    # what the caller wants, and `diagnose(f)` is the call people try first.
+    model = None if isinstance(structures, dict) else structures
+    from edi.units.unitCorrector import UnitMismatch
+    try:
+        st = as_detected(_as_structures(structures))
+    except UnitMismatch as exc:
+        # Bad units are a finding, not a crash. Asking what is wrong with a
+        # model is exactly when it is most likely to be wrong, so the tool for
+        # asking must not fall over on the commonest fault it exists to find.
+        rep = PresolveReport()
+        rep.structure = _units_diagnosis(exc)
+        if not quiet:
+            print(rep.structure)
+        return rep
     # The interesting checks need bounds separated from rows, so fold a copy
     # rather than making the caller know that. This runs whether or not the
     # detector already split the declared bounds out: folding does two things,

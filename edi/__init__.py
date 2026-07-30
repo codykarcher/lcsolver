@@ -53,9 +53,12 @@ from edi.solvers.sensitivity import (
     constraint_duals,
     format_sensitivities,
 )
+from edi.presolve import diagnose, structure_report
 
 __all__ = [
     "Formulation",
+    "diagnose",
+    "structure_report",
     "sensitivities",
     "constraint_duals",
     "format_sensitivities",

@@ -886,7 +886,7 @@ class Formulation(ConcreteModel):
         Returns the text; prints it unless ``quiet``.
         """
         from edi.presolve import structure_report as _report
-        text = _report(self._detected(), top=top)
+        text = _report(self, top=top)
         if not quiet:
             print(text)
         return text
@@ -899,7 +899,7 @@ class Formulation(ConcreteModel):
         and cancellation checks, which do.
         """
         from edi.presolve import diagnose as _diagnose
-        return _diagnose(self._detected(), quiet=quiet, structure_top=top)
+        return _diagnose(self, quiet=quiet, structure_top=top)
 
     def check_units(self):
         for i in range(1, self._objective_counter + 1):

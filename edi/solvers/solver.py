@@ -178,6 +178,20 @@ def _ipopt_available():
         return False
 
 
+def _mark_solved(m):
+    """Record that this model's variable values are an answer, not a guess.
+
+    `diagnose(f)` needs to know: the post-solve checks (cancellation, the
+    positivity floor) read the current values, and run against an unsolved
+    model they describe the author's initial guess while looking exactly like
+    they describe the optimum.
+    """
+    try:
+        m._edi_solved = True
+    except Exception:
+        pass
+
+
 def _attach_sensitivities(m, res, wanted):
     """Compute sensitivities onto the model, so `f.solution` carries them.
 
@@ -190,6 +204,7 @@ def _attach_sensitivities(m, res, wanted):
     Never fatal. A solve that produced an answer must return it even if the
     duals cannot be recovered from it.
     """
+    _mark_solved(m)
     if not wanted or not isinstance(res, dict):
         return res
     try:

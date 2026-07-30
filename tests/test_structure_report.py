@@ -170,3 +170,53 @@ def test_simplify_can_be_turned_off():
 def test_no_simplification_claim_when_nothing_is_removed():
     """A plain GP must not sprout an 'as solved' line."""
     assert 'as solved' not in structure_report(_detected(_gp()))
+
+
+# --- diagnose(f) ------------------------------------------------------------
+# Detecting structure means unit-correcting a clone and walking it. That is how
+# this runs, not what a caller wants to say, so both entry points take the
+# formulation itself.
+
+def test_diagnose_accepts_a_formulation():
+    from edi import diagnose
+    rep = diagnose(_sp(), quiet=True)
+    assert 'Signomial Program (SP)' in rep.structure
+
+
+def test_structure_report_accepts_a_formulation():
+    f = _sp()
+    assert structure_report(f) == structure_report(_detected(f))
+
+
+def test_bad_units_are_diagnosed_not_raised():
+    """The tool for asking what is wrong must survive the commonest fault.
+
+    A unit mismatch used to propagate out of `diagnose`, so the one call you
+    would make to find out why a model misbehaves failed with the very error
+    you were looking for, and printed nothing else.
+    """
+    from edi import diagnose
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='a length')
+    t = f.Variable(name='t', guess=1.0, units='s', description='a time')
+    f.Objective(x)
+    f.ConstraintList([x >= t])                    # metres against seconds
+    rep = diagnose(f, quiet=True)                 # must not raise
+    assert rep.structure.startswith('units')
+    assert '[s]' in rep.structure and '[m]' in rep.structure
+    assert 'Nothing further can be checked' in rep.structure
+
+
+def test_bad_units_report_from_structure_report_too():
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='a length')
+    t = f.Variable(name='t', guess=1.0, units='s', description='a time')
+    f.Objective(x)
+    f.ConstraintList([x >= t])
+    assert structure_report(f).startswith('units')
+
+
+def test_str_of_report_carries_the_structure_section():
+    """`print(diagnose(...))` must be the whole report, not half of it."""
+    text = str(_sp().diagnose(quiet=True))
+    assert 'structure' in text and 'presolve:' in text
