@@ -132,7 +132,7 @@ def _run_diagnostics(structures, level):
     from edi.presolve import diagnose
 
     try:
-        rep = diagnose(structures, quiet=True)
+        rep = diagnose(structures)
     except Exception:
         return None                      # never fail a solve over a check
     if level == 'print':

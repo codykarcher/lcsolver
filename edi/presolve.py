@@ -177,11 +177,18 @@ class PresolveReport:
         return not (self.empty_columns or self.unbounded_above
                     or self.unbounded_below)
 
+    def summary(self) -> str:
+        """The report, as a string. ``print(report.summary())``.
+
+        Same text as ``str(report)``; named to match
+        :meth:`~edi.objects.solution.Solution.summary`, which is what a reader
+        will have seen first.
+        """
+        return str(self)
+
     def __str__(self):
-        # Structure first when it is there. `print(diagnose(st, quiet=True))`
-        # is how anyone gets this report by hand, and it used to print only
-        # the presolve half, because the structure section was prepended by
-        # diagnose's own print path rather than living in the text.
+        # Structure first when it is there: `str(report)` has to be the whole
+        # report, not the half that happens to live in these fields.
         L = ([self.structure, ""] if self.structure else [])
         L += [f"presolve: {self.n_variables} variables, {self.n_rows} rows"]
 
@@ -296,8 +303,6 @@ def _rows_of(structures):
     except UnitMismatch as exc:
         rep = PresolveReport()
         rep.structure = _units_diagnosis(exc)
-        if not quiet:
-            print(rep.structure)
         return rep
     key = st.log_key
     if key is None:
@@ -1789,7 +1794,7 @@ def structure_report(structures, top=5, simplify=True) -> str:
     return '\n'.join(L)
 
 
-def diagnose(structures, x=None, problem=None, names=None, quiet=False,
+def diagnose(structures, x=None, problem=None, names=None,
              x_min=1e-9, structure_top=5):
     """Every structural check, in one call, as one report.
 
@@ -1806,9 +1811,12 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
     solution and is the first thing worth knowing. ``structure_top`` caps how
     many blocking constraints it lists per class.
 
-    Returns a :class:`PresolveReport` with ``degenerate`` and ``cancelling``
-    filled in when a solution was supplied. ``quiet`` suppresses the printout
-    and returns the report for a caller to inspect.
+    Returns a :class:`PresolveReport` and prints nothing --- a function that
+    answers a question should hand back the answer, not emit it as a side
+    effect that a caller cannot capture or suppress::
+
+        report = diagnose(f)
+        print(report.summary())
     """
     from edi.structure.detected import as_detected
 
@@ -1824,8 +1832,6 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
         # asking must not fall over on the commonest fault it exists to find.
         rep = PresolveReport()
         rep.structure = _units_diagnosis(exc)
-        if not quiet:
-            print(rep.structure)
         return rep
     # The interesting checks need bounds separated from rows, so fold a copy
     # rather than making the caller know that. This runs whether or not the
@@ -1864,10 +1870,6 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
         rep.structure = structure_report(st, top=structure_top)
     except Exception:
         rep.structure = ''
-    if not quiet:
-        text = str(rep)
-        extra = rep.post_solve_text()
-        print(text + ("\n" + extra if extra else ""))
     return rep
 
 

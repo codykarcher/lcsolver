@@ -106,11 +106,11 @@ def test_top_caps_the_listing_and_counts_the_rest():
 
 def test_formulation_method_matches_the_function():
     f = _sp()
-    assert f.structure_report(quiet=True) == structure_report(_detected(f))
+    assert f.structure_report() == structure_report(_detected(f))
 
 
 def test_diagnose_leads_with_the_structure_section():
-    rep = _sp().diagnose(quiet=True)
+    rep = _sp().diagnose()
     assert rep.structure.startswith('structure')
     assert 'Not a Geometric Program' in rep.structure
 
@@ -179,7 +179,7 @@ def test_no_simplification_claim_when_nothing_is_removed():
 
 def test_diagnose_accepts_a_formulation():
     from edi import diagnose
-    rep = diagnose(_sp(), quiet=True)
+    rep = diagnose(_sp())
     assert 'Signomial Program (SP)' in rep.structure
 
 
@@ -201,7 +201,7 @@ def test_bad_units_are_diagnosed_not_raised():
     t = f.Variable(name='t', guess=1.0, units='s', description='a time')
     f.Objective(x)
     f.ConstraintList([x >= t])                    # metres against seconds
-    rep = diagnose(f, quiet=True)                 # must not raise
+    rep = diagnose(f)                 # must not raise
     assert rep.structure.startswith('units')
     assert '[s]' in rep.structure and '[m]' in rep.structure
     assert 'Nothing further can be checked' in rep.structure
@@ -218,5 +218,5 @@ def test_bad_units_report_from_structure_report_too():
 
 def test_str_of_report_carries_the_structure_section():
     """`print(diagnose(...))` must be the whole report, not half of it."""
-    text = str(_sp().diagnose(quiet=True))
+    text = str(_sp().diagnose())
     assert 'structure' in text and 'presolve:' in text

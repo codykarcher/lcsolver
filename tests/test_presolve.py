@@ -1271,8 +1271,8 @@ def test_diagnose_reads_either_bound_form_the_same_way():
               'singleton_columns', 'fixed_columns', 'output_columns',
               'bound_only_columns')
 
-    as_rows = diagnose(_detect(_rich_model(), bounds_as_rows=True), quiet=True)
-    as_split = diagnose(_detect(_rich_model(), bounds_as_rows=False), quiet=True)
+    as_rows = diagnose(_detect(_rich_model(), bounds_as_rows=True))
+    as_split = diagnose(_detect(_rich_model(), bounds_as_rows=False))
 
     for f in fields:
         assert (sorted(map(str, getattr(as_rows, f) or []))
@@ -1300,7 +1300,7 @@ def test_a_vacuous_singleton_row_does_not_hide_an_output_variable():
     f.Constraint(x <= 1e30)             # and bounded by nothing in particular
 
     for flag in (True, False):
-        rep = diagnose(_detect(f, bounds_as_rows=flag), quiet=True)
+        rep = diagnose(_detect(f, bounds_as_rows=flag))
         assert 'x' in [str(n) for n in rep.output_columns], \
             f'x should be output-only with bounds_as_rows={flag}'
         assert 'y' not in [str(n) for n in rep.output_columns]
@@ -1317,7 +1317,7 @@ def test_a_tight_singleton_row_does_keep_a_variable_from_being_output_only():
     f.Constraint(x <= 100.0)
 
     for flag in (True, False):
-        rep = diagnose(_detect(f, bounds_as_rows=flag), quiet=True)
+        rep = diagnose(_detect(f, bounds_as_rows=flag))
         assert 'x' not in [str(n) for n in rep.output_columns]
 
 

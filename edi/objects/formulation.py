@@ -875,7 +875,7 @@ class Formulation(ConcreteModel):
         from edi.units.unitCorrector import unit_corrector
         return structure_detector(unit_corrector(self), bounds_as_rows=False)
 
-    def structure_report(self, top=5, quiet=False):
+    def structure_report(self, top=5):
         """What kind of problem this is, and what stops it being a simpler one.
 
         Answers the question a class name raises rather than settles: an SP is
@@ -883,15 +883,12 @@ class Formulation(ConcreteModel):
         reformulation away from posynomial. Names them, with their bodies.
 
         ``top`` caps the constraints listed per class; ``top=None`` lists all.
-        Returns the text; prints it unless ``quiet``.
+        Returns the text and prints nothing.
         """
         from edi.presolve import structure_report as _report
-        text = _report(self, top=top)
-        if not quiet:
-            print(text)
-        return text
+        return _report(self, top=top)
 
-    def diagnose(self, top=5, quiet=False):
+    def diagnose(self, top=5):
         """Every structural check, in one call: structure, then presolve.
 
         The pre-solve half of the report -- it needs no solution. Pass the
@@ -899,7 +896,7 @@ class Formulation(ConcreteModel):
         and cancellation checks, which do.
         """
         from edi.presolve import diagnose as _diagnose
-        return _diagnose(self, quiet=quiet, structure_top=top)
+        return _diagnose(self, structure_top=top)
 
     def check_units(self):
         for i in range(1, self._objective_counter + 1):
