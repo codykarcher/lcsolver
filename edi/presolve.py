@@ -178,7 +178,12 @@ class PresolveReport:
                     or self.unbounded_below)
 
     def __str__(self):
-        L = [f"presolve: {self.n_variables} variables, {self.n_rows} rows"]
+        # Structure first when it is there. `print(diagnose(st, quiet=True))`
+        # is how anyone gets this report by hand, and it used to print only
+        # the presolve half, because the structure section was prepended by
+        # diagnose's own print path rather than living in the text.
+        L = ([self.structure, ""] if self.structure else [])
+        L += [f"presolve: {self.n_variables} variables, {self.n_rows} rows"]
 
         if self.singleton_rows:
             pct = 100.0 * len(self.singleton_rows) / max(self.n_rows, 1)
@@ -1803,8 +1808,7 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
     if not quiet:
         text = str(rep)
         extra = rep.post_solve_text()
-        print((rep.structure + "\n\n" if rep.structure else "")
-              + text + ("\n" + extra if extra else ""))
+        print(text + ("\n" + extra if extra else ""))
     return rep
 
 
