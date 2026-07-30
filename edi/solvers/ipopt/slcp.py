@@ -601,6 +601,33 @@ def _apply_variable_bounds(m, problem, log_xk):
             cur = m.d[j].ub
             v = math.log(hi) - log_xk[j]
             m.d[j].setub(v if cur is None else min(cur, v))
+    seat_step_in_bounds(m)
+
+
+def seat_step_in_bounds(m):
+    """Start the step inside its own box.
+
+    ``d = 0`` -- take no step -- is the right initial guess and is very nearly
+    always feasible. It is not feasible when the iterate already sits ON a
+    bound: the bound in log space is then ``log(lo) - log(x_k)``, which lands
+    a rounding error *above* zero, so the initial value is outside its own
+    bounds and Pyomo says so (W1002) once per such variable per sub-problem.
+    On a converged solve of a model with active bounds that is a wall of
+    warnings with nothing wrong behind it, and it trains the reader to ignore
+    a class of warning worth reading.
+
+    Seat the value in the box rather than silencing the logger, which would
+    hide the genuine ones too. Call after every bound application: bounds are
+    tightened in several passes and only the last one knows the final box.
+    """
+    for j in m.d:
+        v, lo, hi = 0.0, m.d[j].lb, m.d[j].ub
+        if lo is not None and v < lo:
+            v = float(lo)
+        if hi is not None and v > hi:
+            v = float(hi)
+        if v != 0.0:
+            m.d[j].set_value(v)
 
 
 class SubproblemCache:

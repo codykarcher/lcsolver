@@ -96,6 +96,7 @@ import numpy as np
 import pyomo.environ as pyo
 
 from edi.solvers.ipopt.slcp import (CondensedEquality, Posynomial,
+                                    seat_step_in_bounds,
                                     PosynomialRatio, Problem, Signomial)
 
 __all__ = ["SIAOptions", "SIAResult", "solve_sia", "classify",
@@ -795,10 +796,13 @@ class SubproblemCache:
             ub = None if not np.isfinite(hi[j]) else float(hi[j])
             m.d[j].setlb(float(lo[j]))
             m.d[j].setub(ub)
-            # Start from d = 0 (the current iterate), but inside the box: a
-            # variable already at its bound has 0 outside, and Pyomo warns.
-            start = min(max(0.0, float(lo[j])), ub if ub is not None else 0.0)
-            m.d[j].set_value(start)
+        # Start from d = 0 (the current iterate), but inside the box: a
+        # variable already at its bound has 0 outside it. The clamp used to be
+        # written inline as `min(max(0, lo), ub if ub is not None else 0.0)`,
+        # which collapses to 0.0 whenever there is no upper bound -- exactly
+        # the unbounded-above case it was meant to catch -- so the warning it
+        # exists to prevent was emitted anyway.
+        seat_step_in_bounds(m)
         if phase.minimize_violation == 'l1':
             # Elastic: warm-start every slack at this row's own violation,
             # which is its smallest feasible value for the linearised model.
@@ -879,6 +883,7 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 m.d[j].setlb(math.log(lo) - log_xk[j])
             if hi is not None and hi > 0:
                 m.d[j].setub(math.log(hi) - log_xk[j])
+        seat_step_in_bounds(m)
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     if minimize_violation:
         m.t = pyo.Var(initialize=float(_violation(problem, x_k)))
@@ -990,6 +995,9 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     if has_blackbox:
         for j in range(n):
             tighten(j, lo=-radius, hi=radius)
+
+    # Bounds are tightened in several passes above; only now is the box final.
+    seat_step_in_bounds(m)
 
     return _solve_and_extract(m, problem, options, minimize_violation,
                               use_slacks, obj if not minimize_violation else None)
