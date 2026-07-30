@@ -276,7 +276,7 @@ def _drop_zero_terms(gpRows):
 
 
 
-def _blame(structures, classes, name, reason):
+def _blame(structures, classes, name, reason, row=None):
     """Record which row ruled out which problem class, and why.
 
     The detector otherwise only flips a global flag, so a model that "is an
@@ -288,8 +288,8 @@ def _blame(structures, classes, name, reason):
     blk = structures.setdefault('blockers', {})
     for cls in classes:
         rows = blk.setdefault(cls, [])
-        if (name, reason) not in rows:
-            rows.append((name, reason))
+        if (name, reason, row) not in rows:
+            rows.append((name, reason, row))
 
 
 def structure_detector(pyomo_component, bounds_as_rows=True):
@@ -507,7 +507,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             # is sp with fractional objective
             _blame(structures, ['Linear_Program', 'Quadratic_Program',
                                 'Geometric_Program'], 'the objective',
-                   'is a ratio of posynomials')
+                   'is a ratio of posynomials', row=0)
             structures['Linear_Program'][0] = False
             structures['Quadratic_Program'][0] = False
             structures['Geometric_Program'][0] = False
@@ -523,7 +523,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             if not all([rw[1]>0.0 for rw in gpRows]):
                 # has subtraction in the objective
                 _blame(structures, ['Geometric_Program', 'Signomial_Program'],
-                       'the objective', 'has a negative term (a true signomial)')
+                       'the objective', 'has a negative term (a true signomial)',
+                       row=0)
                 structures['Geometric_Program'][0] = False
                 structures['Signomial_Program'][0] = False
             else:
@@ -542,7 +543,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                 # If PD, then it is a QP and is not an LP
                 structures['Quadratic_Program'][1] = quadraticCheck[1:] + [None,None]
                 _blame(structures, ['Linear_Program'], 'the objective',
-                       'is quadratic, not affine')
+                       'is quadratic, not affine', row=0)
                 structures['Linear_Program'][0] = False
             else:
                 # if not PD, then it is not a QP
@@ -554,7 +555,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                     structures['Linear_Program'][1] = linearCheck[1:] + [None,None]
                 else:
                     _blame(structures, ['Linear_Program'], 'the objective',
-                           'is neither affine nor a positive-definite quadratic')
+                           'is neither affine nor a positive-definite quadratic',
+                           row=0)
                     structures['Linear_Program'][0] = False  
 
     # check that there are constraints
@@ -597,7 +599,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         if not all([rw[0]>=0.0 for rw in lhs_zeroed]):
                             # has fraction
                             _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
-                                   'divides by an expression, so it is not affine')
+                                   'divides by an expression, so it is not affine', row=i + 1)
                             structures['Linear_Program'][0] = False
                             structures['Linear_Program'][1] = None
                             structures['Quadratic_Program'][0] = False
@@ -621,7 +623,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                                         structures['Quadratic_Program'][1][4] = np.append( structures['Quadratic_Program'][1][4], linearCheck[2] )
                             else:
                                 _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
-                                       'is nonlinear in the design variables')
+                                       'is nonlinear in the design variables', row=i + 1)
                                 structures['Linear_Program'][0] = False
                                 structures['Linear_Program'][1] = None
                                 structures['Quadratic_Program'][0] = False
@@ -629,7 +631,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                     else:
                         # signomial fraction present
                         _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
-                               'contains a signomial fraction')
+                               'contains a signomial fraction', row=i + 1)
                         structures['Linear_Program'][0] = False
                         structures['Linear_Program'][1] = None
                         structures['Quadratic_Program'][0] = False
@@ -712,7 +714,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         # has subtraction, which is not allowed under this definition of SP
                         _blame(structures, ['Geometric_Program', 'Signomial_Program'],
                                c.name, 'has a negative term that cannot be moved '
-                                       'to the other side (a true signomial)')
+                                       'to the other side (a true signomial)',
+                               row=i + 1)
                         structures['Geometric_Program'][0] = False
                         structures['Geometric_Program'][1] = None
                         structures['Signomial_Program'][0] = False
@@ -722,7 +725,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         # is sp with fraction
                         _blame(structures, ['Geometric_Program'], c.name,
                                'is a ratio of posynomials, not a posynomial '
-                               '(this is what makes the model an SP)')
+                               '(this is what makes the model an SP)', row=i + 1)
                         structures['Geometric_Program'][0] = False
                         structures['Geometric_Program'][1] = None
                         if structures['Signomial_Program'][0] != False:

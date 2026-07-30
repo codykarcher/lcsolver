@@ -121,3 +121,52 @@ def test_blame_does_not_disturb_detection():
                        (_gp, 'Geometric_Program'), (_sp, 'Signomial_Program')):
         st = _detected(build())
         assert st[key][0] is not False, key
+
+
+# --- as written vs as solved ------------------------------------------------
+# A constraint whose only job is to define a quantity nothing else reads is
+# removed by the presolve. It can make a model an SP on paper while the solver
+# is handed a GP, and the report has to distinguish the two or it misleads.
+
+def _sp_only_on_paper():
+    """A GP, plus a posynomial equality defining an output-only variable.
+
+    `q == 1 + lam` is not GP-representable, so the model detects as an SP. But
+    nothing reads `lam`, so the presolve drops it and the constraint with it.
+    This is the Hoburg UAV's taper ratio, reduced.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='x')
+    y = f.Variable(name='y', guess=1.0, units='m', description='y')
+    q = f.Variable(name='q', guess=1.5, units='-', description='q')
+    lam = f.Variable(name='lam', guess=0.5, units='-', description='taper')
+    A = f.Constant(name='A', value=2.0, units='m^2', description='A')
+    f.Objective(x + y)
+    f.ConstraintList([x * y >= A, q >= 1.2, q == 1 + lam])
+    return f
+
+
+def test_reports_both_as_written_and_as_solved():
+    text = structure_report(_detected(_sp_only_on_paper()))
+    assert 'Signomial Program (SP) as written' in text
+    assert 'Geometric Program (GP) as solved' in text
+    assert 'removed by the presolve' in text
+
+
+def test_a_genuine_sp_is_not_simplified():
+    """The blocker here is load-bearing, so nothing may claim it goes away."""
+    text = structure_report(_detected(_sp()))
+    assert 'as solved' not in text
+    assert 'Signomial Program (SP)' in text
+    assert 'removed by the presolve' not in text
+
+
+def test_simplify_can_be_turned_off():
+    text = structure_report(_detected(_sp_only_on_paper()), simplify=False)
+    assert 'as solved' not in text
+    assert 'Signomial Program (SP)' in text
+
+
+def test_no_simplification_claim_when_nothing_is_removed():
+    """A plain GP must not sprout an 'as solved' line."""
+    assert 'as solved' not in structure_report(_detected(_gp()))

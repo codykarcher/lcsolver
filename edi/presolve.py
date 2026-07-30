@@ -1591,7 +1591,35 @@ def _constraint_bodies(structures):
         return {}
 
 
-def structure_report(structures, top=5) -> str:
+def _rows_after_presolve(structures):
+    """Constraint indices that still exist once the presolve has run.
+
+    A blocker that does not survive did not really determine the class of the
+    problem that gets solved. The commonest case by far: a constraint whose
+    only job is to define a quantity nothing else reads -- a taper ratio, a
+    span in metres -- which the presolve removes and back-substitutes
+    afterwards. It can make a model an SP on paper while the solver is handed
+    a GP.
+
+    Removing rows cannot introduce a blocker, and monomial elimination
+    substitutes a monomial for a variable, which maps posynomials to
+    posynomials. So a class whose blockers are all removed really is achieved.
+
+    Returns ``None`` if the presolve cannot run, so the caller can stay quiet
+    rather than guess.
+    """
+    try:
+        st = _with_empty_bounds(structures)
+        st = fold_singleton_rows(st)
+        st, _elim = eliminate_monomial_equalities(st)
+        st, _removed = reduce_columns(st)
+        rows, _ops, _key = _rows_of(st)
+    except Exception:
+        return None
+    return {int(r[0]) if r[0] >= 0 else int(-r[0] - 1) for r in rows}
+
+
+def structure_report(structures, top=5, simplify=True) -> str:
     """What kind of problem this is, and what stops it being a simpler one.
 
     The detector already knows: it clears a flag the moment a row rules a class
@@ -1600,6 +1628,12 @@ def structure_report(structures, top=5) -> str:
     made it one*. Usually it is one or two, and usually they are a
     reformulation away from posynomial, so naming them is the difference
     between a label and an action.
+
+    ``simplify`` additionally asks whether the blockers survive the presolve.
+    They often do not -- a constraint that merely defines a reporting quantity
+    is removed before the solve -- and then the class the model is *written*
+    in is not the class that gets *solved*. That distinction is the whole
+    point of asking.
 
     ``top`` caps how many blocking constraints are listed per class; the rest
     are counted. Set ``top=None`` for all of them.
@@ -1619,9 +1653,28 @@ def structure_report(structures, top=5) -> str:
             L.append(f'  {msg}')
         return '\n'.join(L)
 
+    # Does the presolve remove what blocks a simpler class? If so the model is
+    # only nominally the class it was detected as.
+    simplified, surviving = detected, None
+    if simplify:
+        surviving = _rows_after_presolve(st)
+    if surviving is not None:
+        for cand in _CLASS_ORDER[:_CLASS_ORDER.index(detected)]:
+            rows = blockers.get(cand, ())
+            if all(r[2] is not None and r[2] not in surviving for r in rows):
+                simplified = cand
+                break
+
     label, consequence = _CLASS_INFO[detected]
-    L.append(f'  {label}')
-    L.append(f'    {consequence}')
+    if simplified != detected:
+        s_label, s_consequence = _CLASS_INFO[simplified]
+        L.append(f'  {label} as written')
+        L.append(f'  {s_label} as solved -- every constraint that blocked it '
+                 f'is removed by the presolve')
+        L.append(f'    {s_consequence}')
+    else:
+        L.append(f'  {label}')
+        L.append(f'    {consequence}')
 
     def _section(classes, headline, advice=None):
         rows = []
@@ -1630,13 +1683,13 @@ def structure_report(structures, top=5) -> str:
         if not rows:
             return
         seen, uniq = set(), []
-        for name, why in rows:
+        for name, why, row in rows:
             if name not in seen:
                 seen.add(name)
-                uniq.append((name, why))
+                uniq.append((name, why, row))
         L.append('')
         n = len(uniq)
-        n_obj = sum(1 for nm, _ in uniq if nm == 'the objective')
+        n_obj = sum(1 for nm, _, _ in uniq if nm == 'the objective')
         n_con = n - n_obj
         parts = []
         if n_con:
@@ -1646,10 +1699,13 @@ def structure_report(structures, top=5) -> str:
         L.append(f'  {headline} -- {" and ".join(parts)} '
                  f'block{"s" if n == 1 else ""} it:')
         shown = uniq if top is None else uniq[:top]
-        for name, why in shown:
+        for name, why, row in shown:
             body = bodies.get(name)
             L.append(f'      {name}' + (f'   {body}' if body else ''))
             L.append(f'          {why}')
+            if surviving is not None and row is not None and row not in surviving:
+                L.append('          (removed by the presolve -- it does not '
+                         'reach the solver)')
         if len(uniq) > len(shown):
             L.append(f'      ... and {len(uniq) - len(shown)} more')
         if advice:
@@ -1659,12 +1715,19 @@ def structure_report(structures, top=5) -> str:
     # "failing to be an SP", and saying so would be noise.
     rank = _CLASS_ORDER.index(detected)
     if rank > _CLASS_ORDER.index('Geometric_Program'):
-        _section(['Geometric_Program'], 'Not a Geometric Program',
+        _section(['Geometric_Program'],
+                 'Not a Geometric Program as written'
+                 if simplified == 'Geometric_Program' else
+                 'Not a Geometric Program',
+                 'The solver dispatches on the as-written class, so this still '
+                 'routes through the SP loop; the presolve then hands that loop '
+                 'a GP, which is why it converges in a couple of iterations.'
+                 if simplified == 'Geometric_Program' else
                  'Reformulate those and the model becomes a GP: one convex '
                  'solve, global optimum, no iteration.')
     if rank > _CLASS_ORDER.index('Quadratic_Program'):
-        lp = {n for n, _ in blockers.get('Linear_Program', ())}
-        qp = {n for n, _ in blockers.get('Quadratic_Program', ())}
+        lp = {r[0] for r in blockers.get('Linear_Program', ())}
+        qp = {r[0] for r in blockers.get('Quadratic_Program', ())}
         if lp == qp:
             _section(['Linear_Program'], 'Not a Linear or Quadratic Program')
         else:
