@@ -72,7 +72,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
-           "diagnose", "floor_report",
+           "diagnose", "floor_report", "structure_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -159,6 +159,10 @@ class PresolveReport:
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
     at_floor: list = field(default_factory=list)
+    #: `structure_report` text, filled in by `diagnose`. Kept as a field
+    #: rather than folded into __str__ so a caller can print the two
+    #: halves separately -- structure needs no solution, the rest does.
+    structure: str = ''
     defaulted_guesses: list = field(default_factory=list)
     cancelling: list = field(default_factory=list)
     bounds: dict = field(default_factory=dict)
@@ -1536,8 +1540,144 @@ def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
     return out
 
 
+
+#: What each class means for the solve, and what it buys. The report exists to
+#: answer "so what" -- a class name alone tells a reader nothing about whether
+#: the answer they got is global.
+_CLASS_INFO = {
+    'Linear_Program': (
+        'Linear Program (LP)',
+        'one convex solve; global optimum, exact duals'),
+    'Quadratic_Program': (
+        'Quadratic Program (QP)',
+        'one convex solve; global optimum'),
+    'Geometric_Program': (
+        'Geometric Program (GP)',
+        'convex in log space: one convex solve, global optimum'),
+    'Signomial_Program': (
+        'Signomial Program (SP)',
+        'convex in no variables; solved as a sequence of convex subproblems '
+        '(SIA/PCCP), so the optimum is LOCAL'),
+}
+
+#: Simplest first. A model is reported as the first class it satisfies.
+_CLASS_ORDER = ['Linear_Program', 'Quadratic_Program', 'Geometric_Program',
+                'Signomial_Program']
+
+
+def _clean_expr(text, width=88):
+    """A constraint body as a reader wants it, not as Pyomo prints it."""
+    for junk in ('dimensionless*', '*dimensionless', ' dimensionless'):
+        text = text.replace(junk, '')
+    text = ' '.join(text.split())
+    return text if len(text) <= width else text[:width - 3] + '...'
+
+
+def _constraint_bodies(structures):
+    """``{name: body}`` for every constraint on the detected model."""
+    model = structures.get('model') if hasattr(structures, 'get') else None
+    if model is None:
+        return {}
+    try:
+        import pyomo.environ as pyo
+        bodies = {c.name: _clean_expr(str(c.expr))
+                  for c in model.component_data_objects(ctype=pyo.Constraint)}
+        objs = [_clean_expr(str(o.expr))
+                for o in model.component_data_objects(ctype=pyo.Objective)]
+        if objs:
+            bodies['the objective'] = objs[0]
+        return bodies
+    except Exception:
+        return {}
+
+
+def structure_report(structures, top=5) -> str:
+    """What kind of problem this is, and what stops it being a simpler one.
+
+    The detector already knows: it clears a flag the moment a row rules a class
+    out. It just never said which row, so a model that "is an SP" could not
+    answer the only question worth asking about that fact -- *which constraint
+    made it one*. Usually it is one or two, and usually they are a
+    reformulation away from posynomial, so naming them is the difference
+    between a label and an action.
+
+    ``top`` caps how many blocking constraints are listed per class; the rest
+    are counted. Set ``top=None`` for all of them.
+    """
+    st = as_detected(structures)
+    blockers = (st.get('blockers') or {}) if hasattr(st, 'get') else {}
+    bodies = _constraint_bodies(st)
+
+    L = ['structure', '---------']
+
+    detected = next((k for k in _CLASS_ORDER
+                     if st.get(k) and st[k][0] and st[k][1] is not None), None)
+    if detected is None:
+        L.append('  unstructured -- no LP, QP, GP or SP form was detected')
+        msg = st.get('message') if hasattr(st, 'get') else None
+        if msg:
+            L.append(f'  {msg}')
+        return '\n'.join(L)
+
+    label, consequence = _CLASS_INFO[detected]
+    L.append(f'  {label}')
+    L.append(f'    {consequence}')
+
+    def _section(classes, headline, advice=None):
+        rows = []
+        for cls in classes:
+            rows += blockers.get(cls, [])
+        if not rows:
+            return
+        seen, uniq = set(), []
+        for name, why in rows:
+            if name not in seen:
+                seen.add(name)
+                uniq.append((name, why))
+        L.append('')
+        n = len(uniq)
+        n_obj = sum(1 for nm, _ in uniq if nm == 'the objective')
+        n_con = n - n_obj
+        parts = []
+        if n_con:
+            parts.append(f'{n_con} constraint' + ('s' if n_con != 1 else ''))
+        if n_obj:
+            parts.append('the objective')
+        L.append(f'  {headline} -- {" and ".join(parts)} '
+                 f'block{"s" if n == 1 else ""} it:')
+        shown = uniq if top is None else uniq[:top]
+        for name, why in shown:
+            body = bodies.get(name)
+            L.append(f'      {name}' + (f'   {body}' if body else ''))
+            L.append(f'          {why}')
+        if len(uniq) > len(shown):
+            L.append(f'      ... and {len(uniq) - len(shown)} more')
+        if advice:
+            L.append(f'    {advice}')
+
+    # Only report the classes SIMPLER than the one detected: a GP is not
+    # "failing to be an SP", and saying so would be noise.
+    rank = _CLASS_ORDER.index(detected)
+    if rank > _CLASS_ORDER.index('Geometric_Program'):
+        _section(['Geometric_Program'], 'Not a Geometric Program',
+                 'Reformulate those and the model becomes a GP: one convex '
+                 'solve, global optimum, no iteration.')
+    if rank > _CLASS_ORDER.index('Quadratic_Program'):
+        lp = {n for n, _ in blockers.get('Linear_Program', ())}
+        qp = {n for n, _ in blockers.get('Quadratic_Program', ())}
+        if lp == qp:
+            _section(['Linear_Program'], 'Not a Linear or Quadratic Program')
+        else:
+            _section(['Quadratic_Program'], 'Not a Quadratic Program')
+            _section(['Linear_Program'], 'Not a Linear Program')
+    elif rank > _CLASS_ORDER.index('Linear_Program'):
+        _section(['Linear_Program'], 'Not a Linear Program')
+
+    return '\n'.join(L)
+
+
 def diagnose(structures, x=None, problem=None, names=None, quiet=False,
-             x_min=1e-9):
+             x_min=1e-9, structure_top=5):
     """Every structural check, in one call, as one report.
 
     The individual checks are expert tools: each needs the structure detected a
@@ -1547,6 +1687,11 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
     ``x`` and ``problem``, when given, enable the two checks that can only run
     after a solve -- degeneracy and signomial cancellation. Without them only
     the structural half runs, which is the half that needs nothing.
+
+    The report opens with :func:`structure_report` -- what kind of problem
+    this is and what stops it being a simpler one -- because that needs no
+    solution and is the first thing worth knowing. ``structure_top`` caps how
+    many blocking constraints it lists per class.
 
     Returns a :class:`PresolveReport` with ``degenerate`` and ``cancelling``
     filled in when a solution was supplied. ``quiet`` suppresses the printout
@@ -1588,10 +1733,15 @@ def diagnose(structures, x=None, problem=None, names=None, quiet=False,
             rep.cancelling = []
         rep.at_floor = floor_report(
             x, names or [str(v) for v in st.variables], x_min=x_min)
+    try:
+        rep.structure = structure_report(st, top=structure_top)
+    except Exception:
+        rep.structure = ''
     if not quiet:
         text = str(rep)
         extra = rep.post_solve_text()
-        print(text + ("\n" + extra if extra else ""))
+        print((rep.structure + "\n\n" if rep.structure else "")
+              + text + ("\n" + extra if extra else ""))
     return rep
 
 

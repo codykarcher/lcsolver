@@ -275,6 +275,23 @@ def _drop_zero_terms(gpRows):
     return kept if kept else gpRows
 
 
+
+def _blame(structures, classes, name, reason):
+    """Record which row ruled out which problem class, and why.
+
+    The detector otherwise only flips a global flag, so a model that "is an
+    SP" cannot say what stopped it being a GP -- which is the first thing
+    anyone wants to know, because a signomial constraint is usually one term
+    away from a posynomial one. Cheap: a few tuples, appended where the flag
+    was already being cleared.
+    """
+    blk = structures.setdefault('blockers', {})
+    for cls in classes:
+        rows = blk.setdefault(cls, [])
+        if (name, reason) not in rows:
+            rows.append((name, reason))
+
+
 def structure_detector(pyomo_component, bounds_as_rows=True):
     """Detect the optimization structure of a Pyomo model.
 
@@ -463,7 +480,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
 
     # starts building the output dict
     # Structured as : [strucure_present, the gp matrix stack, the constraint operator list]
-    structures = {"Linear_Program"   :[True,[],[]], 
+    structures = {"blockers": {},
+                  "Linear_Program"   :[True,[],[]], 
                   "Quadratic_Program":[True,[],[]],
                   "Geometric_Program":[True,[],[]], 
                   "Signomial_Program":[True,[],[]],} # Convex, LogConvex, Convex_QCQP, 
@@ -487,6 +505,9 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # check that all of the first entries (constraint number) are 0, otherwise this is a signomial fraction
         if not all([rw[0]==0.0 for rw in gpRows]):
             # is sp with fractional objective
+            _blame(structures, ['Linear_Program', 'Quadratic_Program',
+                                'Geometric_Program'], 'the objective',
+                   'is a ratio of posynomials')
             structures['Linear_Program'][0] = False
             structures['Quadratic_Program'][0] = False
             structures['Geometric_Program'][0] = False
@@ -501,6 +522,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             # Check to see if all of the leading constants are positive for GP/SP
             if not all([rw[1]>0.0 for rw in gpRows]):
                 # has subtraction in the objective
+                _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+                       'the objective', 'has a negative term (a true signomial)')
                 structures['Geometric_Program'][0] = False
                 structures['Signomial_Program'][0] = False
             else:
@@ -518,6 +541,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             if quadraticCheck[0]:
                 # If PD, then it is a QP and is not an LP
                 structures['Quadratic_Program'][1] = quadraticCheck[1:] + [None,None]
+                _blame(structures, ['Linear_Program'], 'the objective',
+                       'is quadratic, not affine')
                 structures['Linear_Program'][0] = False
             else:
                 # if not PD, then it is not a QP
@@ -528,6 +553,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                 if linearCheck[0]:
                     structures['Linear_Program'][1] = linearCheck[1:] + [None,None]
                 else:
+                    _blame(structures, ['Linear_Program'], 'the objective',
+                           'is neither affine nor a positive-definite quadratic')
                     structures['Linear_Program'][0] = False  
 
     # check that there are constraints
@@ -569,6 +596,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         # Do LP/QP stuff
                         if not all([rw[0]>=0.0 for rw in lhs_zeroed]):
                             # has fraction
+                            _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                                   'divides by an expression, so it is not affine')
                             structures['Linear_Program'][0] = False
                             structures['Linear_Program'][1] = None
                             structures['Quadratic_Program'][0] = False
@@ -591,12 +620,16 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                                         structures['Quadratic_Program'][1][3] = np.append( structures['Quadratic_Program'][1][3], linearCheck[1] , axis=0)
                                         structures['Quadratic_Program'][1][4] = np.append( structures['Quadratic_Program'][1][4], linearCheck[2] )
                             else:
+                                _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                                       'is nonlinear in the design variables')
                                 structures['Linear_Program'][0] = False
                                 structures['Linear_Program'][1] = None
                                 structures['Quadratic_Program'][0] = False
                                 structures['Quadratic_Program'][1] = None   
                     else:
                         # signomial fraction present
+                        _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                               'contains a signomial fraction')
                         structures['Linear_Program'][0] = False
                         structures['Linear_Program'][1] = None
                         structures['Quadratic_Program'][0] = False
@@ -677,6 +710,9 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
 
                     if not all([rw[1]>0.0 for rw in lhs_final]):
                         # has subtraction, which is not allowed under this definition of SP
+                        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+                               c.name, 'has a negative term that cannot be moved '
+                                       'to the other side (a true signomial)')
                         structures['Geometric_Program'][0] = False
                         structures['Geometric_Program'][1] = None
                         structures['Signomial_Program'][0] = False
@@ -684,6 +720,9 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
 
                     if not all([rw[0]>=0.0 for rw in lhs_final]):
                         # is sp with fraction
+                        _blame(structures, ['Geometric_Program'], c.name,
+                               'is a ratio of posynomials, not a posynomial '
+                               '(this is what makes the model an SP)')
                         structures['Geometric_Program'][0] = False
                         structures['Geometric_Program'][1] = None
                         if structures['Signomial_Program'][0] != False:

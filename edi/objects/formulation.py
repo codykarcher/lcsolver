@@ -863,6 +863,44 @@ class Formulation(ConcreteModel):
 
         print(format_sensitivities(self.sensitivities(**kwargs)))
 
+    def _detected(self):
+        """This formulation's detected structure, units corrected first.
+
+        Detection reads the corrected twin, not the declared model: a
+        constraint stated in feet against one in metres is a different set of
+        exponents, and classifying the uncorrected form can call the same
+        model by a different name.
+        """
+        from edi.structure.structureDetector import structure_detector
+        from edi.units.unitCorrector import unit_corrector
+        return structure_detector(unit_corrector(self), bounds_as_rows=False)
+
+    def structure_report(self, top=5, quiet=False):
+        """What kind of problem this is, and what stops it being a simpler one.
+
+        Answers the question a class name raises rather than settles: an SP is
+        an SP *because of specific constraints*, and they are usually a
+        reformulation away from posynomial. Names them, with their bodies.
+
+        ``top`` caps the constraints listed per class; ``top=None`` lists all.
+        Returns the text; prints it unless ``quiet``.
+        """
+        from edi.presolve import structure_report as _report
+        text = _report(self._detected(), top=top)
+        if not quiet:
+            print(text)
+        return text
+
+    def diagnose(self, top=5, quiet=False):
+        """Every structural check, in one call: structure, then presolve.
+
+        The pre-solve half of the report -- it needs no solution. Pass the
+        solved model to `edi.presolve.diagnose` directly for the degeneracy
+        and cancellation checks, which do.
+        """
+        from edi.presolve import diagnose as _diagnose
+        return _diagnose(self._detected(), quiet=quiet, structure_top=top)
+
     def check_units(self):
         for i in range(1, self._objective_counter + 1):
             assert_units_consistent(self.__dict__['objective_' + str(i)])
