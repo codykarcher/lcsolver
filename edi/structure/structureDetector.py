@@ -250,6 +250,31 @@ def _require_bounds_as_rows_legacy(structures, who):
             "bound. Re-run structure_detector with bounds_as_rows=True.")
 
 
+
+def _drop_zero_terms(gpRows):
+    """Remove terms whose leading coefficient is exactly zero.
+
+    ``0 * x`` contributes nothing to a sum, so a zero-coefficient term is not
+    a modelling error -- it is an absent term. But the GP/SP tests below ask
+    ``coefficient > 0``, which a zero fails exactly as a NEGATIVE coefficient
+    does, so the classifier read it as a subtraction and rejected the whole
+    model with "structure is neither a GP nor an SP".
+
+    That matters because ``0 * some_variable`` is the natural way to write a
+    units-correct absent term in a parameterised model -- an architecture with
+    no fuel tank contributing no tank weight, say. Dropping the term here is
+    exact and makes that idiom work.
+
+    A row that is ALL zero terms is left alone: an identically-zero expression
+    is a real problem and should be reported as one further down, not silently
+    turned into an empty posynomial.
+    """
+    if not gpRows:
+        return gpRows
+    kept = [rw for rw in gpRows if rw[1] != 0.0]
+    return kept if kept else gpRows
+
+
 def structure_detector(pyomo_component, bounds_as_rows=True):
     """Detect the optimization structure of a Pyomo model.
 
@@ -452,7 +477,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # Walk the expression, returns the full breakdown of the constraint in dictionary form
         rv = visitor.walk_expression(obj.sense * obj)
         # parses into a gp-solver like matrix/vector
-        gpRows = parseDict_GP(0,rv,N_vars_unwrapped,variableMap)
+        gpRows = _drop_zero_terms(
+            parseDict_GP(0,rv,N_vars_unwrapped,variableMap))
         if gpRows is None:
             return unstructured_dict() | { "message":"The objective is not expressible in the GP algebra (it contains an operation outside the monomial/signomial/signomial-fraction forms, such as a transcendental function)"}
         # Should be in the form [constraint_number, leading constant, exponent for var_1, exponent for var_2...]
@@ -528,8 +554,10 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                 # Rv includes all constant, monomial, signomial, etc...  Walk through each of these
                 for rvv in rv:
                     # Extract all of the GP style matricies
-                    gpRows_lhs = parseDict_GP(i+1,rvv['lhs'],N_vars_unwrapped,variableMap)
-                    gpRows_rhs = parseDict_GP(i+1,rvv['rhs'],N_vars_unwrapped,variableMap)
+                    gpRows_lhs = _drop_zero_terms(parseDict_GP(
+                        i+1,rvv['lhs'],N_vars_unwrapped,variableMap))
+                    gpRows_rhs = _drop_zero_terms(parseDict_GP(
+                        i+1,rvv['rhs'],N_vars_unwrapped,variableMap))
                     if gpRows_lhs is None or gpRows_rhs is None:
                         side = 'lhs' if gpRows_lhs is None else 'rhs'
                         return unstructured_dict() | { "message":"The %s of constraint %s is not expressible in the GP algebra (it contains an operation outside the monomial/signomial/signomial-fraction forms, such as a transcendental function)"%(side,c.name)}

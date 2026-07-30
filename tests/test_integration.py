@@ -275,6 +275,17 @@ def test_spaircraft_end_to_end():
     It also caught the iteration cap: SPaircraft converges in 149 iterations
     and the default was 100, so a converging run was being stopped three fifths
     of the way through and reported as a failure.
+
+    The objective moved from 95559.91 to 95120.43 -- 0.46% LOWER, i.e. a
+    better optimum -- when Phase I stopped writing signomial equalities as
+    ``residual == t``. That form forces every equality to the single shared
+    violation scalar, so on a model with SPaircraft's ten-odd
+    SignomialEqualities the sub-problem could be infeasible on a perfectly
+    feasible problem; ``|residual| <= t`` fixed it. The new point satisfies
+    the same feasibility and stationarity assertions above -- 1e-6 and 1e-5 --
+    so this is a better local solution on a non-convex problem, not a
+    regression. A better Phase I start landing in a better basin is exactly
+    what that fix should do.
     """
     build = _example('spaircraft')
 
@@ -289,7 +300,7 @@ def test_spaircraft_end_to_end():
     assert res.max_violation <= 1e-6
     assert res.stationarity <= 1e-5
     assert len(res.x) == n_vars, 'presolve must restore the full solution'
-    assert res.objective == pytest.approx(95559.91, rel=1e-3)
+    assert res.objective == pytest.approx(95120.43, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
