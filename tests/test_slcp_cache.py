@@ -21,8 +21,8 @@ import pytest
 from edi import Formulation
 from edi.solvers.ipopt.slcp import Options, SubproblemCache
 from edi.solvers.ipopt.slcp_bridge import build_problem, solve_slcp
-from edi.structure.structureDetector import structure_detector
-from edi.units.unitCorrector import unit_corrector
+from edi.preconditioner.structureDetector import structure_detector
+from edi.preconditioner.unitCorrector import unit_corrector
 
 M = pyo.units.m
 

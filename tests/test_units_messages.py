@@ -6,7 +6,7 @@ try:
     from pyomo.environ import units
 
     from edi import Formulation
-    from edi.units.unitCorrector import UnitMismatch, unit_corrector
+    from edi.preconditioner.unitCorrector import UnitMismatch, unit_corrector
     available = True
 except Exception:                                    # pragma: no cover
     available = False

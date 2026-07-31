@@ -57,8 +57,8 @@ def bench_case(name, build_formulation, slcp_case=None, repeats=5):
     from edi.solvers.ipopt import ipopt_solve
     from edi.solvers.ipopt.convex import solve_gp_ipopt
     from edi.solvers.solver import cvxopt_solve
-    from edi.structure.structureDetector import structure_detector
-    from edi.units.unitCorrector import unit_corrector
+    from edi.preconditioner.structureDetector import structure_detector
+    from edi.preconditioner.unitCorrector import unit_corrector
 
     print(f'\n{"=" * 76}\n{name.upper()}\n{"=" * 76}')
 

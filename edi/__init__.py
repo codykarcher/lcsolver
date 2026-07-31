@@ -25,7 +25,7 @@ codes, and structure detection (LP/QP/GP/SP).
 
 Note on history: this package began life as ``pyomo.contrib.edi``. When it was
 split into a standalone distribution the modules were reorganized into
-``edi.objects`` / ``edi.solvers`` / ``edi.structure`` / ``edi.units``, but the
+``edi.objects`` / ``edi.solvers`` / ``edi.preconditioner``, but the
 package ``__init__`` continued to import from ``pyomo.contrib.edi`` inside a
 bare ``try/except: pass``. Because that module no longer ships with Pyomo, every
 import failed silently and ``import edi`` exposed none of its own API. The
@@ -53,7 +53,7 @@ from edi.solvers.sensitivity import (
     constraint_duals,
     format_sensitivities,
 )
-from edi.presolve import diagnose, structure_report
+from edi.preconditioner.presolve import diagnose, structure_report
 from edi.solvers.feasibility import FeasibilityResult, feasibility
 
 # `from edi import units` gives Pyomo's units container, so a model needs one
@@ -61,16 +61,14 @@ from edi.solvers.feasibility import FeasibilityResult, feasibility
 # this is for the places that need the object -- `1.0 * units.m` on the right
 # of a constraint, `units.convert(...)` inside a black box.
 #
-# `edi.units` is ALSO a subpackage (unitCorrector, unitWalker), and importing a
-# submodule binds it onto its parent package -- which would overwrite this
-# name. So load the subpackage first and rebind after: once `edi.units` is in
-# sys.modules, a later `from edi.units.unitCorrector import ...` resolves
-# through sys.modules and never touches this attribute again.
-#
-# Every reference in this repository is that fully-qualified form and is
-# unaffected. `import edi.units` followed by attribute access would break, and
-# nothing does it.
-from edi.units import unitCorrector as _unitCorrector  # noqa: F401
+# This is a plain re-export and needs no care, because nothing else is called
+# `units` any more. It used to need a great deal: `edi.units` was the package
+# holding unitCorrector and unitWalker, and Python binds a submodule onto its
+# parent package as it imports it, so the first `from edi.units.unitCorrector
+# import ...` anywhere -- including the lazy ones inside solve() -- silently
+# replaced this name with the package and turned `units.m` into an
+# AttributeError, mid-session. Those modules now live in `edi.preconditioner`
+# with the rest of the pre-solve chain, and the name is free.
 from pyomo.environ import units
 
 

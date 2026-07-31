@@ -34,7 +34,7 @@ power one. For a **GP** the comparison is linear in ``y = log x`` and each term
 is a monomial ``c_k * prod x_j**a_jk``. The arithmetic that operates on the
 terms is identical; only the space in which the comparison is made differs.
 
-That is not a theory. :func:`~edi.presolve._tighten_linear` already serves
+That is not a theory. :func:`~edi.preconditioner.presolve._tighten_linear` already serves
 bound propagation for both from one implementation, with ``space`` the only
 thing distinguishing them, and the LP path fell out of the GP one for free.
 :attr:`Detected.space` names that distinction so the rest of the code can rely

@@ -9,7 +9,7 @@
 ``edi.solvers.ipopt.slcp`` implements sequential log-convex programming over
 its own :class:`~edi.solvers.ipopt.slcp.Problem` object, which nothing in EDI
 built. This module is the missing adapter: it turns the row form produced by
-:func:`~edi.structure.structureDetector.structure_detector` into that object,
+:func:`~edi.preconditioner.structureDetector.structure_detector` into that object,
 so the same formulation can be solved either way and the two compared.
 
 The row form is already close to what SLCP wants. Rows carry
@@ -34,7 +34,7 @@ than silently dropped.
 
 import numpy as np
 
-from edi.structure.detected import as_detected
+from edi.preconditioner.detected import as_detected
 from edi.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
                                     Posynomial,
                                     PosynomialRatio, Problem, Signomial,
@@ -176,17 +176,17 @@ def presolve_structures(structures, verbose=False):
     a value that is feasible for the original problem.
 
     Returns ``(reduced, removed)``. ``removed`` is in
-    :func:`~edi.presolve.reduce_columns` form and is what
-    :func:`~edi.presolve.restore_columns` needs to rebuild a full solution.
+    :func:`~edi.preconditioner.presolve.reduce_columns` form and is what
+    :func:`~edi.preconditioner.presolve.restore_columns` needs to rebuild a full solution.
 
     Unlike ``structure_detector(bounds_as_rows=False)``, this works on a
     structure whose bounds are still rows: it synthesizes the empty bounds
     array to fold them into. That is a deliberate choice made here rather than
-    in ``edi.presolve``, because this is the point that knows the consumer --
+    in ``edi.preconditioner.presolve``, because this is the point that knows the consumer --
     SLCP and SIA both read variable bounds -- whereas the cvxopt backends do
-    not, and ``edi.presolve`` refuses the conversion for exactly that reason.
+    not, and ``edi.preconditioner.presolve`` refuses the conversion for exactly that reason.
     """
-    from edi.presolve import presolve as _presolve_pipeline
+    from edi.preconditioner.presolve import presolve as _presolve_pipeline
 
     st = dict(structures)
     if st.get('bounds') is None:

@@ -11,9 +11,9 @@
 
 from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
-# from edi.structure.structureDetector import structure_detector
-from edi.structure.structureDetector import structure_detector
-from edi.units.unitCorrector import unit_corrector
+# from edi.preconditioner.structureDetector import structure_detector
+from edi.preconditioner.structureDetector import structure_detector
+from edi.preconditioner.unitCorrector import unit_corrector
 from edi.solvers.writeback import write_solution
 
 
@@ -109,7 +109,7 @@ def _raise_if_infeasible(structures):
     sentence naming the constraint.
     """
     if isinstance(structures, dict) and structures.get('infeasible'):
-        from edi.presolve import InfeasibleProblem
+        from edi.preconditioner.presolve import InfeasibleProblem
         raise InfeasibleProblem(
             structures.get('message', 'the model has no feasible point'))
 
@@ -129,7 +129,7 @@ def _run_diagnostics(structures, level):
         return None
     import warnings
 
-    from edi.presolve import diagnose
+    from edi.preconditioner.presolve import diagnose
 
     try:
         rep = diagnose(structures)
@@ -151,7 +151,7 @@ def _run_diagnostics(structures, level):
     if problems:
         warnings.warn(
             "model diagnostics: " + "; ".join(problems)
-            + ". Call edi.presolve.diagnose(structures) for the full report.",
+            + ". Call edi.preconditioner.presolve.diagnose(structures) for the full report.",
             RuntimeWarning, stacklevel=3)
     return rep
 
@@ -321,9 +321,9 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     """
     import warnings
 
-    from edi.presolve import InfeasibleProblem
+    from edi.preconditioner.presolve import InfeasibleProblem
     from edi.solvers.ipopt import ipopt_solve
-    from edi.units.unitCorrector import UnitMismatch
+    from edi.preconditioner.unitCorrector import UnitMismatch
 
     # Detect once and use the result for both the checks and the solve. These
     # used to be two separate walks of the model, because `diagnose` needs

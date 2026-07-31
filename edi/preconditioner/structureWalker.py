@@ -92,7 +92,7 @@ from pyomo.common.dependencies import numpy, numpy_available
 if numpy_available:
     import numpy as np
 
-# from edi.structure.walkerSupportFunctions import (
+# from edi.preconditioner.walkerSupportFunctions import (
 #     unarySignomial,
 #     no_structure_dict,
 #     monomial_multiplication,
@@ -101,7 +101,7 @@ if numpy_available:
 #     signomial_power_evaluation,
 #     # processMonomial,
 # )
-from edi.structure.walkerSupportFunctions import (
+from edi.preconditioner.walkerSupportFunctions import (
     no_structure_dict,
     monomial_multiplication,
     signomial_multiplication,

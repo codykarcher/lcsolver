@@ -119,6 +119,80 @@ class SIAOptions:
         self.complementarity_tolerance = 1e-6  # max_i |lambda_i log g_i(x)|
         # --- Phase I: find a feasible point before optimizing --------------
         self.phase1 = True             # False falls back to penalty CCP
+        # 'l1' (default) or 'minmax'.
+        #
+        # min-max solves  min t  s.t.  log g_i <= t  with ONE shared scalar, so
+        # every constraint is driven to the same violation level. That is a bad
+        # fit for a model carrying many signomial EQUALITIES: each becomes
+        # |h_i| <= t, so all of them must be satisfied simultaneously and to
+        # the same tolerance, and an equality already gets a conservative AGM
+        # approximation on BOTH sides (p <= q and q <= p), which can be jointly
+        # infeasible even where the true equality is satisfiable.
+        #
+        # Elastic L1 gives each constraint its OWN slack and minimises the sum.
+        # Its optimum is sparse: constraints that can be satisfied fall to zero
+        # slack and stop competing with the ones that cannot. This is what
+        # SNOPT calls elastic mode and IPOPT calls feasibility restoration, and
+        # it is the standard answer to exactly this problem.
+        #
+        # Measured on the spcomparisons aircraft, which carries ~15 coupled
+        # signomial equalities: min-max fails at 50, 200 AND 500 iterations
+        # alike -- not a budget problem, a formulation one.
+        # 'composite' (default) | 'l1' | 'minmax'. See _phase1_composite.
+        self.phase1_method = 'composite'
+        self.phase1_restore_iterations = 12
+        # Cap on the composite trust radius, in log space. Phase I is a
+        # minimum-change REPAIR of the seed, not a search: the seed carries
+        # whatever the engineer knew, and on a non-convex problem the point
+        # Phase I hands over decides which local optimum Phase II descends to.
+        # Left to expand freely the radius reached 8 -- a factor of e^8 per
+        # variable -- and SPaircraft came back 0.46% worse from a feasible
+        # point nowhere near its seed.
+        self.phase1_trust_max = 1.0
+        # Proximity weight on the elastic Phase I objective:
+        #     min  sum(s_i) + w ||d||^2
+        # Feasibility alone is a badly posed thing to ask for. Any point in
+        # the feasible set answers it, sum(s_i) usually has a whole face of
+        # minimizers, and which one comes back is down to the interior-point
+        # solver. On a non-convex problem that choice is not cosmetic: the
+        # point Phase I hands over decides which local optimum Phase II
+        # descends to. simpleac came back at 4536 or 6485 -- both feasible to
+        # 1e-13 and stationary to 1e-8 -- depending only on whether presolve
+        # had eliminated a variable first.
+        #
+        # The weight makes the answer the SMALLEST repair of the seed, which
+        # is unique, continuous in the data, and the thing an engineer means
+        # by "make my starting design feasible". Small enough not to compete
+        # with the slacks: it breaks ties, it does not trade feasibility away.
+        self.phase1_proximity = 1e-6
+        # Restore the equalities after each accepted Phase II step.
+        #
+        # Phase II's guarantees -- feasible iterates, monotone descent -- are
+        # stated for a problem whose constraints are exact or CONSERVATIVE. A
+        # signomial equality is neither: condensing both sides gives a monomial
+        # that is tangent at the iterate and on the wrong side of the true
+        # constraint in both directions. So the very first step leaves the
+        # feasible set even from an exactly feasible start -- measured on the
+        # E175, 6e-15 to 2.257 in one step -- and the run then spends its whole
+        # budget crawling back, asymptoting just above tolerance without ever
+        # landing on it. That is not slow convergence, it is convergence to a
+        # point that is not quite feasible, and stationarity measured there
+        # stalls with it (5.93e-06 against a 1e-06 tolerance, falling 0.3% an
+        # iteration).
+        #
+        # The normal step from Phase I fixes it: after each accepted step, pull
+        # back onto the manifold. Cheap, since a step from a nearly-feasible
+        # point converges in one or two Newton iterations.
+        #
+        # OFF by default. Measured on the E175 it does what it says -- the
+        # worst violation after the first step drops from 2.257 to 0.271 and
+        # the converged value from 4.2e-08 to 1.7e-08 -- but it does NOT move
+        # stationarity, which is what actually gates convergence there, and it
+        # costs about 50% more wall time. Worth switching on when you need
+        # every iterate to be a usable design rather than only the last one.
+        self.phase2_restore = False
+
+
         self.phase1_max_iterations = 50
         # When Phase I falls short, continue with the penalty path instead of
         # abandoning the solve. Penalty CCP tolerates an infeasible start by
@@ -182,7 +256,16 @@ class SIAOptions:
         # converged run cannot report itself converged. Measured on SPaircraft:
         # 1.96e-03 at 1e-8 against 9.51e-07 at 1e-12, for no change in the
         # objective and no extra iterations.
-        self.ipopt_options = {"print_level": 0, "sb": "yes", "tol": 1e-12}
+        # constr_viol_tol does NOT follow tol -- it keeps its own 1e-4 default,
+        # which is a floor on how well the sub-problem's rows are satisfied and
+        # therefore a floor on Phase I. It showed up as the composite step
+        # driving the aircraft from 2.2 to 1.6e-04 in two iterations and then
+        # sitting at 1e-04 forever, with the sub-problem reporting every slack
+        # at zero: the model believed it was feasible because 1e-04 is what it
+        # was asked to achieve.
+        self.ipopt_options = {"print_level": 0, "sb": "yes", "tol": 1e-12,
+                              "constr_viol_tol": 1e-12,
+                              "acceptable_constr_viol_tol": 1e-10}
         for k, v in kw.items():
             if not hasattr(self, k):
                 raise AttributeError(f"unknown SIA option {k!r}")
@@ -201,6 +284,7 @@ class SIAResult:
         self.stationarity = None
         self.complementarity = None
         self.multipliers = None
+        self.report = None          # human-readable convergence explanation
         self.history = []
         self.objectives = []
         self.conservative = False   # True if no constraint had to be linearized
@@ -567,8 +651,8 @@ class SubproblemCache:
         # NOT bool(minimize_violation): it takes three values now, and
         # bool('l1') is True, so the elastic mode collided with min-max in
         # this cache and was handed a model carrying m.t and no m.s.
-        mv = minimize_violation if minimize_violation == 'l1' else bool(
-            minimize_violation)
+        mv = (minimize_violation if minimize_violation in ('l1', 'l1_hard')
+              else bool(minimize_violation))
         key = (mv, bool(use_slacks))
         if key not in self._phases:
             self._phases[key] = self._build(*key)
@@ -596,7 +680,20 @@ class SubproblemCache:
         # at an identical residual and none of them stands out. The elastic
         # form is what makes an infeasibility diagnosable: at its optimum
         # nearly every s_i is zero and the few that are not ARE the answer.
-        elastic = (minimize_violation == 'l1')
+        # 'l1' slacks everything; 'l1_hard' slacks only the INEQUALITIES and
+        # imposes the equalities exactly, so the step is confined to the
+        # linearised equality manifold. That is the TANGENTIAL half of a
+        # composite step, expressed in the sub-problem instead of through a
+        # null-space projection.
+        #
+        # It is only safe from a point already ON the manifold, and then it is
+        # guaranteed safe: the AGM condensation is tight at its expansion
+        # point (w_k = q_k(x_k)/q(x_k) gives qhat(x_k) = q(x_k) exactly), so
+        # d = 0 satisfies the linearised equalities and the sub-problem cannot
+        # be infeasible. From an inconsistent start the same rows are what
+        # made it fail with "sub-problem failed: infeasible" at iteration 1.
+        elastic = (minimize_violation in ('l1', 'l1_hard'))
+        hard_eq = (minimize_violation == 'l1_hard')
         if minimize_violation and not elastic:
             m.t = pyo.Var(initialize=0.0)
         slacked = (use_slacks and not minimize_violation) or elastic
@@ -637,8 +734,11 @@ class SubproblemCache:
             m.obj = pyo.Objective(expr=obj_expr + penalty, sense=pyo.minimize)
         elif elastic:
             # Pure feasibility: no true objective at all, so there is no
-            # scaling contest between cost and feasibility to lose.
-            m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I),
+            # scaling contest between cost and feasibility to lose. The
+            # proximity term breaks the tie between equally feasible points.
+            w = getattr(self.options, 'phase1_proximity', 0.0)
+            prox = (w * sum(m.d[j] ** 2 for j in range(n))) if w else 0.0
+            m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I) + prox,
                                   sense=pyo.minimize)
         else:
             m.obj = pyo.Objective(expr=m.t, sense=pyo.minimize)
@@ -682,7 +782,11 @@ class SubproblemCache:
                                 for k, (_c, a) in enumerate(body.p.terms)) \
                           - sum(ws[k] * projection(a)
                                 for k, (_c, a) in enumerate(body.q.terms))
-                if elastic:
+                if hard_eq:
+                    # Imposed exactly: no slack, so the step stays on the
+                    # linearised manifold.
+                    m.cons.add(expr == 0.0)
+                elif elastic:
                     # |residual| <= s_i, this row's own slack.
                     m.cons.add(expr <= m.s[i])
                     m.cons.add(-expr <= m.s[i])
@@ -731,8 +835,18 @@ class SubproblemCache:
                             minimize_violation=minimize_violation)
 
     # -- per-iteration update ----------------------------------------------
-    def update(self, phase, x_k, tau):
-        """Re-point a built phase at a new iterate. No symbolic work."""
+    def update(self, phase, x_k, tau, radius=None):
+        """Re-point a built phase at a new iterate. No symbolic work.
+
+        ``radius`` bounds |d_j| when the caller wants a trust region even
+        though nothing was linearized. Phase II does not: every row there is
+        exact or conservative, so the step is safe at any length. Phase I with
+        hard equalities does, because a CondensedEquality is TANGENT, not
+        conservative -- condensing both sides of an equality is neither an
+        inner nor an outer approximation, so an unbounded step can leave the
+        true manifold far enough that the next restoration has to travel, and
+        travelling is what breaks the inequalities the step just fixed.
+        """
         m, n = phase.model, self.n
         log_xk = np.log(x_k)
 
@@ -792,6 +906,9 @@ class SubproblemCache:
                     lo[j] = max(lo[j], math.log(blo) - log_xk[j])
                 if bhi is not None and bhi > 0:
                     hi[j] = min(hi[j], math.log(bhi) - log_xk[j])
+        if radius is not None:
+            lo = np.maximum(lo, -radius)
+            hi = np.minimum(hi, radius)
         for j in range(n):
             ub = None if not np.isfinite(hi[j]) else float(hi[j])
             m.d[j].setlb(float(lo[j]))
@@ -803,7 +920,7 @@ class SubproblemCache:
         # the unbounded-above case it was meant to catch -- so the warning it
         # exists to prevent was emitted anyway.
         seat_step_in_bounds(m)
-        if phase.minimize_violation == 'l1':
+        if phase.minimize_violation in ('l1', 'l1_hard'):
             # Elastic: warm-start every slack at this row's own violation,
             # which is its smallest feasible value for the linearised model.
             v0 = float(_violation(self.problem, x_k))
@@ -828,7 +945,8 @@ class _CachedPhase:
 
 def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 curvature=None,
-                minimize_violation=False, use_slacks=True, cache=None):
+                minimize_violation=False, use_slacks=True, cache=None,
+                force_trust=False):
     """Assemble and solve the inner-approximation sub-problem in log space.
 
     ``minimize_violation`` selects PHASE I: the objective becomes the worst
@@ -852,9 +970,10 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
         # Everything below is symbolic construction that does not change
         # between iterations; the cache does it once and only moves the
         # numbers. Bounds, including the positivity floor, are re-pointed in
-        # update(). A cacheable problem has no black box, so no trust region.
+        # update(). A cacheable problem has no black box, so a trust region
+        # applies only when the caller asks for one -- see update().
         phase = cache.update(cache.get(minimize_violation, use_slacks),
-                             x_k, tau)
+                             x_k, tau, radius=radius if force_trust else None)
         try:
             return _solve_and_extract(phase.model, problem, options,
                                       minimize_violation, use_slacks,
@@ -885,9 +1004,18 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 m.d[j].setub(math.log(hi) - log_xk[j])
         seat_step_in_bounds(m)
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
-    if minimize_violation:
+    # Same three modes as the cached builder: min-max (one shared t), elastic
+    # L1 (a slack per row), and l1_hard (slacks on the inequalities only, with
+    # the equalities imposed exactly). Kept in step deliberately -- the cache
+    # falls through to this path for black-box bodies and on its own numerical
+    # guard, so a mode the cache understands and this does not shows up as
+    # 'ConcreteModel object has no attribute s' from whichever iteration
+    # happened to fall through.
+    _elastic = (minimize_violation in ('l1', 'l1_hard'))
+    _hard_eq = (minimize_violation == 'l1_hard')
+    if minimize_violation and not _elastic:
         m.t = pyo.Var(initialize=float(_violation(problem, x_k)))
-    if use_slacks and not minimize_violation:
+    if (use_slacks and not minimize_violation) or _elastic:
         m.s = pyo.Var(m.I, domain=pyo.NonNegativeReals, initialize=0.0)
 
     def lse(terms):
@@ -898,7 +1026,16 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             for c, a in terms))
 
     # --- objective ---------------------------------------------------------
-    if minimize_violation:
+    if _elastic:
+        # Pure feasibility, L1: the optimum is sparse, so the rows that keep a
+        # slack are the ones that actually cannot be satisfied. Plus the
+        # proximity term -- see SIAOptions.phase1_proximity.
+        _w = getattr(options, 'phase1_proximity', 0.0)
+        _prox = (_w * sum(m.d[j] ** 2 for j in range(n))) if _w else 0.0
+        m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I) + _prox,
+                              sense=pyo.minimize)
+        rhs = lambda i: m.s[i]
+    elif minimize_violation:
         # Phase I: drive the worst violation down and nothing else.
         m.obj = pyo.Objective(expr=m.t, sense=pyo.minimize)
         rhs = lambda i: m.t
@@ -932,7 +1069,15 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 c, a = body.terms[0]
                 e = math.log(c) + sum(a[j] * (m.d[j] + log_xk[j])
                                       for j in range(n))
-                m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
+                if op == "==" and _hard_eq:
+                    m.cons.add(e == 0.0)
+                elif op == "==" and minimize_violation:
+                    m.cons.add(e <= rhs(i))
+                    m.cons.add(-e <= rhs(i))
+                elif op == "==":
+                    m.cons.add(e == rhs(i))
+                else:
+                    m.cons.add(e <= rhs(i))
             else:
                 m.cons.add(lse(body.terms) <= rhs(i))
         elif isinstance(body, CondensedEquality):
@@ -941,7 +1086,16 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             ce, ae = body.condensed(x_k)
             e = math.log(ce) + sum(ae[j] * (m.d[j] + log_xk[j])
                                    for j in range(n))
-            m.cons.add(e == rhs(i))
+            if _hard_eq:
+                m.cons.add(e == 0.0)
+            elif minimize_violation:
+                # |residual| <= slack. Writing it as `e == t` against a shared
+                # t is what made Phase I fail on feasible problems: it forces
+                # every equality to the SAME signed residual.
+                m.cons.add(e <= rhs(i))
+                m.cons.add(-e <= rhs(i))
+            else:
+                m.cons.add(e == rhs(i))
         elif isinstance(body, PosynomialRatio):
             # log p  <=  log q_hat, with q_hat the AGM monomial under-estimator.
             # q_hat <= q everywhere, so this is HARDER than the true constraint.
@@ -969,7 +1123,13 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             if curvature is not None and i in curvature:
                 curvature[i].observe(gl)
                 e = e + curvature[i].quad(m.d)
-            m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
+            if op == "==" and _hard_eq:
+                m.cons.add(e == 0.0)
+            elif op == "==" and minimize_violation:
+                m.cons.add(e <= rhs(i))
+                m.cons.add(-e <= rhs(i))
+            else:
+                m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
 
     # Stay in the positive orthant.
     # The positivity floor and the trust region are both simple bounds on d, so
@@ -992,7 +1152,7 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     # Trust region -- ONLY when something had to be linearized. With every
     # constraint exact or conservative the step is safe by construction and a
     # region would only slow it down.
-    if has_blackbox:
+    if has_blackbox or force_trust:
         for j in range(n):
             tighten(j, lo=-radius, hi=radius)
 
@@ -1027,7 +1187,7 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
     m.solutions.load_from(results)
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
-    _elastic = (minimize_violation == 'l1')
+    _elastic = (minimize_violation in ('l1', 'l1_hard'))
     s = (np.array([pyo.value(m.s[i]) for i in range(len(cons))])
          if ((use_slacks and not minimize_violation) or _elastic)
          else np.zeros(len(cons)))
@@ -1129,6 +1289,93 @@ def format_infeasibility(problem, x, mults=None, k=8):
 
 
 
+
+def _posy_loggrad(posy, x, n):
+    """``(log p, d log p / d log x)`` for a posynomial, analytically.
+
+    log p is a log-sum-exp of monomials, so the gradient is the weighted mean
+    of their exponent vectors -- one pass, exact, and far cheaper than the n
+    finite differences it replaces.
+    """
+    vals = np.array([c * np.prod(x ** a) for c, a in posy.terms])
+    tot = vals.sum()
+    if tot <= 0:
+        return -700.0, np.zeros(n)
+    w = vals / tot
+    g = np.zeros(n)
+    for wk, (_c, a) in zip(w, posy.terms):
+        g += wk * np.asarray(a, dtype=float)
+    return float(np.log(tot)), g
+
+
+def _con_loggrad(con, x, n):
+    """``(log g, d log g / d log x)`` for any constraint body."""
+    b = con.body
+    if getattr(b, 'p', None) is not None:          # ratio / condensed equality
+        lp, gp = _posy_loggrad(b.p, x, n)
+        lq, gq = _posy_loggrad(b.q, x, n)
+        return lp - lq, gp - gq
+    return _posy_loggrad(b, x, n)
+
+
+def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False):
+    """Least-norm Gauss-Newton onto the equality manifold -- the NORMAL step.
+
+    This works on the TRUE residuals, never on the conservative condensation,
+    which is the whole point. A signomial equality reaches the sub-problem as
+    ``p <= q`` AND ``q <= p``, each AGM-condensed, so the approximation's
+    feasible set is strictly smaller than the true one and can be empty where
+    the true equality is perfectly satisfiable. Newton does not care: on a
+    1173-variable aircraft with 802 signomial equalities it reaches 5e-12 in
+    eleven steps, quadratically, while every Phase I formulation stalls.
+
+    Least-norm is deliberate. The repaired point should stay as close to the
+    start as the equalities allow -- it is fixing an inconsistency, not
+    searching. As a standalone feasibility method this is useless (it leaves
+    inequalities exactly where it found them); as the normal half of a
+    composite step it is precisely right.
+    """
+    n = problem.n
+    eq = [i for i, c in enumerate(problem.constraints) if c.operator == '==']
+    if not eq:
+        return np.array(x, dtype=float), 0.0
+    lo = np.array([b[0] if b and b[0] else 1e-30
+                   for b in (problem.bounds or [(None, None)] * n)])
+    hi = np.array([b[1] if b and b[1] else 1e30
+                   for b in (problem.bounds or [(None, None)] * n)])
+    x = np.array(x, dtype=float).copy()
+
+    def _res(z):
+        r = np.zeros(len(eq)); J = np.zeros((len(eq), n))
+        for k, i in enumerate(eq):
+            r[k], J[k] = _con_loggrad(problem.constraints[i], z, n)
+        return r, J
+
+    for it in range(iters):
+        r, J = _res(x)
+        nrm = float(np.max(np.abs(r)))
+        if verbose:
+            print(f"    restore {it:2d}  max|h| = {nrm:.3e}")
+        if nrm <= tol:
+            break
+        # lstsq, not pinv @ r: for an underdetermined system (802 equalities
+        # in 1173 variables on the aircraft) it returns the same least-norm
+        # solution without forming the pseudo-inverse, and this runs once per
+        # Phase II iteration now, not once per solve.
+        d = np.linalg.lstsq(J, -r, rcond=1e-10)[0]
+        big = float(np.max(np.abs(d)))
+        if big > 1.0:
+            d *= 1.0 / big
+        for alpha in (1.0, 0.5, 0.25, 0.1):
+            xn = np.clip(x * np.exp(alpha * d), lo * 1.000001, hi * 0.999999)
+            if float(np.max(np.abs(_res(xn)[0]))) < nrm:
+                x = xn
+                break
+        else:
+            break
+    return x, float(np.max(np.abs(_res(x)[0])))
+
+
 def _phase1_l1(problem, x, options, has_blackbox, cache=None):
     """Elastic Phase I: a slack per constraint, minimising their SUM.
 
@@ -1187,6 +1434,240 @@ def _phase1_l1(problem, x, options, has_blackbox, cache=None):
         radius = min(options.trust_max, radius * options.trust_expand)
     return (x, it, _violation(problem, x) <= options.feasibility_tolerance,
             slacks, mults)
+
+
+
+def _violation_ineq(problem, x):
+    """Worst ``log g_i(x)`` over the INEQUALITIES only."""
+    return max((_log_g(c, x) for c in problem.constraints
+                if c.operator != '=='), default=0.0)
+
+
+
+def convergence_report(problem, res, options=None, k=8):
+    """Explain what a solve did, and if it stopped short, what held it back.
+
+    "did not converge within 400 iterations" is a true statement that tells an
+    engineer nothing. It does not say whether the design is usable, which of
+    the three KKT criteria was binding, how close it came, or -- most useful of
+    all -- WHICH variables carry the residual. Nearly always the answer is a
+    handful of them, and nearly always they turn out to be a sub-model that
+    sizes nothing in the converged design.
+
+    That case is worth naming, because it looks like failure and is not. On the
+    E175 the objective is stable to eight figures by iteration 75 and the run
+    then spends 325 more iterations dragging stationarity from 2e-04 to 6e-06,
+    all of it inside twelve fuselage bending variables whose bending stations
+    have run past the tail (x_hbend = 39.4 m on an aircraft whose tail is at
+    23.8 m) and whose reinforcement areas are ~1e-04 m^2. The shell carries the
+    loads unaided, the block is flat, and a 1e-06 stationarity ask of a flat
+    block is not reasonable. The design is converged; the measure is not.
+    """
+    options = options or SIAOptions()
+    lines = []
+    x = np.asarray(res.x, dtype=float)
+    stat = float(getattr(res, 'stationarity', float('nan')))
+    viol = float(getattr(res, 'max_violation', float('nan')))
+    comp = float(getattr(res, 'complementarity', float('nan')))
+    tols = (('stationarity', stat, options.stationarity_tolerance),
+            ('feasibility', viol, options.feasibility_tolerance),
+            ('complementarity', comp, options.complementarity_tolerance))
+
+    if res.converged:
+        lines.append(f"CONVERGED in {res.iterations} iterations. "
+                     f"objective = {res.objective:.6g}")
+    else:
+        binding = [(n, v, t) for n, v, t in tols
+                   if v == v and v > t]          # v == v filters NaN
+        lines.append(f"STOPPED after {res.iterations} iterations without "
+                     f"meeting all three KKT tolerances. "
+                     f"objective = {res.objective:.6g}")
+        for n, v, t in binding:
+            lines.append(f"  binding: {n} = {v:.3e}, tolerance {t:.1e} "
+                         f"({v / t:.1f}x)")
+        for n, v, t in tols:
+            if (n, v, t) not in binding and v == v:
+                lines.append(f"  met:     {n} = {v:.3e} <= {t:.1e}")
+
+    # Is the objective actually still moving? A run whose objective is stable
+    # to eight figures has converged in every sense an engineer cares about,
+    # whatever the KKT residual says.
+    objs = list(getattr(res, 'objectives', None) or [])
+    if len(objs) >= 20:
+        tail = objs[-20:]
+        spread = (max(tail) - min(tail)) / max(abs(tail[-1]), 1e-300)
+        lines.append(f"  objective over the last 20 iterations: relative "
+                     f"spread {spread:.2e}"
+                     + ("  -- STABLE; the design is settled and the residual "
+                        "below is a measurement issue, not a design one"
+                        if spread < 1e-6 else ""))
+
+    # Where the stationarity residual actually lives.
+    mults = getattr(res, 'multipliers', None)
+    if mults is not None and not res.converged:
+        g = np.asarray(problem.objective.log_grad(x), dtype=float)
+        for i, con in enumerate(problem.constraints):
+            lam = float(mults[i])
+            if lam != 0.0:
+                g = g + lam * np.asarray(con.body.log_grad(x), dtype=float)
+        lo = np.full(problem.n, options.x_min)
+        hi = [None] * problem.n
+        if problem.bounds is not None:
+            for j, pair in enumerate(problem.bounds[:problem.n]):
+                if pair:
+                    if pair[0] and pair[0] > options.x_min:
+                        lo[j] = pair[0]
+                    hi[j] = pair[1]
+        for j in range(problem.n):
+            if x[j] <= lo[j] * (1 + 1e-6):
+                g[j] = min(g[j], 0.0)
+            if hi[j] and x[j] >= hi[j] * (1 - 1e-6):
+                g[j] = max(g[j], 0.0)
+        names = getattr(problem, 'names', None) or [f'x[{j}]'
+                                                    for j in range(problem.n)]
+        order = np.argsort(-np.abs(g))[:k]
+        lines.append(f"  the stationarity residual is carried by these "
+                     f"variables:")
+        for j in order:
+            if abs(g[j]) < 1e-14:
+                break
+            lines.append(f"    {names[j]:<42s} dL/dlog x = {g[j]:+.3e}   "
+                         f"x = {x[j]:.4e}")
+        # Group by prefix: a residual confined to one sub-model is the
+        # signature of a degenerate block rather than a genuine stall.
+        pref = {}
+        for j in order:
+            key = str(names[j]).split('_')[0]
+            pref[key] = pref.get(key, 0.0) + abs(g[j])
+        if len(pref) == 1:
+            only = next(iter(pref))
+            lines.append(f"  ALL of it sits in '{only}*'. A residual confined "
+                         f"to one sub-model usually means that block is flat "
+                         f"-- it sizes nothing in the converged design, so its "
+                         f"gradient is near zero in every direction and the "
+                         f"last digits never settle. Check whether those "
+                         f"variables are doing any work before treating this "
+                         f"as a failure.")
+
+    # Variables resting on the artificial positivity floor.
+    floor = [j for j in range(problem.n) if x[j] <= options.x_min * 1e3]
+    if floor:
+        names = getattr(problem, 'names', None) or [f'x[{j}]'
+                                                    for j in range(problem.n)]
+        lines.append(f"  WARNING: {len(floor)} variable(s) rest on the "
+                     f"positivity floor ({options.x_min:g}). The KKT "
+                     f"certificate is honest -- the floor is an active bound "
+                     f"and holds the gradient -- but the floor is a numerical "
+                     f"device, not a modelling statement, so the answer there "
+                     f"is an artifact of it:")
+        for j in floor[:k]:
+            lines.append(f"    {names[j]:<42s} x = {x[j]:.3e}")
+    return '\n'.join(lines)
+
+
+def _phase1_composite(problem, x, options, has_blackbox, cache=None):
+    """Composite-step Phase I: restore the equalities, then move tangentially.
+
+    Each round is a normal step and a tangential step, the classical split:
+
+      normal      Gauss-Newton onto ``h(x) = 0``, on the TRUE residuals.
+                  Exact, quadratic, and it ignores the inequalities entirely.
+      tangential  one elastic-L1 sub-problem with the equalities imposed
+                  EXACTLY, so the step reduces inequality violation without
+                  leaving the (linearised) manifold.
+
+    The tangential step leaves the true manifold at second order, which is
+    what the next round's normal step is for. This is why the two halves have
+    to alternate rather than run once each.
+
+    It exists because neither half works alone on a tightly coupled model.
+    Slacking the equalities lets the sub-problem trade equality residual for
+    inequality residual and wander; it stalls on the 1173-variable aircraft
+    with 802 signomial equalities, at every iteration budget, under both
+    min-max and L1. Holding them exactly from an INCONSISTENT point is worse
+    still -- the sub-problem is flatly infeasible at iteration 1. Holding them
+    exactly from a RESTORED point is guaranteed feasible, because the AGM
+    condensation is tight at its expansion point, so ``d = 0`` is always
+    available and the sub-problem can only improve on it.
+
+    Falls back to plain slacked L1 if a hard sub-problem fails at the minimum
+    trust radius -- that means the linearised manifold and the trust region
+    genuinely do not intersect, and slack is then the honest response.
+    """
+    tol = options.feasibility_tolerance
+    radius = options.trust_radius
+    slacks = np.zeros(len(problem.constraints))
+    mults = None
+    it = 0
+    n_eq = sum(1 for c in problem.constraints if c.operator == '==')
+    if n_eq == 0:                      # nothing to restore; plain elastic L1
+        return _phase1_l1(problem, x, options, has_blackbox, cache=cache)
+
+    def _restore(z):
+        return restore_equalities(problem, z,
+                                  iters=options.phase1_restore_iterations,
+                                  tol=min(tol, 1e-10))
+
+    if _violation(problem, x) <= tol:
+        # Already feasible: do not touch it. Restoring first would still land
+        # on the manifold, but at a DIFFERENT point, and on a non-convex
+        # problem the starting point picks the local optimum -- it moved
+        # SPaircraft from 95120 to 95560 lbf and simpleac from 4536 to 6485
+        # with no constraint anywhere reporting a problem.
+        return x, 0, True, slacks, mults
+
+    x, heq = _restore(x)                      # start on the manifold
+    for it in range(1, options.phase1_max_iterations + 1):
+        viol = _violation(problem, x)
+        if viol <= tol:
+            return x, it - 1, True, slacks, mults
+
+        # --- tangential step -------------------------------------------------
+        mode = 'l1_hard' if heq <= max(tol, 1e-7) else 'l1'
+        try:
+            d, slacks, mults, total = _subproblem(
+                problem, x, 0.0, radius, options, has_blackbox,
+                minimize_violation=mode, cache=cache, force_trust=True)
+        except RuntimeError:
+            if radius > options.trust_min:
+                radius = max(options.trust_min, radius * options.trust_shrink)
+                continue
+            if mode == 'l1_hard':      # manifold and trust region miss: slack
+                return _phase1_l1(problem, x, options, has_blackbox,
+                                  cache=cache)
+            return x, it, False, slacks, mults
+
+        # --- normal step, closing the same composite step --------------------
+        # The pair is accepted or rejected TOGETHER. Judging the tangential
+        # step on its own is what made this oscillate: it would report
+        # 5e-02 -> 1.6e-04, and then the restoration that has to follow it
+        # would put the violation back at 5e-02, because a long tangential
+        # step leaves the manifold far enough that pulling it back moves the
+        # inequalities too. Accepting only when the WHOLE step improves makes
+        # the trust radius responsible for that drift, which is what a trust
+        # radius is for.
+        x_try, heq_try = _restore(x * np.exp(d))
+        new_viol = _violation(problem, x_try)
+        if options.verbose:
+            nz = int(np.sum(slacks > tol))
+            print(f"  phase1-comp {it:3d}  |h| {heq_try:.1e}  max log g "
+                  f"{viol:+.3e} -> {new_viol:+.3e}  sum(s) = {total:.3e}  "
+                  f"({nz} slack, {mode}, r = {radius:.2g})")
+        if new_viol >= viol:
+            radius *= options.trust_shrink
+            if radius < options.trust_min:
+                # The composite step cannot improve at any length. Either the
+                # remaining violation is genuinely irreducible or it is not
+                # reachable this way; the elastic L1 answers which, and names
+                # the rows if it is the former.
+                return _phase1_l1(problem, x, options, has_blackbox,
+                                  cache=cache)
+            continue
+        x, heq = x_try, heq_try
+        radius = min(getattr(options, 'phase1_trust_max', options.trust_max),
+                     radius * options.trust_expand)
+
+    return x, it, _violation(problem, x) <= tol, slacks, mults
 
 
 def explain_infeasibility(problem, x, options=None, has_blackbox=False,
@@ -1373,6 +1854,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
     n_exact, n_cons, n_lin = classify(problem)
     has_blackbox = n_lin > 0
+    n_eq_p2 = sum(1 for c in problem.constraints if c.operator == '==')
 
     res = SIAResult()
     res.conservative = not has_blackbox
@@ -1403,8 +1885,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # one penalized objective and hope, get feasible first on its own terms,
     # then optimize with the guarantees switched on and no penalty at all.
     if options.phase1 and _violation(problem, x) > options.feasibility_tolerance:
-        x, res.phase1_iterations, feasible, p1_mults = _phase1(
-            problem, x, options, has_blackbox, cache=cache)
+        _method = getattr(options, 'phase1_method', 'composite')
+        if _method == 'composite':
+            (x, res.phase1_iterations, feasible,
+             _p1_slacks, p1_mults) = _phase1_composite(
+                problem, x, options, has_blackbox, cache=cache)
+            res.phase1_mode = 'composite'
+        elif _method == 'l1':
+            (x, res.phase1_iterations, feasible,
+             _p1_slacks, p1_mults) = _phase1_l1(
+                problem, x, options, has_blackbox, cache=cache)
+            res.phase1_mode = 'l1'
+        else:
+            x, res.phase1_iterations, feasible, p1_mults = _phase1(
+                problem, x, options, has_blackbox, cache=cache)
+            res.phase1_mode = 'minmax'
+
         res.history.append(x.copy())
         res.phase1_feasible = feasible
         if options.verbose:
@@ -1704,6 +2200,17 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 radius = min(options.trust_max, radius * options.trust_expand)
 
         x = x_new
+        if (getattr(options, 'phase2_restore', False) and n_eq_p2
+                and not has_blackbox):
+            x_r, _heq = restore_equalities(
+                problem, x, iters=options.phase1_restore_iterations,
+                tol=min(options.feasibility_tolerance, 1e-10))
+            # Only if it actually helps. Restoration is least-norm, so it
+            # barely moves the inequalities; if it somehow makes the worst
+            # violation worse, the step was not the problem and the plain
+            # iterate is the safer one to keep.
+            if _violation(problem, x_r) <= _violation(problem, x):
+                x = x_r
         res.history.append(x.copy())
         res.objectives.append(problem.objective_value(x))
 
@@ -1771,4 +2278,13 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     res.stationarity, res.max_violation, res.complementarity = stat, viol, comp
     res.multipliers = mults
     res.slacks_active = viol > options.feasibility_tolerance
+    # Attached to every result, not just the failures: the same text explains
+    # why a run that DID converge converged, and the degenerate-block warning
+    # is worth seeing either way.
+    try:
+        res.report = convergence_report(problem, res, options)
+    except Exception as exc:                     # never let a diagnostic
+        res.report = f"(convergence report unavailable: {exc})"   # kill a solve
+    if options.verbose:
+        print(res.report)
     return res

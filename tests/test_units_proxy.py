@@ -4,17 +4,18 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""`from edi import units` must give Pyomo's units container.
+"""`from edi import units` gives Pyomo's units container.
 
-This is a name collision worth pinning. `edi.units` is also a subpackage
-(unitCorrector, unitWalker), and Python binds a submodule onto its parent
-package as it imports it -- so `from edi.units.unitCorrector import ...`
-anywhere would overwrite the name with the subpackage and turn `units.m` into
-an AttributeError, at whatever point in a session that import first ran.
+This used to be a name collision. ``edi.units`` was the package holding
+unitCorrector and unitWalker, and Python binds a submodule onto its parent
+package as it imports it -- so the first ``from edi.units.unitCorrector import
+...`` anywhere, including the lazy imports inside ``solve()``, replaced the
+name with the package and turned ``units.m`` into an AttributeError partway
+through a session.
 
-edi/__init__ loads the subpackage before rebinding, so the parent attribute is
-set once and then replaced. These tests fix that behaviour in both orderings
-and after the lazy imports a solve performs.
+Those modules now live in :mod:`edi.preconditioner` with the rest of the
+pre-solve chain, so the name is simply free. These tests pin both halves: the
+proxy is Pyomo's own object, and nothing in the package reclaims the name.
 """
 import subprocess
 import sys
@@ -42,27 +43,38 @@ def test_usable_in_a_model_and_solves():
     assert float(f.solution['y']) == pytest.approx(2.0, abs=1e-4)
 
 
-def test_survives_the_submodule_imports_a_solve_performs():
-    """The clobber this guards against, in the order that would trigger it."""
+def test_nothing_reclaims_the_name():
+    """The regression that motivated the move.
+
+    Importing the pre-solve modules must leave ``edi.units`` alone. It did not
+    when they lived under that name.
+    """
     import edi
-    from edi.units.unitCorrector import unit_corrector    # noqa: F401
-    from edi.units.unitWalker import unitsPack            # noqa: F401
+    from edi.preconditioner.unitCorrector import unit_corrector   # noqa: F401
+    from edi.preconditioner.unitWalker import unitsPack           # noqa: F401
     assert edi.units is pyo.units
 
 
-@pytest.mark.parametrize('first', ['edi', 'submodule'],
-                         ids=['edi-first', 'submodule-first'])
+def test_edi_units_is_not_a_package_any_more():
+    """``import edi.units.<anything>`` must fail rather than resolve."""
+    with pytest.raises(ModuleNotFoundError):
+        __import__('edi.units.unitCorrector')
+
+
+@pytest.mark.parametrize('first', ['edi', 'preconditioner'],
+                         ids=['edi-first', 'preconditioner-first'])
 def test_both_import_orderings_in_a_fresh_interpreter(first):
-    """Import order must not decide what `edi.units` means.
+    """Import order must not decide what ``edi.units`` means.
 
     Run out of process: within one session the modules are already in
-    sys.modules, which is precisely the state that hides this bug.
+    sys.modules, which is precisely the state that hid the original bug.
     """
     lead = ('import edi' if first == 'edi'
-            else 'from edi.units.unitCorrector import unit_corrector')
+            else 'from edi.preconditioner.unitCorrector import unit_corrector')
     code = (f'{lead}\n'
             'import edi, pyomo.environ as pyo\n'
-            'from edi.units.unitCorrector import unit_corrector\n'
+            'from edi.preconditioner.unitCorrector import unit_corrector\n'
+            'from edi.preconditioner.structureDetector import structure_detector\n'
             'assert edi.units is pyo.units, type(edi.units)\n'
             'from edi import units\n'
             'assert units is pyo.units\n'
@@ -73,7 +85,9 @@ def test_both_import_orderings_in_a_fresh_interpreter(first):
     assert 'ok' in out.stdout
 
 
-def test_the_subpackage_is_still_importable():
-    """Rebinding the name must not make the real subpackage unreachable."""
-    from edi.units import unitCorrector
-    assert callable(unitCorrector.unit_corrector)
+def test_the_preconditioner_package_exposes_the_chain():
+    """One import for the whole pre-solve pipeline."""
+    from edi.preconditioner import (diagnose, structure_detector,
+                                    structure_report, unit_corrector)
+    assert all(callable(fn) for fn in (unit_corrector, structure_detector,
+                                       diagnose, structure_report))

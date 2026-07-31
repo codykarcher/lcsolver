@@ -10,9 +10,9 @@ import pyomo.environ as pyo
 import pytest
 
 from edi import Formulation
-from edi.presolve import structure_report
-from edi.structure.structureDetector import structure_detector
-from edi.units.unitCorrector import unit_corrector
+from edi.preconditioner.presolve import structure_report
+from edi.preconditioner.structureDetector import structure_detector
+from edi.preconditioner.unitCorrector import unit_corrector
 
 
 def _detected(f):

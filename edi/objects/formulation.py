@@ -400,7 +400,7 @@ class Formulation(ConcreteModel):
             AR = f.Variable('AR', units='-', description='aspect ratio')
 
         Variables that took a default are recorded and reported by
-        ``edi.presolve.diagnose``, so the omission stays visible rather than
+        ``edi.preconditioner.presolve.diagnose``, so the omission stays visible rather than
         becoming invisible.
         """
         return self._require_guesses
@@ -871,8 +871,8 @@ class Formulation(ConcreteModel):
         exponents, and classifying the uncorrected form can call the same
         model by a different name.
         """
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
+        from edi.preconditioner.structureDetector import structure_detector
+        from edi.preconditioner.unitCorrector import unit_corrector
         return structure_detector(unit_corrector(self), bounds_as_rows=False)
 
     def structure_report(self, top=5):
@@ -885,17 +885,17 @@ class Formulation(ConcreteModel):
         ``top`` caps the constraints listed per class; ``top=None`` lists all.
         Returns the text and prints nothing.
         """
-        from edi.presolve import structure_report as _report
+        from edi.preconditioner.presolve import structure_report as _report
         return _report(self, top=top)
 
     def diagnose(self, top=5):
         """Every structural check, in one call: structure, then presolve.
 
         The pre-solve half of the report -- it needs no solution. Pass the
-        solved model to `edi.presolve.diagnose` directly for the degeneracy
+        solved model to `edi.preconditioner.presolve.diagnose` directly for the degeneracy
         and cancellation checks, which do.
         """
-        from edi.presolve import diagnose as _diagnose
+        from edi.preconditioner.presolve import diagnose as _diagnose
         return _diagnose(self, structure_top=top)
 
     def check_units(self):

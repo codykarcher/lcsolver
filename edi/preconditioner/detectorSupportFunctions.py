@@ -20,10 +20,10 @@ from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
 
 
-# from edi.structure.walkerSupportFunctions import (
+# from edi.preconditioner.walkerSupportFunctions import (
 #     processMonomial,
 # )
-from edi.structure.walkerSupportFunctions import processMonomial
+from edi.preconditioner.walkerSupportFunctions import processMonomial
 
 if numpy_available:
     import numpy as np

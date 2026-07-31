@@ -2,7 +2,7 @@
 
 Two things are under test here and they fail in opposite ways.
 
-:mod:`edi.presolve` is diagnostic -- it never changes the problem, so the way
+:mod:`edi.preconditioner.presolve` is diagnostic -- it never changes the problem, so the way
 it goes wrong is by reporting nothing useful. The check that matters is that
 it *finds* the defect it is looking for and stays quiet on a clean model.
 
@@ -22,7 +22,7 @@ import pytest
 pytest.importorskip("edi.solvers.ipopt.sia")
 
 from edi import Formulation
-from edi.presolve import (
+from edi.preconditioner.presolve import (
     InfeasibleProblem,
     PresolveLog,
     assert_equivalent,
@@ -43,11 +43,11 @@ from edi.solvers.ipopt.slcp_bridge import (
     presolve_structures,
     solve_sia,
 )
-from edi.structure.structureDetector import (
+from edi.preconditioner.structureDetector import (
     require_bounds_as_rows,
     structure_detector,
 )
-from edi.units.unitCorrector import unit_corrector
+from edi.preconditioner.unitCorrector import unit_corrector
 
 
 def _detect(f, bounds_as_rows=True):
@@ -1168,7 +1168,7 @@ def test_the_checker_notices_a_transform_that_lies():
 # ---------------------------------------------------------------------------
 def test_a_backend_refuses_a_structure_it_cannot_read():
     """Declared rather than remembered: the whole point of the registry."""
-    from edi.structure.structureDetector import features, require
+    from edi.preconditioner.structureDetector import features, require
 
     rows = _detect(_active_bound_model(), bounds_as_rows=True)
     split = _detect(_active_bound_model(), bounds_as_rows=False)
@@ -1183,7 +1183,7 @@ def test_a_backend_refuses_a_structure_it_cannot_read():
 
 
 def test_an_unknown_consumer_is_not_second_guessed():
-    from edi.structure.structureDetector import require
+    from edi.preconditioner.structureDetector import require
     require(_detect(_active_bound_model(), bounds_as_rows=False), 'something_new')
 
 
@@ -1191,7 +1191,7 @@ def test_an_unknown_consumer_is_not_second_guessed():
 # the typed view
 # ---------------------------------------------------------------------------
 def test_detected_names_what_the_dict_only_implied():
-    from edi.structure.detected import Detected
+    from edi.preconditioner.detected import Detected
 
     gp = _detect(_active_bound_model(), bounds_as_rows=False)
     assert isinstance(gp, Detected)
@@ -1331,7 +1331,7 @@ def test_terms_parses_each_row_once_however_often_it_is_asked():
     the solve just stops finishing. On SPaircraft it cost four minutes inside
     `fold_singleton_rows` against an eleven-second solve.
     """
-    import edi.structure.detected as detected
+    import edi.preconditioner.detected as detected
 
     st = _detect(_rich_model(), bounds_as_rows=False)
     indices = [0] + st.constraint_indices
@@ -1369,7 +1369,7 @@ def test_a_rebuilt_structure_does_not_answer_from_the_old_cache():
 
 
 def test_term_values_match_direct_evaluation():
-    from edi.presolve import _eval_terms
+    from edi.preconditioner.presolve import _eval_terms
 
     st = _detect(_rich_model(), bounds_as_rows=False)
     x = np.linspace(1.5, 4.0, st.n_variables)
@@ -1384,7 +1384,7 @@ def test_term_values_match_direct_evaluation():
 
 
 def test_the_typed_view_is_idempotent():
-    from edi.structure.detected import as_detected
+    from edi.preconditioner.detected import as_detected
 
     st = _detect(_active_bound_model(), bounds_as_rows=False)
     assert as_detected(st) is st

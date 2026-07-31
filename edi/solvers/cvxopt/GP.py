@@ -18,7 +18,7 @@ if not cvxopt_available:
 
 
 def solve_GP(structures):
-    from edi.structure.structureDetector import require
+    from edi.preconditioner.structureDetector import require
     require(structures, 'solve_GP')
     # print(structures)
     # cody

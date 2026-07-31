@@ -74,7 +74,7 @@ class FeasibilityResult:
         The backends take their initial point from the model's current variable
         values, so this is what makes the result passable. Returns the model.
         """
-        from edi.presolve import _as_structures
+        from edi.preconditioner.presolve import _as_structures
         from edi.solvers.writeback import write_solution
 
         st = _as_structures(model)
@@ -104,7 +104,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     """
     import pyomo.environ as pyo
 
-    from edi.presolve import _as_structures
+    from edi.preconditioner.presolve import _as_structures
     from edi.solvers.ipopt.sia import SIAOptions, explain_infeasibility
     from edi.solvers.ipopt.slcp_bridge import (_apply_presolve, _restore,
                                                build_problem)
@@ -114,8 +114,8 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
         # The presolve form splits bounds out of the rows, and Phase I reads
         # rows. Detect afresh rather than quietly looking for a point in a
         # problem with no variable bounds.
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
+        from edi.preconditioner.structureDetector import structure_detector
+        from edi.preconditioner.unitCorrector import unit_corrector
         st = structure_detector(unit_corrector(model))
 
     if x0 is None:

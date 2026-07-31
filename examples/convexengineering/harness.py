@@ -239,7 +239,7 @@ def feasibility(f, rtol: float = 1e-6, *, correct_units: bool = True) -> tuple:
     """
     if correct_units:
         try:
-            from edi.units.unitCorrector import unit_corrector
+            from edi.preconditioner.unitCorrector import unit_corrector
             f = unit_corrector(f)
         except Exception:
             pass

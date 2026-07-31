@@ -25,7 +25,7 @@ cvxopt, cvxopt_available = attempt_import( "cvxopt" )
 if not cvxopt_available:
     raise ImportError('The Signomial Programming solver currently requires cvxopt')
 
-# from edi.structure.detectorSupportFunctions import (
+# from edi.preconditioner.detectorSupportFunctions import (
 #      # gpRow_add,
 #      # gpRow_subtract,
 #      gpRow_multiply,
@@ -36,7 +36,7 @@ if not cvxopt_available:
 #      # checkLinear,
 #      # unstructured_dict,
 # )
-from edi.structure.detectorSupportFunctions import (
+from edi.preconditioner.detectorSupportFunctions import (
      gpRow_multiply,
      gpRow_divide,
 )
@@ -159,7 +159,7 @@ def pccp_modification(constraintList,penalty_exponent=5.0):
 
 
 def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0, gp_solver=None):
-    from edi.structure.structureDetector import require
+    from edi.preconditioner.structureDetector import require
     require(structures, 'solve_SP')
     """Solve a signomial program by PCCP (penalty convex-concave).
 

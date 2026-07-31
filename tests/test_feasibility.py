@@ -87,8 +87,8 @@ def test_a_short_start_is_refused_rather_than_padded():
 
 
 def test_x_is_indexed_like_the_model():
-    from edi.structure.structureDetector import structure_detector
-    from edi.units.unitCorrector import unit_corrector
+    from edi.preconditioner.structureDetector import structure_detector
+    from edi.preconditioner.unitCorrector import unit_corrector
     f = _satisfiable()
     st = structure_detector(unit_corrector(f))
     assert len(feasibility(f).x) == len(st['variables'])

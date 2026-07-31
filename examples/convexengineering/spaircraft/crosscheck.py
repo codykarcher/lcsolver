@@ -149,7 +149,7 @@ def main() -> None:
           f"{len(uniq)} distinct names unmatched")
     print("  unmatched sample:", uniq[:20])
 
-    from edi.units.unitCorrector import unit_corrector
+    from edi.preconditioner.unitCorrector import unit_corrector
     fc = unit_corrector(f)
     rows = []
     n_eval = 0
