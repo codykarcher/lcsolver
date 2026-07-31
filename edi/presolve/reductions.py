@@ -1827,7 +1827,7 @@ def structure_report(structures, top=5, simplify=True) -> str:
 
 
 def optimization_check(structures, x=None, problem=None, names=None,
-             x_min=1e-9, structure_top=5):
+                       x_min=1e-9, structure_top=5):
     """Every check on a model, in one call, as one report.
 
     The individual checks are expert tools: each needs the structure detected a
@@ -1841,11 +1841,27 @@ def optimization_check(structures, x=None, problem=None, names=None,
     what stops it being a simpler one, and the variables that are output-only,
     unbounded, disconnected or fixed.
 
-    **After** -- pass ``x`` and ``problem`` to add the checks that only mean
-    something at a solution: variables the optimum does not determine
-    (``degenerate``), signomial terms contributing nothing there
-    (``cancelling``), and variables resting on the positivity floor
-    (``at_floor``).
+    **After** -- the checks that only mean something at a solution: variables
+    the optimum does not determine (``degenerate``), signomial terms
+    contributing nothing there (``cancelling``), and variables resting on the
+    positivity floor (``at_floor``).
+
+    Those turn themselves on. Hand this a *solved* Formulation and it reads
+    the point off the model and builds the low-level problem the checks want,
+    so the same call gives the structural half before a solve and the whole
+    report after::
+
+        report = optimization_check(f)      # before: structure + presolve
+        solve(f)
+        report = optimization_check(f)      # after: adds the three above
+
+    Passing ``x`` and ``problem`` explicitly still works and takes precedence.
+
+    Auto-wiring happens only for a Formulation, never for a structure handed
+    in directly. A detected structure holds the unit-corrected *clone*, and
+    that clone is never solved -- reading values off structures detected
+    before a solve would silently check the author's initial guesses while
+    reporting in the language of a result.
 
     The report opens with :func:`structure_report` -- what kind of problem
     this is and what stops it being a simpler one -- because that needs no
@@ -1897,6 +1913,26 @@ def optimization_check(structures, x=None, problem=None, names=None,
     guesses = getattr(model, 'defaulted_guesses', None)
     if guesses:
         rep.defaulted_guesses = list(guesses)
+    # Wire up the post-solve checks when the model has been solved. `solve()`
+    # marks it; the mark is what distinguishes an answer from an initial
+    # guess, and running these against a guess would describe the guess in the
+    # language of a result.
+    if (x is None and problem is None and model is not None
+            and getattr(model, '_edi_solved', False)):
+        try:
+            import numpy as _np
+            import pyomo.environ as _pyo
+
+            from edi.solvers.ipopt.slcp_bridge import build_problem
+
+            _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
+                             dtype=float)
+            _p = build_problem(st, sp_form=True)
+            if _x.size >= _p.n:
+                x, problem = _x[:_p.n], _p
+        except Exception:
+            pass                    # a check must never block the report
+
     # The post-solve checks report variable names, and the structures already
     # carry them -- without this default they printed `<var 2>`, which is the
     # one thing a reader of a degeneracy report cannot act on.

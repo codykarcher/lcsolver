@@ -327,3 +327,62 @@ def test_a_genuine_sp_is_not_gp_after_presolve():
     """The other side of it: an unremovable signomial must fail the check."""
     from edi.presolve.reductions import _gp_after_presolve
     assert _gp_after_presolve(_detected(_sp())) is False
+
+
+# --- the post-solve half turns itself on ------------------------------------
+
+def _free_rider():
+    """`z` is held only by its own bounds: the optimum does not determine it."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='x')
+    y = f.Variable(name='y', guess=1.0, units='m', description='y')
+    f.Variable(name='z', guess=1.0, units='-', description='free rider')
+    A = f.Constant(name='A', value=2.0, units='m^2', description='A')
+    f.Objective(x + y)
+    f.ConstraintList([x * y >= A, f.z >= 0.5, f.z <= 4.0])
+    return f
+
+
+def test_post_solve_checks_are_off_before_a_solve():
+    from edi import optimization_check
+    rep = optimization_check(_free_rider())
+    assert rep.degenerate == [] and rep.post_solve_text() == ''
+
+
+def test_post_solve_checks_turn_on_after_a_solve():
+    """Same call, more report -- the point of the auto-wiring."""
+    from edi import optimization_check
+    from edi.solvers.solver import solve
+    f = _free_rider()
+    solve(f, sensitivities=False)
+    rep = optimization_check(f)
+    assert len(rep.degenerate) == 1
+    assert 'does not determine' in rep.post_solve_text()
+
+
+def test_the_degenerate_variable_is_named():
+    """It reported `<var 2>` until `names` was defaulted from the structures."""
+    from edi import optimization_check
+    from edi.solvers.solver import solve
+    f = _free_rider()
+    solve(f, sensitivities=False)
+    text = optimization_check(f).post_solve_text()
+    assert 'z' in text and '<var' not in text
+
+
+def test_structures_are_never_auto_wired():
+    """The guard that matters.
+
+    A detected structure holds the unit-corrected CLONE, which is never
+    solved. Auto-wiring from structures detected before a solve would check
+    the author's initial guesses while reporting in the language of a result,
+    so it is done only for a Formulation.
+    """
+    from edi import optimization_check
+    from edi.solvers.solver import solve
+    f = _free_rider()
+    st = _detected(f)                    # detected BEFORE solving
+    solve(f, sensitivities=False)
+    rep = optimization_check(st)         # stale clone: must stay structural
+    assert rep.degenerate == []
+    assert rep.post_solve_text() == ''
