@@ -57,9 +57,66 @@ class FeasibilityResult:
     names: list = field(default_factory=list)
     text: str = ''
 
-    def summary(self) -> str:
-        """The report, as a string. ``print(result.summary())``."""
-        return self.text
+    def summary(self, top=12) -> str:
+        """The report, as a string. ``print(result.summary())``.
+
+        Fuller than the one-line verdict, because a feasibility answer is only
+        useful with its context: how many rows were examined, how far off the
+        worst of them is, and -- when there is no point -- which variables the
+        blocking rows have in common, since that is usually where the
+        modelling error is.
+        """
+        L = ['feasibility', '-----------']
+        n = len(self.slacks)
+        if self.feasible:
+            L.append(f'  FEASIBLE: a point satisfying all {n} constraints was '
+                     f'found in {self.iterations} elastic iteration'
+                     f'{"s" if self.iterations != 1 else ""}.')
+            L.append('  (That count is the presolved problem, which is what '
+                     'was actually searched.)')
+            L.append('  It is in `.x`, indexed like the model, and can be '
+                     'handed to solve(f, start=result).')
+            L.append('  This ignored the objective entirely: the point is '
+                     'feasible, not optimal.')
+            if n:
+                # Clamped: the elastic slacks are >= 0 by construction and a
+                # small negative is interior-point round-off, which reads as
+                # nonsense next to the word "slack".
+                worst = max(0.0, float(max(self.slacks)))
+                L.append(f'  Worst remaining slack {worst:.3e}, within '
+                         f'tolerance.')
+            return '\n'.join(L)
+
+        tot = float(sum(s for _r, s, _v in self.blocking))
+        L.append(f'  INFEASIBLE: {len(self.blocking)} of {n} constraints keep a '
+                 f'positive slack (sum {tot:.4e}).')
+        L.append('  These must be relaxed for the model to close. The elastic '
+                 'form drives every row it CAN')
+        L.append('  satisfy to zero slack, so what is listed is close to an '
+                 'irreducible inconsistent set,')
+        L.append('  not merely the worst offenders.')
+        L.append('')
+        L.append('  largest first:')
+        for row, slack, variables in self.blocking[:top]:
+            names = ', '.join(variables[:6]) or '-'
+            more = '' if len(variables) <= 6 else f' (+{len(variables) - 6})'
+            L.append(f'      row {row:5d}  slack {slack:.4e}   vars: {names}{more}')
+        if len(self.blocking) > top:
+            L.append(f'      ... and {len(self.blocking) - top} more')
+
+        shared = None
+        for _r, _s, variables in self.blocking:
+            shared = set(variables) if shared is None else shared & set(variables)
+        if shared:
+            L.append('')
+            L.append(f'  Every blocking row involves: {", ".join(sorted(shared))}')
+            L.append('  -- a variable common to all of them is the usual place '
+                     'the error is.')
+        L.append('')
+        L.append('  `.x` holds the least-infeasible point found, which is '
+                 'still generally a better')
+        L.append('  starting point than the declared guesses.')
+        return '\n'.join(L)
 
     def __str__(self):
         return self.text
@@ -133,6 +190,11 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     options = options or SIAOptions()
     text, x1, slacks = explain_infeasibility(problem, x0[:problem.n],
                                              options=options, k=top)
+    # explain_infeasibility reports the count in its prose; pull it back out so
+    # the structured result does not have to be parsed to learn it.
+    import re as _re
+    _m = _re.search(r'in (\d+) iterations|after (\d+) elastic', text)
+    n_iter = int(next(g for g in (_m.groups() if _m else ()) if g)) if _m else 0
 
     tol = options.feasibility_tolerance
     slacks = np.asarray(slacks, dtype=float)
@@ -162,7 +224,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
         x=np.asarray(getattr(restored, 'x', x1), dtype=float),
         slacks=slacks,
         blocking=blocking,
-        iterations=0,
+        iterations=n_iter,
         names=list(problem.names or []),
         text=text,
     )

@@ -242,3 +242,78 @@ def unit_corrector(pyomo_component):
         raise UnitMismatch(_join_failures(failures))
 
     return corrected_model
+
+
+class UnitCheck:
+    """The result of :func:`unit_check`: did the units balance, and the model.
+
+    Carries a ``summary()`` like every other object in the pre-solve chain, so
+    a reader does not have to remember which step returns what. ``model`` is
+    the corrected clone -- the thing to hand to
+    :func:`~edi.preconditioner.structureDetector.structure_detector` -- and the
+    result is truthy when the units balance.
+    """
+
+    __slots__ = ('ok', 'model', 'failures', 'n_objectives', 'n_constraints')
+
+    def __init__(self, ok, model, failures=(), n_objectives=0,
+                 n_constraints=0):
+        self.ok = bool(ok)
+        self.model = model
+        self.failures = list(failures)
+        self.n_objectives = int(n_objectives)
+        self.n_constraints = int(n_constraints)
+
+    def __bool__(self):
+        return self.ok
+
+    def __str__(self):
+        return self.summary()
+
+    def summary(self) -> str:
+        L = ['units', '-----']
+        if self.ok:
+            L.append(f'  balanced: {self.n_objectives} objective'
+                     f'{"s" if self.n_objectives != 1 else ""} and '
+                     f'{self.n_constraints} constraint'
+                     f'{"s" if self.n_constraints != 1 else ""} check out, and '
+                     f'the model has been converted to base units.')
+            L.append('  Nothing downstream is meaningful until this passes, '
+                     'so it is the first step of the chain.')
+        else:
+            L.append(_join_failures(self.failures))
+            L.append('')
+            L.append('  Nothing further can be checked until the units '
+                     'balance: the structure detector reads the')
+            L.append('  unit-corrected model, and this one has no correction.')
+        return '\n'.join(L)
+
+
+def unit_check(pyomo_component, raise_on_error=True):
+    """Check that a model's units balance; the first step of the chain.
+
+    The same walk as :func:`unit_corrector` -- this is the name to use -- but
+    it returns a :class:`UnitCheck` rather than the bare corrected model, so
+    the units step answers to ``summary()`` like the rest of the chain::
+
+        check = unit_check(f)
+        print(check.summary())
+        structures = structure_detector(check.model)
+
+    ``raise_on_error=False`` reports a mismatch instead of raising, which is
+    what a diagnostic caller wants: asking what is wrong with a model is
+    exactly when it is most likely to be wrong.
+    """
+    import pyomo.environ as pyo
+
+    n_obj = len(list(pyomo_component.component_data_objects(
+        ctype=pyo.Objective, descend_into=True, active=True)))
+    n_con = len(list(pyomo_component.component_data_objects(
+        ctype=pyo.Constraint, descend_into=True, active=True)))
+    try:
+        model = unit_corrector(pyomo_component)
+    except UnitMismatch as exc:
+        if raise_on_error:
+            raise
+        return UnitCheck(False, None, [str(exc)], n_obj, n_con)
+    return UnitCheck(True, model, (), n_obj, n_con)

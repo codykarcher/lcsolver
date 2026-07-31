@@ -53,8 +53,9 @@ from edi.solvers.sensitivity import (
     constraint_duals,
     format_sensitivities,
 )
-from edi.preconditioner.presolve import diagnose, structure_report
-from edi.solvers.feasibility import FeasibilityResult, feasibility
+from edi.preconditioner import (diagnose, feasibility, FeasibilityResult,
+                                structure_detector, structure_report,
+                                unit_check, UnitCheck, unit_corrector)
 
 # `from edi import units` gives Pyomo's units container, so a model needs one
 # import rather than two. Declaring a Variable already takes units as a string;
@@ -77,6 +78,10 @@ __all__ = [
     "units",
     "diagnose",
     "structure_report",
+    "structure_detector",
+    "unit_check",
+    "UnitCheck",
+    "unit_corrector",
     "feasibility",
     "FeasibilityResult",
     "sensitivities",

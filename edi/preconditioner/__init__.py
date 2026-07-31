@@ -35,6 +35,10 @@ The chain, which ``solve()`` runs internally and will accept back::
     solve(f, structures=structures)
 """
 
+from edi.preconditioner.feasibilityCheck import (  # noqa: F401
+    FeasibilityResult,
+    feasibility,
+)
 from edi.preconditioner.presolve import (  # noqa: F401
     InfeasibleProblem,
     PresolveReport,
@@ -47,11 +51,15 @@ from edi.preconditioner.structureDetector import (  # noqa: F401
     structure_detector,
 )
 from edi.preconditioner.unitCorrector import (  # noqa: F401
+    UnitCheck,
     UnitMismatch,
+    unit_check,
     unit_corrector,
 )
 
 __all__ = [
+    "unit_check",
+    "UnitCheck",
     "unit_corrector",
     "UnitMismatch",
     "structure_detector",
@@ -61,4 +69,6 @@ __all__ = [
     "presolve_report",
     "PresolveReport",
     "InfeasibleProblem",
+    "feasibility",
+    "FeasibilityResult",
 ]

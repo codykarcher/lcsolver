@@ -314,6 +314,16 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     1e-30..1e30 box for the reference solution to be inside it, and a presolve
     that "cleaned up" those limits would cut off the answer.
     """
+    # Accept the previous step's result directly, so the chain composes:
+    #   structures = structure_detector(unit_check(f))
+    # rather than making the caller reach inside for `.model`.
+    if hasattr(pyomo_component, 'model') and hasattr(pyomo_component, 'ok'):
+        if not pyomo_component.ok:
+            raise ValueError(
+                'the units do not balance, so there is no corrected model to '
+                'detect structure on. Read unit_check(...).summary().')
+        pyomo_component = pyomo_component.model
+
     # Various setup things
 
     if not isinstance(pyomo_component, BlockData):

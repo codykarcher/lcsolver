@@ -121,6 +121,16 @@ class Detected(dict):
     working, so consumers migrate one at a time rather than all at once.
     """
 
+    def summary(self, top=5) -> str:
+        """What kind of problem this is, and what blocks a simpler one.
+
+        Every result object in the pre-solve chain answers to ``summary()`` --
+        this one, the unit check, the diagnose report and the feasibility
+        result -- so a reader does not have to remember which is which.
+        """
+        from edi.preconditioner.presolve import structure_report
+        return structure_report(self, top=top)
+
     # -- what kind of problem is this ------------------------------------
     def _first(self, order):
         for k in order:

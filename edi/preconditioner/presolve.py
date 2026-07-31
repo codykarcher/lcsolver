@@ -1642,32 +1642,61 @@ def _units_diagnosis(exc):
             '  has no correction. Fix the above and run this again.')
 
 
-def _rows_after_presolve(structures):
-    """Constraint indices that still exist once the presolve has run.
+def _gp_after_presolve(structures):
+    """Is the problem the solver actually receives a geometric program?
 
-    A blocker that does not survive did not really determine the class of the
-    problem that gets solved. The commonest case by far: a constraint whose
-    only job is to define a quantity nothing else reads -- a taper ratio, a
-    span in metres -- which the presolve removes and back-substitutes
-    afterwards. It can make a model an SP on paper while the solver is handed
-    a GP.
+    Answered by looking at the presolved rows, not by tracking which original
+    row went away. Two earlier attempts did the latter and both were wrong:
+    ``fold_singleton_rows``, ``eliminate_monomial_equalities`` and
+    ``reduce_columns`` each RENUMBER, so an index means something different
+    after every pass, and matching content across them is guesswork the moment
+    two rows look alike.
 
-    Removing rows cannot introduce a blocker, and monomial elimination
-    substitutes a monomial for a variable, which maps posynomials to
-    posynomials. So a class whose blockers are all removed really is achieved.
+    The two things that stop a set of rows being a GP are visible directly:
 
-    Returns ``None`` if the presolve cannot run, so the caller can stay quiet
-    rather than guess.
+    * a **fraction** -- a group with a denominator, stored as a negative row
+      index -- is a ratio of posynomials rather than a posynomial;
+    * a **posynomial equality** -- an ``==`` group with more than one term --
+      because log-sum-exp == 0 is not a convex set.
+
+    plus the standing requirement that every coefficient be positive. Checking
+    those on the reduced rows answers the question that matters without
+    needing to know which constraint each row used to be.
+
+    Returns ``None`` if the presolve cannot run, so the caller can decline to
+    claim anything.
     """
     try:
         st = _with_empty_bounds(structures)
         st = fold_singleton_rows(st)
         st, _elim = eliminate_monomial_equalities(st)
-        st, _removed = reduce_columns(st)
-        rows, _ops, _key = _rows_of(st)
+        st, _red = reduce_columns(st)
+        rows, operators, _key = _rows_of(st)
     except Exception:
         return None
-    return {int(r[0]) if r[0] >= 0 else int(-r[0] - 1) for r in rows}
+
+    groups = {}
+    for r in rows:
+        raw = int(r[0])
+        idx = raw if raw >= 0 else -raw - 1
+        if idx == 0:
+            continue
+        g = groups.setdefault(idx, {'numer': 0, 'denom': 0, 'neg': False})
+        if raw >= 0:
+            g['numer'] += 1
+        else:
+            g['denom'] += 1
+        if float(r[1]) <= 0.0:
+            g['neg'] = True
+
+    ops = list(operators or [])
+    for idx, g in groups.items():
+        if g['denom'] or g['neg']:
+            return False
+        op = ops[idx - 1] if 0 <= idx - 1 < len(ops) else None
+        if op == '==' and g['numer'] > 1:
+            return False
+    return True
 
 
 def structure_report(structures, top=5, simplify=True) -> str:
@@ -1708,27 +1737,13 @@ def structure_report(structures, top=5, simplify=True) -> str:
             L.append(f'  {msg}')
         return '\n'.join(L)
 
-    # Does the presolve remove what blocks a simpler class? If so the model is
-    # only nominally the class it was detected as.
-    simplified, surviving = detected, None
-    if simplify:
-        surviving = _rows_after_presolve(st)
-    if surviving is not None:
-        for cand in _CLASS_ORDER[:_CLASS_ORDER.index(detected)]:
-            rows = blockers.get(cand, ())
-            # `rows` must be non-empty. The claim is "every constraint that
-            # ruled this class out is removed before the solve", and that is
-            # only checkable when the blame list ACCOUNTS for the flag being
-            # off. An empty list means the detector cleared the flag somewhere
-            # unrecorded, and `all([])` is True -- so this used to assert the
-            # simplification most confidently in exactly the case where it knew
-            # least. Found with a posynomial equality, whose blame site was
-            # missing: the report announced "GP as solved" for a model with
-            # three signomial constraints the presolve does not touch.
-            if rows and all(r[2] is not None and r[2] not in surviving
-                            for r in rows):
-                simplified = cand
-                break
+    # Does the problem the SOLVER receives simplify to a GP? Only that is
+    # asked. LP and QP would need the linearity test rerun on the reduced
+    # rows, and asserting them without checking is how this went wrong before.
+    simplified = detected
+    if simplify and detected == 'Signomial_Program':
+        if _gp_after_presolve(st) is True:
+            simplified = 'Geometric_Program'
 
     label, consequence = _CLASS_INFO[detected]
     if simplified != detected:
@@ -1747,11 +1762,18 @@ def structure_report(structures, top=5, simplify=True) -> str:
             rows += blockers.get(cls, [])
         if not rows:
             return
-        seen, uniq = set(), []
+        # Group by constraint, keeping EVERY distinct reason. One row can
+        # fail a class more than one way -- a posynomial equality that is also
+        # a ratio of posynomials -- and showing only the first reason hid the
+        # more specific one, which is the actionable half.
+        order, reasons = [], {}
         for name, why, row in rows:
-            if name not in seen:
-                seen.add(name)
-                uniq.append((name, why, row))
+            if name not in reasons:
+                reasons[name] = (row, [])
+                order.append(name)
+            if why not in reasons[name][1]:
+                reasons[name][1].append(why)
+        uniq = [(name, reasons[name][1], reasons[name][0]) for name in order]
         L.append('')
         n = len(uniq)
         n_obj = sum(1 for nm, _, _ in uniq if nm == 'the objective')
@@ -1764,13 +1786,12 @@ def structure_report(structures, top=5, simplify=True) -> str:
         L.append(f'  {headline} -- {" and ".join(parts)} '
                  f'block{"s" if n == 1 else ""} it:')
         shown = uniq if top is None else uniq[:top]
-        for name, why, row in shown:
+        for name, whys, row in shown:
             body = bodies.get(name)
             L.append(f'      {name}' + (f'   {body}' if body else ''))
-            L.append(f'          {why}')
-            if surviving is not None and row is not None and row not in surviving:
-                L.append('          (removed by the presolve -- it does not '
-                         'reach the solver)')
+            for why in whys:
+                L.append(f'          {why}')
+
         if len(uniq) > len(shown):
             L.append(f'      ... and {len(uniq) - len(shown)} more')
         if advice:

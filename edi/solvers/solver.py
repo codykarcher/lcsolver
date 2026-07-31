@@ -304,7 +304,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
 
     ``start`` sets the point the solve begins from, which the backends
     otherwise take from the model's current values. It accepts a
-    :class:`~edi.solvers.feasibility.FeasibilityResult`, so the feasibility
+    :class:`~edi.preconditioner.feasibilityCheck.FeasibilityResult`, so the feasibility
     solve composes with this one::
 
         result = feasibility(f)

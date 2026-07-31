@@ -220,3 +220,110 @@ def test_str_of_report_carries_the_structure_section():
     """`print(diagnose(...))` must be the whole report, not half of it."""
     text = str(_sp().diagnose())
     assert 'structure' in text and 'presolve:' in text
+
+
+# --- posynomial equalities --------------------------------------------------
+# A GP admits only MONOMIAL equalities: log-sum-exp == 0 is not a convex set.
+# The detector knew, but the site that cleared the flag carried no blame, ran
+# only while the flag was still alive, and stopped after the first offender.
+# The report then inferred "simplifies to a GP after presolve" from a blame
+# list that did not mention the three constraints preventing exactly that.
+
+def _posynomial_equality():
+    """``x*y + x == A``: a posynomial equality, and not an affine one.
+
+    The distinction matters. ``x + y == A`` is *linear*, so the model is an LP
+    and the GP question never arises -- the report only discusses classes
+    simpler than the one detected. A product term forces it past LP and QP, so
+    GP is the next class up and the equality is what rules it out.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x')
+    y = f.Variable(name='y', guess=1.0, units='-', description='y')
+    A = f.Constant(name='A', value=3.0, units='-', description='A')
+    f.Objective(x)
+    f.ConstraintList([x * y + x == A, x >= 0.5, y >= 0.5, y <= 2.0])
+    return f
+
+
+def test_a_posynomial_equality_is_not_a_gp():
+    st = _detected(_posynomial_equality())
+    assert st['Geometric_Program'][0] is False
+    assert st['Signomial_Program'][0] is not False
+
+
+def test_the_posynomial_equality_is_named_as_the_blocker():
+    text = structure_report(_detected(_posynomial_equality()))
+    assert 'posynomial equality' in text
+    assert 'monomial equalities' in text
+
+
+def test_every_offending_equality_is_blamed_not_just_the_first():
+    """It used to `break` after one."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x')
+    y = f.Variable(name='y', guess=1.0, units='-', description='y')
+    z = f.Variable(name='z', guess=1.0, units='-', description='z')
+    A = f.Constant(name='A', value=3.0, units='-', description='A')
+    f.Objective(x)
+    f.ConstraintList([x * y + x == A, x * z + x == A, y * z + y == A,
+                      x >= 0.1, y >= 0.1, z >= 0.1])
+    st = _detected(f)
+    blamed = {r[0] for r in st['blockers'].get('Geometric_Program', ())}
+    assert len(blamed) == 3, blamed
+
+
+def test_blame_is_recorded_even_when_gp_was_already_ruled_out():
+    """The decisive one.
+
+    The scan was guarded by `if Geometric_Program[0] != False`, so on a model
+    something else had already made non-GP it never ran -- and the missing
+    blame is what let the report claim a simplification that was not true.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x')
+    y = f.Variable(name='y', guess=1.0, units='-', description='y')
+    lam = f.Variable(name='lam', guess=0.5, units='-', description='lam')
+    q = f.Variable(name='q', guess=1.5, units='-', description='q')
+    A = f.Constant(name='A', value=3.0, units='-', description='A')
+    f.Objective(x)
+    f.ConstraintList([q == 1 + lam,        # rules out GP, and is removable
+                      x * y + x == A,      # rules out GP, and is NOT
+                      x >= 0.5, y >= 0.5, y <= 2.0, q >= 1.2])
+    st = _detected(f)
+    reasons = ' '.join(r[1] for r in st['blockers'].get('Geometric_Program', ()))
+    assert 'posynomial equality' in reasons
+
+    text = structure_report(st)
+    assert 'as solved' not in text, (
+        'claimed a simplification while an unremovable signomial equality '
+        'remains:\n' + text)
+
+
+def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
+    """Where "as solved" comes from, and where it must NOT come from.
+
+    Two earlier versions decided this by tracking which original row the
+    presolve took away. Both were wrong: fold_singleton_rows,
+    eliminate_monomial_equalities and reduce_columns each RENUMBER, so an
+    index means something different after every pass. It is now answered by
+    inspecting the reduced rows -- no fraction, no multi-term equality, no
+    negative coefficient -- which needs no provenance at all.
+
+    So blanking the blame list must not change the verdict: the two are
+    independent, and that independence is the point.
+    """
+    from edi.preconditioner.presolve import _gp_after_presolve
+    from edi.preconditioner.presolve import structure_report as report
+    st = _detected(_sp_only_on_paper())
+    assert _gp_after_presolve(st) is True
+    with_blame = report(st)
+    st['blockers'] = {}
+    assert 'as solved' in with_blame
+    assert 'as solved' in report(st)
+
+
+def test_a_genuine_sp_is_not_gp_after_presolve():
+    """The other side of it: an unremovable signomial must fail the check."""
+    from edi.preconditioner.presolve import _gp_after_presolve
+    assert _gp_after_presolve(_detected(_sp())) is False
