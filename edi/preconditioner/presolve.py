@@ -1716,7 +1716,17 @@ def structure_report(structures, top=5, simplify=True) -> str:
     if surviving is not None:
         for cand in _CLASS_ORDER[:_CLASS_ORDER.index(detected)]:
             rows = blockers.get(cand, ())
-            if all(r[2] is not None and r[2] not in surviving for r in rows):
+            # `rows` must be non-empty. The claim is "every constraint that
+            # ruled this class out is removed before the solve", and that is
+            # only checkable when the blame list ACCOUNTS for the flag being
+            # off. An empty list means the detector cleared the flag somewhere
+            # unrecorded, and `all([])` is True -- so this used to assert the
+            # simplification most confidently in exactly the case where it knew
+            # least. Found with a posynomial equality, whose blame site was
+            # missing: the report announced "GP as solved" for a model with
+            # three signomial constraints the presolve does not touch.
+            if rows and all(r[2] is not None and r[2] not in surviving
+                            for r in rows):
                 simplified = cand
                 break
 

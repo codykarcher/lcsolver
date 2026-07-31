@@ -565,6 +565,15 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # print(structures)
         conCounter = 0
         operatorList = []
+        #: (row index, name, rows produced) for every '==' constraint, kept
+        #: regardless of which flags are still alive. The monomial-equality
+        #: check below used to read the GP row list, which is None once
+        #: anything else has cleared the GP flag -- so on a model that was
+        #: already non-GP for another reason, posynomial equalities were never
+        #: examined and never blamed. That made the blame list incomplete, and
+        #: an incomplete blame list is worse than none: `structure_report`
+        #: infers "simplifies to a GP after presolve" from it.
+        equality_rows = {}
         # Iterate over the constraints
         for i, con in enumerate(constraints):
             # Need to extract from pyomo model
@@ -721,6 +730,11 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         structures['Signomial_Program'][0] = False
                         structures['Signomial_Program'][1] = None
 
+                    if operator == '==':
+                        prev = equality_rows.get(i + 1, [c.name, 0])
+                        prev[1] += len(lhs_final)
+                        equality_rows[i + 1] = prev
+
                     if not all([rw[0]>=0.0 for rw in lhs_final]):
                         # is sp with fraction
                         _blame(structures, ['Geometric_Program'], c.name,
@@ -746,18 +760,25 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         if structures['Signomial_Program'][0] != False:
             structures['Signomial_Program'][2] = operatorList
 
-        if structures['Geometric_Program'][0] != False:
-            conIxs = [ structures['Geometric_Program'][1][i][0] for i in range(0,len(structures['Geometric_Program'][1])) ]
-            unique, counts = numpy.unique(conIxs, return_counts=True)
-            countDict = dict(zip(unique, counts))
-            for i in range(0,len(operatorList)):
-                conIx = i+1
-                if operatorList[i] == '==':
-                    if countDict[conIx] > 1:
-                        structures['Geometric_Program'][0] = False
-                        structures['Geometric_Program'][1] = None
-                        structures['Geometric_Program'][2] = None
-                        break
+        # A geometric program admits only MONOMIAL equalities: `log-sum-exp == 0`
+        # is not a convex set, so a posynomial equality is a signomial
+        # constraint however it is written. Any '==' row that expanded to more
+        # than one term is one of those.
+        #
+        # Every offender is recorded, not just the first, and the scan runs
+        # whatever the GP flag currently says. Both matter: it used to `break`
+        # after one and to be skipped entirely once GP was already False, so
+        # the three drag-fit equalities in the Hoburg UAV went unblamed on a
+        # model that another constraint had already made non-GP.
+        for conIx, (name, n_rows) in sorted(equality_rows.items()):
+            if n_rows > 1:
+                _blame(structures, ['Geometric_Program'], name,
+                       'is a posynomial equality; a GP admits only monomial '
+                       'equalities, so this is a signomial constraint',
+                       row=conIx)
+                structures['Geometric_Program'][0] = False
+                structures['Geometric_Program'][1] = None
+                structures['Geometric_Program'][2] = None
 
     structures['info'] = {}
     structures['info']['N_cons_total']    = N_cons
