@@ -66,7 +66,7 @@ def _group_rows(rows):
 # vertical tail drag fit has tau**133.8 and M**1022.7 -- a line search can
 # walk a.t past 709, exp() overflows to inf, and IPOPT aborts with "Invalid
 # number in NLP function or derivative". That reads like an infeasible model
-# rather than an arithmetic overflow, which makes it expensive to optimization_precheck.
+# rather than an arithmetic overflow, which makes it expensive to optimization_check.
 #
 # A single box cannot serve: the variable carrying the 1022.7 exponent needs
 # one three hundred times tighter than a variable appearing linearly. So the

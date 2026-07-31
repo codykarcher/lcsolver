@@ -27,7 +27,7 @@ from edi.presolve.reductions import (
     PresolveLog,
     assert_equivalent,
     cancellation_report,
-    optimization_precheck,
+    optimization_check,
     evaluate,
     degeneracy_report,
     eliminate_monomial_equalities,
@@ -1259,7 +1259,7 @@ def test_terms_reproduce_the_positional_row_format():
 def test_diagnose_reads_either_bound_form_the_same_way():
     """The report must not depend on how the detector carried the bounds.
 
-    `optimization_precheck` folds single-variable rows into bounds so it can read the
+    `optimization_check` folds single-variable rows into bounds so it can read the
     rows form. It used to skip that fold when the detector had already split
     the bounds out -- but folding also takes single-variable rows OUT of the
     row set, and a model writes plenty of those itself. Left in, they count
@@ -1271,8 +1271,8 @@ def test_diagnose_reads_either_bound_form_the_same_way():
               'singleton_columns', 'fixed_columns', 'output_columns',
               'bound_only_columns')
 
-    as_rows = optimization_precheck(_detect(_rich_model(), bounds_as_rows=True))
-    as_split = optimization_precheck(_detect(_rich_model(), bounds_as_rows=False))
+    as_rows = optimization_check(_detect(_rich_model(), bounds_as_rows=True))
+    as_split = optimization_check(_detect(_rich_model(), bounds_as_rows=False))
 
     for f in fields:
         assert (sorted(map(str, getattr(as_rows, f) or []))
@@ -1300,7 +1300,7 @@ def test_a_vacuous_singleton_row_does_not_hide_an_output_variable():
     f.Constraint(x <= 1e30)             # and bounded by nothing in particular
 
     for flag in (True, False):
-        rep = optimization_precheck(_detect(f, bounds_as_rows=flag))
+        rep = optimization_check(_detect(f, bounds_as_rows=flag))
         assert 'x' in [str(n) for n in rep.output_columns], \
             f'x should be output-only with bounds_as_rows={flag}'
         assert 'y' not in [str(n) for n in rep.output_columns]
@@ -1317,7 +1317,7 @@ def test_a_tight_singleton_row_does_keep_a_variable_from_being_output_only():
     f.Constraint(x <= 100.0)
 
     for flag in (True, False):
-        rep = optimization_precheck(_detect(f, bounds_as_rows=flag))
+        rep = optimization_check(_detect(f, bounds_as_rows=flag))
         assert 'x' not in [str(n) for n in rep.output_columns]
 
 

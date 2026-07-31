@@ -54,7 +54,7 @@ from edi.solvers.sensitivity import (
     format_sensitivities,
 )
 from edi.presolve import (FeasibilityResult, feasibility,
-                          optimization_precheck, structure_detector,
+                          optimization_check, structure_detector,
                           structure_report, UnitCheck, unit_check,
                           unit_corrector)
 
@@ -77,7 +77,7 @@ from pyomo.environ import units
 __all__ = [
     "Formulation",
     "units",
-    "optimization_precheck",
+    "optimization_check",
     "structure_report",
     "structure_detector",
     "unit_check",

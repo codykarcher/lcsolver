@@ -610,8 +610,8 @@ class TestSolveDetectsOnce(unittest.TestCase):
     """`solve` walks the model once, not once per consumer.
 
     The checks and the structured backends used to each detect for themselves,
-    because `optimization_precheck` wants bounds separated from the rows and the backends
-    read them out of the rows. `optimization_precheck` folds single-variable rows into
+    because `optimization_check` wants bounds separated from the rows and the backends
+    read them out of the rows. `optimization_check` folds single-variable rows into
     bounds itself, so it reads either form -- and the walk is the expensive
     part of a solve on a large model, seconds against seconds.
     """
@@ -705,9 +705,9 @@ class TestSuppliedStructures:
     """`solve(f, structures=...)` -- run the chain yourself and hand it back.
 
     The chain a plain solve runs is unit_corrector -> structure_detector ->
-    optimization_precheck -> backend -> sensitivities. Detecting is the expensive step (four
+    optimization_check -> backend -> sensitivities. Detecting is the expensive step (four
     to six seconds on SPaircraft against an eleven-second solve), so a caller
-    who has already done it for a optimization_precheck should not pay twice.
+    who has already done it for a optimization_check should not pay twice.
     """
 
     @staticmethod
@@ -738,15 +738,15 @@ class TestSuppliedStructures:
                                                             rel=1e-6)
 
     def test_diagnose_does_not_consume_the_structures(self):
-        """Detect once, optimization_precheck, then solve -- the whole point of sharing."""
-        from edi.presolve.reductions import optimization_precheck
+        """Detect once, optimization_check, then solve -- the whole point of sharing."""
+        from edi.presolve.reductions import optimization_check
         from edi.solvers.solver import solve
         from edi.presolve.structureDetector import structure_detector
         from edi.presolve.unitCorrector import unit_corrector
 
         f = self._gp()
         st = structure_detector(unit_corrector(f))
-        rep = optimization_precheck(st)                       # must not mutate st
+        rep = optimization_check(st)                       # must not mutate st
         assert 'Geometric Program' in rep.structure
         solve(f, structures=st, sensitivities=False)
         assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5,

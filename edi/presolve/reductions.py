@@ -72,7 +72,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
-           "optimization_precheck", "floor_report", "structure_report",
+           "optimization_check", "floor_report", "structure_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -159,7 +159,7 @@ class PresolveReport:
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
     at_floor: list = field(default_factory=list)
-    #: `structure_report` text, filled in by `optimization_precheck`. Kept as a field
+    #: `structure_report` text, filled in by `optimization_check`. Kept as a field
     #: rather than folded into __str__ so a caller can print the two
     #: halves separately -- structure needs no solution, the rest does.
     structure: str = ''
@@ -1615,7 +1615,7 @@ def _as_structures(obj):
 
     Detecting structure means unit-correcting a clone and walking it, which is
     a detail of how this runs, not of what the caller wants.
-    `optimization_precheck(f)` is the call people try first; making it work
+    `optimization_check(f)` is the call people try first; making it work
     costs one isinstance.
 
     `Detected` is a dict subclass and a `Formulation` is not, which is the
@@ -1632,7 +1632,7 @@ def _units_diagnosis(exc):
     """A unit failure, formatted as a finding rather than raised as an error.
 
     Asking what is wrong with a model is exactly when it is most likely to be
-    wrong, so `optimization_precheck` must not fall over on the commonest
+    wrong, so `optimization_check` must not fall over on the commonest
     fault it exists to find. Nothing downstream can run -- the detector reads
     the unit-corrected model and there is not one -- so this is the whole
     report, and it says so.
@@ -1826,17 +1826,26 @@ def structure_report(structures, top=5, simplify=True) -> str:
     return '\n'.join(L)
 
 
-def optimization_precheck(structures, x=None, problem=None, names=None,
+def optimization_check(structures, x=None, problem=None, names=None,
              x_min=1e-9, structure_top=5):
-    """Every structural check, in one call, as one report.
+    """Every check on a model, in one call, as one report.
 
     The individual checks are expert tools: each needs the structure detected a
     particular way and read in a particular order, which means in practice
     nobody runs them. This is the entry point that makes them the default.
 
-    ``x`` and ``problem``, when given, enable the two checks that can only run
-    after a solve -- degeneracy and signomial cancellation. Without them only
-    the structural half runs, which is the half that needs nothing.
+    It runs on both sides of a solve, which is why it is not called a
+    *pre*check:
+
+    **Before** -- needs nothing but the model. What class of problem it is,
+    what stops it being a simpler one, and the variables that are output-only,
+    unbounded, disconnected or fixed.
+
+    **After** -- pass ``x`` and ``problem`` to add the checks that only mean
+    something at a solution: variables the optimum does not determine
+    (``degenerate``), signomial terms contributing nothing there
+    (``cancelling``), and variables resting on the positivity floor
+    (``at_floor``).
 
     The report opens with :func:`structure_report` -- what kind of problem
     this is and what stops it being a simpler one -- because that needs no
@@ -1847,13 +1856,13 @@ def optimization_precheck(structures, x=None, problem=None, names=None,
     answers a question should hand back the answer, not emit it as a side
     effect that a caller cannot capture or suppress::
 
-        report = optimization_precheck(f)
+        report = optimization_check(f)
         print(report.summary())
     """
     from edi.presolve.detected import as_detected
 
     # Accept the formulation itself. Detecting structure is how this runs,
-    # not what the caller wants, and `optimization_precheck(f)` is the call
+    # not what the caller wants, and `optimization_check(f)` is the call
     # people try first.
     model = None if isinstance(structures, dict) else structures
     from edi.presolve.unitCorrector import UnitMismatch
@@ -1888,6 +1897,15 @@ def optimization_precheck(structures, x=None, problem=None, names=None,
     guesses = getattr(model, 'defaulted_guesses', None)
     if guesses:
         rep.defaulted_guesses = list(guesses)
+    # The post-solve checks report variable names, and the structures already
+    # carry them -- without this default they printed `<var 2>`, which is the
+    # one thing a reader of a degeneracy report cannot act on.
+    if names is None:
+        try:
+            names = [str(v) for v in st.variables]
+        except Exception:
+            names = None
+
     if x is not None and problem is not None:
         try:
             rep.degenerate = degeneracy_report(problem, x, names=names)
