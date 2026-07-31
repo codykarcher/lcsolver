@@ -72,7 +72,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
-           "diagnose", "floor_report", "structure_report",
+           "optimization_precheck", "floor_report", "structure_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
 #: A bound at or beyond these is treated as no bound at all. EDI's default box
@@ -159,7 +159,7 @@ class PresolveReport:
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
     at_floor: list = field(default_factory=list)
-    #: `structure_report` text, filled in by `diagnose`. Kept as a field
+    #: `structure_report` text, filled in by `optimization_precheck`. Kept as a field
     #: rather than folded into __str__ so a caller can print the two
     #: halves separately -- structure needs no solution, the rest does.
     structure: str = ''
@@ -1614,8 +1614,9 @@ def _as_structures(obj):
     """Accept either the detector's output or the formulation itself.
 
     Detecting structure means unit-correcting a clone and walking it, which is
-    a detail of how this runs, not of what the caller wants. `diagnose(f)` is
-    the call people try first; making it work costs one isinstance.
+    a detail of how this runs, not of what the caller wants.
+    `optimization_precheck(f)` is the call people try first; making it work
+    costs one isinstance.
 
     `Detected` is a dict subclass and a `Formulation` is not, which is the
     whole test.
@@ -1631,10 +1632,10 @@ def _units_diagnosis(exc):
     """A unit failure, formatted as a finding rather than raised as an error.
 
     Asking what is wrong with a model is exactly when it is most likely to be
-    wrong, so `diagnose` must not fall over on the commonest fault it exists
-    to find. Nothing downstream can run -- the detector reads the
-    unit-corrected model and there is not one -- so this is the whole report,
-    and it says so.
+    wrong, so `optimization_precheck` must not fall over on the commonest
+    fault it exists to find. Nothing downstream can run -- the detector reads
+    the unit-corrected model and there is not one -- so this is the whole
+    report, and it says so.
     """
     return ('units\n-----\n' + str(exc).rstrip() + '\n\n'
             '  Nothing further can be checked until the units balance: the\n'
@@ -1825,7 +1826,7 @@ def structure_report(structures, top=5, simplify=True) -> str:
     return '\n'.join(L)
 
 
-def diagnose(structures, x=None, problem=None, names=None,
+def optimization_precheck(structures, x=None, problem=None, names=None,
              x_min=1e-9, structure_top=5):
     """Every structural check, in one call, as one report.
 
@@ -1846,13 +1847,14 @@ def diagnose(structures, x=None, problem=None, names=None,
     answers a question should hand back the answer, not emit it as a side
     effect that a caller cannot capture or suppress::
 
-        report = diagnose(f)
+        report = optimization_precheck(f)
         print(report.summary())
     """
     from edi.presolve.detected import as_detected
 
-    # Accept the formulation itself. Detecting structure is how this runs, not
-    # what the caller wants, and `diagnose(f)` is the call people try first.
+    # Accept the formulation itself. Detecting structure is how this runs,
+    # not what the caller wants, and `optimization_precheck(f)` is the call
+    # people try first.
     model = None if isinstance(structures, dict) else structures
     from edi.presolve.unitCorrector import UnitMismatch
     try:

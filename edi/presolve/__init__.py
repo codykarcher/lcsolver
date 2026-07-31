@@ -17,7 +17,7 @@ pipeline, run in one order, each step consuming the last:
    it -- LP, QP, GP, SP -- publishing the rows, the variable ordering and the
    bounds every backend reads.
 3. :mod:`~edi.presolve.reductions` folds, eliminates and reduces what the
-   detector found, and reports on it -- :func:`diagnose`,
+   detector found, and reports on it -- :func:`optimization_precheck`,
    :func:`structure_report`.
 
 Moving them together also frees the name ``edi.units`` to mean what a modeller
@@ -27,11 +27,12 @@ rebind that name.
 
 The chain, which ``solve()`` runs internally and will accept back::
 
-    from edi.presolve import unit_check, structure_detector, diagnose, feasibility
+    from edi.presolve import (unit_check, structure_detector,
+                              optimization_precheck, feasibility)
 
     check      = unit_check(f)                  # print(check.summary())
     structures = structure_detector(check)      # print(structures.summary())
-    report     = diagnose(structures)           # print(report.summary())
+    report     = optimization_precheck(structures)  # print(report.summary())
     start      = feasibility(structures)        # print(start.summary())
     solve(f, structures=structures, start=start)
 """
@@ -43,7 +44,7 @@ from edi.presolve.feasibilityCheck import (  # noqa: F401
 from edi.presolve.reductions import (  # noqa: F401
     InfeasibleProblem,
     PresolveReport,
-    diagnose,
+    optimization_precheck,
     presolve,
     presolve_report,
     structure_report,
@@ -64,7 +65,7 @@ __all__ = [
     "unit_corrector",
     "UnitMismatch",
     "structure_detector",
-    "diagnose",
+    "optimization_precheck",
     "structure_report",
     "presolve",
     "presolve_report",

@@ -400,7 +400,8 @@ class Formulation(ConcreteModel):
             AR = f.Variable('AR', units='-', description='aspect ratio')
 
         Variables that took a default are recorded and reported by
-        ``edi.presolve.reductions.diagnose``, so the omission stays visible rather than
+        ``edi.presolve.optimization_precheck``, so the omission stays visible
+        rather than
         becoming invisible.
         """
         return self._require_guesses
@@ -888,15 +889,15 @@ class Formulation(ConcreteModel):
         from edi.presolve.reductions import structure_report as _report
         return _report(self, top=top)
 
-    def diagnose(self, top=5):
+    def optimization_precheck(self, top=5):
         """Every structural check, in one call: structure, then presolve.
 
         The pre-solve half of the report -- it needs no solution. Pass the
-        solved model to `edi.presolve.reductions.diagnose` directly for the degeneracy
-        and cancellation checks, which do.
+        solved model to `edi.presolve.optimization_precheck` directly for
+        the degeneracy and cancellation checks, which do.
         """
-        from edi.presolve.reductions import diagnose as _diagnose
-        return _diagnose(self, structure_top=top)
+        from edi.presolve.reductions import optimization_precheck
+        return optimization_precheck(self, structure_top=top)
 
     def check_units(self):
         for i in range(1, self._objective_counter + 1):

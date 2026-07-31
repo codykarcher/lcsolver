@@ -125,7 +125,7 @@ class Detected(dict):
         """What kind of problem this is, and what blocks a simpler one.
 
         Every result object in the pre-solve chain answers to ``summary()`` --
-        this one, the unit check, the diagnose report and the feasibility
+        this one, the unit check, the precheck report and the feasibility
         result -- so a reader does not have to remember which is which.
         """
         from edi.presolve.reductions import structure_report

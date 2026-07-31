@@ -306,7 +306,7 @@ powers they are.
 `TAYLOR_DESCRIPTIONS` already carried a GP-usable series and a validity range
 for every transcendental MAIDAS recognises, but nothing offered them at the
 point of failure. A user told only "contains log()" has to already know the
-trick; `diagnose` now shows it:
+trick; `optimization_precheck` now shows it:
 
 ```
   GP-compatible approximations available:
@@ -319,7 +319,7 @@ trick; `diagnose` now shows it:
 visibly useless there, which is exactly what a user needs to see. A
 suggestion without a range would have been worse than none.
 
-`diagnose` also now reports what any declared atom (section 13) implies, so
+`optimization_precheck` also now reports what any declared atom (section 13) implies, so
 naming a kind and then saying nothing about it no longer happens.
 
 ### Which obstructions actually have a trick

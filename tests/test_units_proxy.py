@@ -87,7 +87,7 @@ def test_both_import_orderings_in_a_fresh_interpreter(first):
 
 def test_the_presolve_package_exposes_the_chain():
     """One import for the whole pre-solve pipeline."""
-    from edi.presolve import (diagnose, structure_detector,
+    from edi.presolve import (optimization_precheck, structure_detector,
                               structure_report, unit_corrector)
     assert all(callable(fn) for fn in (unit_corrector, structure_detector,
-                                       diagnose, structure_report))
+                                       optimization_precheck, structure_report))

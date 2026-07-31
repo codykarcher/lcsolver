@@ -129,10 +129,10 @@ def _run_diagnostics(structures, level):
         return None
     import warnings
 
-    from edi.presolve.reductions import diagnose
+    from edi.presolve.reductions import optimization_precheck
 
     try:
-        rep = diagnose(structures)
+        rep = optimization_precheck(structures)
     except Exception:
         return None                      # never fail a solve over a check
     if level == 'print':
@@ -151,7 +151,7 @@ def _run_diagnostics(structures, level):
     if problems:
         warnings.warn(
             "model diagnostics: " + "; ".join(problems)
-            + ". Call edi.presolve.reductions.diagnose(structures) for the full report.",
+            + ". Call edi.presolve.reductions.optimization_precheck(structures) for the full report.",
             RuntimeWarning, stacklevel=3)
     return rep
 
@@ -181,7 +181,7 @@ def _ipopt_available():
 def _mark_solved(m):
     """Record that this model's variable values are an answer, not a guess.
 
-    `diagnose(f)` needs to know: the post-solve checks (cancellation, the
+    `optimization_precheck(f)` needs to know: the post-solve checks (cancellation, the
     positivity floor) read the current values, and run against an unsolved
     model they describe the author's initial guess while looking exactly like
     they describe the optimum.
@@ -287,20 +287,20 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
 
         corrected  = unit_corrector(f)          # validate and convert units
         structures = structure_detector(corrected)
-        diagnose(structures)                    # the pre-solve checks
+        optimization_precheck(structures)                    # the pre-solve checks
         <backend>(f, structures=structures)     # cvxopt / IPOPT / SLCP / SIA
         sensitivities(f)                        # duals, then write-back
 
     Running those yourself and passing the result back is worth doing when you
     want to look at the middle of it, and when the walk is expensive: it is
     four to six seconds on SPaircraft against an eleven-second solve, so
-    detecting once and reusing it is most of a third off a diagnose-then-solve.
+    detecting once and reusing it is most of a third off a optimization_precheck-then-solve.
 
     Pass structures from ``structure_detector(corrected)`` with its default
     ``bounds_as_rows=True``. The split form is for the presolve, and the
     backends read bounds out of the rows -- handing them the split form is
     caught and refused rather than silently solving an unbounded relaxation.
-    ``diagnose`` reads either form, so the default is the one to share.
+    ``optimization_precheck`` reads either form, so the default is the one to share.
 
     ``start`` sets the point the solve begins from, which the backends
     otherwise take from the model's current values. It accepts a
@@ -326,9 +326,9 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     from edi.presolve.unitCorrector import UnitMismatch
 
     # Detect once and use the result for both the checks and the solve. These
-    # used to be two separate walks of the model, because `diagnose` needs
+    # used to be two separate walks of the model, because `optimization_precheck` needs
     # bounds separated from the rows and the structured backends read them out
-    # of the rows -- but `diagnose` folds single-variable rows into bounds
+    # of the rows -- but `optimization_precheck` folds single-variable rows into bounds
     # itself, so it reads either form and returns the same report. The walk is
     # not cheap: on SPaircraft it is four to six seconds, against an
     # eleven-second solve.
@@ -354,7 +354,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
                 "The backends read variable bounds out of the constraint rows, "
                 "so solving these would ignore every bound and answer a "
                 "different question. Re-run structure_detector(corrected) with "
-                "its default bounds_as_rows=True; diagnose() reads that form "
+                "its default bounds_as_rows=True; optimization_precheck() reads that form "
                 "too.")
         _raise_if_infeasible(structures)
     elif want_checks or solver == 'auto':
