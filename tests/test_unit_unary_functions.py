@@ -23,7 +23,7 @@ import pyomo.environ as pyo
 import pytest
 
 from edi import Formulation
-from edi.preconditioner.unitCorrector import UnitMismatch, unit_corrector
+from edi.presolve.unitCorrector import UnitMismatch, unit_corrector
 
 #: (name, callable, rule). 'dimensionless' takes a dimensionless argument and
 #: returns one; 'same' preserves units; 'sqrt' halves the exponents.
@@ -106,7 +106,7 @@ def test_ceil_preserves_units():
 
 def test_unknown_function_says_so():
     """An unhandled function should name itself, not fail as a unit mismatch."""
-    from edi.preconditioner.unitWalker import _UNARY_UNITS
+    from edi.presolve.unitWalker import _UNARY_UNITS
     assert 'sqrt' in _UNARY_UNITS and 'sin' in _UNARY_UNITS
     # The table is the contract with pyomo's own; if pyomo grows a function we
     # do not know, the error names it rather than reporting a bogus mismatch.

@@ -33,8 +33,8 @@ pyo = pytest.importorskip('pyomo.environ')
 
 from edi import Formulation  # noqa: E402
 from edi.solvers import solver as solver_module  # noqa: E402
-from edi.preconditioner.structureDetector import structure_detector  # noqa: E402
-from edi.preconditioner.unitCorrector import unit_corrector  # noqa: E402
+from edi.presolve.structureDetector import structure_detector  # noqa: E402
+from edi.presolve.unitCorrector import unit_corrector  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
@@ -238,7 +238,7 @@ def test_example_models_survive_every_transform(name):
     worst violation, at a solved point -- rather than a remembered number, so
     it applies to any model without knowing anything about it.
     """
-    from edi.preconditioner.presolve import (assert_equivalent, fold_singleton_rows,
+    from edi.presolve.reductions import (assert_equivalent, fold_singleton_rows,
                               presolve)
 
     build = _example(name)
@@ -342,7 +342,7 @@ def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
     belongs and the constraint matrix where the right-hand side does -- which
     both `evaluate` and `propagate_bounds` did until `linear_parts` existed.
     """
-    from edi.preconditioner.presolve import evaluate, propagate_bounds
+    from edi.presolve.reductions import evaluate, propagate_bounds
 
     f, expected = make()
     st = structure_detector(unit_corrector(f), bounds_as_rows=False)
@@ -382,7 +382,7 @@ def test_quadratic_objective_convention_is_consistent():
     a positive scaling leaves the argmin alone -- so this uses q != 0, where
     minimising (1/2)(x^2+y^2) - 4x lands at x=4 instead of x=2.
     """
-    from edi.preconditioner.presolve import evaluate
+    from edi.presolve.reductions import evaluate
 
     def make():
         f = Formulation()

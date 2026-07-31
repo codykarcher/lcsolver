@@ -25,7 +25,7 @@ codes, and structure detection (LP/QP/GP/SP).
 
 Note on history: this package began life as ``pyomo.contrib.edi``. When it was
 split into a standalone distribution the modules were reorganized into
-``edi.objects`` / ``edi.solvers`` / ``edi.preconditioner``, but the
+``edi.objects`` / ``edi.solvers`` / ``edi.presolve``, but the
 package ``__init__`` continued to import from ``pyomo.contrib.edi`` inside a
 bare ``try/except: pass``. Because that module no longer ships with Pyomo, every
 import failed silently and ``import edi`` exposed none of its own API. The
@@ -53,7 +53,7 @@ from edi.solvers.sensitivity import (
     constraint_duals,
     format_sensitivities,
 )
-from edi.preconditioner import (diagnose, feasibility, FeasibilityResult,
+from edi.presolve import (diagnose, feasibility, FeasibilityResult,
                                 structure_detector, structure_report,
                                 unit_check, UnitCheck, unit_corrector)
 
@@ -68,7 +68,7 @@ from edi.preconditioner import (diagnose, feasibility, FeasibilityResult,
 # parent package as it imports it, so the first `from edi.units.unitCorrector
 # import ...` anywhere -- including the lazy ones inside solve() -- silently
 # replaced this name with the package and turned `units.m` into an
-# AttributeError, mid-session. Those modules now live in `edi.preconditioner`
+# AttributeError, mid-session. Those modules now live in `edi.presolve`
 # with the rest of the pre-solve chain, and the name is free.
 from pyomo.environ import units
 

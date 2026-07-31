@@ -257,11 +257,11 @@ def verify(max_iterations: int = 400, tee: bool = False,
 
     import pyomo.environ as pyo
 
-    from edi.preconditioner.structureDetector import structure_detector
+    from edi.presolve.structureDetector import structure_detector
     from edi.solvers.ipopt.slcp_bridge import solve_sia, build_problem, \
         _apply_presolve
     from edi.solvers.ipopt.sia import SIAOptions, classify
-    from edi.preconditioner.unitCorrector import unit_corrector
+    from edi.presolve.unitCorrector import unit_corrector
 
     fm = build(**mission)
     unit_corrector(fm)

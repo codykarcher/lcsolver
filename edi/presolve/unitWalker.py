@@ -104,7 +104,7 @@ if numpy_available:
 #     ureg = pint.UnitRegistry(system='mks')
 
 
-# from edi.preconditioner.walkerSupportFunctions import (
+# from edi.presolve.walkerSupportFunctions import (
 #     unarySignomial,
 #     no_structure_dict,
 #     monomial_multiplication,
@@ -113,7 +113,7 @@ if numpy_available:
 #     signomial_power_evaluation,
 #     # processMonomial,
 # )
-from edi.preconditioner.walkerSupportFunctions import (
+from edi.presolve.walkerSupportFunctions import (
     # unarySignomial,
     no_structure_dict,
     # monomial_multiplication,

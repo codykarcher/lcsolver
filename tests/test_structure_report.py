@@ -10,9 +10,9 @@ import pyomo.environ as pyo
 import pytest
 
 from edi import Formulation
-from edi.preconditioner.presolve import structure_report
-from edi.preconditioner.structureDetector import structure_detector
-from edi.preconditioner.unitCorrector import unit_corrector
+from edi.presolve.reductions import structure_report
+from edi.presolve.structureDetector import structure_detector
+from edi.presolve.unitCorrector import unit_corrector
 
 
 def _detected(f):
@@ -313,8 +313,8 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
     So blanking the blame list must not change the verdict: the two are
     independent, and that independence is the point.
     """
-    from edi.preconditioner.presolve import _gp_after_presolve
-    from edi.preconditioner.presolve import structure_report as report
+    from edi.presolve.reductions import _gp_after_presolve
+    from edi.presolve.reductions import structure_report as report
     st = _detected(_sp_only_on_paper())
     assert _gp_after_presolve(st) is True
     with_blame = report(st)
@@ -325,5 +325,5 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
 
 def test_a_genuine_sp_is_not_gp_after_presolve():
     """The other side of it: an unremovable signomial must fail the check."""
-    from edi.preconditioner.presolve import _gp_after_presolve
+    from edi.presolve.reductions import _gp_after_presolve
     assert _gp_after_presolve(_detected(_sp())) is False

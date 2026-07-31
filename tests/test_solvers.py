@@ -88,8 +88,8 @@ class TestWriteBack(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(f.x), 5.0)      # untouched
 
     def test_structure_detector_publishes_variable_order(self):
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
 
         f = _linear_model()
         s = structure_detector(unit_corrector(f))
@@ -267,8 +267,8 @@ class TestConvexIpoptBackend(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_gp_via_ipopt_matches_analytic_optimum(self):
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
         from edi.solvers.ipopt.convex import solve_gp_ipopt
 
         f = _gp_known_optimum()
@@ -285,8 +285,8 @@ class TestConvexIpoptBackend(unittest.TestCase):
                      'no IPOPT backend available')
     def test_gp_backends_agree(self):
         """cvxopt and the IPOPT log-space path must reach the same optimum."""
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
         from edi.solvers.solver import cvxopt_solve
         from edi.solvers.ipopt.convex import solve_gp_ipopt
 
@@ -359,8 +359,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     def test_structures_keep_the_corrected_model_alive(self):
         import gc
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
 
         # The clone is deliberately not bound to a local here: this is exactly
         # how callers invoke it, and it is what used to strand the VarData.
@@ -371,8 +371,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     def test_write_solution_resolves_indexed_variables(self):
         import gc
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
         from edi.solvers.writeback import write_solution
 
         f = _indexed_gp()
@@ -508,8 +508,8 @@ class TestGPObjectiveForm(unittest.TestCase):
 
     def test_both_forms_give_the_same_optimum(self):
         from edi.solvers.ipopt.convex import solve_gp_ipopt
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
         answers = {}
         for form in ("sum", "lse", "auto"):
             st = structure_detector(unit_corrector(self._box()))
@@ -535,8 +535,8 @@ class TestGPObjectiveForm(unittest.TestCase):
 
     def test_invalid_form_is_rejected(self):
         from edi.solvers.ipopt.convex import solve_gp_ipopt
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
         st = structure_detector(unit_corrector(self._box()))
         with self.assertRaises(ValueError):
             solve_gp_ipopt(st, form="nonsense")
@@ -594,7 +594,7 @@ class TestConstantOnlyConstraints(unittest.TestCase):
         Falling through to a general NLP solver replaces "constraint X is false
         as written" with a bare termination_condition=infeasible.
         """
-        from edi.preconditioner.presolve import InfeasibleProblem
+        from edi.presolve.reductions import InfeasibleProblem
         from edi.solvers import solver as solver_module
 
         with self.assertRaises(InfeasibleProblem) as ctx:
@@ -722,8 +722,8 @@ class TestSuppliedStructures:
 
     def test_supplied_structures_give_the_same_answer(self):
         from edi.solvers.solver import solve
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
 
         a = self._gp()
         solve(a, sensitivities=False)
@@ -739,10 +739,10 @@ class TestSuppliedStructures:
 
     def test_diagnose_does_not_consume_the_structures(self):
         """Detect once, diagnose, then solve -- the whole point of sharing."""
-        from edi.preconditioner.presolve import diagnose
+        from edi.presolve.reductions import diagnose
         from edi.solvers.solver import solve
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
 
         f = self._gp()
         st = structure_detector(unit_corrector(f))
@@ -759,8 +759,8 @@ class TestSuppliedStructures:
         return a perfectly reasonable-looking answer to a different question.
         """
         from edi.solvers.solver import solve
-        from edi.preconditioner.structureDetector import structure_detector
-        from edi.preconditioner.unitCorrector import unit_corrector
+        from edi.presolve.structureDetector import structure_detector
+        from edi.presolve.unitCorrector import unit_corrector
 
         f = self._gp()
         split = structure_detector(unit_corrector(f), bounds_as_rows=False)

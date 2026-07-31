@@ -27,9 +27,9 @@ except Exception:  # pragma: no cover - older Pyomo
 from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
-# from edi.preconditioner.structureWalker import _StructureVisitor
-from edi.preconditioner.detected import Detected, Term, as_detected
-from edi.preconditioner.structureWalker import _StructureVisitor
+# from edi.presolve.structureWalker import _StructureVisitor
+from edi.presolve.detected import Detected, Term, as_detected
+from edi.presolve.structureWalker import _StructureVisitor
 
 from pyomo.common.dependencies import numpy, numpy_available
 
@@ -38,7 +38,7 @@ if numpy_available:
 else:
     raise ImportError('The stucture detector requires numpy')
 
-# from edi.preconditioner.detectorSupportFunctions import (
+# from edi.presolve.detectorSupportFunctions import (
 #      gpRow_add,
 #      gpRow_subtract,
 #      # gpRow_multiply,
@@ -49,7 +49,7 @@ else:
 #      checkLinear,
 #      unstructured_dict,
 # )
-from edi.preconditioner.detectorSupportFunctions import (
+from edi.presolve.detectorSupportFunctions import (
      gpRow_add,
      gpRow_subtract,
      # gpRow_multiply,

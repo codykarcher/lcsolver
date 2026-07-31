@@ -24,8 +24,8 @@ from pyomo.core.expr.visitor import identify_variables
 from pyomo.common.numeric_types import RegisterNumericType
 RegisterNumericType(pyomo.common.enums.ObjectiveSense)
 
-# from edi.preconditioner.structureWalker import _StructureVisitor
-from edi.preconditioner.unitWalker import _UnitVisitor
+# from edi.presolve.structureWalker import _StructureVisitor
+from edi.presolve.unitWalker import _UnitVisitor
 
 from pyomo.common.dependencies import numpy, numpy_available
 
@@ -34,7 +34,7 @@ if numpy_available:
 else:
     raise ImportError('The stucture detector requires numpy')
 
-# from edi.preconditioner.detectorSupportFunctions import (
+# from edi.presolve.detectorSupportFunctions import (
 #      gpRow_add,
 #      gpRow_subtract,
 #      # gpRow_multiply,
@@ -250,7 +250,7 @@ class UnitCheck:
     Carries a ``summary()`` like every other object in the pre-solve chain, so
     a reader does not have to remember which step returns what. ``model`` is
     the corrected clone -- the thing to hand to
-    :func:`~edi.preconditioner.structureDetector.structure_detector` -- and the
+    :func:`~edi.presolve.structureDetector.structure_detector` -- and the
     result is truthy when the units balance.
     """
 

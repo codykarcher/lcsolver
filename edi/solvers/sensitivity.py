@@ -614,7 +614,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         use_suffix = (method in ('auto', 'suffix')
                       and _duals_from_suffix(model) is not None)
         if not use_suffix:
-            from edi.preconditioner.unitCorrector import unit_corrector
+            from edi.presolve.unitCorrector import unit_corrector
             model = unit_corrector(model)
 
     obj = _objective(model)

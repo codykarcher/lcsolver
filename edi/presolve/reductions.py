@@ -59,7 +59,7 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
-from edi.preconditioner.detected import Term, as_detected
+from edi.presolve.detected import Term, as_detected
 
 class InfeasibleProblem(ValueError):
     """Presolve proved the model infeasible before any solve was attempted."""
@@ -290,13 +290,13 @@ def _rows_of(structures):
     """``(rows, operators, key)`` for the log-space encoding.
 
     Signomial before geometric, which used to be duplicated here as folklore.
-    :attr:`~edi.preconditioner.detected.Detected.log_key` names it now, and names
+    :attr:`~edi.presolve.detected.Detected.log_key` names it now, and names
     why: a model can satisfy several structure flags at once, so "which kind
     is this" and "which encoding are the terms in" are different questions.
     """
-    from edi.preconditioner.detected import as_detected
+    from edi.presolve.detected import as_detected
 
-    from edi.preconditioner.unitCorrector import UnitMismatch
+    from edi.presolve.unitCorrector import UnitMismatch
     model = None if isinstance(structures, dict) else structures
     try:
         st = as_detected(_as_structures(structures))
@@ -1622,8 +1622,8 @@ def _as_structures(obj):
     """
     if isinstance(obj, dict):
         return obj
-    from edi.preconditioner.structureDetector import structure_detector
-    from edi.preconditioner.unitCorrector import unit_corrector
+    from edi.presolve.structureDetector import structure_detector
+    from edi.presolve.unitCorrector import unit_corrector
     return structure_detector(unit_corrector(obj), bounds_as_rows=False)
 
 
@@ -1718,7 +1718,7 @@ def structure_report(structures, top=5, simplify=True) -> str:
     ``top`` caps how many blocking constraints are listed per class; the rest
     are counted. Set ``top=None`` for all of them.
     """
-    from edi.preconditioner.unitCorrector import UnitMismatch
+    from edi.presolve.unitCorrector import UnitMismatch
     try:
         st = as_detected(_as_structures(structures))
     except UnitMismatch as exc:
@@ -1849,12 +1849,12 @@ def diagnose(structures, x=None, problem=None, names=None,
         report = diagnose(f)
         print(report.summary())
     """
-    from edi.preconditioner.detected import as_detected
+    from edi.presolve.detected import as_detected
 
     # Accept the formulation itself. Detecting structure is how this runs, not
     # what the caller wants, and `diagnose(f)` is the call people try first.
     model = None if isinstance(structures, dict) else structures
-    from edi.preconditioner.unitCorrector import UnitMismatch
+    from edi.presolve.unitCorrector import UnitMismatch
     try:
         st = as_detected(_as_structures(structures))
     except UnitMismatch as exc:
@@ -1912,7 +1912,7 @@ def _with_empty_bounds(structures):
         width = max((len(r) - 2 for r in rows), default=0)
         n = max(width, len(st.get("variables") or []))
         st["bounds"] = [(None, None)] * n
-    from edi.preconditioner.detected import as_detected
+    from edi.presolve.detected import as_detected
     return as_detected(st)
 
 

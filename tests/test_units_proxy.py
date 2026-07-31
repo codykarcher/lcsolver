@@ -13,7 +13,7 @@ package as it imports it -- so the first ``from edi.units.unitCorrector import
 name with the package and turned ``units.m`` into an AttributeError partway
 through a session.
 
-Those modules now live in :mod:`edi.preconditioner` with the rest of the
+Those modules now live in :mod:`edi.presolve` with the rest of the
 pre-solve chain, so the name is simply free. These tests pin both halves: the
 proxy is Pyomo's own object, and nothing in the package reclaims the name.
 """
@@ -50,8 +50,8 @@ def test_nothing_reclaims_the_name():
     when they lived under that name.
     """
     import edi
-    from edi.preconditioner.unitCorrector import unit_corrector   # noqa: F401
-    from edi.preconditioner.unitWalker import unitsPack           # noqa: F401
+    from edi.presolve.unitCorrector import unit_corrector   # noqa: F401
+    from edi.presolve.unitWalker import unitsPack           # noqa: F401
     assert edi.units is pyo.units
 
 
@@ -61,8 +61,8 @@ def test_edi_units_is_not_a_package_any_more():
         __import__('edi.units.unitCorrector')
 
 
-@pytest.mark.parametrize('first', ['edi', 'preconditioner'],
-                         ids=['edi-first', 'preconditioner-first'])
+@pytest.mark.parametrize('first', ['edi', 'presolve'],
+                         ids=['edi-first', 'presolve-first'])
 def test_both_import_orderings_in_a_fresh_interpreter(first):
     """Import order must not decide what ``edi.units`` means.
 
@@ -70,11 +70,11 @@ def test_both_import_orderings_in_a_fresh_interpreter(first):
     sys.modules, which is precisely the state that hid the original bug.
     """
     lead = ('import edi' if first == 'edi'
-            else 'from edi.preconditioner.unitCorrector import unit_corrector')
+            else 'from edi.presolve.unitCorrector import unit_corrector')
     code = (f'{lead}\n'
             'import edi, pyomo.environ as pyo\n'
-            'from edi.preconditioner.unitCorrector import unit_corrector\n'
-            'from edi.preconditioner.structureDetector import structure_detector\n'
+            'from edi.presolve.unitCorrector import unit_corrector\n'
+            'from edi.presolve.structureDetector import structure_detector\n'
             'assert edi.units is pyo.units, type(edi.units)\n'
             'from edi import units\n'
             'assert units is pyo.units\n'
@@ -85,9 +85,9 @@ def test_both_import_orderings_in_a_fresh_interpreter(first):
     assert 'ok' in out.stdout
 
 
-def test_the_preconditioner_package_exposes_the_chain():
+def test_the_presolve_package_exposes_the_chain():
     """One import for the whole pre-solve pipeline."""
-    from edi.preconditioner import (diagnose, structure_detector,
-                                    structure_report, unit_corrector)
+    from edi.presolve import (diagnose, structure_detector,
+                              structure_report, unit_corrector)
     assert all(callable(fn) for fn in (unit_corrector, structure_detector,
                                        diagnose, structure_report))

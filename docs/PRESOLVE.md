@@ -18,9 +18,9 @@ the structural checks find 7. Both are worth running.
 ## Using it
 
 ```python
-from edi.preconditioner.presolve import presolve_report, degeneracy_report, fold_singleton_rows
-from edi.preconditioner.structureDetector import structure_detector
-from edi.preconditioner.unitCorrector import unit_corrector
+from edi.presolve.reductions import presolve_report, degeneracy_report, fold_singleton_rows
+from edi.presolve.structureDetector import structure_detector
+from edi.presolve.unitCorrector import unit_corrector
 
 structures = structure_detector(unit_corrector(model), bounds_as_rows=False)
 print(presolve_report(structures))
@@ -371,7 +371,7 @@ expose it; it takes a chain.
 ## Running it: `presolve()` and the log
 
 ```python
-from edi.preconditioner.presolve import presolve
+from edi.presolve.reductions import presolve
 
 reduced, log = presolve(structures)      # order is fixed and safe
 print(log)                               # optional; off by default

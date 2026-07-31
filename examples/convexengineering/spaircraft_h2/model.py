@@ -789,10 +789,10 @@ def verify(tee: bool = True) -> dict:
     import pyomo.environ as pyo
     from pyomo.environ import units as u
 
-    from edi.preconditioner.structureDetector import structure_detector
+    from edi.presolve.structureDetector import structure_detector
     from edi.solvers.ipopt.slcp_bridge import solve_sia
     from edi.solvers.ipopt.sia import SIAOptions
-    from edi.preconditioner.unitCorrector import unit_corrector
+    from edi.presolve.unitCorrector import unit_corrector
 
     warnings.filterwarnings("ignore")
     fm = build(seed="reference")
