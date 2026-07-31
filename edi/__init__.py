@@ -56,8 +56,27 @@ from edi.solvers.sensitivity import (
 from edi.presolve import diagnose, structure_report
 from edi.solvers.feasibility import FeasibilityResult, feasibility
 
+# `from edi import units` gives Pyomo's units container, so a model needs one
+# import rather than two. Declaring a Variable already takes units as a string;
+# this is for the places that need the object -- `1.0 * units.m` on the right
+# of a constraint, `units.convert(...)` inside a black box.
+#
+# `edi.units` is ALSO a subpackage (unitCorrector, unitWalker), and importing a
+# submodule binds it onto its parent package -- which would overwrite this
+# name. So load the subpackage first and rebind after: once `edi.units` is in
+# sys.modules, a later `from edi.units.unitCorrector import ...` resolves
+# through sys.modules and never touches this attribute again.
+#
+# Every reference in this repository is that fully-qualified form and is
+# unaffected. `import edi.units` followed by attribute access would break, and
+# nothing does it.
+from edi.units import unitCorrector as _unitCorrector  # noqa: F401
+from pyomo.environ import units
+
+
 __all__ = [
     "Formulation",
+    "units",
     "diagnose",
     "structure_report",
     "feasibility",
