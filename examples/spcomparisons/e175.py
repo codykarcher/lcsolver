@@ -71,7 +71,9 @@ CASE = Case(
     locked={
         "TECH": "cfm56_era",
         "GEAR_BOX_FRAC": "1.00",     # main gear on the rear spar
-        "V_HT_FLOOR": "1.00",        # Raymer horizontal tail volume floor
+        # Raymer tail volume floor OFF: forward-CG trim now sizes the
+        # tail unaided at V_ht 0.922. Set back to 1.00 to restore it.
+        "V_HT_FLOOR": "0.01",
     },
     reference=REFERENCE,
     known_gaps=KNOWN_GAPS,

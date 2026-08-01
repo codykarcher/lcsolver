@@ -65,6 +65,7 @@ _ETA_ENG = 0.285
 #: directions -- here, the fin pulling inboard against the wing-bending relief
 #: pulling outboard. Set FREE_Y_ENG=1 to try it.
 _FREE_Y_ENG = bool(_os.environ.get("FREE_Y_ENG"))
+
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
@@ -509,6 +510,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     xCGe = V("x_CG_empty", 17.0, "m", "empty-aircraft centre of gravity")
     xCGfwd = V("x_CG_fwd", 16.0, "m", "most-forward CG, worst payload loading")
     xCGaft = V("x_CG_aft", 20.0, "m", "most-aft CG, worst payload loading")
+    # The payload fractions that PRODUCE those two extremes. cglpay solves a
+    # quadratic for each; here they are variables and the quadratic is carried
+    # by the stationarity condition below, which is what makes it SP-legal.
+    rpayF = V("r_pay_fwd", 0.45, "", "payload fraction giving the fwd CG limit")
+    rpayB = V("r_pay_aft", 0.45, "", "payload fraction giving the aft CG limit")
     # TASOPT's cglpay, run on its own 737-class case, gives rpayF/rpayB =
     # 0.458/0.456 with the partial payload centred at xcabin -/+ 0.271*lcabin,
     # and a resulting CG travel of 2.22 m = 53% MAC.
@@ -550,7 +556,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # ~0.98, so Raymer and the aeroplane agree; TASOPT's deck uses 1.45, which
     # is conservative and, imposed here, distorts the layout -- it pushes the
     # wing aft and stretches the nose to 10.4 m to find the moment arm.
-    V_HT_FLOOR = float(_os.environ.get("V_HT_FLOOR", 1.00))
+    V_HT_FLOOR = float(_os.environ.get("V_HT_FLOOR", 0.01))
     CLhrot = C("C_L_h_rotate", 1.25, "-",
                "HT lift coefficient available at takeoff rotation")
     # Wing C_L at the GROUND attitude with takeoff flaps -- the aeroplane is
@@ -1360,19 +1366,25 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             * ht.eta_ht * ht.C_L_alpha_ht_0
             <= ht.C_L_alpha_ht_0 * ht.eta_ht,
         ht.C_L_ht >= 0.01,
-        # HORIZONTAL TAIL VOLUME FLOOR.
+        # HORIZONTAL TAIL VOLUME FLOOR -- now OFF by default.
         #
-        # Not satisfying, and worth saying why it is here. The trim and
-        # rotation cases in this model genuinely only require V_ht ~ 0.72; a
-        # real 737 carries ~0.98 because its tail is also sized by landing
-        # flare at aft CG, stall recovery and deep-stall avoidance, and gust
-        # load cases -- none of which this model contains. TASOPT does not
-        # derive it either: its 737 deck sets iHTsize=1 and takes V_h = 1.45
-        # as an INPUT (runs/737/737s.tas:229,231).
+        # This existed because the trim and rotation cases only asked for
+        # V_ht ~ 0.72 against a real 737's ~0.98, so Raymer's transport value
+        # stood in for the cases the model does not contain (landing flare at
+        # aft CG, stall recovery, deep-stall avoidance, gust loads).
         #
-        # So the floor stands in for the missing cases, at Raymer's transport
-        # value -- which the real aircraft corroborates. Set V_HT_FLOOR low to
-        # size on trim and rotation alone and see what they ask for (0.72).
+        # The reason it was needed has gone. The forward-CG trim case could
+        # not size the tail while x_CG_fwd was a free unknown of its own trim
+        # equality -- the optimiser simply co-solved the pair and put the
+        # forward limit 2.3 m ahead of any loading the cabin can produce. With
+        # the CG envelope on TASOPT's cglpay footing, trim asks for V_ht =
+        # 0.922 unaided, and S_ht comes out at 1.049 of the real tail against
+        # 1.325 with the floor imposed. A floor that binds ABOVE what the
+        # physics wants is no longer standing in for a missing case; it is
+        # just adding 9 m2 of tail and 4% of MTOW.
+        #
+        # Kept as a switch rather than deleted: set V_HT_FLOOR back to 1.00 to
+        # restore the old behaviour.
         ht.V_ht >= V_HT_FLOOR,
 
         # THE TAIL MUST BE ABLE TO GENERATE THE LIFT IT IS SIZED FOR.
@@ -1957,16 +1969,55 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                          + ht.W_ht * ht.x_CG_ht + vt.W_vt * vt.x_CG_vt
                          + numeng * Wengsys * xeng
                          + wing.W_wing * (fu.x_wing + wing.dx_AC_wing)),
-        xCGfwd * (W_dry + r_pay_lim * fu.W_payload)
-            + r_pay_lim * fu.W_payload * x_pay_off * fu.l_shell
-            <= xCGe * W_dry
-               + r_pay_lim * fu.W_payload * (fu.x_shell1
-                                             + 0.5 * fu.l_shell),
-        xCGaft * (W_dry + r_pay_lim * fu.W_payload)
-            >= xCGe * W_dry
-               + r_pay_lim * fu.W_payload * (fu.x_shell1
-                                             + 0.5 * fu.l_shell
-                                             + x_pay_off * fu.l_shell),
+        # ---- CG envelope: TASOPT cglpay, solved rather than sampled --------
+        # cglpay (balance.f:633) loads the cabin CONTIGUOUSLY FROM ONE END --
+        # front for the forward extreme, rear for the aft one -- at zero fuel,
+        # and solves for the payload fraction that maximises the excursion.
+        # The worst case is INTERIOR: a full cabin has its centroid at the
+        # middle and barely excurses, an almost-empty one can be bunched at an
+        # extreme but weighs nothing against the empty aircraft, and the
+        # maximum sits between. TASOPT takes the root of the quadratic that
+        # falls out of d(xcg)/d(rpay) = 0.
+        #
+        # Two earlier attempts at this were both wrong. Freezing rpay at 0.457
+        # cannot be a worst case, since the critical fraction depends on the
+        # whole weight breakdown and moves every design iteration. Replacing
+        # that with a SWEEP of fixed fractions gave only one-sided bounds, and
+        # the bounds went slack: x_CG_fwd is also an unknown of the forward
+        # trim equality (the htsize row), so with nothing pinning it from the
+        # other side the optimiser co-solved it with S_ht and parked it at
+        # 14.25 m -- 2.3 m ahead of ANY loading the sweep could produce, and
+        # 1.06 m ahead of the front spar. That is the same defect class as the
+        # rest: a quantity the optimiser can move for free.
+        #
+        # The quadratic does not need a radical. Writing the loaded CG as
+        #     xcg(r) = [xpay(r)*Wpay*r + xWe] / [Wpay*r + We]
+        # with the contiguous-loading centroid xpay(r) = xcabin + s*L*(1-r),
+        # s = +/-1/2, the stationarity condition d(xcg)/dr = 0 reduces to
+        #     xcg = xcabin + s*L*(1 - 2r)
+        # which is LINEAR: the forward case is just xcg = x_shell1 + L*r and
+        # the aft case xcg = x_shell2 - L*r. Paired with the CG definition
+        # itself that is two signomial equalities and one new variable per
+        # side, and it reproduces cglpay exactly. The quadratic's other root
+        # is negative (-5.7 on the 737), so SP positivity discards it for free
+        # and no root selection is needed.
+        #
+        # Hand-check against this model's own weights: rF = 0.4683 -> 16.583 m
+        # and rB = 0.4508 -> 18.680 m, travel 2.10 m against TASOPT's 2.34.
+        xCGfwd == fu.x_shell1 + fu.l_shell * rpayF,          # [SP] SigEq
+        xCGfwd * (W_dry + rpayF * fu.W_payload)
+        == xCGe * W_dry
+           + fu.x_shell1 * fu.W_payload * rpayF
+           + 0.5 * fu.l_shell * fu.W_payload * rpayF ** 2,   # [SP] SigEq
+        # Aft: centroid measured forward from x_shell2, so the cross term
+        # moves to the LHS to keep both sides posynomial.
+        xCGaft + fu.l_shell * rpayB == fu.x_shell2,          # [SP] SigEq
+        xCGaft * (W_dry + rpayB * fu.W_payload)
+        + 0.5 * fu.l_shell * fu.W_payload * rpayB ** 2
+        == xCGe * W_dry
+           + fu.x_shell2 * fu.W_payload * rpayB,             # [SP] SigEq
+        rpayF <= 1.0,
+        rpayB <= 1.0,
         xCGaft >= xCGfwd,
     ]
 
@@ -1990,7 +2041,23 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Nose fineness. Below about 1.2 calibre the flow separates and the
         # drag model here -- which has no separation term -- stops being
         # honest, so this keeps the optimiser inside the fits validity.
-        fu.l_nose >= 1.2 * 2.0 * fu.R_fuse,
+        # EQUALITY, not a floor. Nose length is a fixed geometric INPUT in
+        # TASOPT (xshell1); here it was free above a 1.2-calibre floor, and
+        # once the CG envelope was put on cglpay's footing the optimiser found
+        # it: x_CG_fwd = x_shell1 + l_shell*r_F, so pushing the nose out moves
+        # the forward loading extreme aft and relieves the trim demand. The
+        # 737's nose went to 10.71 m against a 4.45 m floor, with the floor
+        # left slack (g = -0.878) and my forward-CG row pulling it at a
+        # shadow price of 2.32.
+        #
+        # It is NOT a harmless translation of the whole aeroplane: the cabin
+        # and payload move aft by the full stretch while the fuselage's own
+        # centroid term (0.5*W_fuse*l_fuse) moves only half as far, so the
+        # optimiser buys a real shift of payload against wing and pays only
+        # structure for it. Tying nose length to diameter removes the lever
+        # and still scales by class -- 1.2 calibres puts the 737's cabin start
+        # at 4.45 m, which is where it actually is.
+        fu.l_nose == 1.2 * 2.0 * fu.R_fuse,                   # [SP] SigEq
         # Tailcone at least two calibres long, for rotation clearance. This
         # is a genuine trade rather than a formality: a shorter cone shortens
         # the tail arm, which the tail volume coefficients pay for in tail

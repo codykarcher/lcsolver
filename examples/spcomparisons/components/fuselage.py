@@ -224,7 +224,19 @@ def add_fuselage(f, *, prefix="Fuse_", l_tank=None, SPR=8.0,
         Wpay >= Wpass + Wlugg + Wcargo,
         Wpay >= npass * Wavgpasstot,
         Wpaymax >= Wpay,
-        nseat >= npass,
+        # EQUALITY. As `nseat >= npass` the seat count was a design variable
+        # bounded only from below: the optimiser could add empty rows and
+        # stretch the cabin. Nothing paid for that until the CG envelope was
+        # put on TASOPT's cglpay footing, at which point a longer cabin moved
+        # the forward CG limit aft (x_CG_fwd = x_shell1 + l_shell*r_F) and so
+        # bought tail-trim relief -- and the 180-seat 737 promptly grew to
+        # 35.24 rows, a 4.24 m fuselage stretch carrying no passengers.
+        #
+        # A latent fault, not one the CG change introduced: under the old
+        # envelope n_rows sat at exactly 30.0000 only because nothing gave it
+        # a reason to move. The seat count is an INPUT in TASOPT, and a cabin
+        # is sized for the seats it has.
+        nseat == npass,
         nrows == nseat / SPR,
         # The cylindrical shell holds the cabin AND, on a hydrogen aircraft,
         # the LH2 tank behind it. Everything downstream of l_shell -- skin,

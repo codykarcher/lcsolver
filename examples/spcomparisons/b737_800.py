@@ -78,10 +78,14 @@ KNOWN_GAPS = {
         "Follows directly from the span above at near-correct area; not an "
         "independent discrepancy."),
     "HT_S_ht": (
-        "V_ht sits exactly on the Raymer 1.00 floor, so the tail is set by a "
-        "floor rather than by physics. The corrected rotation row is slack "
-        "here (clears with ~3% margin, sizes nothing), agreeing with TASOPT's "
-        "htsize. The forward-CG trim case is where to look next."),
+        "RESOLVED, kept for the record. This used to read 'V_ht sits exactly "
+        "on the Raymer 1.00 floor, so the tail is set by a floor rather than "
+        "by physics; the forward-CG trim case is where to look next.' That is "
+        "now what sizes it. Trim could not do the job while x_CG_fwd was a "
+        "free unknown of its own trim equality -- the optimiser co-solved the "
+        "pair and parked the forward limit 2.3 m ahead of any loading the "
+        "cabin can produce. With the CG envelope on cglpay's footing, trim "
+        "asks for V_ht = 0.922 unaided and the floor is off."),
     # The two below are ACCEPTED, not explained. That is a different category
     # from the rest of this dict, which give a mechanism. Here the model is a
     # clean optimum and the real aeroplane is a design carrying history --
@@ -92,19 +96,24 @@ KNOWN_GAPS = {
     # not have. Recorded so the tolerance check stays meaningful for the
     # quantities where a gap WOULD mean something.
     "VT_S_vt": (
-        "0.88. Fin area, sized here by V_MC and V_MCG from the model's own "
-        "engine-out thrust and moment arm. Boeing's fin reflects control "
-        "authority decisions and margins we cannot see. Accepted."),
+        "1.39 locked / 1.04 free. Fin area, sized here by V_MC and V_MCG from "
+        "the model's own engine-out thrust and moment arm. The free-Mach case "
+        "is essentially exact, so the fin model itself is sound; the locked "
+        "case inherits the same ~18% oversizing the whole aeroplane carries "
+        "at M 0.785 and is not an independent discrepancy. Boeing's fin also "
+        "reflects control-authority margins we cannot see."),
     "LG_x_m": (
-        "0.95. Main gear ~1 m forward of the real station. The rear-spar rule "
-        "and the 8-15% nose-load band both bind as intended and the geometry "
-        "is self-consistent; the residual is where Boeing put the spar. "
-        "Accepted."),
+        "1.10 locked / 0.99 free. The rear-spar rule and the 8-15% nose-load "
+        "band both bind as intended and the geometry is self-consistent. The "
+        "free-Mach case sits within 1.5% of the real station, so the locked "
+        "residual tracks the aeroplane's overall size rather than the gear "
+        "model. Accepted."),
     "LG_x_n": (
-        "Sits exactly on its l_nose floor, and l_nose is itself on its own "
-        "1.2-calibre fineness floor because wetted area drives it down -- so "
-        "the nose gear is pinned by a chain of floors rather than placed. "
-        "Note it comes OFF the floor when Mach is free."),
+        "0.86 locked / 0.98 free. Sits on its l_nose station, and l_nose is "
+        "now TIED to fuselage diameter at 1.2 calibres rather than floored "
+        "there -- it was free above that floor and the optimiser stretched it "
+        "to 10.71 m to move the forward CG limit aft once the CG envelope "
+        "started depending on it. Comes off the station when Mach is free."),
 }
 
 CASE = Case(
@@ -113,7 +122,9 @@ CASE = Case(
     locked={
         "TECH": "cfm56_era",
         "GEAR_BOX_FRAC": "1.00",     # main gear on the rear spar
-        "V_HT_FLOOR": "1.00",        # Raymer horizontal tail volume floor
+        # Raymer tail volume floor OFF: forward-CG trim now sizes the
+        # tail unaided at V_ht 0.922. Set back to 1.00 to restore it.
+        "V_HT_FLOOR": "0.01",
     },
     reference=REFERENCE,
     known_gaps=KNOWN_GAPS,

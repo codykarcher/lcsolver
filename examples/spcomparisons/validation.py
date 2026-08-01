@@ -26,7 +26,14 @@ from dataclasses import dataclass, field
 
 #: Solver settings these cases are known to converge under.
 MAX_ITERATIONS = 400
-STATIONARITY_TOL = 1e-5
+#: 1e-5 for a result; set EDI_FAST=1 while debugging for 1e-3, which reaches a
+#: usable answer in ~15 iterations and 12s instead of ~85 and 32s. Measured on
+#: the 737: loosening to 1e-4 buys nothing at all (83 iterations against 85),
+#: because the solve passes through 7e-5 on its way to 2.7e-6 either way -- the
+#: saving only appears once the tolerance is loose enough to stop it early.
+#: Geometry is settled to about three figures at 1e-3; do not quote a weight
+#: from a fast run.
+STATIONARITY_TOL = 1e-3 if os.environ.get("EDI_FAST") else 1e-5
 
 #: Modules that read technology or geometry knobs at import time. A process
 #: that already imported them under different settings has stale constants
@@ -96,6 +103,16 @@ def solve(case: Case):
     st = structure_detector(cm)
     opts = SIAOptions(max_iterations=MAX_ITERATIONS)
     opts.stationarity_tolerance = STATIONARITY_TOL
+    # PCCP-style condensation of the p/q numerator as well as the denominator.
+    # The condensed row is EASIER than the true one, so iterates may leave the
+    # feasible set and the monotone-descent guarantee goes with it -- but p_hat
+    # matches p in value and gradient at x_k, so the sub-problem's duals still
+    # certify the ORIGINAL problem and the KKT termination test stays honest.
+    # Measured on the 737: 240 iterations and 79.6 s without, 44 and 22.8 s
+    # with, agreeing to five significant figures on every reported quantity.
+    # The locked-Mach case does not reach tolerance in 400 iterations without
+    # it and converges in 19 with it.
+    opts.condense_numerator = True
     res = solve_sia(st, options=opts, presolve=False)
     if not res.converged:
         return res, {}
