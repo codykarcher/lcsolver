@@ -36,6 +36,7 @@ transonic rise that makes a transport sweep its wing -- and the fit returns
 """
 from __future__ import annotations
 
+import os as _os
 from dataclasses import dataclass, field
 
 
@@ -70,9 +71,33 @@ class Polar:
     m_perp_max: float | None = None
     tau_range: tuple = (0.09, 0.145)
     source: str = ''
+    #: Reference point (Re, tau, M_perp, cl) the terms are normalised about,
+    #: and the cd there. See `from_yaml`: with these set the constraint is
+    #: (cd/cd_ref)**alpha >= sum_k c_k * prod (x_i/x_ref_i)**e_ki, which keeps
+    #: every coefficient in (0,1) summing to 1 instead of spanning ~90 orders
+    #: of magnitude. Purely a change of variables -- exponents are untouched
+    #: and the fit is bit-for-bit the same function.
+    x_ref: tuple | None = None
+    cd_ref: float = 1.0
+    #: Validity box from the dataset the fit was built on. Recorded whether or
+    #: not it is enforced, because a surrogate outside its box is not a model
+    #: of anything and the caller should at least be able to check.
+    m_range: tuple | None = None
+    re_range: tuple | None = None
+    cl_range: tuple | None = None
 
     def cd(self, Re, tau, M_perp, cl):
-        """The posynomial that ``cd**alpha`` must dominate."""
+        """The posynomial that ``(cd/cd_ref)**alpha`` must dominate.
+
+        With ``x_ref`` set the arguments are divided by it, which is what
+        keeps the coefficients representable; ``cd_ref`` is 1.0 for the
+        un-normalised fits so the caller's expression is unchanged.
+        """
+        if self.x_ref is not None:
+            rr, tr, mr, cr = self.x_ref
+            Re, tau, M_perp, cl = (Re / rr, tau / tr, M_perp / mr, cl / cr)
+            return sum(c * Re ** eR * tau ** et * M_perp ** eM * cl ** ec
+                       for c, eR, et, eM, ec in self.terms)
         if self.re_mode == 'per_term':
             return sum(c * (Re / self.re_scale) ** eR * tau ** et
                        * M_perp ** eM * cl ** ec
@@ -119,9 +144,100 @@ YORK_C_STREAMWISE = Polar(
     source='stock SPaircraft, for comparison only',
 )
 
+# ---------------------------------------------------------------------------
+# MSES refits, 2026-07-31
+# ---------------------------------------------------------------------------
+#: Loaded from components/mses_fits/*.yaml. These replace York's fit with a
+#: surrogate built on a purpose-run MSES sweep (Mach 0.10-0.86, Re 5e6-4e7,
+#: forced transition 3%/5%, Ncrit 9), cross-checked against TASOPT's own polar
+#: tables at median CD ratio 1.000, 96% within 5%.
+#:
+#: The reason this matters is not accuracy for its own sake. York's fit is
+#: valid only to M_perp ~0.74 and under-predicts drag by 3-6x beyond it, so
+#: the model carried a hard `M_perp <= 0.74` fence -- and that fence, not
+#: aerodynamics, was setting wing sweep. These fits run to M 0.86 and capture
+#: the transonic rise, which lets sweep be decided by a real trade against the
+#: structural penalty in surfw.f rather than by a surrogate's edge.
+_FIT_DIR = _os.path.join(_os.path.dirname(__file__), "mses_fits")
+
+
+def from_yaml(path, name=None, x_ref=(2.0e7, 0.12, 0.72, 0.60), **kw):
+    """Build a normalised :class:`Polar` from an sfit YAML.
+
+    The YAML gives ``alpha``, ``A`` (K x n) and ``b`` for
+    ``log cd = (1/alpha) logsumexp_k(alpha*(b_k + A_k . log x))`` with
+    ``x = (Re/1000, tau, Mach[, CL])``.
+
+    ``x_ref`` normalises the fit about a representative operating point. This
+    is a pure change of variables -- shift b, leave A alone -- and it is what
+    makes the coefficients usable: the T-series tail fit has a term with
+    ``alpha*b = -774.7``, whose coefficient ``exp(-774.7)`` UNDERFLOWS to zero
+    in float64, silently deleting the high-Mach drag-rise barrier. Normalised,
+    every coefficient lands in (0, 1) and they sum to exactly 1 at the
+    reference point.
+
+    A 3-column ``A`` (no CL) is padded with a zero CL exponent, so a
+    CL-independent tail fit is the same object as a wing fit and needs no
+    special case downstream.
+    """
+    import math
+    import yaml
+    with open(path) as fh:
+        d = yaml.safe_load(fh)
+    alpha = float(d["alpha"])
+    A = [[float(v) for v in row] for row in d["A"]]
+    b = [float(v) for v in d["b"]]
+    n_in = len(A[0])
+    if n_in == 3:                      # (Re/1000, tau, M); no CL dependence
+        A = [row + [0.0] for row in A]
+    rr, tr, mr, cr = x_ref
+    lxr = [math.log(rr / 1000.0), math.log(tr), math.log(mr), math.log(cr)]
+
+    def _logsum(bs):
+        m = max(bs)
+        return m + math.log(sum(math.exp(v - m) for v in bs))
+
+    tl = [alpha * (b[k] + sum(A[k][i] * lxr[i] for i in range(4)))
+          for k in range(len(b))]
+    log_cd_ref = _logsum(tl) / alpha
+    terms = []
+    for k in range(len(b)):
+        bp = b[k] + sum(A[k][i] * lxr[i] for i in range(4)) - log_cd_ref
+        terms.append((math.exp(alpha * bp),
+                      *(alpha * A[k][i] for i in range(4))))
+    return Polar(name=name or d.get("family", "mses"), alpha=alpha,
+                 terms=tuple(terms), x_ref=x_ref, cd_ref=math.exp(log_cd_ref),
+                 source=f"{_os.path.basename(path)}; rms_log "
+                        f"{d.get('rms_log')}, p95 {d.get('p95_pct')}%", **kw)
+
+
+#: C-series wing polar. The like-for-like replacement for YORK_C, which was a
+#: fit to the same family's TASOPT tables.
+MSES_C = from_yaml(_os.path.join(_FIT_DIR, "NC_SMA_final.yaml"), name="mses_c",
+                   perp_cl=True, m_perp_max=None,
+                   m_range=(0.10, 0.86), re_range=(5.0e6, 4.0e7),
+                   cl_range=(0.1, 1.2), tau_range=(0.090, 0.145))
+
+#: E-series wing polar, same sweep, different airfoil family.
+MSES_E = from_yaml(_os.path.join(_FIT_DIR, "NE_SMA_final.yaml"), name="mses_e",
+                   perp_cl=True, m_perp_max=None,
+                   m_range=(0.10, 0.86), re_range=(5.0e6, 4.0e7),
+                   cl_range=(0.1, 1.2), tau_range=(0.090, 0.145))
+
+#: T-series TAIL polar, CL-independent (fit at CL=0.1, which is where a tail
+#: lives). This is the accurate one of the T fits -- rms_log 0.043, p95 7.4%
+#: against 0.278 for the CL-dependent version -- and it replaces TASOPT's two
+#: Mach-independent constants with a surrogate that has a real drag rise.
+MSES_T_TAIL = from_yaml(_os.path.join(_FIT_DIR, "N3-T_SMA_CL0p1_final.yaml"),
+                        name="mses_t_tail", x_ref=(1.0e7, 0.10, 0.70, 1.0),
+                        perp_cl=True, m_perp_max=None,
+                        m_range=(0.10, 0.86), re_range=(5.0e6, 4.0e7),
+                        tau_range=(0.100, 0.140))
+
 #: Registry. A refit produced elsewhere is added here and selected by name;
 #: nothing else in the model needs to change.
-POLARS = {p.name: p for p in (YORK_C, YORK_C_STREAMWISE)}
+POLARS = {p.name: p for p in (YORK_C, YORK_C_STREAMWISE,
+                              MSES_C, MSES_E, MSES_T_TAIL)}
 
 
 def from_sfit(name, A, b, alpha, **kw):

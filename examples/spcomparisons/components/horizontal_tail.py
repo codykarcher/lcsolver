@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from numpy import pi, tan
 
-from .polars import (TASOPT_ARE_XP, TASOPT_TAIL_CDF,
+from .polars import (POLARS, TASOPT_ARE_XP, TASOPT_TAIL_CDF,
                      TASOPT_TAIL_CDP, TASOPT_TAIL_REREF)
 from .wingbox import add_wingbox
 
@@ -224,6 +224,16 @@ def add_horizontal_tail(f, N, state, *, sweep_deg=None, prefix="HT_",
             + 3.73076e-14 * Rec ** -2.57406 * tau ** 3.12793 * M ** 0.448159
             + 1.44343e-12 * Rec ** -3.91046 * tau ** 4.66279 * M ** 7.68852),
         ]
+    elif drag_model == "mses":
+        # T-series MSES surrogate, CL-independent (fit at CL=0.1, which is
+        # where a tail actually lives). Replaces TASOPT's two Mach-independent
+        # constants with a fit that has a real transonic rise -- CD roughly
+        # 9x between M 0.70 and 0.85 on a 12% section -- so the PERPENDICULAR
+        # Mach is what must be fed here, not the flight Mach. Getting that
+        # wrong would be a large error rather than a small one.
+        _tp = POLARS["mses_t_tail"]
+        cons += [(CD0h / _tp.cd_ref) ** _tp.alpha
+                 >= _tp.cd(Rec, tau, M, 1.0)]
     else:
         raise ValueError(f"unknown tail drag_model {drag_model!r}")
 
