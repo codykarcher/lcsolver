@@ -66,6 +66,22 @@ class SizeClass:
     # gives 4.45 m). It is a CLASS attribute because a light bizjet, single
     # pilot capable with a small radome, does not carry an airliner flight
     # deck, and a global 4.0 m would add ~2 m of nose to a 13 m aeroplane.
+    # V_MCG as a fraction of the takeoff stall speed. FAR 25.149(e) defines
+    # the ground minimum control speed by a 30 ft lateral deviation with
+    # nosewheel steering discounted -- a lateral-dynamics test, not a flight
+    # condition -- which is why it lands far BELOW every flight speed and why
+    # no balanced-field or approach case reaches it. Representing it properly
+    # needs a ground-handling model this study does not have.
+    #
+    # So it is a calibrated ratio, and it is honest about being one. 0.88 is
+    # the 737-800: V_MCG ~113 kt against V_s (takeoff flaps) ~129. Transports
+    # generally sit at 0.85-0.90. It was previously V_MCG == V_s_TO -- a value
+    # with no aircraft behind it, which sized the fin at 140 kt instead of 113
+    # and, since fin area goes as 1/V^2, under-sized it by roughly a third.
+    #
+    # Expected to differ by class: a light twin with a short moment arm and a
+    # widebody with four engines do not share a rudder-authority margin.
+    k_mcg: float = 0.88
     l_nose_min_m: float = 4.0
     # Cabin length ABOVE the seat rows: galleys, lavatories, doors, exit rows.
     # Additive rather than a fraction of seat-row length, because these are

@@ -58,6 +58,13 @@ _GEAR_BOX_FRAC = float(_os.environ.get("GEAR_BOX_FRAC", "0.0"))
 #: agreement was reached with the engine in the wrong place -- so it has to be
 #: re-earned here rather than assumed.
 _ETA_ENG = 0.285
+
+#: Let the engine station be a design variable instead of pinning it to
+#: _ETA_ENG. Off by default: the pinned model is the one validated against the
+#: 737, and freeing a variable is only safe once something resists it in both
+#: directions -- here, the fin pulling inboard against the wing-bending relief
+#: pulling outboard. Set FREE_Y_ENG=1 to try it.
+_FREE_Y_ENG = bool(_os.environ.get("FREE_Y_ENG"))
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
@@ -209,7 +216,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     far, c, farv = add_far(f, n_eng=_ne,
                            ruleset=getattr(size_class, "far_ruleset", "FAR25"),
                            field_length_max_ft=getattr(size_class,
-                                                       "field_length_ft", None))
+                                                       "field_length_ft", None),
+                           k_mcg=getattr(size_class, "k_mcg", 0.88))
     cons += c
     # The tank is sized first so the fuselage knows how much shell to add.
     # Its parameters are TASOPT's cryo case: 2 atm vent pressure and the 1.3
@@ -1078,11 +1086,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         return base + numeng * Wengsys if _rear else base
 
     def _relief():
-        """What relieves the wing root moment. Underwing engines do; rear
-        engines cannot, which is one of the reasons real airliners hang them
-        on the wing."""
-        r = wing.W_wing + f_wingfuel * W_ftotal
-        return r if _rear else r + numeng * Wengsys
+        """DISTRIBUTED relief only: wing structure and the fuel it carries.
+
+        These are spread along the span roughly like the chord, so giving them
+        the same moment arm as the lift is reasonable. A podded engine is a
+        POINT mass and is not: it belongs at its own arm, y_eng, and is added
+        separately in the root-moment row below.
+
+        Lumping the engine in here -- which is what this did -- meant the
+        relief did not depend on where the engine was. That is the whole
+        reason airliners hang engines outboard, and the model could not see
+        it: y_eng appeared only in the engine-out yaw moment, so the fin
+        wanted it inboard and nothing wanted it out.
+        """
+        return wing.W_wing + f_wingfuel * W_ftotal
 
     def _iz_wing():
         base = ((wing.W_fuel_wing + wing.W_wing) / (wing.S * g)
@@ -1090,7 +1107,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                 * (1. / 12. - (1. - wing.lambda_) / 16.))
         if _rear:
             return base
-        return base + numeng * Wengsys * (_ETA_ENG * wing.b / 2.0) ** 2 / g
+        # y_eng, not the constant it happens to be pinned to. Those agreed
+        # only because both were 0.285*b/2; two engine positions in one model
+        # is the same defect as the two eta_o values in the cranked wing.
+        return base + numeng * Wengsys * y_eng ** 2 / g
     cons += [
         # Engine-out yaw arm. A podded underwing engine sits far outboard, so
         # losing one is a much bigger yawing moment than losing a rear engine
@@ -1104,9 +1124,22 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # engine AT eta_s, propagating into the root moment through
         # (Ss - Nload*We)*0.5*b*(eta_s - eta_o). The single-taper model has no
         # break to sit on, so it keeps the 0.35 semi-span station it had.
-        y_eng == (0.5 * fu.w_fuse if _rear
-                  else (wing.eta_s * wing.b / 2.0 if wing_model == "tasopt"
-                        else _ETA_ENG * wing.b / 2.0)),
+        # Engine spanwise station. Rear-mounted is fixed against the fuselage.
+        # Wing-mounted is either pinned to the planform break (the default,
+        # and what TASOPT assumes) or FREE, if FREE_Y_ENG is set.
+        #
+        # Freeing it is only meaningful now that the root-moment row gives the
+        # engine its own arm. Before that, y_eng appeared solely in the
+        # engine-out yaw moment: the fin wanted it inboard, nothing wanted it
+        # out, and it would have collapsed onto its lower bound. With the
+        # relief span-dependent there is a real trade -- outboard relieves the
+        # wing and grows the fin -- so both directions are now resisted.
+        *([y_eng == 0.5 * fu.w_fuse] if _rear else
+          ([y_eng >= 1.15 * (fu.w_fuse + 0.5 * lg.d_nacelle),
+            y_eng <= 0.5 * (wing.b / 2.0)]
+           if _FREE_Y_ENG else
+           [y_eng == (wing.eta_s * wing.b / 2.0 if wing_model == "tasopt"
+                      else _ETA_ENG * wing.b / 2.0)])),
         # Wing root moment, relieved by wing weight and fuel -- and, for an
         # underwing installation, by the engines themselves. That relief is
         # one of the reasons real airliners hang engines on the wing.
@@ -1115,9 +1148,18 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # moment from the spanwise load distribution and carries its own
         # relief fixed point internally (see wingbox_tasopt), so imposing this
         # as well would define M_r twice with two different load models.
-        *([wing.box.M_r * wing.c_root >= (
-            (wing.L_max - wing.box.N_lift * _relief())
-            * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip)))]
+        # Written all-positive, with the engine at ITS OWN ARM. The
+        # distributed relief keeps the lift's arm factor K; the engine gets
+        # N_lift * n_eng * W_engsys * y_eng, which is what makes an outboard
+        # engine buy a lighter wing. Rear-mounted engines relieve nothing.
+        *([wing.box.M_r * wing.c_root
+           + wing.box.N_lift * _relief()
+             * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip))
+           + (0.0 * Wengsys * y_eng if _rear
+              else wing.box.N_lift * numeng * Wengsys * y_eng)
+           >= wing.L_max
+              * (wing.b ** 2 / (12 * wing.S)
+                 * (wing.c_root + 2 * wing.c_tip))]
           if wing_model == "hoburg" else []),
         fu.A_1h_Land >= (fu.N_land * _plus_eng(fu.W_tail + fu.W_apu))
                            / (fu.h_fuse * fu.sigma_bend),

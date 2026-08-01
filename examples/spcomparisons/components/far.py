@@ -119,7 +119,10 @@ RULESETS = {r.name: r for r in (FAR25, FAR23_COMMUTER)}
 # transport with slotted flaps and slats:
 #   takeoff flaps   C_Lmax 1.8-2.2,  dCD ~ 0.015-0.025 flaps + 0.015-0.025 gear
 #   landing flaps   C_Lmax 2.6-3.2,  dCD ~ 0.06-0.10
-CLMAX_TO = 2.0
+#: 2.2, not 2.0. A 737 at flaps 5 reaches roughly 2.2-2.4; 2.0 put our
+#: takeoff stall speed at 140 kt against the real aircraft's ~129, and every
+#: takeoff speed is referenced to it -- including the one the fin is sized at.
+CLMAX_TO = 2.2
 CLMAX_LAND = 2.8
 DCD_FLAP_TO = 0.020
 DCD_FLAP_LAND = 0.080
@@ -128,7 +131,8 @@ MU_ROLL = 0.025          # rolling friction, dry paved runway
 
 
 def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
-            field_length_max_ft=None, landing_field_max_ft=None):
+            field_length_max_ft=None, landing_field_max_ft=None,
+            k_mcg=0.88):
     """Add certification performance constraints. Returns ``(group, cons)``.
 
     The caller wires the aircraft-level quantities in afterwards via
@@ -182,6 +186,8 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
     h_scr = C("h_screen", 10.668, "m", "35 ft screen height, FAR 25.109")
     h_scl = C("h_screen_land", 15.24, "m", "50 ft screen height, FAR 25.125")
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
+    kmcg = C("k_MCG", k_mcg, "-",
+             "V_MCG as a fraction of V_s_TO (calibrated; see SizeClass)")
 
     out = dict(_ruleset=rs, _n_eng=ne,
                V_s_TO=Vs_to, V_s_land=Vs_ld, V_2=V2, V_LOF=Vlof, V_ref=Vref,
@@ -219,14 +225,20 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
         # -- which lets a sideslipping aircraft use its wing to help -- is not
         # available. The rudder does the whole job alone.
         #
-        # Represented here as control at the takeoff stall speed rather than at
-        # 1.13 times it. That is a modelling choice, not a quotation from the
-        # rule: 25.149(e) defines V_MCG by a 30 ft lateral deviation with
-        # nosewheel steering discounted, which needs a ground-handling model
-        # this does not have. The ratio is what matters -- the fin must work at
-        # 1/1.13 of the airborne control speed, so it needs (1.13)^2 = 1.28
-        # times the area.
-        Vmcg == Vs_to,
+        # Represented as a CALIBRATED FRACTION of the takeoff stall speed.
+        # 25.149(e) defines V_MCG by a 30 ft lateral deviation with nosewheel
+        # steering discounted -- a lateral-dynamics test rather than a flight
+        # condition -- which needs a ground-handling model this study does not
+        # have. It is also why no flight-phase speed reaches it: V_ref ~141,
+        # V_1 ~145 and V_MC ~146 kt all sit far above a real V_MCG of ~113, so
+        # deriving it from the balanced field would give a LARGER V_MCG and a
+        # smaller fin, not a better one.
+        #
+        # This was previously `Vmcg == Vs_to`, a value with no aircraft behind
+        # it. It sized the fin at 140 kt against a real 113, and since fin area
+        # goes as 1/V^2 that under-sized it by about a third. k_MCG comes from
+        # the SizeClass so it can differ by aircraft.
+        Vmcg == kmcg * Vs_to,
         Vlof == 1.10 * Vs_to,
         Vref == rs.vref_factor * Vs_ld,
         # 25.109 / 25.125: demonstrated distance factored to field length.
