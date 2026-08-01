@@ -174,6 +174,8 @@ class PresolveReport:
     #: `rigidity_report` output, filled in by `optimization_check`. Needs no
     #: solution -- it is a property of the equality system alone.
     rigidity: dict = field(default_factory=dict)
+    #: `unopposed_report` output: variables nothing resists.
+    unopposed: list = field(default_factory=list)
 
     @property
     def clean(self):
@@ -255,6 +257,9 @@ class PresolveReport:
         if self.rigidity:
             L.append("")
             L.append(rigidity_text(self.rigidity))
+        if self.unopposed:
+            L.append("")
+            L.append(unopposed_text(self.unopposed))
         return "\n".join(L)
 
     def post_solve_text(self):
@@ -314,6 +319,57 @@ def _rows_of(structures):
     if key is None:
         raise ValueError("presolve needs a detected GP or SP structure")
     return st[key][1], st[key][2], key
+
+
+def _underdetermined_vars(structures, n) -> set:
+    """Variables the equality system leaves free (Dulmage-Mendelsohn).
+
+    Maximum matching of equality rows to variables, then everything reachable
+    by alternating paths from the UNMATCHED variables. Canonical: it does not
+    depend on which maximum matching is found.
+    """
+    try:
+        edges, rows, _n, _names = _equality_graph(structures, None)
+    except Exception:
+        return set()
+    match_var, match_row = {}, {}
+
+    def augment(i, seen):
+        for j in edges[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            owner = match_var.get(j)
+            if owner is None or augment(owner, seen):
+                match_var[j], match_row[i] = i, j
+                return True
+        return False
+
+    import sys as _sys
+    lim = _sys.getrecursionlimit()
+    _sys.setrecursionlimit(max(lim, 10 * len(edges) + 1000))
+    try:
+        for i in range(len(edges)):
+            augment(i, set())
+    finally:
+        _sys.setrecursionlimit(lim)
+
+    var_rows = collections.defaultdict(list)
+    for i, e in enumerate(edges):
+        for j in e:
+            var_rows[j].append(i)
+    involved = {j for e in edges for j in e}
+    free = {j for j in range(n) if j in involved and j not in match_var}
+    # a variable in NO equality is trivially undetermined by them
+    free |= {j for j in range(n) if j not in involved}
+    seen, stack = set(free), list(free)
+    while stack:
+        j = stack.pop()
+        for i in var_rows.get(j, []):
+            u = match_row.get(i)
+            if u is not None and u not in seen:
+                seen.add(u); stack.append(u)
+    return seen
 
 
 def presolve_report(structures, names=None) -> PresolveReport:
@@ -1629,6 +1685,95 @@ def _max_matching(edges, n):
     return match_var, match_row
 
 
+def unopposed_report(structures, names=None, top=25):
+    """Variables no constraint resists -- quantities the optimiser moves free.
+
+    A design variable earns its place by being pushed one way and held the
+    other. When nothing holds it, the optimiser moves it until something else
+    breaks, and the answer looks converged while resting on a quantity the
+    model never determined.
+
+    This is the defect class that :func:`presolve_report`'s bounded-ness check
+    misses, and it misses it for a specific reason: that check treats ANY
+    equality as bounding a variable both ways. An equality constrains a
+    COMBINATION, not an individual. ``mac*q == k*c_root`` is one equation in
+    three unknowns, so ``q`` slides along it trading against ``mac`` -- and a
+    wing model carried ``p`` and ``q`` declared as "1 + 2 taper" and
+    "1 + taper", constrained to be neither, for a long time. They were pinned
+    only implicitly, by a structural model that happened to read them; the
+    moment a different structural model was selected ``q`` inflated 1.15 ->
+    1.56, shrinking the mean chord 20% and the horizontal tail with it.
+
+    Nothing was inconsistent, so no infeasibility or over-determination check
+    could see it. Something was absent.
+
+    Two analyses are needed together and neither suffices alone:
+
+    * the Dulmage-Mendelsohn UNDER-determined block, for which variables the
+      equality system genuinely leaves free (canonical, unlike a bare
+      matching);
+    * the sign of each inequality's exponent, for whether it resists motion
+      up, down, or neither.
+
+    A variable is reported when it is under-determined AND some direction has
+    no inequality resisting it. Reported as ``[(name, direction, n_rows)]``.
+
+    This does NOT touch the bounds used by the solve. It is a report.
+    """
+    rows, operators, _key = _rows_of(structures)
+    st = as_detected(_as_structures(structures))
+    if names is None:
+        names = [str(v) for v in (st.variables or [])]
+    n = max([len(r) - 2 for r in rows] + [len(names)])
+    loose = _underdetermined_vars(structures, n)
+
+    up_held = [False] * n
+    down_held = [False] * n
+    touch = collections.Counter()
+    for i in st.constraint_indices:
+        op = st.operator(i)
+        terms = st.terms(i)
+        seen = set()
+        for t in terms:
+            seen |= t.variables
+        for j in seen:
+            touch[j] += 1
+        if op == "==":
+            continue                      # handled by the DM block above
+        for t in terms:
+            sgn = -1.0 if t.denominator else 1.0
+            for j, e in t.exponents.items():
+                if sgn * e > 0:
+                    up_held[j] = True     # raising j tightens p/q <= 1
+                elif sgn * e < 0:
+                    down_held[j] = True
+
+    out = []
+    for j in sorted(loose):
+        if j >= n:
+            continue
+        free = [d for d, held in (("up", up_held[j]), ("down", down_held[j]))
+                if not held]
+        if free and touch[j]:
+            out.append((nm_at(names, j), "/".join(free), touch[j]))
+    out.sort(key=lambda t: -t[2])
+    return out[:top]
+
+
+def unopposed_text(found) -> str:
+    """:func:`unopposed_report` as the paragraph a reader wants."""
+    if not found:
+        return ""
+    L = [f"  {len(found)} variables are under-determined by the equalities AND "
+         "unresisted by any inequality -- the optimiser can move these for "
+         "free, and a converged answer may be resting on them:"]
+    for nm, direction, k in found:
+        L.append(f"    {nm}  (free to move {direction}; {k} rows mention it)")
+    L.append("    A variable named by MANY rows and resisted by none is the "
+             "dangerous case: it looks wired and is not.")
+    return "\n".join(L)
+
+
 def rigidity_report(structures, names=None, cluster_max=12):
     """Degrees of freedom, per variable, from the equality system alone.
 
@@ -2196,6 +2341,11 @@ def optimization_check(structures, x=None, problem=None, names=None,
             st, names or [str(v) for v in st.variables])
     except Exception:
         rep.rigidity = {}
+    try:
+        rep.unopposed = unopposed_report(
+            st, names or [str(v) for v in st.variables])
+    except Exception:
+        rep.unopposed = []
     return rep
 
 
