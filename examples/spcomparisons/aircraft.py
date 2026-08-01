@@ -58,6 +58,7 @@ from components.horizontal_tail import add_horizontal_tail
 from components.landing_gear import add_landing_gear
 from components.vertical_tail import add_vertical_tail
 from components.wing import add_wing
+from components.wing_tasopt import add_wing_tasopt
 from components.wingbox import ALUMINIUM, COMPOSITE
 import components.technology as _technology
 from components.technology import MODERN_COMPOSITE
@@ -83,6 +84,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           pi_tail_supports: str = "fixed", seed: str | None = None,
           tau_limits: bool = True, sweep_pricing: bool = False,
           polar="york_c", tail_drag: str = "tasopt",
+          wing_model: str = "hoburg",
           sweep_deg: float | None = None):
     """Build the LH2 D8.2. Returns an EDI ``Formulation``.
 
@@ -154,9 +156,18 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # sweep_deg=None leaves quarter-chord sweep a design variable (the default);
     # passing a number pins it, which is useful for like-for-like comparison
     # against TASOPT and the real aircraft while the polar refit is pending.
-    wing, c = add_wing(f, N, st, sweep_deg=sweep_deg, material=_mat,
-                       sweep_pricing=sweep_pricing, polar=polar,
-                       rho_fuel=70.0 if arch.fuel == "lh2" else 817.0)
+    # Two wing models, same group and same exposed names, so nothing
+    # downstream knows which it has. "hoburg" is SPaircraft's single-taper
+    # planform with the closed-form box; "tasopt" is the cranked planform --
+    # two independent taper ratios, constant LE sweep, a trailing edge that
+    # kinks at the break -- with the station-based box ported from surfw.f.
+    # They are separate models rather than a switch inside one because the
+    # geometry differs, not just the weight estimate: mac, the area integral
+    # and the load distribution are all planform-dependent.
+    _wing_add = {"hoburg": add_wing, "tasopt": add_wing_tasopt}[wing_model]
+    wing, c = _wing_add(f, N, st, sweep_deg=sweep_deg, material=_mat,
+                        sweep_pricing=sweep_pricing, polar=polar,
+                        rho_fuel=70.0 if arch.fuel == "lh2" else 817.0)
     cons += c
     vt, c = add_vertical_tail(f, N, st, sweep_deg=SWEEP_VT, material=_mat,
                               tau_limits=tau_limits,
@@ -1019,6 +1030,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         Weadd == feadd * eng.W_engine,
         Wpylon >= (Wnace + Weadd + eng.W_engine) * fpylon,
         Wengsys >= Ceng * (Wpylon + Wnace + Weadd + eng.W_engine),
+        # Tie the box's inertial relief to the engine actually hung on the
+        # wing. Declared inside the box because the engine is built after the
+        # wing; a rear-mounted installation relieves nothing, so it is pinned
+        # near zero rather than left free -- an unconstrained relief term
+        # would let the optimiser invent load relief from nothing.
+        *([wing.box.W_eng_relief == (1e-6 * Wengsys if arch.rear_engines
+                                     else Wengsys)]
+          if wing_model == "tasopt" else []),
     ]
 
     # ---- engine installation -------------------------------------------------
@@ -1058,13 +1077,28 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # tucked against the fuselage -- which the vertical tail has to size
         # for. This is a genuine penalty of the conventional layout and the
         # rear-engine D8 gets to avoid it.
-        y_eng == (0.5 * fu.w_fuse if _rear else 0.35 * wing.b / 2.0),
+        # Engine spanwise station. On the CRANKED wing it sits at the
+        # planform break, which is both what most transports do (a 737's
+        # engines are at eta ~0.28-0.31 against a 0.285 break) and what
+        # TASOPT's surfw.f assumes -- its inertial relief is written with the
+        # engine AT eta_s, propagating into the root moment through
+        # (Ss - Nload*We)*0.5*b*(eta_s - eta_o). The single-taper model has no
+        # break to sit on, so it keeps the 0.35 semi-span station it had.
+        y_eng == (0.5 * fu.w_fuse if _rear
+                  else (wing.eta_s * wing.b / 2.0 if wing_model == "tasopt"
+                        else 0.35 * wing.b / 2.0)),
         # Wing root moment, relieved by wing weight and fuel -- and, for an
         # underwing installation, by the engines themselves. That relief is
         # one of the reasons real airliners hang engines on the wing.
-        wing.box.M_r * wing.c_root >= (
+        #
+        # ONLY for the closed-form box. The TASOPT box derives its own root
+        # moment from the spanwise load distribution and carries its own
+        # relief fixed point internally (see wingbox_tasopt), so imposing this
+        # as well would define M_r twice with two different load models.
+        *([wing.box.M_r * wing.c_root >= (
             (wing.L_max - wing.box.N_lift * _relief())
-            * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip))),
+            * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip)))]
+          if wing_model == "hoburg" else []),
         fu.A_1h_Land >= (fu.N_land * _plus_eng(fu.W_tail + fu.W_apu))
                            / (fu.h_fuse * fu.sigma_bend),
         fu.A_1h_MLF >= (fu.N_lift * _plus_eng(fu.W_tail + fu.W_apu)
@@ -1909,6 +1943,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     _bound_variables(f)
     if seed == "reference":
         _seed_from_reference(f)
+        if wing_model == "tasopt":
+            _seed_cranked_wing(f)
     return f
 
 
@@ -1974,6 +2010,75 @@ def _seed_from_reference(f):
                 val = val[idx] if idx is not None and idx < len(val) else val[0]
             vd.set_value(float(val), skip_validation=True)
             n += 1
+    return n
+
+
+def _seed_cranked_wing(f):
+    """Make the cranked planform consistent with the seeded point.
+
+    reference.json records a converged SINGLE-taper wing -- 76 Wing_ entries,
+    including S, b, c_root, lambda and mac -- and knows nothing about
+    lambda_s, K_c, K_mac, c_break or the chord slopes, which therefore start
+    at their declaration guesses. The two are not consistent: at the seed
+    S == c_o*b*K_c is off by 4% and mac*S == b*c_o^2*K_mac by 7%, so several
+    signomial equalities begin violated and phase 1 starts by trying to
+    reconcile a planform that does not exist. It wandered to a rectangular
+    20 m-span wing at 71 degrees of sweep.
+
+    So derive them instead of guessing. Everything below follows from the
+    seeded S, b, c_o, lambda and eta_o, with lambda_s chosen to satisfy the
+    area relation exactly:
+
+        K_c = S/(c_o*b)
+        K_c = eta_o + (eta_s-eta_o)/2 + lam_t(1-eta_s)/2 + lam_s(1-eta_o)/2
+
+    solved for lam_s. mac is then RE-seeded from the cranked integral rather
+    than left at the single-taper value, because on this planform the recorded
+    one is simply the wrong number.
+    """
+    from components.wing_tasopt import ETA_BREAK
+
+    def g(name):
+        v = getattr(f, name, None)
+        try:
+            return float(v.value) if v.value is not None else None
+        except Exception:
+            try:
+                return float(v[0].value)
+            except Exception:
+                return None
+
+    S, b, co = g("Wing_S"), g("Wing_b"), g("Wing_c_root")
+    lam_t, eo = g("Wing_lambda"), g("Wing_eta_o")
+    if None in (S, b, co, lam_t, eo):
+        return 0
+    es = ETA_BREAK
+    Kc_req = S / (co * b)
+    lam_s = ((Kc_req - eo - (es - eo) / 2.0 - lam_t * (1.0 - es) / 2.0)
+             * 2.0 / (1.0 - eo))
+    lam_s = min(max(lam_s, lam_t), 1.0)          # keep it a real planform
+    Kc = (eo + (1 + lam_s) * (es - eo) / 2.0
+          + (lam_s + lam_t) * (1 - es) / 2.0)
+    Kmac = (eo + (es - eo) * (1 + lam_s + lam_s ** 2) / 3.0
+            + (1 - es) * (lam_s ** 2 + lam_s * lam_t + lam_t ** 2) / 3.0)
+    Dinn = (co - lam_s * co) / ((b / 2.0) * (es - eo))
+    Dout = (lam_s * co - lam_t * co) / ((b / 2.0) * (1.0 - es))
+    tanL = g("Wing_tan_Lambda") or 0.36
+    vals = {"Wing_lambda_s": lam_s, "Wing_c_break": lam_s * co,
+            "Wing_K_c": Kc, "Wing_K_o": 1.0 / Kc, "Wing_K_mac": Kmac,
+            "Wing_mac": b * co ** 2 * Kmac / S,
+            "Wing_dc_dy_inn": Dinn, "Wing_dc_dy_out": Dout,
+            "Wing_tan_Lambda_LE": tanL + 0.25 * Dout,
+            "Wing_tan_Lambda_qc_inn": tanL + 0.25 * Dout - 0.25 * Dinn}
+    n = 0
+    for nm, val in vals.items():
+        v = getattr(f, nm, None)
+        if v is None or val is None or val <= 0:
+            continue
+        try:
+            v.set_value(float(val), skip_validation=True); n += 1
+        except Exception:
+            pass
     return n
 
 

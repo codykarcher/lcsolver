@@ -170,7 +170,7 @@ def volumes(co, b, cosL, eta_o=ETA_O, eta_s=ETA_S,
 def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
                        N_lift=3.0, cosL=None, material=None,
                        eta_o=ETA_O, eta_s=ETA_S,
-                       lam_s=LAMBDA_S, lam_t=LAMBDA_T,
+                       lam_s=None, lam_t=None, taper=None,
                        W_engine=None, rho_fuel=None, f_fuel=1.0,
                        f_wadd=0.640, relief=True):
     """Add the station-based box. Returns ``(vars, constraints)``.
@@ -183,6 +183,31 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     material = material or ALUMINIUM
     V, C = group.Variable, group.Constant
 
+    # PLANFORM. If the caller has its own taper -- and the wing does -- the
+    # box must use it, not TASOPT's cranked 0.70/0.25. Ignoring it left the
+    # wing's taper priced by nothing: with the closed-form box it sits on its
+    # 0.15 floor because nu = (1+l+l^2)/(1+l)^2 makes a sharply tapered wing
+    # lighter, but with this box it drifted to 0.42, which dropped c_root and
+    # the mean chord by a third and took the horizontal tail down with them
+    # (S_ht 31.8 -> 19.8 against a real 32.0) because V_ht is referenced to
+    # mac. A quantity the optimiser can move for free is the recurring defect
+    # in this model, and this was one more of them.
+    #
+    # The fix is NOT to derive the box planform from a variable taper. That
+    # was tried and it fails: lam_s = 1 - (1-lam_t)*eta_s makes Kc carry a
+    # difference and Ko = 1/Kc the reciprocal of a signomial, turning what
+    # were constant coefficients into signomial expressions. Neither case
+    # converged (600 iterations, and a sub-problem failure at 74).
+    #
+    # TASOPT does not optimise taper -- lambdas and lambdat are deck INPUTS.
+    # So faithfulness runs the other way: the box keeps its constant planform
+    # and the CALLER pins the wing's taper to lam_t, which both prices taper
+    # (it is no longer free) and keeps every coefficient constant. `taper` is
+    # accepted only so the caller can read back what to pin to.
+    if lam_s is None:
+        lam_s = LAMBDA_S
+    if lam_t is None:
+        lam_t = LAMBDA_T
     _cosL = cosL if cosL is not None else 1.0
     Kc, Ko, Kp0, gam_s, gam_t = planform(eta_o, eta_s, lam_s, lam_t)
     # the fLt term in Kp carries 1/AR, which is a variable here
@@ -204,6 +229,11 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     Wweb = V("W_web", 3e3, "N", "weight of shear webs")
     Wstruct = V("W_struct", 7e4, "N", "structural weight")
 
+    # Declared as a Constant, not just taken as a Python float, because the
+    # rest of the model reads wing.box.N_lift (aircraft.py couples the
+    # fuselage load factor to it) and the two box models must present the
+    # same interface.
+    Nlift = C("N_lift", N_lift, "-", "wing loading multiplier")
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
     rhocap = C("rho_cap", material["rho"], "kg/m^3", "spar cap density")
     rhoweb = C("rho_web", material["rho"], "kg/m^3", "shear web density")
@@ -213,7 +243,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     wwb = C("r_w_c", wbox, "-", "wingbox width-to-chord ratio")
 
     out = dict(r_w_c=wwb, W_cap=Wcap, W_web=Wweb, W_struct=Wstruct,
-               t_cap=tcapo, t_web=twebo, c_o=co, M_r=Mo,
+               t_cap=tcapo, t_web=twebo, c_o=co, M_r=Mo, N_lift=Nlift,
                S_o=So, M_o=Mo, S_s=Ss, M_s=Ms)
 
     hbox = tau                      # box height / chord == airfoil t/c
@@ -237,7 +267,18 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     Wout = V("W_out", 2e4, "N", "outer panel weight incl. secondary and fuel")
     dyWinn = V("dyW_inn", 2e4, "N*m", "inner panel relief moment")
     dyWout = V("dyW_out", 2e4, "N*m", "outer panel relief moment")
-    Reng = W_engine if W_engine is not None else 0.0 * Lmax
+    # Engine relief as a VARIABLE, not an argument: the engine is built after
+    # the wing (aircraft.py:241 against :167), so its weight cannot be passed
+    # in. The aircraft ties this to the engine system weight for a wing-hung
+    # installation and to nothing for a rear-mounted one.
+    Weng = V("W_eng_relief", 1.0, "N", "engine weight relieving the wing")
+    Reng = Weng
+    # Fuel volume, integrated over the real bays rather than correlated. The
+    # box already computes the bay areas for the relief term; using a separate
+    # mac^2 correlation for CAPACITY meant the same fuel had two different
+    # volumes in one model, which is a contradiction rather than an
+    # approximation.
+    Vfuelbox = V("V_fuel", 25.0, "m^3", "fuel volume in the wing box")
 
     cons = [
         AR == b ** 2 / S,
@@ -329,6 +370,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
             dyWout == (dyWsout * (1.0 + f_wadd)
                        + f_fuel * rhof * Abfs * g * dyVout),
         ]
+        cons += [Vfuelbox == 2.0 * (Abfo * Vcen + _Abfi * Vinn + Abfs * Vout)]
         out.update(Ab_fuel_o=Abfo, Ab_fuel_s=Abfs)
     else:
         cons += [
@@ -336,10 +378,12 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
             Wout == Wsout * (1.0 + f_wadd),
             dyWinn == dyWsinn * (1.0 + f_wadd),
             dyWout == dyWsout * (1.0 + f_wadd),
+            Vfuelbox == 0.0 * Vcen + 1e-9 * Vcen,   # no fuel model requested
         ]
     if not relief:
         # Explicitly OFF: pin the relief to nothing rather than deleting the
         # rows, so the two cases differ by a constant and stay comparable.
         cons = [c for c in cons]
-    out.update(W_inn=Winn, W_out=Wout, W_s_inn=Wsinn, W_s_out=Wsout)
+    out.update(W_inn=Winn, W_out=Wout, W_s_inn=Wsinn, W_s_out=Wsout,
+               W_eng_relief=Weng, V_fuel=Vfuelbox)
     return out, cons
