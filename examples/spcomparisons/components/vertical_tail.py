@@ -122,10 +122,19 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
         # the source, which lets the optimizer claim a larger planform than
         # the area it pays structural weight for.
         Svt == bvt * (croot + ctip) / 2,                            # [SP] SigEq
-        p >= 1 + 2 * taper,
-        2 * q >= 1 + p,
-        ymac == (bvt / 3) * q / p,
-        zmac == (bvt / 3) * q / p,
+        # EQUALITIES, as for the horizontal tail: definitions of substituted
+        # variables rather than design freedoms.
+        p == 1 + 2 * taper,
+        q == 1 + taper,
+        # TRANSPOSED. Unlike the wing and the horizontal tail the FACTOR is
+        # right -- b_vt is the fin HEIGHT, one panel root-to-tip rather than
+        # tip-to-tip (note ARvt == 2.0*Avt above), so the centroid genuinely
+        # sits at b/3 -- but p/q was inverted. Correcting it RAISES the mean
+        # chord, 2.127 m -> 3.222 m, and with it the fin arm through
+        #     dx_lead + z_mac*tan(Lambda) + 0.25*cbar == l_vt
+        # which is the opposite direction to the horizontal tail's correction.
+        ymac == (bvt / 3) * p / q,
+        zmac == (bvt / 3) * p / q,
         (2. / 3) * (1 + taper + taper ** 2) * croot / q == cma,     # [SP] SigEq
         taper == ctip / croot,
         dxlead + croot <= dxtrail,

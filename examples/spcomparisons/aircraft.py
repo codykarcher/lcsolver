@@ -571,7 +571,36 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                "|C_Lh| download available at the forward-CG trim case")
     CLpmax = C("C_L_p_max", 1.25, "-",
                "wing C_L for the forward-CG trim case (TASOPT CLpmax)")
-    CMw1 = C("C_M_w1", 0.015, "-", "wing dCM/dCL")
+    # |dCM/dCL| of the wing about its box axis. NEGATIVE in TASOPT; carried
+    # here as a MAGNITUDE, with every appearance signed explicitly at its use.
+    #
+    # This was 0.015, a placeholder: surfcm.f was ported for CM0 (that is
+    # c_m_w_val, with its eta_surfcm/Kc_surfcm rows) and CM1 was left as a
+    # constant. But CM1 is the term that carries the box-to-aerodynamic-centre
+    # offset, and it is dominated by SWEEP. Evaluating surfcm.f exactly on
+    # TASOPT's own 737 deck (Xaxis 0.40, etao 0.1016, etas 0.285, lambdas 0.70,
+    # lambdat 0.25, AR 10.1, sweep 26 deg, fLo -0.3, fLt -0.05, and the
+    # forward-CG case rcls 1.1 / rclt 0.5):
+    #
+    #     etao*(1+fLo)*(Xaxis-0.25)      = +0.010672
+    #     (Xaxis-0.25)*cosL^2*C1/3       = +0.037354
+    #     -(tanL/Ko)*C2/12               = -0.235040     <- sweep, dominant
+    #     tip-rolloff term               = +0.000669
+    #     / Kp = 0.55287                 -> CM1 = -0.33705
+    #
+    # So the true value is 22x larger AND of the opposite sign. co*CM1 is
+    # -1.98 m on TASOPT's 737 where our 0.015 gave +0.098 m, and since the
+    # trim row solves for (x_wing - co*CMw1), that 2.08 m error went straight
+    # into the wing station: the box sat at 19.94 m against TASOPT's 16.36.
+    #
+    # 0.337 is the 737 deck's value, so this is still a CONSTANT and still
+    # only right for a 26-degree wing. Porting surfcm's CM1 properly -- it is
+    # a function of etao, etas, the two tapers, the two lift-taper ratios and
+    # sweep, all of which already exist as variables -- is the next step, and
+    # is what the matrix will need. The cruise case gives -0.37782 on the same
+    # deck, so the spread across mission points is about 12%.
+    CMw1 = C("C_M_w1", 0.337, "-", "|wing dCM/dCL| about the box axis "
+             "(NEGATIVE; sign applied at each use). surfcm.f on the 737 deck.")
     CMh0 = C("C_M_h0", 0.02, "-", "|tail zero-lift moment|")
     CMh1 = C("C_M_h1", 0.30, "-", "|tail dCM/dCL|")
     CLMf0 = C("C_L_Mf0", 0.185, "-", "C_L at which the fuselage moment is zero")
@@ -1616,9 +1645,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         #
         # x_hbox is the horizontal tail BOX station, roughly the quarter chord
         # aft of its leading edge, not the tail's CG.
+        # CMw1 IS NEGATIVE, and the two c_root*CMw1 terms have therefore moved
+        # to the other side. This row solves for (x_wing - co*CMw1), which is
+        # TASOPT's (xwbox - co*CMw1) -- the wing's effective AERODYNAMIC
+        # reference, not the box station. With CMw1 held at +0.015 that
+        # distinction collapsed: co*CMw1 was 0.098 m, so the row placed the
+        # BOX where the AC belongs and the box slid aft to compensate.
         (xCGfwd * CLpmax * wing.S
-         + wing.c_root * CMw1 * CLpmax * wing.S
-         + wing.c_root * CMw1 * CLhfwd * ht.S_ht
          + ht.c_root_ht * CMh1 * CLhfwd * ht.S_ht
          + (xCG[Nclimb] + ht.dx_lead_ht + 0.25 * ht.c_root_ht)
            * CLhfwd * ht.S_ht
@@ -1626,6 +1659,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         == (wing.c_root * cmw * wing.S
             + fu.x_wing * CLpmax * wing.S
             + fu.x_wing * CLhfwd * ht.S_ht
+            + wing.c_root * CMw1 * CLpmax * wing.S
+            + wing.c_root * CMw1 * CLhfwd * ht.S_ht
             + ht.c_root_ht * CMh0 * ht.S_ht
             + CMVf1 * CLMf0),                                 # [SP] SigEq
         # Row 2, aft-CG stability -- with TASOPT's NEUTRAL POINT, not
@@ -1647,9 +1682,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # it down -- V_ht 0.295 against 0.575, in almost exactly that ratio.
         #
         # Grouped from the expansion (CMh1 = -cmh1), times S:
+        # Both c_root*CMw1 terms swap sides here too, for the same reason: the
+        # expansion carries (co*CMw1 - xwbox) and CMw1 is negative, so each
+        # appearance changes sign with it.
         (xNPt * wing.S + fu.x_wing * dCLhdCL * ht.S_ht
-         + wing.c_root * CMw1 * wing.S + CMVf1)
-        == (wing.c_root * CMw1 * dCLhdCL * ht.S_ht
+         + wing.c_root * CMw1 * dCLhdCL * ht.S_ht + CMVf1)
+        == (wing.c_root * CMw1 * wing.S
             + fu.x_wing * wing.S
             + ht.c_root_ht * CMh1 * dCLhdCL * ht.S_ht
             + (xCG[Nclimb] + ht.dx_lead_ht + 0.25 * ht.c_root_ht)

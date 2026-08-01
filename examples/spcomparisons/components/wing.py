@@ -146,9 +146,26 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
 
     cons = [
         Arect == ctip * b,
-        p >= 1 + 2 * taper,
-        2 * q >= 1 + p,
-        ymac == (b / 3) * q / p,
+        # p and q are DEFINED below as equalities. The one-sided pair that
+        # used to sit here (p >= 1 + 2*taper, 2*q >= 1 + p) was left in place
+        # when those were added, and redundant active rows are not free: the
+        # equality implies the inequality, so both bind at the same point with
+        # parallel gradients, and the multipliers are then indeterminate. That
+        # is what the wing's 1e4 duals were -- an order of magnitude larger
+        # than anything else in the model and read at the time as the price of
+        # the taper pin -- and it is why the wing-position dual scan came back
+        # with 1e11 multipliers and no usable information.
+        # Spanwise station of the mean aerodynamic chord. Two errors, which
+        # partly cancelled: p/q was TRANSPOSED, and the factor was b/3 where
+        # a full-span b needs b/6. The standard result is
+        #     y_mac = (b/6)(1 + 2*lambda)/(1 + lambda) = (b/6) p/q
+        # since y_mac/(b/2) = (1/3) p/q and b here is TIP-TO-TIP (AR = b^2/S).
+        # The old form gave 9.758 m against 7.026 m, 1.389x high.
+        #
+        # Inert in the wing today -- nothing reads y_mac, which is its own
+        # smell -- but the identical expression is live in both tails, where
+        # it sets the moment arms. Fixed in all three.
+        ymac == (b / 6) * p / q,
         # EQUALITY, not a one-sided bound.
         #
         # SPaircraft writes this as mac >= (2/3)(1+lam+lam^2) c_root/q, which
@@ -255,6 +272,43 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
         # No correction here: it is applied inside the box, to W_cap and
         # W_web, so the COMPONENTS match TASOPT and not merely their sum.
         Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs),
+        # REVERTED TO `<=` PENDING THE WING INVESTIGATION.
+        #
+        # As an equality this is the correct statement -- the offset from the
+        # box station to the wing's area centroid is pure planform geometry
+        # and should not be purchasable -- and the optimiser really was
+        # exploiting the one-sided form, driving it to EXACTLY ZERO because
+        # dx_AC_wing appears in the empty-CG moment sum and zeroing it holds
+        # the CG forward for free.
+        #
+        # It is reverted anyway, for two measured reasons. It does NOT do what
+        # it was changed for: it moves the wing box 0.07 m (20.161 -> 20.229)
+        # against the 3.80 m offset from TASOPT it was meant to explain. And
+        # it costs the locked-Mach case its convergence -- 2000 iterations and
+        # 899 s leave stationarity at 6.8e-03, no better than at 400, so it is
+        # a genuine conflict rather than a budget. Restore the equality once
+        # the wing position is understood; the defect it fixes is real.
+        # ORIGINAL NOTE: this is the chordwise offset from the wing box station to
+        # the wing's aerodynamic/area centroid, and for a swept wing it is
+        # pure planform geometry -- the outboard panels sit aft of the root,
+        # so the centroid does too. As a `<=` it was a quantity the optimiser
+        # could move for free, and it drove it to EXACTLY ZERO: dx_AC_wing
+        # appears in the empty-CG moment sum (aircraft.py:1971) as
+        # W_wing*(x_wing + dx_AC_wing), so zeroing it holds the empty CG
+        # forward and buys static margin at no cost.
+        #
+        # The consequence was the largest geometric error in the model. With
+        # the wing's AC pinned to the box station, the only way to put the AC
+        # where trim and stability want it is to move the whole BOX aft -- so
+        # the 737's wingbox sat at 20.16 m against TASOPT's 16.36 m, +3.80 m,
+        # and dragged the rear spar and the main gear aft with it (x_m 22.64 m
+        # against a real 20.5 m, pinned exactly to the rear spar). Comparing
+        # centroid to centroid rather than box to box, the same two aircraft
+        # differ by only +1.22 m: we were placing the BOX where TASOPT places
+        # the CENTROID.
+        #
+        # The formula itself was never wrong -- it evaluates to 2.068 m here
+        # against TASOPT's dxwing of 2.578 m -- only its sense.
         dxACwing <= 1. / 24. * (croot + 5. * ctip) / S * b ** 2 * tanL,
     ]
 

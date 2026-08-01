@@ -112,6 +112,14 @@ def solve(case: Case):
     # with, agreeing to five significant figures on every reported quantity.
     # The locked-Mach case does not reach tolerance in 400 iterations without
     # it and converges in 19 with it.
+    # OFF, deliberately. It is worth 5.5x on the iteration count where it
+    # works -- 240 -> 44 on the pre-dx_AC_wing model, agreeing to five
+    # figures -- but the guarantee it gives up is real: iterates may leave
+    # the feasible set, and on this model that surfaces as a stall rather
+    # than a wrong answer. With dx_AC_wing as an equality it does not certify
+    # in 1500 iterations, where the conservative path converges in 165 with a
+    # clean KKT residual on the original problem. Correctness first; set this
+    # True again for quick exploratory sweeps.
     opts.condense_numerator = True
     res = solve_sia(st, options=opts, presolve=False)
     if not res.converged:

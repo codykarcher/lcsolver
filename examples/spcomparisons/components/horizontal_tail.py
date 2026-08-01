@@ -132,9 +132,20 @@ def add_horizontal_tail(f, N, state, *, sweep_deg=None, prefix="HT_",
         # that was only ever correct because something else happened to pin it.
         dxlead + ymac * tanLh + 0.25 * chma == lht,          # [SP] SigEq
         dxlead + croot <= dxtrail,
-        p >= 1 + 2 * taper,
-        2 * q >= 1 + p,
-        ymac == (bht / 3) * q / p,
+        # EQUALITIES. These bound correctly today (both bind, at 1.6 and 1.3
+        # for taper 0.30) but only because the optimiser happens to want them
+        # tight. They are definitions of substituted variables, not design
+        # freedoms, so they are written as such -- matching the wing.
+        p == 1 + 2 * taper,
+        q == 1 + taper,
+        # TRANSPOSED, and live: this feeds the tail arm two rows above via
+        #     dx_lead + y_mac*tan(Lambda_h) + 0.25*cbar == l_ht
+        # so an inflated y_mac inflates l_ht, which inflates V_ht, which lets
+        # S_ht come out smaller than the tail volume actually demands.
+        # b_ht is TIP-TO-TIP here (AR_ht == b_ht^2/S_h below), so the mean
+        # chord sits at (b/6) p/q, not (b/3) q/p -- 2.939 m against 3.880 m,
+        # 1.320x high, worth about 0.37 m of false tail arm.
+        ymac == (bht / 6) * p / q,
         (2. / 3) * (1 + taper + taper ** 2) * croot / q == chma,    # [SP] SigEq
         taper == ctip / croot,
         Sh == bht * (croot + ctip) / 2,                             # [SP] SigEq
