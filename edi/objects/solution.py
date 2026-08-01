@@ -72,7 +72,8 @@ class Solution:
 
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
-                 solver=None, structure=None, groups=None, ambiguous=None):
+                 solver=None, structure=None, groups=None, ambiguous=None,
+                 holographic=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
@@ -83,6 +84,9 @@ class Solution:
         #: value returned for one of these is a property of which dual vector
         #: was recovered, not of the design.
         self.ambiguous = set(ambiguous or ())
+        #: Holographic constraints found ACTIVE at this solution. Non-empty
+        #: means the answer is on a limit that was declared never to bind.
+        self.holographic = list(holographic or [])
         self.status = status
         self.solver = solver
         self.structure = structure
@@ -183,6 +187,10 @@ class Solution:
             L += ['Constants', '---------'] + self._table(self.constants,
                                                           ndecimal) + ['']
 
+        if self.holographic:
+            from edi.solvers.holographic import format_holographic
+            L += [format_holographic(self.holographic), '']
+
         L += ['Sensitivities', '-------------']
         if not self.constants:
             L += ['   No constants in the formulation', '']
@@ -257,7 +265,7 @@ class Solution:
 
     @classmethod
     def from_model(cls, model, sensitivities=None, status=None, solver=None,
-                   structure=None, ambiguous=None):
+                   structure=None, ambiguous=None, holographic=None):
         """Read the model's current values into a Solution.
 
         Deliberately reads the model handed to it rather than any structure
@@ -318,4 +326,5 @@ class Solution:
                    variables=variables, constants=constants,
                    sensitivities=sensitivities, status=status, solver=solver,
                    structure=structure, ambiguous=ambiguous,
+                   holographic=holographic,
                    groups=cls._group_paths(getattr(model, '_groups', {})))

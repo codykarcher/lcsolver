@@ -193,7 +193,9 @@ def _mark_solved(m):
 
 
 def _attach_sensitivities(m, res, wanted):
-    """Compute sensitivities onto the model, so `f.solution` carries them.
+    """Post-solve reporting: holographic checks, then sensitivities.
+
+    Compute sensitivities onto the model, so `f.solution` carries them.
 
     Default-on because they are the reason to state a quantity as a Constant
     rather than a literal, and as an opt-in nobody ran them. They cost one SVD
@@ -204,7 +206,34 @@ def _attach_sensitivities(m, res, wanted):
     Never fatal. A solve that produced an answer must return it even if the
     duals cannot be recovered from it.
     """
+    import warnings
     _mark_solved(m)
+
+    # Holographic constraints are checked on EVERY solve, not only when a
+    # diagnostic is asked for. An active one means the answer is sitting on a
+    # limit that was declared never to bind -- the edge of a fit, a numerical
+    # box -- and nothing else about the solve looks wrong when that happens.
+    try:
+        from edi.solvers.holographic import (format_holographic,
+                                             holographic_report)
+        active = holographic_report(m)
+        n_tot = len(getattr(m, '_holographic', ()) or ())
+        if isinstance(res, dict):
+            res['holographic_active'] = active
+        m._holographic_cache = active
+        if active:
+            warnings.warn(
+                f"{len(active)} of {n_tot} holographic constraints are ACTIVE "
+                f"at the solution ("
+                + ", ".join(d['name'] for d in active[:3])
+                + (", ..." if len(active) > 3 else "")
+                + "). These were declared as limits that should not bind, so "
+                  "the optimum is on a boundary of the model's validity rather "
+                  "than of the design. Read solution.summary() for the detail.",
+                RuntimeWarning, stacklevel=3)
+    except Exception:
+        pass                                  # a check must never lose a solve
+
     if not wanted or not isinstance(res, dict):
         return res
     try:

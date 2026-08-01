@@ -221,11 +221,18 @@ class Group:
         return self._formulation.Constant(f'{self._prefix}{name}', value,
                                           units, description, **kw)
 
-    def Constraint(self, expr):
-        return self._formulation.Constraint(expr)
+    def Constraint(self, expr, holographic=False):
+        return self._formulation.Constraint(expr, holographic=holographic)
 
-    def ConstraintList(self, conList):
-        return self._formulation.ConstraintList(conList)
+    def ConstraintList(self, conList, holographic=False):
+        return self._formulation.ConstraintList(conList,
+                                                holographic=holographic)
+
+    def HolographicConstraint(self, expr):
+        return self._formulation.HolographicConstraint(expr)
+
+    def HolographicConstraintList(self, conList):
+        return self._formulation.HolographicConstraintList(conList)
 
     def sum(self, vector, axis=None):
         return self._formulation.sum(vector, axis=axis)
@@ -288,6 +295,9 @@ class Formulation(ConcreteModel):
         self._constraint_counter = 0
 
         self._groups = {}
+        #: Names of constraints declared holographic -- there to bound the
+        #: problem, not to shape the answer. See `HolographicConstraint`.
+        self._holographic = set()
         self._sensitivity_cache = None
         #: Set False to let `Variable` omit its guess. See `require_guesses`.
         self._require_guesses = True
@@ -325,7 +335,10 @@ class Formulation(ConcreteModel):
 
         return Solution.from_model(self, sensitivities=self._sensitivity_cache,
                                    ambiguous=getattr(self, '_ambiguous_cache',
-                                                     None))
+                                                     None),
+                                   holographic=getattr(self,
+                                                       '_holographic_cache',
+                                                       None))
 
     def solution_with_sensitivities(self, **kwargs):
         """The solution, with sensitivities computed and attached."""
@@ -656,13 +669,41 @@ class Formulation(ConcreteModel):
     # def RuntimeObjective(self):
     #     pass
 
-    def Constraint(self, expr):
+    def Constraint(self, expr, holographic=False):
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
         self.add_component(conName, pyo.Constraint(expr=expr))
         self._constraint_keys.append(conName)
         self._allConstraint_keys.append(conName)
         self.__dict__[conName].construct()
+        if holographic:
+            self._holographic.add(conName)
+        return conName
+
+    def HolographicConstraint(self, expr):
+        """A constraint that must hold but must not *bind*.
+
+        Some constraints are not part of the design problem; they are there to
+        keep it well posed. A 1e-30..1e30 box that stops a variable running to
+        zero. The edges of the data a fit was made from. A limit that says
+        "beyond here I am not modelling anything, I am extrapolating".
+
+        The answer is only meaningful if none of them is active. An optimum
+        sitting on the edge of a fit's validity is not an optimum, it is the
+        solver telling you it wanted to go somewhere you have no data for, and
+        the number it returned is whatever the fit happened to extrapolate to.
+        That is easy to miss, because the solve converges and the answer looks
+        like any other.
+
+        So they are declared, not merely written, and every solve checks them
+        and says so. Nothing about the constraint itself changes -- it is
+        imposed exactly as an ordinary one -- only that EDI knows to watch it.
+        """
+        return self.Constraint(expr, holographic=True)
+
+    def HolographicConstraintList(self, conList):
+        """`ConstraintList`, with every entry declared holographic."""
+        return self.ConstraintList(conList, holographic=True)
 
     def RuntimeConstraint(self, outputs, operators, inputs, black_box):
         self._constraint_counter += 1
@@ -774,7 +815,7 @@ class Formulation(ConcreteModel):
         """``vector`` repeated as each of ``n`` columns -> ``(len(vector), n)``."""
         return broadcast_cols(vector, n)
 
-    def ConstraintList(self, conList):
+    def ConstraintList(self, conList, holographic=False):
         # An elementwise comparison produces an array of constraints, of
         # whatever shape the operands had. Flatten it, so that
         # `f.ConstraintList(M >= f.broadcast_rows(cap, n))` reads the way it
@@ -792,7 +833,7 @@ class Formulation(ConcreteModel):
             elif isinstance(con, dict):
                 self.RuntimeConstraint(**con)
             else:
-                self.Constraint(con)
+                self.Constraint(con, holographic=holographic)
 
     def get_variables(self):
         return [
