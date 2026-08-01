@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from numpy import cos, pi, tan
 
-from .polars import (TASOPT_ARE_XP, TASOPT_TAIL_CDF,
+from .polars import (POLARS, TASOPT_ARE_XP, TASOPT_TAIL_CDF,
                      TASOPT_TAIL_CDP, TASOPT_TAIL_REREF)
 from .wingbox import add_wingbox
 
@@ -158,9 +158,16 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
 
     # ---- structure, on the doubled span -----------------------------------
     box = vt.group("box", prefix=f"{vt.prefix}box_")
+    # `material` was not being passed, so the fin box silently fell back to
+    # add_wingbox's default aluminium (250 MPa) while the wing and horizontal
+    # tail took theirs from the technology level. Under TECH=cfm56_era that
+    # left the fin sized on 2020s allowables and therefore too light -- the
+    # kind of gap that shows up as agreement, because a lighter fin makes the
+    # aeroplane closer to a reference it should not have matched that way.
     wb, wbcons = add_wingbox("vertical_tail", AR=ARvt, b=2. * bvt,
                              S=2. * Svt, p=p, q=q, tau=tau, Lmax=2. * Lvmax,
-                             group=box, tau_limits=tau_limits,
+                             group=box, material=material,
+                             tau_limits=tau_limits,
                              cosL=cosLv if sweep_pricing else None)
     cons += wbcons
     out["box"] = wb
@@ -198,6 +205,16 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
             + 0.000196709 * Rec ** 0.214479 * tau ** -0.0383195 * M ** -0.137561
             + 6.59349e-50 * Rec ** -0.498092 * tau ** 1.55922 * M ** -114.577),
         ]
+    elif drag_model == "mses":
+        # T-series MSES surrogate, CL-independent (fit at CL=0.1, which is
+        # where a tail actually lives). Replaces TASOPT's two Mach-independent
+        # constants with a fit that has a real transonic rise -- CD roughly
+        # 9x between M 0.70 and 0.85 on a 12% section -- so the PERPENDICULAR
+        # Mach is what must be fed here, not the flight Mach. Getting that
+        # wrong would be a large error rather than a small one.
+        _tp = POLARS["mses_t_tail"]
+        cons += [(CDvis / _tp.cd_ref) ** _tp.alpha
+                 >= _tp.cd(Rec, tau, cosLv * M, 1.0)]
     else:
         raise ValueError(f"unknown tail drag_model {drag_model!r}")
 
