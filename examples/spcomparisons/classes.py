@@ -82,7 +82,67 @@ class SizeClass:
     # Expected to differ by class: a light twin with a short moment arm and a
     # widebody with four engines do not share a rudder-authority margin.
     k_mcg: float = 0.88
-    l_nose_min_m: float = 4.0
+    # MINIMUM NOSE-GEAR LOAD FRACTION, imposed at the AFT CG limit -- the
+    # tip-back case, where the nose carries least. A CALIBRATION, not a rule,
+    # and it needs to be per class because it selects the gear layout.
+    #
+    # 0.11 is chosen against the REAL 737: wheelbase 15.72 m against 15.3,
+    # main gear 21.64 against 20.5, nose gear 5.92 against 5.2. The classic
+    # design band is 8-15%, so it sits mid-band and is defensible on its own
+    # terms too.
+    #
+    # RE-CALIBRATED. It was 0.10, chosen before cm_section was split into
+    # cruise and landing values. That split raised the flaps-down wing
+    # moment threefold, moved the CG envelope, and dropped the solution back
+    # onto the long-wheelbase branch at 0.10 (nose gear 2.24 m, B 18.62).
+    # The branch boundary now sits between 0.10 and 0.11.
+    #
+    # TASOPT is NOT the reference here, and deliberately so. Its own 737 puts
+    # the main gear 1.00 ft behind its aft CG limit -- a 1.94% nose load, an
+    # aeroplane that would sit on its tail -- because TASOPT has no nose-load
+    # check anywhere, so nothing reconciles gear stations taken from the real
+    # aircraft against a LOADABILITY-extreme aft CG the real aircraft is never
+    # loaded to. Its gear stations cannot be a target for a model that does
+    # check the load.
+    #
+    # Handle with care: the response is not smooth. Between 0.09 and 0.10 the
+    # solution jumps between two branches -- a long-wheelbase layout with the
+    # nose gear far forward (x_n 2.76, B 17.53) and a short one with it aft
+    # (x_n 5.63, B 15.34) -- at almost equal cost, 1.045 against 1.049 MTOW.
+    # Changing this constant selects a branch rather than nudging a trend, so
+    # re-check the geometry after any change rather than interpolating.
+    f_nose_load_min: float = 0.11
+    # NOSE LENGTH, metres: nose tip to the front of the pressure shell. The
+    # SECOND of TASOPT's two independent nose inputs -- xshell1 in the deck
+    # (runs/737/737s.tas:294, 17.0 ft = 5.182 m), separate from and unrelated
+    # to xlgnose below. TASOPT derives neither from the other, nor either from
+    # fuselage radius.
+    #
+    # 4.0 was a placeholder default that only the Citation ever overrode, and
+    # once the 1.2-calibre rule was removed it became the ONLY thing setting
+    # nose length -- so the 737 was sizing its nose off a made-up number and
+    # came out 1.18 m short.
+    #
+    # Only the 737 value is sourced; the rest await decks or drawings.
+    l_nose_min_m: float = 5.182
+    # NOSE GEAR STATION, metres aft of the nose tip. An INPUT, exactly as in
+    # TASOPT, where xlgnose is a line in the deck (runs/737/737s.tas:340,
+    # 14.0 ft = 4.267 m) and is derived from nothing.
+    #
+    # This replaces `lg.x_n >= fu.l_nose`, which required the nose gear to sit
+    # at or behind the front of the pressure shell. TASOPT's own 737 breaks
+    # that by 0.92 m -- xlgnose 4.267 against xshell1 5.182 -- because the
+    # gear bay lives in the UNPRESSURISED nose section, ahead of the forward
+    # bulkhead, which is where a nose gear actually goes. The constraint was
+    # enforcing a relationship the reference aircraft does not satisfy, and
+    # with the gear pinned to it the 15% nose-load rule dragged the whole nose
+    # cone down onto whatever floor was underneath.
+    #
+    # ONLY THE 737 VALUE IS SOURCED. The others are placeholders pending decks
+    # or drawings, and are flagged rather than silently scaled -- a nose gear
+    # station is not a function of fuselage radius, which is the assumption
+    # that produced the calibre rule this replaces.
+    x_lg_nose_m: float = 4.267
     # Cabin length ABOVE the seat rows: galleys, lavatories, doors, exit rows.
     # Additive rather than a fraction of seat-row length, because these are
     # physically fixed objects -- a galley does not shrink when the cabin has

@@ -557,6 +557,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # is conservative and, imposed here, distorts the layout -- it pushes the
     # wing aft and stretches the nose to 10.4 m to find the moment arm.
     V_HT_FLOOR = float(_os.environ.get("V_HT_FLOOR", 0.01))
+    # Minimum nose-gear load fraction at the AFT CG. Per class, because it
+    # selects the gear layout rather than nudging it. See
+    # SizeClass.f_nose_load_min for the calibration and its branch behaviour.
+    f_nose_min = getattr(size_class, "f_nose_load_min", 0.10)
     CLhrot = C("C_L_h_rotate", 1.25, "-",
                "HT lift coefficient available at takeoff rotation")
     # Wing C_L at the GROUND attitude with takeoff flaps -- the aeroplane is
@@ -629,11 +633,29 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     CLMf0 = C("C_L_Mf0", 0.185, "-", "C_L at which the fuselage moment is zero")
     dCLhdCL = C("dCLh_dCL", 0.55, "-", "tail lift response to aircraft C_L")
     xNPt = V("x_NP_tasopt", 15.0, "m", "neutral point, TASOPT balance.f form")
+    # SECTION PITCHING MOMENT, |c_m|, BY MISSION CASE.
+    #
+    # TASOPT carries three (runs/737/737s.tas:186-203): -0.20 takeoff and
+    # initial climb, -0.06 clean climb/cruise/descent, and -0.35 for the
+    # landing, forward-CG tail sizing case. A wing with flaps down has a far
+    # larger nose-down moment, and that is what the tail has to balance.
+    #
+    # We had ONE, 0.12, feeding both the per-segment cruise relation and the
+    # forward-CG landing trim row. It cannot serve both: they are a factor of
+    # six apart. 0.12 was a compromise, so the cruise case was twice too
+    # strong and the landing case three times too weak.
     cm_sec = C("c_m_section", 0.12, "-",
-               "section pitching moment magnitude, transonic supercritical")
+               "section |c_m|, clean/cruise. Kept at 0.12 rather than "
+               "TASOPT's 0.06: this is a supercritical section and the "
+               "model's own cruise relation is calibrated against it.")
+    cm_sec_land = C("c_m_section_land", 0.35, "-",
+                    "section |c_m|, landing with flaps deployed -- TASOPT's "
+                    "forward-CG tail sizing case, 737s.tas:201")
     eta_surf = V("eta_surfcm", 0.1, "-", "centrebody fraction of span, bo/b")
     Kc_cm = V("Kc_surfcm", 0.67, "-", "surfcm chord-weighted span factor")
     cmw = V("c_m_w_val", 0.05, "-", "wing pitching moment magnitude |CM0|")
+    cmw_land = V("c_m_w_land", 0.15, "-",
+                 "wing |CM0| with flaps down, forward-CG tail sizing case")
 
     # OBJECTIVE. Normally fuel burn; PUSH_XM swaps in 1/x_m so the solver
     # maximises the main gear station instead. That turns "how far aft can the
@@ -888,11 +910,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # pointing the other way, because the load band constrains the RATIO
         # dx_m/B and is happy to buy it with a long wheelbase.
         #
-        # Referencing l_nose rather than SPaircraft's hard 5 m is what lets one
-        # row serve the whole matrix: l_nose carries its own fineness floor
-        # (1.2 calibre), so this scales down for a Citation and up for a 787,
-        # where a fixed 5 m forced a 787's nose onto a light twin.
-        lg.x_n >= fu.l_nose,
+        # NOSE GEAR IS FREE, and carries NO dependency on the nose cone.
+        #
+        # Two rows have stood here and both were wrong. `x_n >= l_nose`
+        # required the gear at or behind the front of the pressure shell,
+        # which TASOPT's own 737 violates by 0.92 m -- xlgnose 4.267 against
+        # xshell1 5.182 -- because the bay sits in the unpressurised nose.
+        # Pinning x_n to TASOPT's xlgnose instead fixed the geometry but
+        # made the station an input where it can be a result.
+        #
+        # The cone length is now specified (l_nose == 5.182 for the 737),
+        # so the two are decoupled: the cone is geometry, the gear station
+        # is placed by the load rules -- the 15% maximum, which wants a long
+        # wheelbase and so pulls the gear forward, against the aft-CG 8%
+        # minimum and the weight of the leg itself.
         lg.x_m >= fu.x_wing,
         # The gear may not hang off the back of the wing: aft limit is the local
         # trailing edge. This REPLACES `x_m <= dx_AC_wing + x_wing`, which
@@ -999,7 +1030,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # physical consequence -- at the aft CG limit the nose was carrying
         # 1.0% and the aeroplane sits on its tail -- and the forward end stays
         # where it was until there is an operational envelope to hang it on.
-        xCGaft + 0.08 * lg.B <= lg.x_m,
+        xCGaft + f_nose_min * lg.B <= lg.x_m,
         lg.L_n <= 0.15 * W_totalmax,
         lg.L_m == W_totalmax * lg.dx_n / lg.B,
         lg.L_n_dyn >= 0.31 * ((lg.z_CG + lg.l_m) / lg.B) * W_totalmax,
@@ -1710,7 +1741,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
          + (xCG[Nclimb] + ht.dx_lead_ht + 0.25 * ht.c_root_ht)
            * CLhfwd * ht.S_ht
          + CMVf1 * CLpmax)
-        == (wing.c_root * cmw * wing.S
+        == (wing.c_root * cmw_land * wing.S
             + fu.x_wing * CLpmax * wing.S
             + fu.x_wing * CLhfwd * ht.S_ht
             + wing.c_root * CMw1 * CLpmax * wing.S
@@ -2019,6 +2050,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             * eta_surf * wing.cos_Lambda ** 4
             == cm_sec * (1.0 + wing.lambda_ + wing.lambda_ ** 2)
                * wing.cos_Lambda ** 4,                          # [SP] SigEq
+        # The same CM0 relation at the LANDING section moment. Identical
+        # geometry, different c_m -- TASOPT re-runs surfcm per mission case
+        # for exactly this reason, and the forward-CG tail sizing case is the
+        # flaps-down one.
+        3.0 * cmw_land * Kc_cm + cm_sec_land * (1.0 + wing.lambda_
+                                                + wing.lambda_ ** 2)
+            * eta_surf * wing.cos_Lambda ** 4
+            == cm_sec_land * (1.0 + wing.lambda_ + wing.lambda_ ** 2)
+               * wing.cos_Lambda ** 4,                          # [SP] SigEq
         # ---- surfcm CM1, the other half of the port ------------------------
         # CM0 above was ported; CM1 was left as a constant, and CM1 is the
         # term that carries the box-to-aerodynamic-centre offset. See the
@@ -2164,10 +2204,21 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # was doing the work, which is what these rows are. None of them is a
     # bound for the solver's benefit -- each is a real geometric limit.
     cons += [
-        # A cockpit is a cockpit: roughly size-independent, and it sets the
-        # floor for the small classes where a fineness rule alone would let
-        # the nose collapse.
-        fu.l_nose >= size_class.l_nose_min_m * units.m,
+        # NOSE LENGTH IS AN INPUT, the second of TASOPT's two nose numbers
+        # (xshell1, deck line 294 = 17.0 ft = 5.182 m) alongside xlgnose.
+        #
+        # It used to be a floor standing in for a cockpit, backing up the
+        # 1.2-calibre fineness rule. With that rule gone this was the only
+        # thing left setting nose length, and it was a placeholder 4.0 m that
+        # only the Citation had ever overridden -- so the 737 sized its nose
+        # off a made-up number, came out 1.18 m short, and took the fuselage
+        # with it (l_fuse 0.940 of the real aircraft, failing the check, while
+        # the tailcone was if anything too LONG at 7.21 m against TASOPT's
+        # 6.71). The whole deficit was in the nose.
+        #
+        # Equality rather than a floor for the same reason as x_lg_nose: this
+        # is a specified station, not a limit the optimiser trades against.
+        fu.l_nose == size_class.l_nose_min_m * units.m,       # [SP] SigEq
         # Nose fineness. Below about 1.2 calibre the flow separates and the
         # drag model here -- which has no separation term -- stops being
         # honest, so this keeps the optimiser inside the fits validity.
@@ -2187,7 +2238,22 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # structure for it. Tying nose length to diameter removes the lever
         # and still scales by class -- 1.2 calibres puts the 737's cabin start
         # at 4.45 m, which is where it actually is.
-        fu.l_nose == 1.2 * 2.0 * fu.R_fuse,                   # [SP] SigEq
+        # REMOVED: `l_nose >= 1.2 * 2 * R_fuse`.
+        #
+        # It was a drag-fit validity fence wearing geometry's clothes -- the
+        # nose polars carry no separation term, so a blunt nose leaves the
+        # data they were fitted to. That is a reason to WATCH the fineness
+        # ratio, not to let it set a length.
+        #
+        # Nose length is an INPUT in TASOPT (xlgnose), and it is set by what
+        # the nose contains -- cockpit, avionics bay, radar, gear bay -- none
+        # of which scales with fuselage radius. The per-class floor at
+        # SizeClass.l_nose_min_m is the honest control and remains below.
+        #
+        # What actually drives the length is the gear: the 15% nose-load
+        # maximum wants a long wheelbase, which wants the nose gear forward,
+        # which through `x_n >= l_nose` wants a SHORT nose. So it runs down
+        # to whatever floor exists.
         # Tailcone at least two calibres long, for rotation clearance. This
         # is a genuine trade rather than a formality: a shorter cone shortens
         # the tail arm, which the tail volume coefficients pay for in tail
