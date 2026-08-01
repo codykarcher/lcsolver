@@ -301,7 +301,7 @@ def build(engine: str = "CFM56") -> Formulation:
 
 
 def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
-               prefix: str = ""):
+               prefix: str = "", n_eng: float = 2.0):
     """Add one turbofan to ``f``, sharing geometry across ``N`` segments.
 
     ``state`` supplies the per-segment freestream as ``P_atm``, ``T_atm``,
@@ -810,9 +810,29 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
             TSFC[i] == 1 / Isp[i],
         ]
 
-        # engine weight (TASOPT data fit, relaxed to an inequality)
+        # ENGINE WEIGHT (TASOPT data fit, relaxed to an inequality).
+        #
+        # DIVIDED BY n_eng. The fit reproduces TASOPT's Webare, and tfweight.f
+        # builds that as `Webare = We1 * neng` -- a SET total, not one engine.
+        # This variable is a single turbofan, and the aircraft multiplies it
+        # by n_eng again, so the engine set was counted twice.
+        #
+        # The evidence is exact rather than inferred. At the sizing segment
+        # our core flow is 44.87 kg/s = 98.9 lb/s, so the (m_core/100 lb/s)
+        # normaliser is 0.989 and the fit returns essentially 9.81*K = 7,860
+        # lbf -- TASOPT's Webare of 7,870.7 to within 0.1%. Against TASOPT's
+        # PER-ENGINE bare of 3,935 lb that is a ratio of 1.975.
+        #
+        # Corrected, our engine set lands on TASOPT's Webare exactly. Both are
+        # then about 0.75 of a real CFM56-7B (5,216 lbf each, 10,432 the pair,
+        # see PUBLISHED["CFM56"] in reference.py) -- so TASOPT is 25% light on
+        # this engine and we now inherit that rather than compounding it.
+        #
+        # NOTE the fit was made against twins. Dividing by n_eng recovers the
+        # per-engine weight only if that holds; a four-engine deck would need
+        # the fit revisited, not just the divisor changed.
         cons += [
-            W_engine / units.kg >= (mtot[i] / alphap1[i])
+            W_engine / units.kg >= (mtot[i] / alphap1[i]) / n_eng
                 * ((1 / (100 * units.lb / units.s)) * 9.81 * units.m / units.s ** 2)
                 * (1684.5 + 17.7 * (pif[i] * pilc[i] * pihc[i]) / 30
                    + 1662.2 * (alpha[i] / 5) ** 1.2),

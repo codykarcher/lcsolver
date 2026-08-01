@@ -39,12 +39,23 @@ from .polars import POLARS, YORK_C
 from .wingbox import add_wingbox
 
 
-#: Cranked-planform weight credit: divides this box's cap and web weights.
-#: A real transport wing is cranked and carries root bending more efficiently
-#: than the single taper line this closed form integrates, so the closed form
-#: over-predicts by a roughly constant factor. See the note at its use in
-#: wingbox.py for the measurement it is calibrated against.
-F_CRANKED = 1.2
+#: NO WING WEIGHT CORRECTION. Two lived here and both are gone.
+#:
+#: F_CRANKED = 1.2 credited the box for a cranked planform carrying root
+#: bending more efficiently than the single taper line the closed form
+#: integrates. F_TASOPT_WING = 0.8 was added on top, calibrated because
+#: the wing read 31,558 lbf against TASOPT's 23,717 -- a ratio of 1.331
+#: that looked like a wing-model error.
+#:
+#: It was not. The aircraft carrying that wing had DOUBLE the engine
+#: weight it should have (the weight fit returns a set total; see
+#: turbofan/model.py), so it was some 7,800 lbf heavy plus snowball and
+#: the wing was correctly sized for that heavier aeroplane. The 1.331
+#: was measuring the engine error.
+#:
+#: With the engine corrected both credits are removed and the box stands
+#: on its own arithmetic. Calibrating a constant against a symptom hides
+#: the cause and then has to be undone.
 
 
 def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
@@ -254,7 +265,7 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     wb, wbcons = add_wingbox("wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
                              Lmax=Lmax, tau_max=tau_max, group=box,
                              cosL=cosL if sweep_pricing else None,
-                             material=material, weight_credit=F_CRANKED)
+                             material=material)
     cons += wbcons
     out["box"] = wb
 

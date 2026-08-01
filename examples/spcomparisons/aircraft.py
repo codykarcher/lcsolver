@@ -267,8 +267,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             eng_key = "D82_LH2" if arch.fuel == "lh2" else "D82_SPaircraft"
         else:
             eng_key = size_class.engine + ("_LH2" if arch.fuel == "lh2" else "")
+        # n_eng so the weight fit can return ONE engine: it reproduces
+        # TASOPT's Webare, which tfweight.f builds as We1*neng.
         eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
-                            prefix="Eng_"); cons += c
+                            prefix="Eng_",
+                            n_eng=(float(size_class.n_fans) if electric
+                                   else 2.0)); cons += c
 
     # ---- aircraft-level scalars -------------------------------------------
     W_total = V("W_total", 1.4e5, "lbf", "total aircraft weight")
