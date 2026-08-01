@@ -40,7 +40,8 @@ from .wingbox import add_wingbox
 
 
 def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
-             rho_fuel=817.0, material=None, sweep_pricing=False, polar=YORK_C):
+             rho_fuel=817.0, material=None, sweep_pricing=False, polar=YORK_C,
+             box_model="hoburg", W_engine=None):
     """Add the wing (geometry + structure + per-segment aero) to ``f``.
 
     ``state`` supplies the per-segment freestream: rho, V, M, mu.
@@ -155,6 +156,19 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
         #
         # The mean aerodynamic chord is determined by the planform. It is an
         # equality.
+        # p and q are DEFINED here. They are described at their declaration as
+        # "1 + 2 taper" and "1 + taper" and were never constrained to be so --
+        # inherited that way from SPaircraft, where the closed-form wing box
+        # consumes both (nu**3.94 >= 0.86 p**-2.38 + ..., 12 >= AR Lmax q**2/...)
+        # and pins them implicitly. That is not a definition, it is a
+        # coincidence of which model happens to read them, and it broke the
+        # moment the TASOPT box -- which uses neither -- was selected: q
+        # inflated from 1.15 to 1.56, and since mac = (2/3)(1+l+l^2) c_root/q
+        # that shrank the mean chord 20%, which took the horizontal tail from
+        # 31.8 to 20.1 m2 because V_ht is referenced to mac. Free, because
+        # nothing else read q.
+        p == 1 + 2 * taper,
+        q == 1 + taper,
         (2. / 3) * (1 + taper + taper ** 2) * croot / q == mac,   # [SP] SigEq
         taper == ctip / croot,
         S == b * (croot + ctip) / 2,                                # [SP] SigEq
@@ -198,6 +212,10 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
 
     # ---- structure --------------------------------------------------------
     box = wing.group("box", prefix=f"{wing.prefix}box_")
+    # The closed-form box, over this single-taper planform. The station-based
+    # TASOPT box lives with the cranked planform it was derived for, in
+    # wing_tasopt.py -- pairing it with this geometry left the wing's taper
+    # priced by nothing and drove it to 0.42.
     wb, wbcons = add_wingbox("wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
                              Lmax=Lmax, tau_max=tau_max, group=box,
                              cosL=cosL if sweep_pricing else None,
@@ -270,7 +288,9 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     # section c_l, and the perpendicular Mach it stops being valid at.
     _polar = POLARS[polar] if isinstance(polar, str) else polar
     _cl = CLw / cosL ** 2 if _polar.perp_cl else CLw
-    cons += [CDp ** _polar.alpha
+    # Normalised polars carry a cd_ref (1.0 for the un-normalised ones), so
+    # the same row serves both. See Polar.cd and polars.from_yaml.
+    cons += [(CDp / _polar.cd_ref) ** _polar.alpha
              >= _polar.cd(Re, tau, cosL * M, _cl) * _polar.re_factor(Re)
              ** _polar.alpha]
     if _polar.m_perp_max is not None:
