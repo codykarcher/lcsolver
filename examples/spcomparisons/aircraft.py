@@ -599,8 +599,31 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # sweep, all of which already exist as variables -- is the next step, and
     # is what the matrix will need. The cruise case gives -0.37782 on the same
     # deck, so the spread across mission points is about 12%.
-    CMw1 = C("C_M_w1", 0.337, "-", "|wing dCM/dCL| about the box axis "
-             "(NEGATIVE; sign applied at each use). surfcm.f on the 737 deck.")
+    # Now a VARIABLE, computed by the surfcm CM1 rows further down rather than
+    # pinned. The constant it replaces was 0.337, TASOPT's 737-deck value; our
+    # own unbroken planform at 25 degrees evaluates to 0.3694, so even for the
+    # aircraft it was calibrated on it was 9% off, and it would not have
+    # travelled to the D8, the 787 or the Citation at all -- CM1's dominant
+    # term is -(tanL/Ko)C2/12, so it scales with sweep and aspect ratio.
+    CMw1 = V("C_M_w1", 0.37, "-", "|wing dCM/dCL| about the box axis "
+             "(NEGATIVE; sign applied at each use), surfcm.f CM1")
+    # surfcm CM1 workspace. gam_s = lambdas*rcls with lambdas = 1 for an
+    # unbroken wing, so it is just rcls and stays a constant; gam_t follows
+    # the taper and is therefore a variable.
+    gam_t = V("gamma_t_cm", 0.125, "-", "surfcm tip lift-taper, lambda_t*rclt")
+    C1_cm = V("C1_surfcm", 1.19, "-", "surfcm C1")
+    C2_cm = V("C2_surfcm", 1.09, "-", "surfcm C2")
+    Kp_cm = V("Kp_surfcm", 0.62, "-", "surfcm load-weighted span factor")
+    # TASOPT 737 deck (runs/737/737s.tas): Xaxis 0.40 spar box axis x/c,
+    # fLo -0.3 fuselage lift carryover loss, fLt -0.05 tip lift rolloff, and
+    # the FORWARD-CG TAIL SIZING case rcls 1.1 / rclt 0.5 -- which is the case
+    # this trim row is, so those are the right two of the three mission sets.
+    Xax_m = C("X_axis_m_qc", 0.40 - 0.25, "-", "spar box axis aft of c/4, x/c")
+    fLo_cm = C("f_L_o", -0.3, "-", "fuselage lift carryover loss factor")
+    fLt_a = C("f_L_t_abs", 0.05, "-", "|tip lift rolloff factor|")
+    gam_s = C("gamma_s_cm", 1.1, "-", "surfcm break lift-taper = rcls "
+              "(lambdas = 1, unbroken wing)")
+    rclt_cm = C("rclt", 0.5, "-", "tip/root cl ratio, forward-CG case")
     CMh0 = C("C_M_h0", 0.02, "-", "|tail zero-lift moment|")
     CMh1 = C("C_M_h1", 0.30, "-", "|tail dCM/dCL|")
     CLMf0 = C("C_L_Mf0", 0.185, "-", "C_L at which the fuselage moment is zero")
@@ -945,7 +968,38 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Forward gear margin: the nose gear carries 8-15% of the weight. This
         # is what places a nose gear, and it replaces the hard `x_n >= 5 m`
         # that used to sit in landing_gear.py sizing every aircraft's nose.
-        lg.L_n >= 0.08 * W_totalmax,
+        # AT THE CG EXTREMES, not at the cruise CG.
+        #
+        # These were written against L_n == W*dx_m/B with dx_m measured from
+        # xCG[Nclimb] -- the CRUISE CG -- so the band was being satisfied at a
+        # loading condition that never governs. The nose carries LEAST at the
+        # aft CG and MOST at the forward CG; checking the middle guarantees
+        # neither. With the wing correctly placed the consequence was
+        # immediate and severe: the gear sat 0.137 m aft of the aft CG limit,
+        # 1.0% nose load against the 8% minimum, which is an aeroplane that
+        # sits on its tail.
+        #
+        # x_m >= xCGaft + 0.08*B is posynomial <= monomial and so plain GP;
+        # the forward one reverses and is signomial.
+        # ONLY THE AFT ONE MOVES. Imposing BOTH ends over the full envelope is
+        # arithmetically impossible here and it is worth recording why:
+        #
+        #     xCGaft + 0.08 B <= x_m <= xCGfwd + 0.15 B
+        #  => travel <= 0.07 B  =>  B >= 1.9/0.07 = 27.1 m
+        #
+        # against a 13.25 m wheelbase. The sub-problem goes infeasible. This
+        # is NOT specific to this model: TASOPT's own 737 carries 2.34 m of
+        # travel on a 15.68 m wheelbase, travel/B = 0.149, and would fail the
+        # same band -- which is why TASOPT does not impose one. Real aircraft
+        # meet 8-15% because their CERTIFIED envelope is about 0.8 m, far
+        # narrower than the LOADABILITY extreme cglpay computes; the gap is
+        # operational loading rules, which this model does not have.
+        #
+        # So the aft end is imposed, because it is the one with a hard
+        # physical consequence -- at the aft CG limit the nose was carrying
+        # 1.0% and the aeroplane sits on its tail -- and the forward end stays
+        # where it was until there is an operational envelope to hang it on.
+        xCGaft + 0.08 * lg.B <= lg.x_m,
         lg.L_n <= 0.15 * W_totalmax,
         lg.L_m == W_totalmax * lg.dx_n / lg.B,
         lg.L_n_dyn >= 0.31 * ((lg.z_CG + lg.l_m) / lg.B) * W_totalmax,
@@ -1965,6 +2019,44 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             * eta_surf * wing.cos_Lambda ** 4
             == cm_sec * (1.0 + wing.lambda_ + wing.lambda_ ** 2)
                * wing.cos_Lambda ** 4,                          # [SP] SigEq
+        # ---- surfcm CM1, the other half of the port ------------------------
+        # CM0 above was ported; CM1 was left as a constant, and CM1 is the
+        # term that carries the box-to-aerodynamic-centre offset. See the
+        # note at the C_M_w1 declaration for what that cost.
+        #
+        # For an unbroken wing (etas = etao, lambdas = 1) surfcm collapses to
+        #     Kc = etao + (1/2)(1+lt)(1-etao)              [Kc_cm, above]
+        #     Ko = 1/(AR*Kc)
+        #     Kp = etao(1+fLo) + (1/2)(gs+gt)(1-etao) - 2|fLt| gt lt/(AR Kc)
+        #     C1 = (gs + (1/2)(gt + gs lt) + lt gt)(1-etao)
+        #     C2 = (gs + 2 gt)(1-etao)^2
+        # with gs = rcls (lambdas = 1) and gt = lt*rclt.
+        #
+        # CM1 is NEGATIVE, so CMw1 carries its magnitude and the dominant
+        # sweep term -(tanL/Ko)C2/12 becomes the positive side. Note 1/Ko is
+        # AR*Kc, so no reciprocal is needed. Every term below is positive,
+        # which is why this is only a signomial equality and not worse.
+        gam_t == wing.lambda_ * rclt_cm,
+        C1_cm + (gam_s + 0.5 * (gam_t + gam_s * wing.lambda_)
+                 + wing.lambda_ * gam_t) * eta_surf
+            == (gam_s + 0.5 * (gam_t + gam_s * wing.lambda_)
+                + wing.lambda_ * gam_t),                        # [SP] SigEq
+        C2_cm + (gam_s + 2.0 * gam_t) * 2.0 * eta_surf
+            == (gam_s + 2.0 * gam_t) * (1.0 + eta_surf ** 2),   # [SP] SigEq
+        Kp_cm + 2.0 * fLt_a * gam_t * wing.lambda_
+                / (wing.AR * Kc_cm)
+                + 0.5 * (gam_s + gam_t) * eta_surf
+            == eta_surf * (1.0 + fLo_cm)
+               + 0.5 * (gam_s + gam_t),                         # [SP] SigEq
+        CMw1 * Kp_cm
+            + eta_surf * (1.0 + fLo_cm) * Xax_m
+            + Xax_m * wing.cos_Lambda ** 2 * C1_cm / 3.0
+            + fLt_a * wing.lambda_ * gam_t * wing.tan_Lambda
+            == wing.tan_Lambda * wing.AR * Kc_cm * C2_cm / 12.0
+               + 2.0 * fLt_a * wing.lambda_ ** 2 * gam_t * Xax_m
+                 * wing.cos_Lambda ** 2 / (wing.AR * Kc_cm)
+               + fLt_a * wing.lambda_ * gam_t * wing.tan_Lambda
+                 * eta_surf,                                    # [SP] SigEq
     ]
 
     # Maximum wing C_L falls with sweep: the 2.15 is a section value and the
