@@ -48,6 +48,8 @@ from edi.presolve.reductions import (  # noqa: F401
     presolve,
     presolve_report,
     structure_report,
+    rigidity_report,
+    rigidity_text,
 )
 from edi.presolve.structureDetector import (  # noqa: F401
     structure_detector,
@@ -67,6 +69,8 @@ __all__ = [
     "structure_detector",
     "optimization_check",
     "structure_report",
+    "rigidity_report",
+    "rigidity_text",
     "presolve",
     "presolve_report",
     "PresolveReport",

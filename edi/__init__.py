@@ -55,7 +55,8 @@ from edi.solvers.sensitivity import (
 )
 from edi.presolve import (FeasibilityResult, feasibility,
                           optimization_check, structure_detector,
-                          structure_report, UnitCheck, unit_check,
+                          structure_report, rigidity_report,
+                          rigidity_text, UnitCheck, unit_check,
                           unit_corrector)
 
 # `from edi import units` gives Pyomo's units container, so a model needs one
@@ -79,6 +80,8 @@ __all__ = [
     "units",
     "optimization_check",
     "structure_report",
+    "rigidity_report",
+    "rigidity_text",
     "structure_detector",
     "unit_check",
     "UnitCheck",

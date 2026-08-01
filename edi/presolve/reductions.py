@@ -171,6 +171,9 @@ class PresolveReport:
     singleton_rows: list = field(default_factory=list)
     duplicate_rows: int = 0
     row_counts: dict = field(default_factory=dict)
+    #: `rigidity_report` output, filled in by `optimization_check`. Needs no
+    #: solution -- it is a property of the equality system alone.
+    rigidity: dict = field(default_factory=dict)
 
     @property
     def clean(self):
@@ -249,6 +252,9 @@ class PresolveReport:
         if self.clean:
             L.append("  no empty columns and every variable is bounded "
                      "both ways")
+        if self.rigidity:
+            L.append("")
+            L.append(rigidity_text(self.rigidity))
         return "\n".join(L)
 
     def post_solve_text(self):
@@ -1560,6 +1566,234 @@ def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
 
 
 
+def _equality_graph(structures, names=None):
+    """``(edges, rows, n)`` for the bipartite equality/variable graph.
+
+    ``edges[i]`` is the variable set of equality row ``i``. Plain
+    single-variable equalities are kept: ``x == 3`` really does consume a
+    degree of freedom, and dropping it would overstate how free the model is.
+    """
+    st = as_detected(_as_structures(structures))
+    if names is None:
+        # Read the names off the DETECTED object, not the argument: a
+        # Formulation is not a mapping, and taking the same route as the rows
+        # is what keeps name index and column index the same index.
+        names = [str(v) for v in (st.variables or [])]
+    rows, edges = [], []
+    n = len(names)
+    for i in st.constraint_indices:
+        if st.operator(i) != "==":
+            continue
+        touched = set()
+        for t in st.terms(i):
+            touched |= t.variables
+        if touched:
+            rows.append(i)
+            edges.append(touched)
+            n = max(n, max(touched) + 1)
+    return edges, rows, n, list(names)
+
+
+def _max_matching(edges, n):
+    """Kuhn's algorithm: match equality rows to variables they determine.
+
+    The matching size is the STRUCTURAL rank of the equality system -- how
+    many variables the equalities can pin between them, ignoring numerics.
+    Structural rank is an upper bound on the true rank, so a system this
+    calls under-determined genuinely is; one it calls square may still be
+    numerically singular.
+    """
+    match_var = {}                       # variable -> row that determines it
+    match_row = [-1] * len(edges)
+
+    def augment(i, seen):
+        for j in edges[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            owner = match_var.get(j)
+            if owner is None or augment(owner, seen):
+                match_var[j] = i
+                match_row[i] = j
+                return True
+        return False
+
+    import sys
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 10 * len(edges) + 1000))
+    try:
+        for i in range(len(edges)):
+            augment(i, set())
+    finally:
+        sys.setrecursionlimit(limit)
+    return match_var, match_row
+
+
+def rigidity_report(structures, names=None, cluster_max=12):
+    """Degrees of freedom, per variable, from the equality system alone.
+
+    A model's variable count is not its degree-of-freedom count. Every
+    equality spends one. This walks the bipartite graph of equality rows
+    against the variables they touch and reports what is actually free,
+    which answers three questions that a variable list cannot:
+
+    **Which variables are no longer design variables?** A variable an
+    equality determines is an OUTPUT wearing a design variable's clothes.
+    Writing an identity is the standard way to create one, and it is usually
+    correct -- but it silently removes a degree of freedom that other
+    constraints may have been relying on. Diff this list across a change and
+    the removed freedoms are exactly what you took away.
+
+    **Is any group of equalities over-determined?** More equations than
+    variables to absorb them means no assignment satisfies them all except by
+    numerical coincidence. This is the structurally guaranteed conflict, and
+    it is reported with the offending rows and variables.
+
+    **Which clusters are rigid?** A group whose equalities leave it one
+    degree of freedom or none is welded: an inequality on ANY member becomes,
+    through the chain, a bound on EVERY member. That is how a local bound
+    turns into a global one far from where it was written, and it is
+    invisible in the source, where each row looks independent and reasonable.
+
+    What this does NOT catch, and the limit is worth stating plainly: a
+    conflict needs an inequality to close it, and inequalities are not in
+    this graph. Equalities that leave a healthy number of degrees of freedom
+    can still compose with a bound elsewhere to make a model infeasible.
+    Rigidity is a warning that the composition is possible, not a proof it
+    happened.
+
+    ``cluster_max`` caps how large a rigid cluster may be and still be worth
+    printing -- a 400-variable rigid block is the model, not a finding.
+    """
+    edges, rows, n, names = _equality_graph(structures, names)
+    match_var, match_row = _max_matching(edges, n)
+
+    involved = set()
+    for e in edges:
+        involved |= e
+    rank = len(match_var)
+
+    rep = {
+        'n_equalities': len(edges),
+        'n_variables': n,
+        'n_involved': len(involved),
+        'structural_rank': rank,
+        'dof': n - rank,
+        'determined': sorted(nm_at(names, j) for j in match_var),
+        'overdetermined': [],
+        'rigid_clusters': [],
+        'incidence': {},
+    }
+
+    # How many equalities touch each variable. A high count is not wrong --
+    # x_CG legitimately appears in dozens -- but it says the variable is a
+    # hub, and a bound on a hub propagates everywhere.
+    inc = collections.Counter()
+    for e in edges:
+        for j in e:
+            inc[j] += 1
+    rep['incidence'] = {nm_at(names, j): c for j, c in inc.most_common()}
+
+    # -- over-determined block (Dulmage-Mendelsohn) ------------------------
+    # Rows left unmatched have no variable of their own to determine. Walking
+    # alternating paths back from them collects everything implicated.
+    var_rows = collections.defaultdict(list)
+    for i, e in enumerate(edges):
+        for j in e:
+            var_rows[j].append(i)
+
+    unmatched = [i for i in range(len(edges)) if match_row[i] < 0]
+    if unmatched:
+        seen_r, seen_v, stack = set(unmatched), set(), list(unmatched)
+        while stack:
+            i = stack.pop()
+            for j in edges[i]:
+                if j in seen_v:
+                    continue
+                seen_v.add(j)
+                owner = match_var.get(j)
+                if owner is not None and owner not in seen_r:
+                    seen_r.add(owner)
+                    stack.append(owner)
+        rep['overdetermined'] = [
+            {'rows': sorted(rows[i] for i in seen_r),
+             'variables': sorted(nm_at(names, j) for j in seen_v),
+             'excess': len(seen_r) - len(seen_v)}]
+
+    # -- rigid clusters ----------------------------------------------------
+    # Connected components of the equality graph. A component with as many
+    # equalities as variables has no freedom left; one short of that has a
+    # single freedom, so every member moves in lockstep with every other.
+    seen_r, comps = set(), []
+    for start in range(len(edges)):
+        if start in seen_r:
+            continue
+        seen_r.add(start)
+        cr, cv, stack = [start], set(), [start]
+        while stack:
+            i = stack.pop()
+            for j in edges[i]:
+                if j in cv:
+                    continue
+                cv.add(j)
+                for k in var_rows[j]:
+                    if k not in seen_r:
+                        seen_r.add(k)
+                        cr.append(k)
+                        stack.append(k)
+        comps.append((cr, cv))
+
+    for cr, cv in comps:
+        dof = len(cv) - len(cr)
+        if dof <= 1 and len(cv) <= cluster_max:
+            rep['rigid_clusters'].append({
+                'rows': sorted(rows[i] for i in cr),
+                'variables': sorted(nm_at(names, j) for j in cv),
+                'dof': dof})
+    rep['rigid_clusters'].sort(key=lambda c: (c['dof'], -len(c['variables'])))
+    return rep
+
+
+def rigidity_text(rep, top=8):
+    """:func:`rigidity_report` as the paragraph a reader wants."""
+    L = [f"degrees of freedom: {rep['n_variables']} variables, "
+         f"{rep['n_equalities']} equalities of structural rank "
+         f"{rep['structural_rank']} -> {rep['dof']} free"]
+
+    for blk in rep['overdetermined']:
+        L.append(f"  OVER-DETERMINED: {len(blk['rows'])} equalities on "
+                 f"{len(blk['variables'])} variables ({blk['excess']} more "
+                 "equations than unknowns). No assignment satisfies all of "
+                 "them; the solve will report infeasible or silently satisfy "
+                 "them only to tolerance:")
+        L.append(f"    rows {blk['rows'][:12]}"
+                 + (" ..." if len(blk['rows']) > 12 else ""))
+        L.append(f"    variables: {', '.join(blk['variables'][:10])}"
+                 + (" ..." if len(blk['variables']) > 10 else ""))
+
+    rigid = rep['rigid_clusters']
+    if rigid:
+        L.append(f"  {len(rigid)} rigid clusters -- every variable in one "
+                 "moves in lockstep with the others, so a bound on any member "
+                 "acts as a bound on all of them:")
+        for c in rigid[:top]:
+            kind = "fully determined" if c['dof'] == 0 else "1 degree of freedom"
+            L.append(f"    [{kind}] {', '.join(c['variables'][:8])}"
+                     + (" ..." if len(c['variables']) > 8 else "")
+                     + f"  (rows {c['rows'][:6]}"
+                     + (" ...)" if len(c['rows']) > 6 else ")"))
+        if len(rigid) > top:
+            L.append(f"    ... and {len(rigid) - top} more")
+
+    det = rep['determined']
+    if det:
+        L.append(f"  {len(det)} variables are determined by equalities rather "
+                 "than chosen by the optimiser -- they are outputs, and any "
+                 "one of them that you added recently is a degree of freedom "
+                 "you removed")
+    return "\n".join(L)
+
+
 #: What each class means for the solve, and what it buys. The report exists to
 #: answer "so what" -- a class name alone tells a reader nothing about whether
 #: the answer they got is global.
@@ -1957,6 +2191,11 @@ def optimization_check(structures, x=None, problem=None, names=None,
         rep.structure = structure_report(st, top=structure_top)
     except Exception:
         rep.structure = ''
+    try:
+        rep.rigidity = rigidity_report(
+            st, names or [str(v) for v in st.variables])
+    except Exception:
+        rep.rigidity = {}
     return rep
 
 
