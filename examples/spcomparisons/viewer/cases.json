@@ -1,0 +1,226 @@
+[
+ {
+  "file": "b737__conventional.json",
+  "cls": "b737",
+  "arch": "conventional",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "b737__d8.json",
+  "cls": "b737",
+  "arch": "d8",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "b737__h2burn.json",
+  "cls": "b737",
+  "arch": "h2burn",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1194
+ },
+ {
+  "file": "citation__conventional.json",
+  "cls": "citation",
+  "arch": "conventional",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "citation__d8.json",
+  "cls": "citation",
+  "arch": "d8",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "citation__h2burn.json",
+  "cls": "citation",
+  "arch": "h2burn",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1194
+ },
+ {
+  "file": "citation__h2fc.json",
+  "cls": "citation",
+  "arch": "h2fc",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 699
+ },
+ {
+  "file": "e175__conventional.json",
+  "cls": "e175",
+  "arch": "conventional",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "e175__d8.json",
+  "cls": "e175",
+  "arch": "d8",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1172
+ },
+ {
+  "file": "e175__h2burn.json",
+  "cls": "e175",
+  "arch": "h2burn",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 1194
+ },
+ {
+  "file": "e175__h2fc.json",
+  "cls": "e175",
+  "arch": "h2fc",
+  "converged": true,
+  "hasValues": true,
+  "n_var": 699
+ },
+ {
+  "file": "b737__battery.json",
+  "cls": "b737",
+  "arch": "battery",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 654
+ },
+ {
+  "file": "b737__conventional_M.json",
+  "cls": "b737",
+  "arch": "conventional_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "b737__h2fc.json",
+  "cls": "b737",
+  "arch": "h2fc",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 699
+ },
+ {
+  "file": "b787__battery.json",
+  "cls": "b787",
+  "arch": "battery",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 654
+ },
+ {
+  "file": "b787__conventional.json",
+  "cls": "b787",
+  "arch": "conventional",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "b787__d8.json",
+  "cls": "b787",
+  "arch": "d8",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "b787__h2burn.json",
+  "cls": "b787",
+  "arch": "h2burn",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1194
+ },
+ {
+  "file": "b787__h2fc.json",
+  "cls": "b787",
+  "arch": "h2fc",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 699
+ },
+ {
+  "file": "citation__battery.json",
+  "cls": "citation",
+  "arch": "battery",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 654
+ },
+ {
+  "file": "citation__battery_M.json",
+  "cls": "citation",
+  "arch": "battery_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 654
+ },
+ {
+  "file": "citation__conventional_M.json",
+  "cls": "citation",
+  "arch": "conventional_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "citation__d8_M.json",
+  "cls": "citation",
+  "arch": "d8_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "citation__h2burn_M.json",
+  "cls": "citation",
+  "arch": "h2burn_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1194
+ },
+ {
+  "file": "citation__h2fc_M.json",
+  "cls": "citation",
+  "arch": "h2fc_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 699
+ },
+ {
+  "file": "e175__battery.json",
+  "cls": "e175",
+  "arch": "battery",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 654
+ },
+ {
+  "file": "e175__conventional_M.json",
+  "cls": "e175",
+  "arch": "conventional_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 1172
+ },
+ {
+  "file": "e175__h2fc_M.json",
+  "cls": "e175",
+  "arch": "h2fc_M",
+  "converged": false,
+  "hasValues": false,
+  "n_var": 699
+ }
+]

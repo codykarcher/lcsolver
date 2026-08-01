@@ -1,0 +1,232 @@
+"""Liquid-hydrogen fuselage tank, as signomial-program constraints.
+
+Derived from
+------------
+``examples/tasopt/tasopt_py/cryo/`` -- the Python port of TASOPT v3's
+``cryo_tank/``, itself verified against TASOPT.jl to machine precision. The
+originating routines are named against each constraint block below.
+
+Why a tank model at all
+-----------------------
+Kerosene lives in the wing box for free: it occupies volume the structure
+already has, and its weight relieves wing bending. Liquid hydrogen does
+neither. It needs a pressure vessel, that vessel is round, a round vessel does
+not fit in a wing, and so it goes in the fuselage and displaces payload. The
+tank is therefore not an accessory to a hydrogen aircraft -- it is one of the
+two things (with the fuel cell) that decides whether the aircraft closes.
+
+The gravimetric penalty is the whole story. LH2 carries 2.8x the energy per
+kilogram of kerosene, and a tank that weighs as much as the fuel it holds
+throws that advantage away.
+
+What is monomial and what is not
+--------------------------------
+MAIDAS classification of the source routines, with the reformulation used
+where the direct form leaves the cone:
+
+* **Skin thickness** ``t = dp (2 R_o) / (2 s_a e_w + 0.8 dp)`` is monomial in
+  ``R_o`` at fixed vent pressure. Kept as an equality.
+* **Radius stack-up** ``R = R_o - t`` is a difference, so signomial. Written
+  as ``R_o >= R + t``, a posynomial inequality, which is tight because the
+  objective pushes the tank outward against the fuselage.
+* **Head surface area** ``S = 2 A (0.333 + 0.667 (L/R)^1.6)^0.625`` is a
+  *fractional power of a posynomial*. That is not GP, and the epigraph
+  ``S_h^(1/0.625) >= ...`` is the standard reformulation (MAIDAS calls this
+  rewrite ``posy_pow_fractional``).
+* **Volume closure** ``V_fuel = l A + 2 V_head`` is a sum on the greater side.
+  Written as ``V_fuel <= l A + 2 V_head``: the tank must hold at least the
+  fuel, and minimising weight makes it tight.
+* **Boil-off** is a heat leak divided by latent heat -- monomial once the
+  insulation resistance is a variable.
+* **Support rings.** The first version of this module had none, and the
+  verification against ``size_inner_tank`` found the tank 22% light --
+  every piece the SP modelled was within 13% (erring heavy), and the entire
+  gap was the two stiffener rings that carry the vessel and its fuel into
+  the fuselage. The port's ring sizing (a fixed-section I-beam solved for
+  height) fits a monomial to 4.2%:
+
+      W_stiff = 309.6 (W_sup / 1 N)^0.069 (R / 1 m)^1.08   [N]
+
+  with the near-zero load exponent saying the ring is mostly its own
+  perimeter mass. That exponent is then dropped: carrying ``W_sup^0.069``
+  as a constraint made SIA's phase-1 subproblem ill-conditioned (the
+  documented cases stopped solving cold), and freezing the load term at a
+  nominal 15 kN costs at most 8% on the rings across a 3x load range --
+  on a component that is itself ~25% of the tank. The solver's fragility
+  priced the refinement honestly: not worth it.
+
+      W_stiff = 599.4 (R / 1 m)^1.08   [N]
+
+Everything else -- weights as density x area x thickness, volumes as area x
+length -- is monomial by construction.
+
+What is *not* carried over
+--------------------------
+The source sizes insulation by iterating on a heat-leak balance with a
+temperature-dependent conductivity per layer (``tank_heat_leak``, a Newton
+solve). An SP cannot contain a Newton solve, and York's treatment of the
+analogous problem in the engine is the precedent: write the converged
+condition as a constraint. Here that is a single thermal resistance per unit
+area, ``R_insul``, with the layer build-up collapsed into it. The consequence
+is that insulation *material choice* is no longer a free variable -- only its
+thickness is.
+"""
+from __future__ import annotations
+
+__all__ = ["add_cryo_tank", "LH2_DENSITY", "LH2_LHV", "LH2_LATENT_HEAT"]
+
+#: Saturated liquid hydrogen at ~1.3 bar, kg/m^3. From the port's
+#: ``cryo.fuel_thermo.liquid_properties``.
+LH2_DENSITY = 70.0
+#: Lower heating value, J/kg. 2.8x kerosene, which is the entire motivation.
+LH2_LHV = 1.20e8
+#: Latent heat of vaporisation, J/kg -- what boil-off costs.
+LH2_LATENT_HEAT = 4.46e5
+
+
+def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
+                  pvent: float = 1.3e5, qfac: float = 1.0,
+                  ftankadd: float = 0.0):
+    """Add an LH2 fuselage tank. Returns ``(vars, constraints)``.
+
+    The tank is a cylinder with ellipsoidal heads, sitting inside the
+    fuselage and sized by the fuel it must hold.
+
+    ``ftankadd`` is TASOPT's own parameter: a fraction of the *structural*
+    weight -- skin, heads and rings, but not insulation -- added for mounts,
+    fill and vent lines, baffles and vapour management. It defaults to 0.0,
+    which is what this model carried before the parameter existed, so
+    existing callers are unaffected.
+
+    Calibrating it: at TASOPT's documented LH2 turbofan (21,247 lbf of fuel
+    in a 2.54 m fuselage), sweeping the *port's* own sizer reproduces their
+    published 7,556 lbf / 9.51 m / 0.738-gravimetric tank at ftankadd ~0.35
+    to 0.40 with 12.7 cm of foam, and the length pins it there: thicker
+    insulation reaches their weight only by overshooting their length. A
+    double-walled vacuum jacket was ruled out directly -- running the port's
+    ``size_outer_tank`` on the same case lands at gravimetric 0.48, so their
+    documented tank is single-wall foam-insulated.
+
+    One caveat on that calibration. ftankadd ~0.4 and "ftankadd ~0.1 with
+    roughly twice the insulation density" fit their two published numbers
+    about equally well, because insulation density moves weight without
+    moving length either. This model cannot separate them from two numbers,
+    and does not pretend to: the term is a calibrated lump, not a claim
+    about where their extra mass physically sits.
+    """
+    tank = f.group("tank", prefix=prefix)
+    V = tank.Variable
+    # Bounded rather than merely constrained. Several tank relations are
+    # reciprocal -- ``Q_leak t_insul = k S dT`` sends the heat leak to
+    # infinity as the insulation thins -- so an unbounded iterate is not a
+    # poor guess but an arithmetic overflow. The bounds below are generous
+    # engineering limits, not tuning: they exist to keep the *solver* inside
+    # the region where the model means anything.
+    Vb = lambda n, g, u, d, bd: tank.Variable(n, g, u, d, bounds=bd)
+    C = tank.Constant
+
+    # ---- geometry ---------------------------------------------------------
+    R_o = Vb("R_o", 1.78, "m", "tank outer radius", (0.3, 4.0))
+    R = Vb("R", 1.777, "m", "tank inner radius", (0.3, 4.0))
+    t_skin = Vb("t_skin", 2.2e-3, "m", "tank wall thickness", (5e-4, 0.05))
+    t_head = Vb("t_head", 2.2e-3, "m", "head wall thickness", (5e-4, 0.05))
+    t_insul = Vb("t_insul", 0.08, "m", "insulation thickness", (0.01, 0.6))
+    l_cyl = Vb("l_cyl", 1.0, "m", "cylindrical section length", (0.2, 40.0))
+    l_tank = Vb("l_tank", 2.8, "m", "total tank length incl. heads", (0.5, 45.0))
+    L_head = V("L_head", 0.89, "m", "head depth")
+
+    A = V("A", 9.9, "m^2", "tank cross-sectional area")
+    S_cyl = V("S_cyl", 11.3, "m^2", "cylinder surface area")
+    S_head = V("S_head", 30.5, "m^2", "head surface area, both ends")
+    S_tank = V("S_tank", 42.0, "m^2", "total wetted area")
+    V_fuel = V("V_fuel", 21.6, "m^3", "fuel volume carried")
+    V_head = V("V_head", 5.8, "m^3", "volume of one ellipsoidal head")
+
+    # ---- weights ----------------------------------------------------------
+    W_skin = V("W_skin", 7e2, "N", "cylinder skin weight")
+    W_head = V("W_head", 1.9e3, "N", "head weight, both ends")
+    W_insul = V("W_insul", 1.2e3, "N", "insulation weight")
+    W_stiff = V("W_stiff", 9.2e2, "N", "support ring weight, both rings")
+    W_tank = V("W_tank", 4.7e3, "N", "total dry tank weight")
+    W_fuel = V("W_fuel", 1.41e4, "N", "usable fuel weight in tank")
+
+    # ---- thermal ----------------------------------------------------------
+    Q_leak = Vb("Q_leak", 1.6e3, "W", "steady heat leak into the tank", (1.0, 1e6))
+    m_boil = Vb("m_boil", 3.5e-3, "kg/s", "boil-off mass flow", (1e-9, 1.0))
+
+    # ---- constants --------------------------------------------------------
+    g = C("g", 9.81, "m/s^2", "gravitational acceleration")
+    dp = C("dp", pvent, "Pa", "tank vent (design) pressure")
+    sig_a = C("sigma_a", 4.7e8 / 4.0, "Pa", "allowable stress, Al-2219 UTS/4")
+    e_w = C("e_w", 0.9, "-", "weld efficiency")
+    rho_skin = C("rho_skin", 2825.0, "kg/m^3", "Al-2219 density")
+    rho_insul = C("rho_insul", 35.0, "kg/m^3", "rigid closed-cell foam")
+    rho_fuel = C("rho_fuel", LH2_DENSITY, "kg/m^3", "liquid hydrogen density")
+    AR = C("AR", 2.0, "-", "head aspect ratio, R/L_head")
+    K = C("K", (2.0 ** 2 + 2.0) / 6.0, "-", "ellipsoidal head stress factor")
+    ullage = C("ullage", 0.95, "-", "fraction of tank volume that is liquid")
+    dT = C("dT", 273.0, "K", "ambient-to-cryogen temperature difference")
+    k_insul = C("k_insul", 0.011, "W/(m*K)", "foam conductivity at mean temp")
+    qfac = C("qfac", qfac, "-", "structural/piping heat leak factor")
+    h_lat = C("h_lat", LH2_LATENT_HEAT, "J/kg", "latent heat of vaporisation")
+    # Support-ring fit against the port's stiffener_weight; see docstring.
+    k_stiff = C("k_stiff", 599.4, "N", "ring weight fit at 15 kN load")
+    R_ref = C("R_ref", 1.0, "m", "reference radius for the fit")
+    f_add = C("f_tankadd", ftankadd, "-",
+              "fittings, supports and piping, as a fraction of structure")
+
+    cons = [
+        # -- pressure vessel, from cryo.tank.size_inner_tank ----------------
+        # Monomial in R_o once dp and sigma_a are fixed.
+        t_skin * (2.0 * sig_a * e_w + 0.8 * dp) == dp * (2.0 * R_o),
+        t_head * (2.0 * sig_a * e_w + 2.0 * dp * (K - 0.1)) == dp * (2.0 * R_o) * K,
+
+        # Radius stack-up. The source writes R = R_o - t_skin, a difference.
+        # As an inequality it is posynomial and tight: nothing gains by
+        # making the inner radius smaller than the wall allows.
+        R_o >= R + t_skin,
+
+        # Head geometry. AR is the head aspect ratio, so L_head = R/AR.
+        L_head * AR == R,
+        A == 3.141592653589793 * R ** 2,
+
+        # -- volumes, from the same routine ---------------------------------
+        V_head == 2.0 * A * L_head / 3.0,
+        # Sum on the greater side: the tank holds at least the fuel it
+        # carries, and minimising weight makes this tight.
+        V_fuel <= l_cyl * A + 2.0 * V_head,
+        W_fuel <= ullage * rho_fuel * g * V_fuel,
+        l_tank >= l_cyl + 2.0 * L_head,
+
+        # -- surface areas ---------------------------------------------------
+        S_cyl >= 2.0 * 3.141592653589793 * R * l_cyl,
+        # The source has S_head = 2 A (0.333 + 0.667 (L/R)^1.6)^0.625 -- a
+        # fractional power of a posynomial, which is not GP. With AR fixed,
+        # L/R is a constant and the bracket collapses to a number; that is
+        # the reformulation used here, and it is exact rather than a fit.
+        # For AR = 2 the bracket is (0.333 + 0.667*0.5^1.6)^0.625 = 0.7735.
+        S_head >= 2.0 * 0.7735 * (2.0 * A),
+        S_tank >= S_cyl + S_head,
+
+        # -- weights ----------------------------------------------------------
+        W_skin >= rho_skin * g * S_cyl * t_skin,
+        W_head >= rho_skin * g * S_head * t_head,
+        W_insul >= rho_insul * g * S_tank * t_insul,
+        # Rings carry the vessel and its fuel; nearly all their weight is
+        # their own perimeter, so the load term is frozen (see docstring).
+        W_stiff >= k_stiff * (R / R_ref) ** 1.0823,
+        # ftankadd multiplies structure only -- insulation is already a
+        # direct area x thickness x density and carries no fittings.
+        W_tank >= (1.0 + f_add) * (W_skin + W_head + W_stiff) + W_insul,
+
+        # -- thermal, from cryo.thermal ---------------------------------------
+        # One lumped conduction resistance. Monomial: heat leak falls as
+        # insulation thickens, which is the trade the optimiser gets to make
+        # against W_insul above.
+        # qfac > 1 charges for heat leaking through supports and piping
+        # (TASOPT's heat_leak_factor); 1.0 leaves pure conduction.
+        Q_leak * t_insul == qfac * k_insul * S_tank * dT,
+        m_boil * h_lat == Q_leak,
+    ]
+
+    return tank, cons
