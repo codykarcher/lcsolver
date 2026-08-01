@@ -379,9 +379,17 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Ltow = C("f_L_total_wing", 1.195 if arch.double_bubble else 1.02, "-",
              "total lift as a fraction of wing lift")
     fhpesys = C("f_hpesys", 0.01, "-", "power systems weight fraction")
-    rSnace = C("r_S_nacelle", 6.0, "-", "nacelle and pylon wetted area factor")
+    # 16.0, TASOPT's value (737s.tas:537). It was 6.0, which was compensating
+    # for the inlet coefficient being 10x too large in the nacelle weight row
+    # below. Both corrected together -- the correlation IS TASOPT's (NASA CR
+    # 151970), so its input should be too. This area also drives nacelle
+    # drag, which was correspondingly light.
+    rSnace = C("r_S_nacelle", 16.0, "-", "nacelle and pylon wetted area factor")
     rvnace = C("r_v_nacelle", 0.925, "-", "incoming nacelle velocity ratio")
-    fpylon = C("f_pylon", 0.05, "-", "pylon weight fraction")
+    # 0.10 from the same deck (737s.tas:357, "fpylon  Wpylon/We+a+n"). Was
+    # 0.05, exactly half, which is the whole of the pylon discrepancy:
+    # 262 lbf per engine against TASOPT's 558.
+    fpylon = C("f_pylon", 0.10, "-", "pylon weight fraction")
     feadd = C("f_eadd", 0.1, "-", "additional engine weight fraction")
     Ceng = C("C_engsys", 1.0, "-", "engine system weight margin")
     Dreduct = C("D_reduct", 0.98416 if arch.BLI else 1.0, "-",
@@ -961,6 +969,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         lg.d_nacelle <= wing.b,
         # Hard landing, Torenbeek (10-26): 10 ft/s sink at max landing weight.
         lg.E_land >= W_totalmax / (2 * g) * lg.w_ult ** 2,
+        # Rejected takeoff: the whole aeroplane's kinetic energy at V_1 goes
+        # into the main-wheel brakes. This sizes the heat sinks, and through
+        # them the wheels and a good share of the main gear.
+        lg.E_RTO >= W_totalmax / (2 * g) * (lg.f_V1 * farv["V_LOF"]) ** 2,
         lg.x_up == fu.x_shell2,
         lg.L_n == W_totalmax * lg.dx_m / lg.B,
         # FORWARD GEAR MARGIN. The nose gear carries 8-15% of the weight: below
@@ -1176,7 +1188,17 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         Afancowl == 0.2 * Snace,
         Aexh == 0.4 * Snace,
         Acorecowl == 3. * np.pi * eng.d_LPC ** 2,
-        Wnace >= ((2.5 + 0.238 * eng.d_f / units.inch) * Ainlet + 1.9 * Afancowl
+        # NASA CR 151970, as tfweight.f:105-109. The inlet coefficient was
+        # 0.238 against TASOPT's 0.0238 -- a factor of ten, and a
+        # transcription slip rather than a modelling choice, since the
+        # exhaust term's 0.0363 matches exactly. At d_f ~ 59 in it made the
+        # inlet coefficient 16.5 instead of 3.9.
+        #
+        # It was cancelling against r_S_nacelle: the coefficient 10x too
+        # large, the area 6/16 = 0.375 of TASOPT's, netting 0.656. Which is
+        # why correcting the area ALONE overshot to 1.82. Both are fixed
+        # together here.
+        Wnace >= ((2.5 + 0.0238 * eng.d_f / units.inch) * Ainlet + 1.9 * Afancowl
                   + (2.5 + 0.0363 * eng.d_f / units.inch) * Aexh + 1.9 * Acorecowl
                   ) * units.lbf / units.ft ** 2,
         Weadd == feadd * eng.W_engine,
@@ -1276,17 +1298,42 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # distributed relief keeps the lift's arm factor K; the engine gets
         # N_lift * n_eng * W_engsys * y_eng, which is what makes an outboard
         # engine buy a lighter wing. Rear-mounted engines relieve nothing.
+        # ONE-SIDE ROOT MOMENT, /24 not /12, and ONE engine not two.
+        #
+        # For lift proportional to chord with TOTAL lift L over both wings,
+        #     M_root(one side) = int_0^(b/2) (L/S) c(y) y dy
+        #                      = L b^2 (c_root + 2 c_tip) / (24 S)
+        # This row used /(12 S) -- exactly twice the one-side moment -- and
+        # charged BOTH engines' relief to a single root.
+        #
+        # The vertical tail is not a counterexample even though it uses /24
+        # with what looks like the same algebra: it is fed DOUBLED b, S and
+        # L_max because the beam model is written for a full span, so its
+        # /24 becomes an effective /6, which is right for one root-to-tip
+        # panel. The wing is fed its actual geometry and needs the plain /24.
+        #
+        # Everything else in the wing box checked out against surfw.f first:
+        # N_lift 3.0 matches the deck, box width 0.50 matches, the cap cubic
+        # reproduces TASOPT's printed tcapo/c = 0.00342 exactly when given
+        # TASOPT's moment and reproduces ours when given ours. The moment was
+        # the whole discrepancy -- 1.444e7 N*m against TASOPT's 4.760e6.
         *([wing.box.M_r * wing.c_root
            + wing.box.N_lift * _relief()
-             * (wing.b ** 2 / (12 * wing.S) * (wing.c_root + 2 * wing.c_tip))
+             * (wing.b ** 2 / (24 * wing.S) * (wing.c_root + 2 * wing.c_tip))
            + (0.0 * Wengsys * y_eng if _rear
-              else wing.box.N_lift * numeng * Wengsys * y_eng)
+              else wing.box.N_lift * 0.5 * numeng * Wengsys * y_eng)
            >= wing.L_max
-              * (wing.b ** 2 / (12 * wing.S)
+              * (wing.b ** 2 / (24 * wing.S)
                  * (wing.c_root + 2 * wing.c_tip))]
           if wing_model == "hoburg" else []),
-        fu.A_1h_Land >= (fu.N_land * _plus_eng(fu.W_tail + fu.W_apu))
-                           / (fu.h_fuse * fu.sigma_bend),
+        # sigma_M_h, not sigma_bend. The MLF case below already uses it and so
+        # does fusew.f: A1 = (Nland*Wtail + rMh*Lhmax)/(hfuse*sigMh). sigma_M_h
+        # is the bending allowable AFTER pressurisation eats into it
+        # (sigma_M_h <= sigma_bend - rE*dP*R/(2t)), so using the raw allowable
+        # here made the landing case's bending area smaller than it should be.
+        fu.A_1h_Land >= (fu.N_land * _plus_eng(fu.W_tail + fu.W_apu)
+                         + fu.r_M_h * ht.L_ht_max)
+                           / (fu.h_fuse * fu.sigma_M_h),
         fu.A_1h_MLF >= (fu.N_lift * _plus_eng(fu.W_tail + fu.W_apu)
                            + fu.r_M_h * ht.L_ht_max) / (fu.h_fuse * fu.sigma_M_h),
         Izwing >= _iz_wing(),
@@ -1302,9 +1349,29 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
            if _rear else
            [xeng <= fu.x_wing, xeng >= 0.8 * fu.x_wing] ),
 
-        # ---- double-bubble floor loading -------------------------------------
-        fu.S_floor == (5. / 16.) * fu.P_floor,
-        fu.M_floor == 9. / 256. * fu.P_floor * fu.w_floor,
+        # ---- floor loading, BY FUSELAGE TYPE ---------------------------------
+        # fusew.f branches on whether there is a centre support:
+        #
+        #   wfb == 0  (single bubble, full-width floor)
+        #       Smax = 0.50   * P ;  Mmax = 0.25   * P * wfloor
+        #   wfb != 0  (double bubble, floor supported at the joint)
+        #       Smax = 5/16   * P ;  Mmax = 9/256  * P * wfloor
+        #
+        # Only the centre-supported pair was here, applied to every aircraft --
+        # the comment even said "double-bubble floor loading". On a single
+        # bubble that understates shear by 0.625 and MOMENT BY 7.1x
+        # (9/256 = 0.0352 against 0.25), and the moment is what sizes the beam
+        # caps through A_floor >= 2*M/(sigma*h) + 1.5*S/tau. The 737's floor
+        # came out at 1,624 lbf against TASOPT's 2,655, and nearly all of what
+        # remained was the planking term rather than beam structure.
+        #
+        # A centre-supported beam really does carry far less moment, so the
+        # numbers are right for a D8 and wrong for everything else.
+        *([fu.S_floor == (5. / 16.) * fu.P_floor,
+           fu.M_floor == 9. / 256. * fu.P_floor * fu.w_floor]
+          if arch.double_bubble else
+          [fu.S_floor == 0.50 * fu.P_floor,
+           fu.M_floor == 0.25 * fu.P_floor * fu.w_floor]),
         fu.dR_fuse == fu.R_fuse * 0.43 / 1.75,
     ]
 

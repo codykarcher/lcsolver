@@ -267,7 +267,27 @@ def add_fuselage(f, *, prefix="Fuse_", l_tank=None, SPR=8.0,
 
         # ---- fuselage joint angle ---------------------------------------------
         thetadb == wdb / Rfuse,
-        hdb >= Rfuse * (1.0 - .5 * thetadb ** 2),                    # [SP]
+        # EQUALITY. The web half-height IS R*cos(theta_db), small-angle
+        # expanded -- it is geometry, not a design freedom.
+        #
+        # As `>=` it was the most expensive free lever in the model. h_db
+        # appears in the shell bending inertia as (h_db + dR/2)^3 * t_db, and
+        # a LARGER inertia means a larger A_0h, which is subtracted from the
+        # required bending area. So the optimiser raised it: h_db came out at
+        # 119.8 m on a 1.85 m radius fuselage, paired with a vanishing t_db,
+        # and the cube manufactured 0.129 m^4 of inertia -- 77% of I_h_shell
+        # -- out of a web this aircraft does not even have.
+        #
+        # The consequence was the whole horizontal bending chain. That false
+        # credit put the zero-bending station at 17.2 m, FORWARD of the wing
+        # box front at 18.6 m, so the integration region inverted and the
+        # front bending area collapsed to 1e-9. W_hbend came out at 99 lbf
+        # against TASOPT's 2,021 -- 4.9%.
+        #
+        # TASOPT is immune twice over: fusew.f multiplies the web term by
+        # nfweb, the NUMBER OF WEBS, which is zero for a single bubble, and
+        # its hfb is geometric rather than free.
+        hdb + Rfuse * .5 * thetadb ** 2 == Rfuse,             # [SP] SigEq
 
         # ---- cross-section -----------------------------------------------------
         Adb >= (2 * hdb + dRfuse) * tdb,
