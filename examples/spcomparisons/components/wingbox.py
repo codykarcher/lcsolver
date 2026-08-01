@@ -244,23 +244,23 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
         Nlift = C("N_lift", 1.0, "-", "wing loading multiplier")
         cons += _band + [
             Wstruct >= Wweb + Wcap,
-            # p/12, not the vertical tail's p/24.
+            # p/24, the wing's coefficient -- because a CONVENTIONAL horizontal
+            # tail has the wing's topology: full span, two cantilevers off a
+            # centre box, fed its true b, S and L_max. TASOPT agrees on the
+            # topology explicitly, calling `tailpo(Sh, ARh, ...)` for the HT
+            # with true area and aspect ratio against
+            # `tailpo(2.0*Sv/nvtail, 2.0*ARv, ...)` for the fin -- the doubling
+            # is the fin's alone.
             #
-            # I wrote this branch by mirroring the VT's, and inherited its
-            # coefficient with it. That was wrong: the /24 belongs to the
-            # doubled-span trick, where a single cantilever is handed twice its
-            # span, area and load and then has its weight halved. A CONVENTIONAL
-            # horizontal tail has the wing's topology -- full span, two
-            # cantilevers off a centre box -- so it takes the wing's
-            # coefficient, which aircraft.py:739 writes as
-            #     M_r c_root >= L_eff b^2/(12 S) (c_root + 2 c_tip)
-            # i.e. L*AR*p/12.
-            #
-            # Measured: the HT root moment came out at 24,216 against the fin's
-            # 121,740 on comparable limit loads (96,848 vs 84,283 lbf), and the
-            # tail weighed 21 lb/m2 where the fin -- the same structure from the
-            # same file -- weighed 53 and a real 737 stabiliser weighs ~61.
-            Mr >= Lmax * AR * p / 12,
+            # This row said /12 for a while, and the reasoning was sound at the
+            # time: match the wing, which aircraft.py then wrote as
+            # `M_r c_root >= L_eff b^2/(12 S)(c_root + 2 c_tip)`. The wing has
+            # since been corrected to /(24 S) -- the /12 form is the moment
+            # about the centreline of BOTH panels, and the box carries one --
+            # and this row did not follow, leaving the HT on twice its root
+            # moment. Measured before the fix: M_r 69,952 against
+            # L_max*AR*p/24 = 34,976, a clean factor of two.
+            Mr >= Lmax * AR * p / 24,
             12 * _c2 >= AR * Lmax * Nlift * q ** 2 / (tau * S * tweb * sigmaxshear),
             _wc * Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
             8 * _c4 >= Nlift * Mr * AR * q ** 2 * tau / (S * Icap * sigmax),

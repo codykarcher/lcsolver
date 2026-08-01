@@ -105,6 +105,21 @@ def add_horizontal_tail(f, N, state, *, sweep_deg=None, prefix="HT_",
     #     L_ht_max >= 0.5 rho V_ne^2 S_ht C_L_ht_max
     # which is a structural limit load, and a surface does reach 2.0 there.
     CLhmax = C("C_L_ht_max", 2.0, "-", "max HT lift coefficient, structural")
+    # 1.0 -- NO empirical correction. Tried at 1.5 and 2.0 and pulled back
+    # out; the measurements are kept because they bound the real fix.
+    #
+    # 1.5 put the stabiliser's areal weight at 60.0 lbf/m2 against a real
+    # ~62, and 2.0 overshot to 70.9 -- so whatever replaces this should be
+    # worth about half the box weight again. See the matching note on C_VT.
+    # The horizontal is the worse of the two surfaces:
+    # 0.511 of TASOPT and 0.669 of the real stabiliser, where the fin is 0.725
+    # and 0.853. Two reasons for the gap being larger. The carry-through is a
+    # genuine load path for a horizontal tail -- two cantilevers joined by a
+    # box THROUGH the fuselage, with the full root moment crossing it -- while
+    # the fin's root region is partly inside its own beam already, since the
+    # fin is fed the doubled span, area and load of the mirror-image trick.
+    # And a trimmable stabiliser carries a pivot, jackscrew and hinge fittings
+    # that f_ht = 0.30 (TASOPT's fhadd, matched exactly) does not cover.
     Cht = C("C_ht", 1.0, "-", "HT weight margin and sensitivity factor")
     fht = C("f_ht", 0.3, "-", "rudder etc. fractional weight")
 

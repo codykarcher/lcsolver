@@ -73,6 +73,35 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
     Wvt = V("W_vt", 1e4, "N", "total VT system weight")
 
     # ---- constants --------------------------------------------------------
+    # 1.0 -- NO empirical correction. Tried at 1.25 and pulled back out; what
+    # it revealed is recorded below because it says where the real fix is.
+    #
+    # A factor here stands in for the CARRY-THROUGH
+    # structure -- the centre section that carries the root moment across the
+    # fuselage -- which TASOPT builds explicitly for every surface
+    # (Wvtail = (Wscen + Wsinn + Wsout)*(1 + fvadd)*nvtail, wsize.py:1028) and
+    # this box does not build at all. The box here is W_struct = W_web + W_cap
+    # for the exposed panels only, which is why the fin came out at 0.725 of
+    # TASOPT and 0.853 of the real aircraft while its added-weight fraction
+    # f_VT = 0.4 already matches TASOPT's fvadd exactly.
+    #
+    # It is NOT a gauge effect -- measured, the fin's cap runs 2.9 mm and its
+    # web 3.6 mm, two to three times any minimum gauge, so that constraint
+    # would never bind.
+    #
+    # And a multiplier does not work HERE even as a stopgap, which is the
+    # useful finding. At 1.25 the fin did not get denser, it got BIGGER:
+    # S_vt 30.0 -> 32.3 m2 (1.22 of the real fin) while areal weight stayed
+    # under at 50.8 lbf/m2 against a real 57. A heavier fin raises MTOW,
+    # raises thrust, raises the engine-out moment, and the extra root chord
+    # runs FORWARD against the pinned trailing edge, shortening l_vt and
+    # demanding more area again. The fin is sized by engine-out, so weight
+    # feeds straight back into area.
+    #
+    # The physical replacement is a monomial and needs no new calibration:
+    #     W_cen = rho*g*(t_cap*r_w_c + t_web*r_h*tau) * c_root^2 * b_o
+    # with b_o the fuselage width at the tail station. Retire this factor when
+    # that is built.
     CVT = C("C_VT", 1.0, "-", "VT weight margin and sensitivity")
     mu0 = C("mu_0", 1.8e-5, "N*s/m^2", "dynamic viscosity at sea level")
     tanL = C("tan_Lambda_vt", tan(sweep_deg * pi / 180), "-",
@@ -94,7 +123,19 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
 
     rho0 = V("rho_TO", 1.225, "kg/m^3", "air density at sea level")
     # A fin with rudder reaches ~1.2-1.5, not 2.6.
-    CLvmax = C("C_L_vt_max", 1.4, "-", "max VT lift coefficient")
+    # 2.6 is TASOPT's own number for this exact quantity (runs/737/737s.tas:265,
+    # "CLvmax  VT max +/-CL at Vmn, for VT structural sizing"). It was 1.4 here,
+    # and the consequence was almost the entire vertical-bending shortfall: this
+    # coefficient sets L_vt_max, which sets B_1v, which sets the tailcone's
+    # vertical bending material, so W_vbend came out at 0.513 of TASOPT against
+    # a coefficient ratio of 1.4/2.6 = 0.538. The horizontal's counterpart was
+    # ported correctly -- C_L_ht_max = 2.0 matches TASOPT's CLhmax = 2.0
+    # exactly -- which is what makes this look like a slip rather than a choice.
+    #
+    # Note this is a STRUCTURAL design coefficient at V_ne, not a control one:
+    # it says what load the fin must survive, not what the rudder can deliver.
+    # c_l_vt_EO is the control-side number and stays separate.
+    CLvmax = C("C_L_vt_max", 2.6, "-", "max VT lift coefficient")
     Vvtmin = C("V_vt_min", 0.001, "-", "minimum VT volume coefficient")
     out.update(rho_TO=rho0, C_L_vt_max=CLvmax, V_vt_min=Vvtmin)
 

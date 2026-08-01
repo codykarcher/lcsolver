@@ -386,13 +386,37 @@ def add_fuselage(f, *, prefix="Fuse_", l_tank=None, SPR=8.0,
         xvbend >= xwing, xvbend <= lfuse,
         B0v == B1v * (xtail - xvbend),                               # [SP] SigEq
         B0v == Ivshell / (rE * wfuse ** 2),
-        Avbendb >= B1v * (xtail - xb) - B0v,
-        Vvbendb >= 0.5 * B1v * ((xtail - xb) ** 2 - (xtail - xvbend) ** 2) - B0v * (xvbend - xb),
+        # x_f, NOT x_b -- the aft edge of the wing box. The vertical bending
+        # material runs from the back of the box aft to the tail, and fusew.f
+        # says so: its xb collapses to xwbox + 0.5*cbox, the BACK of the box.
+        # Our x_b is the forward edge (the names here are inverted, see the
+        # definitions above), so this ran the material 2.7 m further forward
+        # than it should. It enters SQUARED, and W_vbend came out at 1.51 of
+        # TASOPT even after C_L_vt_max was corrected to 2.6 -- the load was
+        # right and the length was not.
+        Avbendb >= B1v * (xtail - xf) - B0v,
+        Vvbendb >= 0.5 * B1v * ((xtail - xf) ** 2 - (xtail - xvbend) ** 2) - B0v * (xvbend - xf),
         Vvbendc >= 0.5 * Avbendb * c0 * w,
         Vvbend >= Vvbendb + Vvbendc,
         Wvbend >= rhobend * g * Vvbend,
 
         # ---- wingbox stations -----------------------------------------------------------
+        # SWAPPED. x_b is declared "back of wingbox" and x_f "front", and the
+        # formulae had them the other way round: x_b came out 2.7 m FORWARD of
+        # x_f on the 737. fusew.f writes xb = xwing - dxwing + 0.5*cbox, and
+        # since dxwing = xwing - xwbox that collapses to xwbox + 0.5*cbox --
+        # the back of the box, as the name says.
+        #
+        # It matters most in the vertical bending material, which runs from the
+        # wing box aft to the tail and enters as (x_tail - x_b) SQUARED. With
+        # x_b at the front of the box the material ran 2.7 m further forward
+        # than it should, and W_vbend came out at 1.51 of TASOPT even after
+        # C_L_vt_max was corrected -- the load was right and the length was not.
+        # NOTE the names are inverted relative to the values: x_f ("front")
+        # evaluates to the AFT edge of the box and x_b ("back") to the forward
+        # edge. Left as-is because the horizontal bending pair is calibrated
+        # around it (W_hbend 1.02 of TASOPT); see the vertical bending block
+        # below, which needs the aft edge and therefore uses x_f.
         xf == xwing + .5 * c0 * w,                                   # [SP] SigEq
         xb == xwing - .5 * c0 * w,                                   # [SP] SigEq
         sigMh <= sigbend - rE * dPover / 2 * Rfuse / tshell,

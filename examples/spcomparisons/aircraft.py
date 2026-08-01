@@ -290,6 +290,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Izwing = V("I_z_wing", 5e6, "kg*m^2", "wing moment of inertia")
     Iztail = V("I_z_tail", 2e6, "kg*m^2", "tail moment of inertia")
     Izfuse = V("I_z_fuse", 3e6, "kg*m^2", "fuselage moment of inertia")
+    Iy = V("I_y", 5e6, "kg*m^2", "aircraft pitch moment of inertia, about the CG")
+    Iyrot = V("I_y_rot", 5e6, "kg*m^2", "pitch inertia about the main gear contact")
+    dxrot = V("dx_rot", 3.0, "m", "main gear aft of the forward CG")
+    dCLhga = V("dC_L_h_ga", 0.04, "-", "HT lift coefficient spare for the go-around")
 
     # engine installation
     Snace = V("S_nacelle", 8.0, "m^2", "nacelle surface area")
@@ -422,6 +426,32 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     CDwm = C("C_D_wm", 0.5, "-", "windmill drag coefficient")
     Vland = C("V_land", size_class.v_land_mps, "m/s", "aircraft landing speed")
     rreq = C("rdot_req", 0.1475, "s^-2", "required yaw rate at landing")
+    # Pitch acceleration demanded at takeoff rotation. The fin has carried an
+    # angular-acceleration requirement all along (`rdot_req`, the yaw rate at
+    # the flare); the horizontal tail never had the pitch analogue, and its
+    # rotation row balanced STATIC moments only -- as though the aeroplane had
+    # to hold the nose up but never actually raise it.
+    #
+    # Note these are the cases that do NOT wash out. A balanced pull-up cannot
+    # size a tail: the required load goes as n*W while the available load goes
+    # as q_A = n*q_s, and the load factor cancels exactly. Angular acceleration
+    # has no such cancellation -- it is moment demanded over and above trim,
+    # and it scales with pitch inertia, so it grows with fuselage length and
+    # with mass carried far from the CG.
+    #
+    # Three longitudinal control-power requirements, all nose-up except the
+    # last. Values are handbook design requirements, not invented:
+    #   nosewheel liftoff   3.0 deg/s^2   forward CG, at rotation
+    #   go-around           6.0 deg/s^2   forward CG, at approach speed
+    #   stall recovery     -4.0 deg/s^2   AFT CG, nose-down, at stall
+    # The go-around is the demanding one: twice the acceleration of rotation
+    # at roughly three-quarters the dynamic pressure.
+    qdotrot = C("qdot_rot", np.radians(3.0), "s^-2",
+                "pitch acceleration required at nosewheel liftoff")
+    qdotga = C("qdot_ga", np.radians(6.0), "s^-2",
+               "pitch acceleration required in a go-around")
+    qdotst = C("qdot_stall", np.radians(4.0), "s^-2",
+               "nose-down pitch acceleration required for stall recovery")
     ReqRng = C("R_req", size_class.range_nmi, "nmi", "required cruise range")
     # Structural design speeds, scaled on stall speed against the
     # 180-passenger reference. Pinned, they gave a Citation and a 787 the
@@ -573,7 +603,26 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # selects the gear layout rather than nudging it. See
     # SizeClass.f_nose_load_min for the calibration and its branch behaviour.
     f_nose_min = getattr(size_class, "f_nose_load_min", 0.10)
-    CLhrot = C("C_L_h_rotate", 1.25, "-",
+    # ELEVATOR AUTHORITY -- what the tail can actually deliver, as opposed to
+    # what it can survive. The model carried two unrelated tail lift
+    # coefficients and neither was this one: `C_L_ht_max` = 2.0, which is
+    # labelled "structural" and appears in exactly one row (the design load
+    # handed to the wingbox), and `C_L_h_CGfwd` = 0.65, the trim value.
+    #
+    # The achievable coefficient is `C_L_alpha_ht * alpha_ht_max`, a relation
+    # that already existed but only ever bounded the trim case. Measured, it
+    # is 2.778 * 0.25 = 0.694 -- and forward-CG trim already spends 0.65 of
+    # that, 94%. So there is almost no control margin, and every manoeuvre
+    # requirement below has to be bought with AREA rather than with lift
+    # coefficient. That is the point of writing them.
+    CLhauth = V("C_L_h_auth", 0.69, "-",
+                "HT lift coefficient the elevator can actually deliver")
+    CLhctrl = C("C_L_h_ctrl_max", 0.90, "-",
+                "usable HT lift coefficient: trimmable incidence + elevator")
+    # 1.25 was above what the tail can reach: rotation was being credited with
+    # nearly twice the achievable coefficient. It is the same physical limit as
+    # every other control case, so it is now capped by the same row.
+    CLhrot = V("C_L_h_rotate", 0.69, "-",
                "HT lift coefficient available at takeoff rotation")
     # Wing C_L at the GROUND attitude with takeoff flaps -- the aeroplane is
     # still on its wheels at V_R, sitting at whatever incidence the gear gives
@@ -1149,8 +1198,23 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
         # ---- fuselage --------------------------------------------------------
         # Tail cone sizing, driven by the VT root moment.
-        3. * (numVT * vt.box.M_r) * vt.c_root_vt * (fu.p_lambda_vt - 1.)
-            >= numVT * vt.L_vt_max * vt.b_vt * fu.p_lambda_vt,
+        # The denominator was (p - 1), which is 2*lambda. It should be q, which
+        # is (1 + lambda). fusew.f writes the tailcone torque as
+        #     Qv = nvtail*Lvmax*bv/3 * (1 + 2*lambda_v)/(1 + lambda_v)
+        # i.e. L*b*p/(3q), and our root moment M_r*c_root is the same quantity
+        # -- for a fin fed the doubled-span trick, M_r*c_root = L*b*p/(3q)
+        # exactly, which is worth stating because it is not obvious.
+        #
+        # At lambda_vt = 0.3 the two denominators are q = 1.3 against
+        # p - 1 = 0.6, so the row demanded 2.17x the torque TASOPT does. That
+        # inflated the tailcone to 1.77 of TASOPT and, since this is a lower
+        # bound on the fin's own root moment, the fin's box with it.
+        #
+        # Also switched from the fuselage's `p_lambda_vt` -- a constant pinned
+        # at 1.6 that does not move when the fin's taper does -- to the fin's
+        # own p_vt and q_vt, which are tied to lambda_vt.
+        3. * (numVT * vt.box.M_r) * vt.c_root_vt * vt.q_vt
+            >= numVT * vt.L_vt_max * vt.b_vt * vt.p_vt,
         fu.V_cone * (1. + fu.lambda_cone) * (pi + 4. * fu.theta_db)
             >= (numVT * vt.box.M_r * vt.c_root_vt / fu.tau_cone
                 * (pi + 2. * fu.theta_db) * (fu.l_cone / fu.R_fuse)),
@@ -1178,6 +1242,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
         # ---- moment of inertia -------------------------------------------------
         Iz >= Izwing + Iztail + Izfuse,
+        # PITCH inertia, for the longitudinal control-power cases below. The
+        # tail and fuselage terms carry straight over from yaw -- both are
+        # built from LONGITUDINAL lever arms (l_ht, l_vt, x_wing), which are
+        # the same distances in pitch. The WING term does not: I_z_wing is a
+        # spanwise integral, and a wing's span contributes nothing to pitch
+        # inertia. Dropping it is what makes this I_y rather than I_z, and it
+        # leaves the estimate conservative-LOW, since the wing's chordwise
+        # extent and the engines' offset from the CG are both omitted.
+        Iy >= Iztail + Izfuse,
         vt.I_z_max >= Iz,
 
         # ---- engine installation ------------------------------------------------
@@ -1645,13 +1718,101 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # carries one subtraction rather than a product of two.
         Wrot + 0.5 * rhoTO * farv["V_LOF"] ** 2 * wing.S * CLgnd
             == W_totalmax,                                    # [SP] SigEq
+
+        # ---- LONGITUDINAL CONTROL POWER ------------------------------------
+        # The fin has been sized by an angular-acceleration case all along --
+        # `rdot_req`, the yaw rate at the flare. The horizontal tail never had
+        # the pitch analogue: its rotation row balanced STATIC moments only, as
+        # though the aeroplane had to hold the nose up but never actually raise
+        # it. These three rows are that missing requirement.
+        #
+        # Every one is capped by what the elevator can deliver, not by what the
+        # structure can survive. The two coefficients that existed -- 2.0
+        # "structural" and 0.65 for trim -- are not control limits, and the
+        # achievable value is 0.694 with 0.65 of it already spent on trim.
+        # AR-INDEPENDENT, and that matters. The obvious form is
+        # `CLhauth <= C_L_alpha_ht[N-1] * alpha_ht_max`, reusing the relation
+        # that already bounds the trim case. Tried that way it became a lever
+        # on aspect ratio: C_L_alpha_ht rises with AR_ht, so the optimiser
+        # bought control power by stretching the tail to AR 9.58 against a real
+        # 6.16, span 16.5 m against 14.35, and 112 lbf/m2 against a real
+        # stabiliser's 61.
+        #
+        # That was not greed, it was compensation. Work out what the REAL 737
+        # tail needs to pass the go-around row below: S_ht*l_ht = 32.4*16.0 =
+        # 518, against a demand of I_y*qdot = 290 kN m, needs dC_Lh = 0.225 on
+        # top of the 0.65 trim already spent -- total 0.875. The slope relation
+        # supplies only 0.736 at AR 6.16, so the ONLY way the model could reach
+        # a realistic authority was to grow span it should not have needed.
+        #
+        # The relation is wrong for this job. A stabiliser's control power
+        # comes from trimmable INCIDENCE plus ELEVATOR deflection, and neither
+        # scales with span; `C_L_alpha * alpha_max` is the surface's stall
+        # limit, which is a different quantity. 0.90 sits above the 0.875 a
+        # real tail must deliver and below the 0.978 the slope relation
+        # asymptotes to, and being flat in AR it lets aspect ratio settle on
+        # the structural optimum rather than on a control artefact.
+        CLhauth <= CLhctrl,
+        CLhrot <= CLhauth,
+
+        # 1(b) NOSEWHEEL LIFTOFF at 3.0 deg/s^2, forward CG. Rotation is an
+        # angular acceleration about the MAIN GEAR CONTACT, so the inertia is
+        # the pitch inertia transferred to that point by parallel axis. At this
+        # condition the CG is the forward one, so the transfer distance is the
+        # same `x_m - x_CG_fwd` the weight moment already uses.
+        dxrot + xCGfwd == lg.x_m,                             # [SP] SigEq
+        Iyrot >= Iy + W_totalmax / g * dxrot ** 2,
         0.5 * rhoTO * farv["V_LOF"] ** 2 * ht.S_ht * CLhrot
             * (xCG[Nclimb] + ht.l_ht - lg.x_m)
-            >= Wrot * (lg.x_m - xCGfwd),
+            >= Wrot * dxrot + qdotrot * Iyrot,
+
+        # 1(c) GO-AROUND at 6.0 deg/s^2, forward CG, at approach speed. This is
+        # the demanding one -- twice the pitch acceleration of rotation at
+        # roughly three-quarters the dynamic pressure -- and it is airborne, so
+        # there is no gear reaction to help. The tail has to trim the aeroplane
+        # at the forward CG AND accelerate it in pitch, and the trim share is
+        # already spoken for at CLhfwd, so only the REMAINDER of the authority
+        # is available for the manoeuvre.
+        dCLhga + CLhfwd <= CLhauth,                           # [SP]
+        0.5 * rhoTO * farv["V_ref"] ** 2 * ht.S_ht * dCLhga * ht.l_ht
+            >= qdotga * Iy,
+
+        # 2(a) STALL RECOVERY at -4.0 deg/s^2, AFT CG, at stall speed. The
+        # first nose-down case in the model: everything else asks the tail to
+        # raise the nose. At the aft CG the aeroplane is least stable, so the
+        # trim tail load is small and effectively the whole authority is free
+        # for the manoeuvre -- which is why this one is written against the
+        # full CLhauth rather than a remainder. The low speed is what makes it
+        # bite: q at stall is the smallest of the three cases.
+        0.5 * rhoTO * farv["V_s_land"] ** 2 * ht.S_ht * CLhauth * ht.l_ht
+            >= qdotst * Iy,
         SM <= (xAC - xCG) / wing.mac,
         SM >= SMmin,
-        xAC / wing.mac <= (xCG / wing.mac + cmw / wing.C_L
-                                 + ht.V_ht * (ht.C_L_ht / wing.C_L)),
+        # CRUISE TRIM, and the source of trim drag. `cmw` was on the WRONG SIDE.
+        #
+        # It is declared four hundred lines up as "wing pitching moment
+        # magnitude |CM0|" -- the magnitude of a NEGATIVE, nose-down moment,
+        # the same convention the htsize port below states explicitly ("written
+        # with CMw0 = -cmw and CLh = -CLhfwd since both are negative"). A
+        # nose-down wing moment has to be trimmed by MORE tail download, so it
+        # belongs on the demand side. Written as a credit it very nearly
+        # cancelled the C_L*(x_AC - x_CG) term, the row went slack, and
+        # `C_L_ht` sat on its 0.01 floor in every one of the five segments.
+        #
+        # The consequences ran wider than the tail. With no tail load there was
+        # no trim drag at all -- and trim drag is mostly NOT the tail's own
+        # induced drag, which is tiny here, but the wing's: `L_total >= W_avg +
+        # L_ht` already makes the wing carry the download, so a download of
+        # about 3% of weight raises wing induced drag by about 6%, or roughly
+        # 2% of total drag. That is the textbook 1-3% the model was getting for
+        # free. It also left AR_ht with no aerodynamic driver: with C_L_ht at
+        # 0.01 the tail's induced drag is 8e-6, so nothing rewarded tail span
+        # and aspect ratio fell to whatever the wingbox alone wanted.
+        #
+        # Grouped to keep every term positive; dividing through by mac*C_L
+        # recovers the original row with the cmw term moved across.
+        ht.V_ht * ht.C_L_ht * wing.mac + xCG * wing.C_L
+            >= xAC * wing.C_L + cmw * wing.mac,               # [SP]
 
         # ---- nacelle drag --------------------------------------------------
         Renace == st.rho * st.V * lnace / st.mu,
@@ -2017,10 +2178,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # structural weight, which is the trade that should decide it.
         # V_1 is no longer pinned per class -- it is tied to the aircraft's own
         # takeoff stall speed below, which is what FAR 25.149 actually says.
-        # c_l_vt_EO STAYS pinned at 0.5, and the experiment that says so is
-        # worth recording. Freed with a 1.0 cap it went straight to the cap and
-        # the fin collapsed -- 19.1 m2 to 11.1 m2, V_vt 0.066 to 0.034, against
-        # a real 26.4 m2 and ~0.089.
+        # c_l_vt_EO STAYS pinned (now at 0.6, recalibrated -- see the pin for
+        # why 0.5 was borrowed from a TASOPT line that sizes nothing), and the
+        # experiment that says pinned rather than free is worth recording.
+        # Freed with a 1.0 cap it went straight to the cap and the fin
+        # collapsed -- 19.1 m2 to 11.1 m2, V_vt 0.066 to 0.034, against a real
+        # 26.4 m2 and ~0.089.
         #
         # 0.5 is not really a lift coefficient here; it is a conservative
         # stand-in for the fin sizing cases this model does not contain. A
@@ -2031,18 +2194,45 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # knows what a rudder is. Until V_MC is modelled properly, the low
         # coefficient is carrying that absence, and freeing it removes the
         # compensation without supplying the physics.
-        # c_l_vt_EO STAYS pinned at 0.5 -- and 0.5 is TASOPT's own number for
-        # this exact quantity (runs/737/737s.tas:237,
-        # "CLveout  VT CL at engine-out trim").
+        # c_l_vt_EO stays PINNED -- freeing it is still wrong, see below -- but
+        # RE-CALIBRATED from 0.5 to 0.6.
         #
-        # Tested twice, before and after V_MCG was added, and it behaves the
-        # same both times: given a 1.0 cap it goes straight to the cap and the
-        # fin halves (V_vt 0.091 -> 0.047, area 20.7 -> 11.8 m2). It is not
-        # really a lift coefficient, it is a control-margin allowance standing
-        # in for rudder authority, sideslip and handling requirements that
-        # neither this model nor TASOPT represents. Freeing it removes the
-        # allowance without supplying the physics.
-        (vt, "c_l_vt_EO", 0.5, None),
+        # 0.5 was taken from TASOPT's deck (runs/737/737s.tas:237, "CLveout VT
+        # CL at engine-out trim"). That provenance does not survive checking:
+        # the same deck sets iVTsize = 1, "set Sv via Vv", so TASOPT's fin is a
+        # prescribed volume coefficient (Vv = 0.10) and CLveout is never used.
+        # The 0.449 in its output is BACK-COMPUTED from the prescribed area.
+        # 0.5 was therefore borrowed from a line that sizes nothing.
+        #
+        # Worse, at 0.5 it was doing two jobs. TASOPT evaluates the engine-out
+        # case at qstall (wsize.f:1079, u0/1.2 = V_stall); we evaluate it at
+        # V_MCG = 0.88*V_s_TO, which is the more faithful condition -- FAR
+        # 25.149(e), on the wheels, no 5 degree bank available. Fin area goes
+        # as 1/V^2, so that alone costs 1/0.88^2 = 1.29x the area, and it
+        # accounted for essentially the whole 26% by which our fin exceeded
+        # TASOPT's. Keeping 0.5 on top of the harder speed penalised the fin
+        # twice for the same missing physics.
+        #
+        # 0.6 is calibrated against the REAL aircraft rather than borrowed.
+        # Matching the 737-800's 26.4 m2 fin exactly needs c_l = 0.717, and
+        # 0.7 delivers it (S_vt 25.88 m2, V_vt 0.090 against a real 0.089).
+        # That was TOO FAR, and the reason is worth recording: the oversized
+        # fin had been masking structural lightness elsewhere, so removing 758
+        # lb of fin also removed 415 lb of vertical bending -- the fin's load
+        # is what drives it -- and the cascade took MTOW from 0.986 to 0.961 of
+        # the real aircraft. Sizing one component to its own truth made the
+        # AEROPLANE worse, because the compensations it was carrying are still
+        # missing. 0.6 keeps most of the correction while leaving the fin
+        # deliberately conservative until those are built.
+        #
+        # STILL PINNED, and the experiment that says so has been run twice,
+        # before and after V_MCG was added: given a 1.0 cap it goes straight to
+        # the cap and the fin halves (V_vt 0.091 -> 0.047, area 20.7 -> 11.8
+        # m2). It is not really a lift coefficient, it is a control-margin
+        # allowance standing in for rudder authority, sideslip and handling
+        # requirements that neither this model nor TASOPT represents. Freeing
+        # it removes the allowance without supplying the physics.
+        (vt, "c_l_vt_EO", 0.6, None),
         # e_vt STAYS pinned, and deliberately. It is a span efficiency, not a
         # design variable, and the obvious way to derive it -- the Nita-Scholz
         # taper fit the horizontal tail uses -- is wrong here: that correlation
@@ -2331,7 +2521,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # area.
         fu.l_cone >= 2.0 * fu.R_fuse,
         # Floor beam depth cannot exceed the space under the floor.
-        fu.h_floor <= 0.10 * fu.R_fuse,
+        # 0.07, not 0.10. A_floor carries 2*M/(sigma*h), so a deeper beam is
+        # always lighter and this bound is what actually sets the floor -- it
+        # binds exactly. At 0.10 it gave h_floor = 0.1855 m, a 7.3 inch beam,
+        # against TASOPT's fixed 5.00 in (737s.tas) and a real 737's 5-6 in.
+        # The floor came out at 0.821 of TASOPT almost entirely because of it.
+        # Kept as a fraction of R_fuse rather than pinned to TASOPT's inch
+        # value so it still scales across the matrix; 0.07 reproduces 5.11 in
+        # on this fuselage.
+        fu.h_floor <= 0.07 * fu.R_fuse,
     ]
 
     cons += _bound_constraints(f)
