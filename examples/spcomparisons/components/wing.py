@@ -39,9 +39,17 @@ from .polars import POLARS, YORK_C
 from .wingbox import add_wingbox
 
 
+#: Cranked-planform weight credit: divides this box's cap and web weights.
+#: A real transport wing is cranked and carries root bending more efficiently
+#: than the single taper line this closed form integrates, so the closed form
+#: over-predicts by a roughly constant factor. See the note at its use in
+#: wingbox.py for the measurement it is calibrated against.
+F_CRANKED = 1.2
+
+
 def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
              rho_fuel=817.0, material=None, sweep_pricing=False, polar=YORK_C,
-             box_model="hoburg", W_engine=None):
+             W_engine=None):
     """Add the wing (geometry + structure + per-segment aero) to ``f``.
 
     ``state`` supplies the per-segment freestream: rho, V, M, mu.
@@ -107,6 +115,7 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     # partially wet hydrogen wing.
     rhofuel = C("rho_fuel", rho_fuel, "kg/m^3", "density of fuel")
     Cwing = C("C_wing", 1.0, "-", "wing weight margin and sensitivity factor")
+
     # Quarter-chord sweep. With ``sweep_deg=None`` it is a DESIGN VARIABLE,
     # carried as cos(Lambda) rather than Lambda so that every appearance stays
     # monomial -- the trig-of-a-variable obstruction never arises. tan(Lambda)
@@ -177,7 +186,16 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
         fl >= (0.0524 * taper ** 4 - 0.15 * taper ** 3 + 0.1659 * taper ** 2
                - 0.0706 * taper + 0.0119),
         e * (1 + fl * AR) <= 1,
-        taper >= 0.15,
+        # Taper and thickness are PINNED, not bounded. Left free they sat on
+        # their artificial floors -- taper on 0.15 and tau on the 0.14 fit
+        # cap -- against TASOPT's 0.250/0.127 and a real 737's 0.24/0.125.
+        # A variable resting on a bound nobody meant as physics is not a
+        # design freedom, and both of these were set by the bound rather than
+        # by any trade. Pinning them to the real aircraft's values makes the
+        # comparison honest and removes two quantities the optimiser was
+        # exploiting.
+        taper == 0.25,
+        tau == 0.13,
         # Fuel volume, GP approximation of the TASOPT signomial constraint.
         Vfuel <= 0.3026 * mac ** 2 * b * tau,
         WfuelWing <= rhofuel * Vfuel * g,
@@ -219,7 +237,7 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     wb, wbcons = add_wingbox("wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
                              Lmax=Lmax, tau_max=tau_max, group=box,
                              cosL=cosL if sweep_pricing else None,
-                             material=material)
+                             material=material, weight_credit=F_CRANKED)
     cons += wbcons
     out["box"] = wb
 
@@ -234,6 +252,8 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     fracs = [C(n, v, "-", f"{n} fractional weight") for n, v in fnames]
 
     cons += [
+        # No correction here: it is applied inside the box, to W_cap and
+        # W_web, so the COMPONENTS match TASOPT and not merely their sum.
         Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs),
         dxACwing <= 1. / 24. * (croot + 5. * ctip) / S * b ** 2 * tanL,
     ]

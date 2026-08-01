@@ -42,7 +42,7 @@ COMPOSITE = {"rho": 1600.0, "sigma": 450e6, "tau": 300e6}
 
 def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
                 Mr=None, taper=None, tau_max=None, material=None,
-                tau_limits=True, cosL=None):
+                tau_limits=True, cosL=None, weight_credit=1.0):
     """Add a wing box to the group's formulation, and return its variables.
 
     Parameters are the *linked* quantities owned by the surface model: aspect
@@ -99,6 +99,23 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
     # degrees and cruise to M 0.55, which is not an airliner. Net, as TASOPT
     # has it: web weight ~ 1/cosL, cap weight ~ 1/cosL^3.
     _cv = cosL if cosL is not None else 1.0
+    # CRANKED-PLANFORM CREDIT, applied to the cap and web directly so the
+    # COMPONENTS match a reference rather than only their sum.
+    #
+    # This box integrates a single taper line in closed form. A real transport
+    # wing is cranked -- an inner panel tapering far less (TASOPT's 737: 0.70
+    # root-to-break against 0.25 break-to-tip) -- which carries root bending
+    # more efficiently than one taper can, so the closed form over-predicts by
+    # a roughly constant factor. Measured against TASOPT's own station-based
+    # calculation at matched inputs: W_cap 1.241, W_web 1.423, W_wing 1.249.
+    #
+    # WING ONLY. The caller passes it; the tails do not, and must not -- this
+    # model already comes out LIGHTER than TASOPT on both (W_ht 0.671, W_vt
+    # 0.750), so a credit there would widen a gap rather than close one.
+    #
+    # A correction, not a discovery. The honest version is the station-based
+    # cranked box in wingbox_tasopt.py; when that converges this goes.
+    _wc = weight_credit
     V, C = group.Variable, group.Constant
 
     # ---- box variables ----------------------------------------------------
@@ -138,7 +155,7 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
         0.92 * wwb * tau * tcap ** 2 + Icap <= 0.92 ** 2 / 2 * wwb * tau ** 2 * tcap,
         # Posynomial approximation of nu = (1+lam+lam^2)/(1+lam)^2
         nu ** 3.94 >= 0.86 * p ** (-2.38) + 0.14 * p ** 0.56,
-        Wweb >= _cv * 8 * rhoweb * g * rh * tau * tweb * S ** 1.5 * nu / (3 * AR ** 0.5),
+        _wc * Wweb >= _cv * 8 * rhoweb * g * rh * tau * tweb * S ** 1.5 * nu / (3 * AR ** 0.5),
     ]
 
     if surfacetype == "wing":
@@ -148,7 +165,7 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
             Wstruct >= Wweb + Wcap,
             # Shear web sizing; assumes all shear carried by the web, r_h=0.75.
             12 * _c2 >= AR * Lmax * q ** 2 / (tau * S * tweb * sigmaxshear),
-            Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
+            _wc * Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
             # Stress limit; assumes bending carried by caps (I_cap >> I_web).
             8 * _c4 >= Mr * AR * q ** 2 * tau / (S * Icap * sigmax),
         ]
@@ -160,7 +177,7 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
             # Root moment; assumes lift per unit span follows local chord.
             Mr >= Lmax * AR * p / 24,
             12 * _c2 >= AR * Lmax * Nlift * q ** 2 / (tau * S * tweb * sigmaxshear),
-            Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
+            _wc * Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
             8 * _c4 >= Nlift * Mr * AR * q ** 2 * tau / (S * Icap * sigmax),
         ]
     elif surfacetype == "horizontal_tail":
@@ -204,7 +221,7 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
             Lhtriout >= Lhtri * bhtout ** 2 / (0.5 * b) ** 2,
             Lhrectout >= Lhrect * bhtout / (0.5 * b),
             12 * _c2 >= 2 * AR * Lshear * Nlift * q ** 2 / (tau * S * tweb * sigmaxshear),
-            Wcap >= _cv * piMfac * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
+            _wc * Wcap >= _cv * piMfac * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
             8 * _c4 >= Nlift * Mr * AR * q ** 2 * tau / (S * Icap * sigmax),
         ]
     elif surfacetype == "horizontal_tail_conventional":
@@ -245,7 +262,7 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
             # same file -- weighed 53 and a real 737 stabiliser weighs ~61.
             Mr >= Lmax * AR * p / 12,
             12 * _c2 >= AR * Lmax * Nlift * q ** 2 / (tau * S * tweb * sigmaxshear),
-            Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
+            _wc * Wcap >= _cv * 8 * rhocap * g * wwb * tcap * S ** 1.5 * nu / (3 * AR ** 0.5),
             8 * _c4 >= Nlift * Mr * AR * q ** 2 * tau / (S * Icap * sigmax),
         ]
     else:

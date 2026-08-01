@@ -170,7 +170,7 @@ def volumes(co, b, cosL, eta_o=ETA_O, eta_s=ETA_S,
 def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
                        N_lift=3.0, cosL=None, material=None,
                        eta_o=ETA_O, eta_s=ETA_S,
-                       lam_s=None, lam_t=None, taper=None,
+                       lam_s=None, lam_t=None, taper=None, Kc=None, Ko=None,
                        W_engine=None, rho_fuel=None, f_fuel=1.0,
                        f_wadd=0.640, relief=True):
     """Add the station-based box. Returns ``(vars, constraints)``.
@@ -209,7 +209,20 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     if lam_t is None:
         lam_t = LAMBDA_T
     _cosL = cosL if cosL is not None else 1.0
-    Kc, Ko, Kp0, gam_s, gam_t = planform(eta_o, eta_s, lam_s, lam_t)
+    # planform() computes Ko = 1/Kc, which is fine when the tapers are floats
+    # -- as in the standalone validation against TASOPT's cranked 737 -- and
+    # NOT fine when they are variables: Kc is then a posynomial and 1/Kc is
+    # its reciprocal, which is not GP-compatible. It sits in the po equality,
+    # upstream of every load in this box, and it is why the cranked wing would
+    # not converge even warm-started from a converged aeroplane with the start
+    # exactly on the manifold. The caller passes its own Kc and Ko, related by
+    # the monomial equality Ko*Kc == 1, when they are variables.
+    _Kc, _Ko, Kp0, gam_s, gam_t = planform(eta_o, eta_s, lam_s, lam_t)
+    if Kc is not None:
+        _Kc = Kc
+    if Ko is not None:
+        _Ko = Ko
+    Kc, Ko = _Kc, _Ko
     # the fLt term in Kp carries 1/AR, which is a variable here
     hrms_f = h_rms(1.0)          # multiplies tau below
     rh, wbox = R_H, W_BOX
@@ -250,6 +263,11 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     hrms = hrms_f * hbox
     havg = h_avg(1.0) * hbox
     cs = co * lam_s
+    # eta_o is the CALLER's, not this module's default. The wing carries it
+    # as a variable (w_fuse/(b/2), about 0.122 on a 737) while ETA_O here is
+    # 0.1016 from TASOPT's deck; leaving them unlinked put two different
+    # centrebody fractions in one model, with S == c_o*b*K_c integrated over
+    # one planform and Vcen == c_o^2*b*eta_o/2 over another.
     Vcen, Vinn, Vout = volumes(co, b, _cosL, eta_o, eta_s, lam_s, lam_t)
     # spanwise moment volumes, surfw.f:173-178
     dyVinn = (co ** 2 * b ** 2 * (eta_s - eta_o) ** 2
@@ -286,8 +304,13 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
         S == co * b * Kc,
         # root load intensity. The fLt tip-rolloff term carries 1/AR and is
         # negative, so it moves to the left as an all-positive equality.
-        po * Kp0 * b + (-2.0 * F_LT * Ko * gam_t * lam_t / AR) * po * b
-            == Lmax,                                          # [SP] SigEq
+        # Kp = Kp0 + 2*fLt*Ko*gam_t*lam_t with fLt NEGATIVE (-0.05), so the
+        # tip-rolloff term SUBTRACTS from Kp. All-positive, it therefore
+        # belongs on the right with Lmax, not on the left -- writing it left
+        # flipped the rolloff. Small (~0.05% of Kp0) but wrong.
+        po * Kp0 * b
+            == Lmax + (-2.0 * F_LT) * Ko * gam_t * lam_t / AR * po * b,
+                                                              # [SP] SigEq
 
         # ---- outer wing, at the break (surfw.f:50-51) ---------------------
         # dLt = fLt*po*co*gammat*lambdat is NEGATIVE (fLt = -0.05), so it and

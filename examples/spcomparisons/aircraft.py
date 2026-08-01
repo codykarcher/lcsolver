@@ -46,6 +46,18 @@ import numpy as np
 #: spanwise station: 0 = front spar, 1 = rear spar. Set GEAR_BOX_FRAC to
 #: sweep it; see the note at the constraint itself.
 _GEAR_BOX_FRAC = float(_os.environ.get("GEAR_BOX_FRAC", "0.0"))
+
+#: Engine spanwise station, as a fraction of semi-span. Was 0.35, which is
+#: about 17% too far outboard: TASOPT mounts the engine AT the planform break
+#: (etas = 0.285 in its 737 deck, and surfw.f's inertial relief is written on
+#: that assumption), and a real 737-800's engines sit at eta ~0.28-0.31.
+#:
+#: This is not cosmetic. y_eng sets the engine-out yawing moment, which sizes
+#: the VERTICAL TAIL, so moving it inboard shortens the arm ~19% and shrinks
+#: the fin. The fin currently agrees with the real aircraft to 1.8%, and that
+#: agreement was reached with the engine in the wrong place -- so it has to be
+#: re-earned here rather than assumed.
+_ETA_ENG = 0.285
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
@@ -83,7 +95,15 @@ NCLIMB, NCRUISE = 3, 2
 def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           pi_tail_supports: str = "fixed", seed: str | None = None,
           tau_limits: bool = True, sweep_pricing: bool = False,
-          polar="york_c", tail_drag: str = "tasopt",
+          # MSES refits are the default. York's fit was valid only to
+          # M_perp ~0.74 and under-predicted drag 3-6x beyond it, so the model
+          # carried a hard fence at that Mach -- and the FENCE, not
+          # aerodynamics, was setting wing sweep (21 deg against TASOPT's 26.0
+          # and a real ~25). mses_c is the like-for-like replacement, fitted to
+          # the same C-series family and valid to M 0.86; mses tails replace
+          # TASOPT's two Mach-independent constants with a fit that has a real
+          # transonic rise. See components/polars.py.
+          polar="mses_c", tail_drag: str = "mses",
           wing_model: str = "hoburg",
           sweep_deg: float | None = None):
     """Build the LH2 D8.2. Returns an EDI ``Formulation``.
@@ -1070,7 +1090,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                 * (1. / 12. - (1. - wing.lambda_) / 16.))
         if _rear:
             return base
-        return base + numeng * Wengsys * (0.35 * wing.b / 2.0) ** 2 / g
+        return base + numeng * Wengsys * (_ETA_ENG * wing.b / 2.0) ** 2 / g
     cons += [
         # Engine-out yaw arm. A podded underwing engine sits far outboard, so
         # losing one is a much bigger yawing moment than losing a rear engine
@@ -1086,7 +1106,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # break to sit on, so it keeps the 0.35 semi-span station it had.
         y_eng == (0.5 * fu.w_fuse if _rear
                   else (wing.eta_s * wing.b / 2.0 if wing_model == "tasopt"
-                        else 0.35 * wing.b / 2.0)),
+                        else _ETA_ENG * wing.b / 2.0)),
         # Wing root moment, relieved by wing weight and fuel -- and, for an
         # underwing installation, by the engines themselves. That relief is
         # one of the reasons real airliners hang engines on the wing.

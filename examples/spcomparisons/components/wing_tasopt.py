@@ -1,5 +1,45 @@
 """The TASOPT wing: a cranked planform with two independent taper ratios.
 
+STATUS: FUTURE WORK. NOT USED. `wing_model` defaults to "hoburg" and every
+result in the study comes from wing.py. This module is kept because the
+geometry and the ported structure are correct and the debugging is expensive
+to redo, not because it works: it does not converge.
+
+Where it stands, so the next attempt starts from the evidence rather than
+repeating it:
+
+  * Eight defects were found and fixed. Seven are listed at the points they
+    occur; the eighth, `Ko = 1.0/Kc` in wingbox_tasopt.planform(), is the one
+    that mattered -- a reciprocal of a posynomial in the load intensity row,
+    upstream of every load in the box. Fixing it moved the failure from
+    "sub-problem infeasible at iteration 32" to "600 iterations without
+    converging", which is the only change of failure MODE any fix produced.
+
+  * A warm start from a CONVERGED hoburg aeroplane -- 1200 values copied, the
+    cranked planform derived from that solution, residuals 0.00e+00 on both
+    signomial equalities -- still failed at iteration 32 (before the Ko fix).
+    That rules out initialisation: the problem is the formulation.
+
+  * At 200 iterations post-fix: stationarity 4.45, max_violation 1.6e-2. A
+    converging solve here reaches ~1e-6 and ~1e-9. That is stuck, not slow.
+
+  * Two defects remain candidates and were fixed but never confirmed to help:
+    the tip-rolloff sign (fLt is negative, so the term belongs on the right of
+    the po equality, worth ~0.05% of Kp0) and TWO different eta_o -- the wing
+    carried it as a variable at ~0.122 while the box defaulted to the deck
+    constant 0.1016, so area was integrated over one planform and volume over
+    another.
+
+The lesson, which is the reason to read this before continuing: planform() and
+volumes() were written and VALIDATED with float arguments -- they reproduce
+TASOPT's own 737 to 0.1% that way -- and then called with variables. `Ko` and
+the eta_o mismatch are both that same trap, and a standalone test passing at
+0.1% gave false confidence about behaviour inside the optimisation. Build the
+next version with variables from the start and validate it INSIDE the solve.
+
+The original text follows.
+
+
 An alternative to ``wing.py`` (SPaircraft/Hoburg), selected with
 ``wing_model="tasopt"``. Both build the same group -- ``f.wing`` -- and expose
 the same names, so the rest of the aircraft does not know which it has.
@@ -245,7 +285,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
     wb, wbcons = add_wingbox_tasopt(
         "wing", AR=AR, b=b, S=S, tau=tau, Lmax=Lmax, group=box,
         cosL=cosL if sweep_pricing else None, material=material,
-        eta_s=eta_break, lam_s=lam_s, lam_t=lam_t,
+        eta_o=eo, eta_s=eta_break, lam_s=lam_s, lam_t=lam_t, Kc=Kc, Ko=Ko,
         W_engine=W_engine, rho_fuel=rho_fuel)
     cons += wbcons
     out["box"] = wb
