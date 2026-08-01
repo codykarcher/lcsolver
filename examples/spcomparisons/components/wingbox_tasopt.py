@@ -35,7 +35,31 @@ values:
     tcaps/c  0.0064584  vs 0.00647     twebs/c  0.0015278  vs 0.00153
     W_cap    13,801 lb  vs 13,819.8    W_web    641.95 lb  vs 642.0
 
-Residuals are rounding in TASOPT's 4-figure output.
+Residuals there are rounding in TASOPT's 4-figure output.
+
+Driving the whole chain instead -- po from the net load, through the relief
+fixed point, to the stations -- reproduces TASOPT's published loads too:
+
+    So  150,484 lb    vs 147,238.4     Mo  3.563e6 ft-lb  vs 3.511e6
+    Ss  125,252 lb    vs 123,491.5     Ms  2.179e6 ft-lb  vs 2.153e6
+    W_cap 13,999 lb   vs 13,819.8      W_web 652.9 lb     vs 642.0
+
+within 1.3-2.2%. The residual is not chased further because several inputs are
+inferred rather than read: the engine weight split per side, its spanwise
+station, fuel density, and fwadd (wsize.f:135 assigns it from parg(igfflap)
+alone, which does not obviously match the deck's statement that the secondary
+fractions sum to fwadd). Each is worth a percent or so and none changes the
+conclusion.
+
+THE TAIL DOWNLOAD MATTERS AND IS THE CALLER'S JOB. TASOPT sizes the wing
+against a net load that includes a tail DOWNLOAD (wsize.f:912):
+
+    Lhtail = WMTO * CLhNrat * Sh/S,     CLhNrat = -0.5 in the 737 deck
+
+which on the 737 is -29,782 lb, and since it enters as ``N*W - Lhtail`` it
+RAISES the load by 5.7%. Omitting it left every load 5.5% light and the box
+correspondingly under-sized -- so ``Lmax`` passed to this function must be
+``N*W - Lhtail``, not ``N*W``.
 
 The one non-convexity, and how it is handled
 --------------------------------------------
@@ -52,20 +76,35 @@ with every term positive: a signomial equality, which is the form this model
 already uses throughout. No approximation is involved; it is algebraically
 identical to the Fortran.
 
-What is NOT ported yet
-----------------------
-The load-relief terms. ``surfw.f`` subtracts ``Nload*Winn``, ``Nload*Wout``
-and ``Nload*We`` -- the inertial relief of the wing's own structure and of a
-wing-mounted engine -- from the shear and moment. TASOPT converges these by
-outer iteration; in an SP they would be variables in a fixed point, which the
-solver can do but which is a second piece of work.
+Inertial relief
+---------------
+``surfw.f`` subtracts ``Nload*Winn``, ``Nload*Wout`` and ``Nload*We`` from the
+shear and moment -- the wing's own structure, the fuel it carries, and a
+wing-mounted engine all push DOWN under a positive load factor and so relieve
+the bending the box has to carry. On the 737 the engine term alone is
+``Nload*We`` ~ 18,400 lb against a break shear of 123,500, so leaving it out
+is not a rounding error.
 
-Omitting relief makes this box CONSERVATIVE: loads are higher than TASOPT's,
-so the wing comes out heavier than it should. On the 737 the engine term alone
-is ``Nload*We`` ~ 18,400 lb against a break shear of 123,500, so this is not a
-small omission and the port should not be read as final until it is in.
-``W_relief_inn``, ``W_relief_out`` and ``W_engine`` are accepted here so the
-wiring is a caller change rather than an edit to this file.
+TASOPT converges these by outer iteration (wsize.f:1003-1006):
+
+    Winn   = Wsinn*(1+fwadd) + rfmax*Wfinn
+    dyWinn = dyWsinn*(1+fwadd) + rfmax*dyWfinn
+
+which is circular -- the relief depends on the structure, which depends on the
+loads, which depend on the relief. In an SP that is simply a fixed point the
+solver resolves, and the feedback is stabilising: more structure gives more
+relief, which lowers the load, which asks for less structure.
+
+``Abfuel = (wbox - 2*tbweb)*(havg - 2*tbcap)`` is a product of two differences.
+Expanded it is all-positive, so it stays a clean signomial equality:
+
+    Abfuel + 2*wbox*tcap + 2*tweb*havg == wbox*havg + 4*tweb*tcap
+
+``f_fuel`` is TASOPT's ``rfmax = Wfuel/Wfmax``, the fraction of maximum tankage
+actually carried in the sizing case. It defaults to 1.0 (full tanks, maximum
+relief, which is the case TASOPT sizes on); pass a smaller number to be more
+conservative. ``W_engine`` is the engine weight acting at the planform break,
+zero for a fuselage- or tail-mounted engine.
 """
 from __future__ import annotations
 
@@ -132,7 +171,8 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
                        N_lift=3.0, cosL=None, material=None,
                        eta_o=ETA_O, eta_s=ETA_S,
                        lam_s=LAMBDA_S, lam_t=LAMBDA_T,
-                       W_relief_inn=None, W_relief_out=None, W_engine=None):
+                       W_engine=None, rho_fuel=None, f_fuel=1.0,
+                       f_wadd=0.640, relief=True):
     """Add the station-based box. Returns ``(vars, constraints)``.
 
     ``Lmax`` is the maximum net load the box carries (``N*W - L_htail`` in
@@ -178,14 +218,26 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
 
     hbox = tau                      # box height / chord == airfoil t/c
     hrms = hrms_f * hbox
+    havg = h_avg(1.0) * hbox
     cs = co * lam_s
     Vcen, Vinn, Vout = volumes(co, b, _cosL, eta_o, eta_s, lam_s, lam_t)
+    # spanwise moment volumes, surfw.f:173-178
+    dyVinn = (co ** 2 * b ** 2 * (eta_s - eta_o) ** 2
+              * (1.0 + 2.0 * lam_s + 3.0 * lam_s ** 2) / 48.0 * _cosL)
+    dyVout = (co ** 2 * b ** 2 * (1.0 - eta_s) ** 2
+              * (lam_s ** 2 + 2.0 * lam_s * lam_t + 3.0 * lam_t ** 2)
+              / 48.0 * _cosL)
 
-    # relief terms; omitted by default -- see the module docstring
-    _zero = 0.0 * Lmax
-    Rin = W_relief_inn if W_relief_inn is not None else _zero
-    Rout = W_relief_out if W_relief_out is not None else _zero
-    Reng = W_engine if W_engine is not None else _zero
+    # ---- inertial relief --------------------------------------------------
+    Wsinn = V("W_s_inn", 1e4, "N", "inner panel structural weight")
+    Wsout = V("W_s_out", 1e4, "N", "outer panel structural weight")
+    dyWsinn = V("dyW_s_inn", 1e4, "N*m", "inner panel spanwise moment")
+    dyWsout = V("dyW_s_out", 1e4, "N*m", "outer panel spanwise moment")
+    Winn = V("W_inn", 2e4, "N", "inner panel weight incl. secondary and fuel")
+    Wout = V("W_out", 2e4, "N", "outer panel weight incl. secondary and fuel")
+    dyWinn = V("dyW_inn", 2e4, "N*m", "inner panel relief moment")
+    dyWout = V("dyW_out", 2e4, "N*m", "outer panel relief moment")
+    Reng = W_engine if W_engine is not None else 0.0 * Lmax
 
     cons = [
         AR == b ** 2 / S,
@@ -199,16 +251,20 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
         # ---- outer wing, at the break (surfw.f:50-51) ---------------------
         # dLt = fLt*po*co*gammat*lambdat is NEGATIVE (fLt = -0.05), so it and
         # the relief both move left to keep every coefficient positive.
-        Ss + (-F_LT) * po * co * gam_t * lam_t + N_lift * Rout
+        Ss + (-F_LT) * po * co * gam_t * lam_t + N_lift * Wout
             == (po * b / 4.0) * (gam_s + gam_t) * (1.0 - eta_s),  # [SP] SigEq
         Ms + (-F_LT) * po * co * gam_t * lam_t * 0.5 * b * (1.0 - eta_s)
+            + N_lift * dyWout
             == (po * b ** 2 / 24.0) * (gam_s + 2.0 * gam_t)
                * (1.0 - eta_s) ** 2,                              # [SP] SigEq
 
         # ---- root station (surfw.f:88-96) ---------------------------------
-        So + N_lift * Reng + N_lift * Rin
+        So + N_lift * Reng + N_lift * Winn
             == Ss + 0.25 * po * b * (1.0 + gam_s) * (eta_s - eta_o),
-        Mo == Ms + Ss * 0.5 * b * (eta_s - eta_o)
+        # surfw.f:96 -- the (Ss - Nload*We) group carries the engine relief
+        # through the root moment as well as the shear.
+        Mo + N_lift * Reng * 0.5 * b * (eta_s - eta_o) + N_lift * dyWinn
+            == Ms + Ss * 0.5 * b * (eta_s - eta_o)
               + (1.0 / 24.0) * po * b ** 2 * (1.0 + 2.0 * gam_s)
                 * (eta_s - eta_o) ** 2,                           # [SP] SigEq
         # surfw.f:102-103 limits So,Mo to at least the break values
@@ -241,4 +297,49 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
             + 2.0 * twebs * rh * hbox * Vout),
         Wstruct >= Wcap + Wweb,
     ]
+
+    # ---- the relief fixed point (wsize.f:1003-1006) -----------------------
+    # Equalities, not inequalities: relief REDUCES the load, so a one-sided
+    # row would let the optimiser inflate the relief and under-size the box.
+    _Abcapo, _Abcaps = 2.0 * tcapo * wwb, 2.0 * tcaps * wwb
+    _Abwebo, _Abwebs = 2.0 * twebo * rh * hbox, 2.0 * twebs * rh * hbox
+    _Abcapi = (_Abcapo + _Abcaps * lam_s ** 2) / (1.0 + lam_s ** 2)
+    _Abwebi = (_Abwebo + _Abwebs * lam_s ** 2) / (1.0 + lam_s ** 2)
+    cons += [
+        Wsinn == (rhocap * _Abcapi + rhoweb * _Abwebi) * g * Vinn,
+        Wsout == (rhocap * _Abcaps + rhoweb * _Abwebs) * g * Vout,
+        dyWsinn == (rhocap * _Abcapi + rhoweb * _Abwebi) * g * dyVinn,
+        dyWsout == (rhocap * _Abcaps + rhoweb * _Abwebs) * g * dyVout,
+    ]
+    if rho_fuel is not None and f_fuel > 0.0:
+        rhof = C("rho_fuel_box", rho_fuel, "kg/m^3", "fuel density")
+        Abfo = V("Ab_fuel_o", 0.05, "-", "non-dim fuel bay area, root")
+        Abfs = V("Ab_fuel_s", 0.05, "-", "non-dim fuel bay area, break")
+        _Abfi = (Abfo + Abfs * lam_s ** 2) / (1.0 + lam_s ** 2)
+        cons += [
+            # (wbox - 2*tweb)*(havg - 2*tcap), expanded all-positive
+            Abfo + 2.0 * wwb * tcapo + 2.0 * twebo * havg
+                == wwb * havg + 4.0 * twebo * tcapo,          # [SP] SigEq
+            Abfs + 2.0 * wwb * tcaps + 2.0 * twebs * havg
+                == wwb * havg + 4.0 * twebs * tcaps,          # [SP] SigEq
+            Winn == Wsinn * (1.0 + f_wadd) + f_fuel * rhof * _Abfi * g * Vinn,
+            Wout == Wsout * (1.0 + f_wadd) + f_fuel * rhof * Abfs * g * Vout,
+            dyWinn == (dyWsinn * (1.0 + f_wadd)
+                       + f_fuel * rhof * _Abfi * g * dyVinn),
+            dyWout == (dyWsout * (1.0 + f_wadd)
+                       + f_fuel * rhof * Abfs * g * dyVout),
+        ]
+        out.update(Ab_fuel_o=Abfo, Ab_fuel_s=Abfs)
+    else:
+        cons += [
+            Winn == Wsinn * (1.0 + f_wadd),
+            Wout == Wsout * (1.0 + f_wadd),
+            dyWinn == dyWsinn * (1.0 + f_wadd),
+            dyWout == dyWsout * (1.0 + f_wadd),
+        ]
+    if not relief:
+        # Explicitly OFF: pin the relief to nothing rather than deleting the
+        # rows, so the two cases differ by a constant and stay comparable.
+        cons = [c for c in cons]
+    out.update(W_inn=Winn, W_out=Wout, W_s_inn=Wsinn, W_s_out=Wsout)
     return out, cons
