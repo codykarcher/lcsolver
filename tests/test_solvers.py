@@ -541,6 +541,88 @@ class TestGPObjectiveForm(unittest.TestCase):
         with self.assertRaises(ValueError):
             solve_gp_ipopt(st, form="nonsense")
 
+    # ---- silent 'sum' failure and its verification polish ----------------
+    # 'sum' can report optimality at a non-optimum: on a model whose optimum
+    # sits at small absolute scale, every sum-form KKT residual deflates
+    # below IPOPT's tolerances (the wind turbine COE model certifies a point
+    # 7x off).  Under form='auto' a claimed 'sum' success is therefore
+    # verified by a warm-started 'lse' solve.  These tests drive
+    # _build_and_solve_gp with a stubbed _assemble_and_solve so the three
+    # outcomes are exercised without needing a model that reproduces the
+    # numerics.
+
+    def _drive_polish(self, results_by_form, lse_raises=False):
+        import warnings as _warnings
+        from unittest import mock
+        from edi.solvers.ipopt import convex
+
+        calls = []
+
+        def fake(m, n, groups, relations, tee, options, method, executable,
+                 form):
+            calls.append(form)
+            if not hasattr(m, 'obj'):
+                m.obj = pyo.Objective(expr=1.0)
+                m.cons = pyo.ConstraintList()
+            if form == 'lse' and lse_raises:
+                raise RuntimeError('restoration failed (JHO-style)')
+            return {'primal objective': results_by_form[form],
+                    'gp form': form, 'status': 'optimal'}
+
+        m = pyo.ConcreteModel()
+        groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}   # tame -> auto=sum
+        with mock.patch.object(convex, '_assemble_and_solve', fake):
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter('always')
+                res = convex._build_and_solve_gp(
+                    m, 1, groups, ['<='], False, None, 'auto', None,
+                    form='auto')
+        return res, calls, caught
+
+    def test_false_sum_optimum_is_replaced_by_lse_and_warned(self):
+        res, calls, caught = self._drive_polish({'sum': 100.0, 'lse': 1.0})
+        self.assertEqual(calls, ['sum', 'lse'])
+        self.assertEqual(res['gp form'], 'lse')
+        self.assertEqual(res['primal objective'], 1.0)
+        self.assertTrue(any('false optimum' in str(w.message) for w in caught))
+
+    def test_agreeing_sum_result_is_kept_without_warning(self):
+        res, calls, caught = self._drive_polish({'sum': 1.0, 'lse': 1.0})
+        self.assertEqual(calls, ['sum', 'lse'])       # verification ran
+        self.assertEqual(res['gp form'], 'sum')       # sum answer kept
+        self.assertFalse(any('false optimum' in str(w.message) for w in caught))
+
+    def test_lse_polish_failure_keeps_the_sum_answer(self):
+        # the JHO sailplane solves under 'sum' and fails under 'lse'; a
+        # failed verification must not take the model down with it
+        res, calls, caught = self._drive_polish({'sum': 1.0, 'lse': 0.5},
+                                                lse_raises=True)
+        self.assertEqual(calls, ['sum', 'lse'])
+        self.assertEqual(res['gp form'], 'sum')
+
+    def test_explicit_sum_form_skips_verification(self):
+        # form='sum' is an explicit user choice; no polish, exactly one solve
+        import warnings as _warnings
+        from unittest import mock
+        from edi.solvers.ipopt import convex
+        calls = []
+
+        def fake(m, n, groups, relations, tee, options, method, executable,
+                 form):
+            calls.append(form)
+            m.obj = pyo.Objective(expr=1.0)
+            m.cons = pyo.ConstraintList()
+            return {'primal objective': 100.0, 'gp form': form,
+                    'status': 'optimal'}
+
+        m = pyo.ConcreteModel()
+        groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}
+        with mock.patch.object(convex, '_assemble_and_solve', fake):
+            res = convex._build_and_solve_gp(
+                m, 1, groups, ['<='], False, None, 'auto', None, form='sum')
+        self.assertEqual(calls, ['sum'])
+        self.assertEqual(res['gp form'], 'sum')
+
 
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 class TestWritebackFailureIsAnnounced(unittest.TestCase):

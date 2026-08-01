@@ -170,8 +170,12 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
 # the logarithm the same quantity is ~676 and stays finite.
 #
 # 'auto' picks 'lse' only when the row data says the plain sum is at risk,
-# and otherwise falls back to 'lse' if 'sum' fails outright -- so a model that
-# needs it still gets it without every model paying for it.
+# falls back to 'lse' if 'sum' fails outright, and VERIFIES a claimed 'sum'
+# success with a warm-started 'lse' polish -- because 'sum' can also fail
+# silently: on a model whose optimum sits at small absolute scale (the wind
+# turbine COE model, objective ~1e-7 in corrected units) the sum-form KKT
+# residuals deflate below IPOPT's tolerances and it certifies a point 7x off
+# the optimum.  See _build_and_solve_gp.
 GP_FORM_AUTO_LOGC = 100.0     # |log c| above which 'auto' switches to 'lse'
 GP_FORM_AUTO_EXPONENT = 100.0  # |exponent| likewise
 
@@ -192,6 +196,14 @@ def _auto_form(groups):
     return 'sum'
 
 
+# Relative objective improvement above which the 'lse' verification solve is
+# taken to have caught a false 'sum' optimum (see _build_and_solve_gp).  The
+# wind-turbine GP that motivated the check shows a factor of ~7; genuine
+# agreement between the forms is within solver tolerance, so anything beyond
+# this is a 'sum' failure, and a warning names it.
+GP_SUM_VERIFY_RTOL = 1e-4
+
+
 def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
                         executable, form='auto'):
     """Shared objective/constraint assembly and IPOPT call."""
@@ -199,8 +211,8 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
         raise ValueError("form must be 'auto', 'sum' or 'lse'")
     chosen = _auto_form(groups) if form == 'auto' else form
     try:
-        return _assemble_and_solve(m, n, groups, relations, tee, options,
-                                   method, executable, chosen)
+        res = _assemble_and_solve(m, n, groups, relations, tee, options,
+                                  method, executable, chosen)
     except Exception:
         if form != 'auto' or chosen == 'lse':
             raise
@@ -210,6 +222,44 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
         m.del_component(m.cons)
         return _assemble_and_solve(m, n, groups, relations, tee, options,
                                    method, executable, 'lse')
+
+    if form != 'auto' or chosen != 'sum':
+        return res
+
+    # 'sum' CLAIMED success; verify it, because 'sum' can also fail
+    # SILENTLY.  Without the outer logarithm every quantity IPOPT sees is
+    # the posynomial itself, and on a model whose optimum lives at small
+    # absolute scale the whole KKT system deflates with it: the wind
+    # turbine COE model (objective ~1e-7 in corrected base units) returns
+    # "EXIT: Optimal Solution Found" with every residual below tolerance
+    # at a point 7x above the true optimum -- the tolerances are simply
+    # larger than the numbers that would have to move.  No property of the
+    # returned point distinguishes this (the constraints are feasible and
+    # nothing is overflowed), so the check is a second solve in 'lse'
+    # form, warm-started at the 'sum' answer: log-space values are O(1-30)
+    # where IPOPT's tolerances mean something.  If 'sum' was right the
+    # polish converges in a handful of iterations to the same point; if
+    # not, it walks to the real optimum.  If 'lse' itself fails -- the JHO
+    # sailplane does, which is why 'sum' exists -- the 'sum' answer is
+    # kept, so models that only 'sum' can solve behave exactly as before.
+    m.del_component(m.obj)
+    m.del_component(m.cons)
+    try:
+        res_lse = _assemble_and_solve(m, n, groups, relations, tee, options,
+                                      method, executable, 'lse')
+    except Exception:
+        return res
+    if res_lse['primal objective'] < res['primal objective'] * (1.0 - GP_SUM_VERIFY_RTOL):
+        import warnings
+        warnings.warn(
+            "the 'sum'-form GP solve reported optimality at an objective of "
+            f"{res['primal objective']:.6g}, but the 'lse' verification solve "
+            f"reached {res_lse['primal objective']:.6g}; the 'sum' result was "
+            "a false optimum (its KKT residuals deflated below IPOPT's "
+            "tolerances) and the 'lse' result is returned instead.",
+            RuntimeWarning)
+        return res_lse
+    return res
 
 
 def _assemble_and_solve(m, n, groups, relations, tee, options, method,
