@@ -18,8 +18,9 @@ import { d8Fuselage } from './components/fuselage.js';
 
 const CASES = [
   { name: 'D8 default', radius: 1.90 },
-  { name: 'wide',       radius: 1.90, shape: { bubble: 0.62, trough: 0.40 } },
-  { name: 'round',      radius: 1.90, shape: { bubble: 0.10, trough: 0.10 } },
+  { name: 'wider',      radius: 1.90, shape: { cabinWidth: 1.85, trough: 0.40 } },
+  { name: 'rounder',    radius: 1.90, shape: { cabinWidth: 1.15, cabinFlat: 2.3 } },
+  { name: 'boxy',       radius: 1.90, shape: { cabinFlat: 5.5 } },
   { name: 'small',      radius: 1.10, fineness: 8.0 },
 ];
 
@@ -31,7 +32,7 @@ for (const c of CASES) {
   const u = body.userData, R = u.radius, L = u.length;
   const p = u.shapeParams;
   console.log(`${c.name}: L ${L.toFixed(2)}, half-height ${R.toFixed(2)}, ` +
-              `bubble ${p.bubble}, trough ${p.trough}`);
+              `cabin W/H ${p.cabinWidth}, flat ${p.cabinFlat}, trough ${p.trough}`);
 
   /* 1. the skin is a closed, outward solid --------------------------------- */
   // Same two tests as the tube, and they matter more here: a section that
@@ -82,38 +83,80 @@ for (const c of CASES) {
   if (Math.abs(halfHeight / R - 1) > 1e-3)
     bad(`cabin half-height ${halfHeight.toFixed(3)} but radius is ${R.toFixed(3)}`);
 
-  /* 3. the cabin section is the double bubble it claims to be -------------- */
-  // Half-width of the union of two unit lobes offset by o is exactly 1 + o.
-  const wantWidth = 1 + p.bubble;
-  const gotWidth = u.halfWidthAt(zc) / R;
+  /* 3. the cabin roof is FLAT and slightly convex -------------------------- */
+  // The OML is not the double bubble. That is the thing most descriptions of
+  // this aeroplane get backwards, and it is what this file did first: modelling
+  // the bubbles as the outer shape puts a crease down the top of an aeroplane
+  // with a flat roof. The bubbles are the pressure vessel; the roof is a
+  // fairing over them.
+  const wantWidth = p.cabinWidth;
+  const gotWidth = 2 * u.halfWidthAt(zc) / (u.crownAt(zc) - u.keelAt(zc));
   if (Math.abs(gotWidth - wantWidth) > 2e-3)
-    bad(`cabin half-width ${gotWidth.toFixed(3)}R, two lobes at ${p.bubble} give ${wantWidth}`);
+    bad(`cabin width/height ${gotWidth.toFixed(3)}, asked ${wantWidth}`);
 
-  // And it has a valley: the top is not flat, or it is not a double bubble.
-  const valley = (z) => u.shapeAt(z).yc + u.shapeAt(z).r * u.section(Math.PI / 2, z);
-  const cabinValley = (u.crownAt(zc) - valley(zc)) / R;
-  const wantValley = 1 - Math.sqrt(1 - p.bubble * p.bubble);
-  if (Math.abs(cabinValley - wantValley) > 2e-3)
-    bad(`cabin valley ${cabinValley.toFixed(3)}R deep, two lobes give ${wantValley.toFixed(3)}`);
+  // Height across the roof, by x rather than by angle -- "flat" is a statement
+  // about the shape in space, and a statement about equal angles is not the
+  // same statement on a section this wide.
+  const roofAt = (z, frac) => {
+    const sh = u.shapeAt(z), want = frac * u.halfWidthAt(z);
+    let lo = 0, hi = Math.PI / 2;                 // x falls as theta rises
+    for (let i = 0; i < 60; i++) {
+      const m = (lo + hi) / 2;
+      if (sh.r * u.section(m, z) * Math.cos(m) > want) lo = m; else hi = m;
+    }
+    const th = (lo + hi) / 2;
+    return sh.yc + sh.r * u.section(th, z) * Math.sin(th);
+  };
+  const peak = u.crownAt(zc);
+  const midDrop = (peak - roofAt(zc, 0.5)) / (peak - u.shapeAt(zc).yc);
+  // Against the superellipse's own closed form rather than a fixed threshold.
+  // At half the width, |x/w|^n = 2^-n, so the roof is at (1 - 2^-n)^(1/n) --
+  // 2.4% down at n = 3.6, 9.4% at n = 2.3. A fixed bound would just be a
+  // statement about which exponent I happened to pick as the default.
+  const wantDrop = 1 - Math.pow(1 - Math.pow(0.5, p.cabinFlat), 1 / p.cabinFlat);
+  if (Math.abs(midDrop - wantDrop) > 3e-3)
+    bad(`roof drops ${(100 * midDrop).toFixed(2)}% at half-width, ` +
+        `exponent ${p.cabinFlat} gives ${(100 * wantDrop).toFixed(2)}%`);
+  if (midDrop < 1e-4) bad(`roof is dead flat, not slightly convex`);
+
+  // Convex, and highest on the centreline: no valley, which is what the bubble
+  // section produced and what a fairing exists to remove.
+  let dip = 0;
+  for (let f = 0; f <= 0.9; f += 0.05) dip = Math.max(dip, roofAt(zc, f) - peak);
+  if (dip > 1e-6) bad(`roof rises ${dip.toFixed(4)} off the centreline -- a valley`);
 
   /* 4. it is three shapes, not one ---------------------------------------- */
-  // Elliptical at the point, double bubble over the cabin, open aft. If any two
+  // Elliptical at the point, flat-topped over the cabin, dished aft. If any two
   // of those measure the same the morph is not doing anything.
+  const valley = (z) => u.shapeAt(z).yc + u.shapeAt(z).r * u.section(Math.PI / 2, z);
+
   // Asked of the SECTION rather than of the body. At 6% of the length the morph
-  // toward the bubble has already begun, so measuring the body there and calling
+  // toward the cabin has already begun, so measuring the body there and calling
   // it "the nose ellipse" reports the blend and blames the ellipse.
-  const aspect = (z) => u.section(0, z) / u.section(Math.PI / 2, z);
   const za = -L * p.uTrough;
-  const noseW = aspect(-1e-9);
+  const noseW = u.section(0, -1e-9) / u.section(Math.PI / 2, -1e-9);
   if (Math.abs(noseW - p.noseWidth) > 2e-3)
     bad(`nose section is ${noseW.toFixed(3)} wide per unit tall, asked ${p.noseWidth}`);
-  if (Math.abs(noseW - gotWidth) < 0.05)
-    bad(`nose and cabin sections are the same shape -- the morph is inert`);
+  // Compared shape against shape, not aspect against aspect: the nose and the
+  // cabin can be the same width and still be quite different sections, since
+  // one is an ellipse and the other is flat-topped. Aspect alone called that
+  // inert when it plainly is not.
+  let secDiff = 0;
+  for (let i = 0; i <= 180; i++) {
+    const th = (i / 180) * Math.PI * 2;
+    secDiff = Math.max(secDiff, Math.abs(u.section(th, -1e-9) - u.section(th, zc)));
+  }
+  if (secDiff < 0.02)
+    bad(`nose and cabin sections differ by only ${secDiff.toFixed(4)} -- the morph is inert`);
 
-  const aftValley = (u.crownAt(za) - valley(za)) / (u.crownAt(za) - u.keelAt(za));
-  const cabValley = (u.crownAt(zc) - valley(zc)) / (u.crownAt(zc) - u.keelAt(zc));
-  if (p.trough > 0.05 && aftValley <= cabValley * 1.2)
-    bad(`aft valley ${aftValley.toFixed(3)} is no deeper than the cabin's ${cabValley.toFixed(3)}`);
+  // Aft, the roof is dished for the engines: the centreline drops below the
+  // shoulders. Over the cabin it does not.
+  const aftDish = (u.crownAt(za) - valley(za)) / (u.crownAt(za) - u.keelAt(za));
+  const cabDish = (u.crownAt(zc) - valley(zc)) / (u.crownAt(zc) - u.keelAt(zc));
+  if (p.trough > 0.05 && aftDish < 0.04)
+    bad(`aft roof is dished only ${(100 * aftDish).toFixed(1)}% -- no seat for an engine`);
+  if (cabDish > 0.01)
+    bad(`cabin roof is already dished by ${(100 * cabDish).toFixed(1)}% -- the trough has leaked forward`);
 
   /* 4b. the point sits above the axis -------------------------------------- */
   // The one thing about this nose that is not simply "wider than a tube's". A
@@ -161,6 +204,29 @@ for (const c of CASES) {
     bad(`section shape changes at ${worstStep.toFixed(2)} per unit length at ` +
         `z ${worstZ.toFixed(1)} -- a ring`);
 
+  /* 5b. the pressure vessel fits inside the skin --------------------------- */
+  // The flat roof is a fairing over two round tubes. If a tube pokes through it
+  // the aeroplane is not describable, and on a body this wide it happens at the
+  // shoulders where nobody is looking.
+  const withVessel = d8Fuselage({
+    radius: c.radius, fineness: c.fineness, shape: c.shape ?? {}, vessel: true });
+  const vs = withVessel.children.find((ch) => ch.userData.isPressureVessel);
+  let clearance = Infinity;
+  if (!vs) bad('vessel: true produced no pressure vessel');
+  else {
+    const vp = vs.geometry.getAttribute('position');
+    for (let i = 0; i < vp.count; i++) {
+      const x = vp.getX(i), y = vp.getY(i), z = vp.getZ(i);
+      const sh = u.shapeAt(z);
+      if (sh.r < 1e-9) continue;
+      const th = Math.atan2(y - sh.yc, x);
+      clearance = Math.min(clearance,
+        sh.r * u.section(th, z) - Math.hypot(x, y - sh.yc));
+    }
+    if (clearance < 0)
+      bad(`pressure vessel pokes ${(-clearance).toFixed(3)} through the skin`);
+  }
+
   /* 6. the nacelle seat is on the surface --------------------------------- */
   // It is published so an engine can be placed ON the body. If it is not
   // actually on the body it is worse than useless.
@@ -177,10 +243,13 @@ for (const c of CASES) {
   }
 
   console.log(`  closed, volume ${vol.toFixed(1)}, half-height ${halfHeight.toFixed(3)}`);
-  console.log(`  width/height: nose section ${noseW.toFixed(2)}, cabin ${gotWidth.toFixed(2)} ` +
-              `(two lobes give ${wantWidth.toFixed(2)})`);
-  console.log(`  valley below the lobes: cabin ${(100 * cabValley).toFixed(1)}%, ` +
-              `aft ${(100 * aftValley).toFixed(1)}% of height`);
+  console.log(`  width/height: nose section ${noseW.toFixed(2)}, cabin ${gotWidth.toFixed(2)}`);
+  console.log(`  nose-to-cabin section change ${secDiff.toFixed(3)}`);
+  console.log(`  roof drops ${(100 * midDrop).toFixed(2)}% by half-width ` +
+              `(exponent ${p.cabinFlat} gives ${(100 * wantDrop).toFixed(2)}%); ` +
+              `dished ${(100 * cabDish).toFixed(1)}% at the cabin, ` +
+              `${(100 * aftDish).toFixed(1)}% aft`);
+  console.log(`  vessel clearance inside the skin: ${clearance.toFixed(3)}`);
   console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
               `${outside} stations outside the envelope`);
   console.log(`  fastest SHAPE change ${worstStep.toFixed(2)} per unit length ` +

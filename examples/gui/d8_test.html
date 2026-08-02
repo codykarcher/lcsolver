@@ -47,7 +47,7 @@
 
 <div id="panel">
   <h1>D8 fuselage</h1>
-  <p class="sub">ellipse &rarr; double bubble &rarr; open aft</p>
+  <p class="sub">wide ellipse &rarr; flat-topped cabin &rarr; dished aft</p>
 
   <h2>deck inputs</h2>
   <div class="row"><label for="rad">half-height</label><output id="oRad"></output></div>
@@ -66,14 +66,24 @@
   <div class="row"><label for="tipRise">tip above axis</label><output id="oTipRise"></output></div>
   <input type="range" id="tipRise" min="-0.40" max="0.60" step="0.01" value="0.15">
 
-  <div class="row"><label for="bubble">bubble offset</label><output id="oBubble"></output></div>
-  <input type="range" id="bubble" min="0.00" max="0.85" step="0.01" value="0.45">
+  <div class="row"><label for="cabinWidth">cabin W/H</label><output id="oCabinWidth"></output></div>
+  <input type="range" id="cabinWidth" min="1.00" max="2.40" step="0.01" value="1.55">
+
+  <div class="row"><label for="cabinFlat">roof flatness</label><output id="oCabinFlat"></output></div>
+  <input type="range" id="cabinFlat" min="2.00" max="6.00" step="0.05" value="3.60">
 
   <div class="row"><label for="trough">aft trough depth</label><output id="oTrough"></output></div>
   <input type="range" id="trough" min="0.00" max="0.60" step="0.01" value="0.30">
 
   <div class="row"><label for="troughWidth">trough width</label><output id="oTroughWidth"></output></div>
   <input type="range" id="troughWidth" min="0.15" max="1.20" step="0.01" value="0.60">
+
+  <h2>pressure vessel</h2>
+  <div class="check"><input type="checkbox" id="vessel"><label for="vessel">show (structure, not OML)</label></div>
+  <div class="row"><label for="vesselRadius">lobe radius</label><output id="oVesselRadius"></output></div>
+  <input type="range" id="vesselRadius" min="0.40" max="1.00" step="0.01" value="0.90">
+  <div class="row"><label for="vesselOffset">lobe offset</label><output id="oVesselOffset"></output></div>
+  <input type="range" id="vesselOffset" min="0.00" max="1.20" step="0.01" value="0.62">
 
   <h2>where it changes</h2>
   <div class="row"><label for="uBubble">bubble by</label><output id="oUBubble"></output></div>
@@ -189,7 +199,8 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 const DECK = ['rad', 'fineness', 'noseD'];
-const SHAPE = ['noseWidth', 'tipRise', 'bubble', 'trough', 'troughWidth',
+const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinFlat',
+               'vesselRadius', 'vesselOffset', 'trough', 'troughWidth',
                'uBubble', 'uOpen', 'uTrough'];
 const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
 
@@ -251,6 +262,7 @@ function build() {
     fineness: num('fineness'),
     noseD: num('noseD'),
     shape: Object.fromEntries(SHAPE.map((k) => [k, num(k)])),
+    vessel: el('vessel').checked,
     detail: el('detail').checked,
   });
   scene.add(body);
@@ -338,11 +350,15 @@ function build() {
   el('readout').innerHTML =
     `L <span>${L.toFixed(2)}</span> &middot; H <span>${(2 * radius).toFixed(2)}</span> ` +
     `&middot; W <span>${(2 * u.maxHalfWidth.halfWidth).toFixed(2)}</span><br>` +
-    `cabin W/H <span>${u.cabinWidthOverHeight.toFixed(3)}</span> ` +
-    `(two lobes give <span>${(1 + num('bubble')).toFixed(3)}</span>)<br>` +
-    `valley below the lobes: cabin ` +
+    `cabin W/H <span>${u.cabinWidthOverHeight.toFixed(3)}</span> &middot; ` +
+    `roof drops <span>${(100 * (1 - Math.pow(1 - Math.pow(0.5, num('cabinFlat')),
+      1 / num('cabinFlat')))).toFixed(2)}%</span> by half-width<br>` +
+    `roof dished: cabin ` +
     `<span>${(u.crownAt(zc) - valleyAt(zc)).toFixed(2)}</span>, aft ` +
-    `<span>${(u.crownAt(za) - valleyAt(za)).toFixed(2)}</span><br>` +
+    `<span>${(u.crownAt(za) - valleyAt(za)).toFixed(2)}</span>` +
+    (u.vesselFitFactor !== undefined && u.vesselFitFactor < 0.999
+      ? `<br>vessel shrunk to <span>${(100 * u.vesselFitFactor).toFixed(0)}%</span> to fit`
+      : '') + `<br>` +
     `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +
     `tail <span>${u.tailLength.toFixed(2)}</span> &middot; ` +
     `widest at z <span>${u.maxHalfWidth.z.toFixed(1)}</span><br>` +
@@ -425,7 +441,7 @@ function ortho(axis) {
 for (const id of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
   el(id).addEventListener('input', build);
 for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid',
-                  'detail', 'engines', 'refShow', 'refFlip'])
+                  'detail', 'engines', 'vessel', 'refShow', 'refFlip'])
   el(id).addEventListener('change', build);
 for (const v of ['front', 'side', 'top', 'nose', 'aft'])
   el(v).addEventListener('click', () => ortho(v));

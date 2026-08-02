@@ -25,7 +25,7 @@
  * dropped into the same scene are already in the same frame.
  */
 import * as THREE from 'three';
-import { skin, glass, trim, painted, cavity, decal } from './materials.js';
+import { skin, glass, trim, painted, cavity, structure, decal } from './materials.js';
 import { orientOutward } from './geom.js';
 
 // Register the decal variants at load rather than on first use, so that a page
@@ -58,7 +58,33 @@ export const ellipticalSection = (w) => (th) =>
   1 / Math.hypot(Math.sin(th), Math.cos(th) / w);
 
 /**
+ * A superellipse (Lame curve) `w` wide, with exponent `n`.
+ *
+ *     |x/w|^n + |y|^n = 1     ->     r = (|cos/w|^n + |sin|^n)^(-1/n)
+ *
+ * This is the D8's OUTER shape: a flat -- but very slightly convex -- top and
+ * bottom with rounded sides, which is what a wide body actually presents to the
+ * air. n = 2 is an ellipse and n large is a rectangle; around 3.5 the top drops
+ * only 2% over the middle half of the width and then turns down into the
+ * corners, which is the "slightly convex out" being asked for.
+ *
+ * Height at the centreline is 1 by construction and it is also the maximum, so
+ * `r(z)` keeps meaning half-height here as everywhere else.
+ */
+export const superellipseSection = (w, n = 3.6) => (th) => {
+  const c = Math.abs(Math.cos(th) / w), s = Math.abs(Math.sin(th));
+  return Math.pow(Math.pow(c, n) + Math.pow(s, n), -1 / n);
+};
+
+/**
  * Two overlapping circles side by side -- a double bubble.
+ *
+ * On a D8 this is the PRESSURE VESSEL, not the outer mould line. The two lobes
+ * are what carries cabin pressure in tension; the shape the air sees is the
+ * superellipse above, wrapped round them. Modelling the bubbles as the OML --
+ * which is the obvious reading of "double bubble fuselage" and is what this
+ * file did first -- puts a crease down the top of an aeroplane that has a flat
+ * roof.
  *
  * Unit lobes with their centres at +/- `offset` from the axis. The union is
  * star-shaped about the centre while offset < 1, so it has a closed polar form:
@@ -711,7 +737,17 @@ const D8 = {
   tipRise:    0.15,  // height of the point above the axis, in half-heights
 
   noseWidth:  1.55,  // ellipse aspect at the point -- WIDE, like the cabin
-  bubble:     0.45,  // lobe offset, in lobe radii -- how far apart the bubbles
+
+  // The OML over the cabin: flat-ish top and bottom, rounded sides.
+  cabinWidth: 1.55,  // width over height
+  cabinFlat:  3.60,  // superellipse exponent; 2 is an ellipse, large is a box
+
+  // The pressure vessel INSIDE it. Two lobes, in half-heights. Drawn only when
+  // asked for -- it is structure, not shape -- but it is what the cabin width
+  // is really for, so it is described here beside it.
+  vesselRadius: 0.90,
+  vesselOffset: 0.62,
+
   trough:     0.30,  // depth of the aft valley, as a fraction of half-height
   troughWidth: 0.60, // angular width of that valley, radians
   // Where along the body each transition happens, as a fraction of length.
@@ -719,6 +755,85 @@ const D8 = {
   uOpen:      0.66,  // aft opening starts
   uTrough:    0.84,  // and is fully open by here
 };
+
+/**
+ * The pressure vessel: two lobes running the cabin, closed with domed ends.
+ *
+ * This is what "double bubble" actually names. It is a structure, not an outer
+ * shape, and drawing it is the quickest way to see why the OML is the shape it
+ * is -- the flat roof is a fairing over two round tubes, and the tubes are round
+ * because that is the only section that carries pressure in pure tension.
+ *
+ * Lofted with the same section machinery as everything else, at constant size
+ * over the cabin and scaled down by a quarter-ellipse at each end for the
+ * bulkheads. The bulkheads are domed rather than flat for the same reason the
+ * lobes are round.
+ */
+function pressureVessel({ radius, p, z0, z1, u }) {
+  const sec = doubleBubbleSection({ offset: p.vesselOffset / p.vesselRadius });
+
+  // Shrink to fit. A vessel that pokes through the roof is not describable, and
+  // whether the asked-for lobes fit depends on the cabin width and the
+  // superellipse exponent in a way nobody is going to work out at the slider.
+  // So: measure the worst point and scale, rather than trust the numbers.
+  //
+  // The vessel sits on the AXIS while the skin section is centred on yc, so the
+  // comparison has to be made in the skin's own frame, at the angle the vessel
+  // point subtends there -- not at the angle it subtends from the axis.
+  let fit = 1;
+  for (let i = 0; i <= 40; i++) {
+    const z = z0 + (z1 - z0) * (i / 40);
+    const sh = u.shapeAt(z);
+    if (sh.r < 1e-9) continue;
+    for (let j = 0; j < 72; j++) {
+      const th = (j / 72) * Math.PI * 2;
+      const vr = radius * p.vesselRadius * sec(th);
+      const x = vr * Math.cos(th), y = vr * Math.sin(th);
+      const thSkin = Math.atan2(y - sh.yc, x);
+      const skinR = sh.r * u.section(thSkin, z);
+      const pointR = Math.hypot(x, y - sh.yc);
+      if (pointR > 1e-9) fit = Math.min(fit, skinR / pointR);
+    }
+  }
+  const scale = radius * p.vesselRadius * Math.min(1, fit * 0.97);
+  const dome = Math.min(scale * 1.1, Math.abs(z0 - z1) * 0.22);
+  const pos = [], idx = [];
+  const nS = 60, nSeg = 72;
+
+  for (let i = 0; i < nS; i++) {
+    const z = z0 + (z1 - z0) * (i / (nS - 1));
+    // Quarter-ellipse taper into each bulkhead, so the ends are domes and the
+    // middle is exactly the section asked for.
+    const dEnd = Math.min(z0 - z, z - z1);
+    const k = dEnd >= dome ? 1 : Math.sqrt(Math.max(0, 1 - ((dome - dEnd) / dome) ** 2));
+    for (let j = 0; j < nSeg; j++) {
+      const th = (j / nSeg) * Math.PI * 2, rr = scale * k * sec(th);
+      pos.push(rr * Math.cos(th), rr * Math.sin(th), z);
+    }
+  }
+  for (let i = 0; i < nS - 1; i++) {
+    for (let j = 0; j < nSeg; j++) {
+      const a = i * nSeg + j, b = i * nSeg + ((j + 1) % nSeg);
+      idx.push(a, b, a + nSeg, b, b + nSeg, a + nSeg);
+    }
+  }
+  for (const [ring, z] of [[0, z0], [nS - 1, z1]]) {
+    const c = pos.length / 3;
+    pos.push(0, 0, z);
+    for (let j = 0; j < nSeg; j++) {
+      idx.push(c, ring * nSeg + j, ring * nSeg + ((j + 1) % nSeg));
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(orientOutward(geo), structure);
+  m.userData.isPressureVessel = true;
+  m.userData.fitFactor = Math.min(1, fit * 0.97);
+  return m;
+}
 
 /**
  * A D8 double-bubble fuselage.
@@ -730,9 +845,12 @@ const D8 = {
  * a tube's -- it is the SECTION changing along the length, which is why the
  * section here is a function of station and not a constant.
  *
- * The double bubble is two overlapping circles, taken exactly rather than by
- * clipping meshes together, so the crease down the top and bottom centreline
- * comes out on its own. See doubleBubbleSection.
+ * The OML is NOT the double bubble, which is the thing most descriptions of
+ * this aeroplane get backwards. What the air sees is a wide superellipse: flat,
+ * very slightly convex top and bottom with rounded sides. The two bubbles are
+ * the PRESSURE VESSEL inside it -- round because that is the only section that
+ * carries pressure in tension -- and the flat roof is a fairing over them. Ask
+ * for `vessel: true` to see them.
  *
  * The aft trough is that same section with its upper valley deepened. It is
  * worth being clear about what this does and does not claim: it produces the
@@ -747,6 +865,7 @@ export function d8Fuselage({
   noseD = null,
   length = null,
   shape: shapeOverrides = {},
+  vessel = false,
   ...rest
 } = {}) {
   const p = {
@@ -759,27 +878,36 @@ export function d8Fuselage({
   if (shapeOverrides.keelHold === undefined) p.keelHold = -p.tipRise;
   const L = length ?? p.fineness * 2 * radius;
 
-  const bubble = doubleBubbleSection({ offset: p.bubble });
-  const open = doubleBubbleSection({
-    offset: p.bubble, trough: p.trough, troughWidth: p.troughWidth });
+  // The cabin OML, and the same shape with its roof dished for the engines.
+  const cabin = superellipseSection(p.cabinWidth, p.cabinFlat);
+  const open = (() => {
+    const base = superellipseSection(p.cabinWidth, p.cabinFlat);
+    return (th) => {
+      const d = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+      const g = d / p.troughWidth;
+      return base(th) * (1 - p.trough * Math.exp(-g * g));
+    };
+  })();
 
-  // Ellipse to bubble to trough. The first and last stops are repeated at the
-  // ends so the morph holds its shape there instead of drifting.
+  // Ellipse to flat-topped cabin to dished aft. The first and last stops are
+  // repeated so the morph holds its shape at the ends instead of drifting.
   const section = morphSection([
     [0.00, ellipticalSection(p.noseWidth)],
-    [p.uBubble, bubble],
-    [p.uOpen, bubble],
+    [p.uBubble, cabin],
+    [p.uOpen, cabin],
     [p.uTrough, open],
     [1.00, open],
   ], L);
 
   const g = buildFuselage({ radius, length: L, p, section, ...rest });
 
+  // The pressure vessel, if asked for. Two lobes running the length of the
+  // cabin, closed with domed bulkheads -- the thing the flat-topped OML is
+  // wrapped around. Off unless wanted, since it is structure and not shape.
   const u = g.userData;
-  const lobe = Math.atan2(Math.sqrt(1 - p.bubble * p.bubble), p.bubble);
   Object.assign(u, {
     isDoubleBubble: true,
-    bubbleOffset: p.bubble,
+    vesselRadius: p.vesselRadius, vesselOffset: p.vesselOffset,
     tipRise: p.tipRise,
     tipY: p.tipRise * radius,
     /** Section width over height at the cabin -- what makes it look like a D8. */
@@ -794,17 +922,29 @@ export function d8Fuselage({
      */
     nacelleSeat: (side = 1, uz = 0.90) => {
       const z = -L * uz;
-      // Out along the valley from dead centre, but not as far as the lobe crest.
+      // Out along the dished roof from dead centre, but not as far as its edge.
       const th = Math.PI / 2 - side * p.troughWidth * 0.55;
       return {
         z,
         point: u.surfaceAt(z, th),
         normal: u.normalAt(z, th),
         valleyY: u.shapeAt(z).yc + u.shapeAt(z).r * section(Math.PI / 2, z),
-        lobeAngle: lobe,
       };
     },
   });
+
+  // Built last: fitting the vessel inside the skin needs the finished body's own
+  // shapeAt and section, so it cannot be done before they exist.
+  if (vessel) {
+    const vs = pressureVessel({
+      radius, p, u,
+      z0: -L * p.uBubble * 0.9,
+      z1: -L * (p.uOpen + 0.06),
+    });
+    g.add(vs);
+    u.vesselFitFactor = vs.userData.fitFactor;
+  }
+
   return g;
 }
 
