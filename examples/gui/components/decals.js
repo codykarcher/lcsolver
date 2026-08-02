@@ -311,22 +311,230 @@ export const finArt = surfaceArt;
  * a decal that guessed square and corrected later would resize itself visibly
  * one frame after appearing.
  *
- * Every mark is centred on the fin's height. Fore and aft is solved rather than
- * chosen, and the size each asks for is an upper bound that the fit reduces to
- * whatever the tail actually allows -- so the only per-mark number here is the
- * one the image file itself decides, its aspect ratio.
+ * Fore and aft is solved rather than chosen, and the size each asks for is an
+ * upper bound that the fit reduces to whatever the tail actually allows -- so
+ * the only per-mark number here is the one the image file itself decides, its
+ * aspect ratio.
+ *
+ * `height` is 0.40 rather than the geometric half. A fin tapers, so the mark
+ * that fits at mid height is smaller than the one that fits below it, and
+ * artwork centred on the geometry reads as sitting high -- the eye centres on
+ * the visible panel, which is bottom-heavy, not on the span.
  */
+export const TAIL_HEIGHT = 0.40;
+
 export const TAIL_ART = {
   'none':          null,
-  'beach black':  { file: 'beach-black.png', aspect: 929 / 149,   height: 0.5, chord: 'auto', size: 0.9 },
-  'beach gold':   { file: 'beach-gold.png',  aspect: 929 / 149,   height: 0.5, chord: 'auto', size: 0.9 },
-  'LB gold':      { file: 'lb-gold.png',     aspect: 1181 / 1272, height: 0.5, chord: 'auto', size: 0.9 },
-  'LB black':     { file: 'lb-black.png',    aspect: 1181 / 1272, height: 0.5, chord: 'auto', size: 0.9 },
-  'mitsubishi':   { file: 'mhi.png',         aspect: 156 / 109,   height: 0.5, chord: 'auto', size: 0.9 },
-  'MIT':          { file: 'mit.png',         aspect: 1400 / 724,  height: 0.5, chord: 'auto', size: 0.9 },
+  'beach black':  { file: 'beach-black.png', aspect: 929 / 149,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'beach gold':   { file: 'beach-gold.png',  aspect: 929 / 149,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'LB gold':      { file: 'lb-gold.png',     aspect: 1181 / 1272, height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'LB black':     { file: 'lb-black.png',    aspect: 1181 / 1272, height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'mitsubishi':   { file: 'mhi.png',         aspect: 156 / 109,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'MIT':          { file: 'mit.png',         aspect: 1400 / 724,  height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
 };
 
 export const artNames = Object.keys(TAIL_ART);
+
+/**
+ * The titles along the body, in order from the nose back.
+ *
+ * All at one height, which is how an airline sets a row of marks: cap heights
+ * are matched and the widths fall out of each logo's own proportions, so the
+ * wordmark ends up long and the roundel small rather than all three being
+ * boxed to the same width and each coming out a different visual weight.
+ */
+export const FUSELAGE_TITLES = [
+  { file: 'mhi.png',        aspect: 156 / 109 },
+  { file: 'mit.png',        aspect: 1400 / 724 },
+  { file: 'beach-gold.png', aspect: 929 / 149 },
+];
+
+/**
+ * Where that row sits.
+ *
+ * `startNoseLengths` is measured in NOSE LENGTHS rather than metres so the row
+ * stays put relative to the door it is meant to sit behind: both are referred
+ * to the same length, so a solve that changes the nose moves them together.
+ *
+ * `y` is a guess, and deliberately a stated one. The window line is at
+ * `R sin 20deg` and a window is about 0.165 tall, so the glass reaches roughly
+ * 0.72 on this body; 1.15 puts the bottom of the artwork clear above it with
+ * room left below the crown.
+ */
+export const TITLE_LAYOUT = {
+  startNoseLengths: 2.0,
+  y: 1.15,
+  height: 0.9,
+  gap: 1.2,
+};
+
+/**
+ * The row of titles as one group, packed nose to tail.
+ *
+ * Each mark's forward edge is set from the previous one's aft edge, so the gaps
+ * are even in METRES on the skin whatever the marks' proportions are. Spacing
+ * them by centre instead would bunch the wide wordmark against its neighbour.
+ */
+export function fuselageTitles(fuselage, { textureFor, titles = FUSELAGE_TITLES,
+                                           layout = {}, name = 'titles' } = {}) {
+  const L = { ...TITLE_LAYOUT, ...layout };
+  const noseLength = fuselage.userData.noseLength;
+  const group = new THREE.Group();
+  group.name = name;
+  let zFwd = -L.startNoseLengths * noseLength;    // z decreases aft
+  const placed = [];
+  for (const t of titles) {
+    const w = L.height * t.aspect;
+    const piece = fuselageArt(fuselage, {
+      texture: textureFor ? textureFor(t.file) : null,
+      z: zFwd - w / 2, y: L.y, height: L.height, aspect: t.aspect,
+      name: t.file.replace(/\.png$/, ''),
+    });
+    group.add(piece);
+    placed.push(piece.userData);
+    zFwd -= w + L.gap;
+  }
+  Object.assign(group.userData, {
+    isArt: true, pieces: placed,
+    /** Where the row starts and ends, so a caller can say whether it fits. */
+    zRange: [zFwd + L.gap, -L.startNoseLengths * noseLength],
+    fits: placed.every((p) => p.fits),
+  });
+  return group;
+}
+
+/**
+ * The angle at which a section passes through a given world height.
+ *
+ * Bisected on the upper half, where height rises monotonically with angle for
+ * every section here. Solved rather than taken as `asin(y / r)` because that is
+ * only true of a circle, and the D8's section is not one -- its height at an
+ * angle depends on the section shape as well as the radius.
+ */
+function angleAtHeight(fuse, z, y) {
+  let lo = -Math.PI / 2, hi = Math.PI / 2;
+  const yAt = (t) => fuse.surfaceAt(z, t).y;
+  if (y <= yAt(lo) || y >= yAt(hi)) return null;
+  for (let i = 0; i < 48; i++) {
+    const m = (lo + hi) / 2;
+    if (yAt(m) < y) lo = m; else hi = m;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Step around a section by ARC LENGTH from a starting angle.
+ *
+ * Equal steps in ANGLE would be the obvious thing and would stretch the
+ * artwork as it climbs towards the crown, because equal angles do not subtend
+ * equal distances on a section that is not a circle -- and even on one, equal
+ * steps in HEIGHT do not. A logo is applied to the developed skin, so the
+ * spacing that has to be even is the one measured along it.
+ *
+ * This is the same lesson as the fuselage's own rings, which are resampled at
+ * even arc length for exactly this reason.
+ */
+function angleAtArc(fuse, z, th0, arc, steps = 160) {
+  if (Math.abs(arc) < 1e-12) return th0;
+  const dir = Math.sign(arc), want = Math.abs(arc);
+  let th = th0, acc = 0;
+  let prev = fuse.surfaceAt(z, th);
+  // A fixed angular step, refined by walking: the section's radius is bounded,
+  // so a step of a degree is far finer than the artwork's own grid.
+  const dth = (dir * Math.PI) / 720;
+  for (let i = 0; i < steps * 4; i++) {
+    const next = fuse.surfaceAt(z, th + dth);
+    const d = Math.hypot(next.x - prev.x, next.y - prev.y);
+    if (acc + d >= want) return th + dth * ((want - acc) / d);
+    acc += d; th += dth; prev = next;
+  }
+  return th;
+}
+
+/**
+ * Artwork on the side of a fuselage, both sides.
+ *
+ * Placed at a world HEIGHT rather than at an angle, for the same reason the
+ * window row is: a cabin floor is level, so anything referenced to it has to
+ * stay level too. Place by angle and the band climbs with the section centre
+ * through the tailcone, arcing up the side of the aeroplane in a way no real
+ * one does.
+ *
+ *   z        station of the artwork's CENTRE, negative aft
+ *   y        world height of its centre
+ *   height   its height on the skin, in metres of arc
+ *   aspect   the image's width over its height
+ */
+export function fuselageArt(fuselage, {
+  texture,
+  z = -12,
+  y = 1.15,
+  height = 0.9,
+  aspect = 1,
+  offset = 0.008,
+  nu = 34,
+  nv = 18,
+  name = 'art',
+} = {}) {
+  const fu = fuselage.userData;
+  const w = height * aspect;
+  // z decreases aft, so the FORWARD edge is the larger z.
+  const zFwd = z + w / 2, zAft = z - w / 2;
+
+  const group = new THREE.Group();
+  group.name = name;
+  let clipped = 0;
+
+  for (const side of [1, -1]) {
+    const pos = [], uv = [], idx = [];
+    for (let iv = 0; iv < nv; iv++) {
+      const fv = iv / (nv - 1);
+      for (let iu = 0; iu < nu; iu++) {
+        const fu2 = iu / (nu - 1);
+        const zs = zFwd + (zAft - zFwd) * fu2;
+        // The band's centre angle is found afresh at every station, which is
+        // what keeps it level rather than parallel to the section.
+        const thC = angleAtHeight(fu, zs, y);
+        if (thC == null) { clipped++; }
+        const base = thC ?? Math.PI / 2;
+        const arc = (fv - 0.5) * height;
+        const th = angleAtArc(fu, zs, base, arc);
+        const p = fu.surfaceAt(zs, side > 0 ? th : Math.PI - th);
+        const n = fu.normalAt(zs, side > 0 ? th : Math.PI - th);
+        pos.push(p.x + n.x * offset, p.y + n.y * offset, p.z + n.z * offset);
+        // Starboard is +x. A viewer there sees the nose (+z) to their LEFT, so
+        // the image's left edge belongs at the forward end -- which is fu2 = 0.
+        // To port it is the other way round. The same rule as the fin, stated
+        // once more here because the surface, not the rule, is what differs.
+        uv.push(side > 0 ? fu2 : 1 - fu2, fv);
+      }
+    }
+    for (let iv = 0; iv < nv - 1; iv++) {
+      for (let iu = 0; iu < nu - 1; iu++) {
+        const a = iv * nu + iu, b = a + 1, c = a + nu, d = c + 1;
+        if (side > 0) idx.push(a, c, b, b, c, d);
+        else idx.push(a, b, c, b, d, c);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, artMaterial(texture));
+    mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}`;
+    group.add(mesh);
+  }
+
+  Object.assign(group.userData, {
+    isArt: true, z, y, aspect,
+    widthMetres: w, heightMetres: height,
+    zRange: [zAft, zFwd],
+    /** Stations where the band ran off the top of the body. Should be zero. */
+    clipped, fits: clipped === 0,
+  });
+  return group;
+}
 
 /**
  * The material for one piece of artwork.

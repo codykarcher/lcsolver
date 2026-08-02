@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
-import { surfaceArt, TAIL_ART, artNames } from './components/decals.js';
+import { surfaceArt, fuselageTitles, TAIL_ART, TAIL_HEIGHT, artNames } from './components/decals.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_conventional_solve.json', import.meta.url), 'utf8'));
 const craft = conventionalAircraft(deckFromSolve(sol), { sitOnGround: false });
@@ -91,19 +91,26 @@ for (const name of artNames) {
   if (!u.fits) fail(`${name} runs ${u.overrun.toFixed(3)} chords off the fin`);
   if (art.children.length !== 2) fail(`${name} has ${art.children.length} faces, wanted 2`);
 
-  // Centred on the fin's height, measured in the WORLD -- the fin stands up
-  // through a quarter turn, so its own frame calls the vertical `x` and a
-  // check written there would not be checking what anyone looks at.
+  // At the intended fraction of the fin's height, measured in the WORLD -- the
+  // fin stands up through a quarter turn, so its own frame calls the vertical
+  // `x` and a check written there would not be checking what anyone looks at.
+  //
+  // Against TAIL_HEIGHT rather than the geometric middle: the artwork sits
+  // below mid deliberately, because a fin tapers and the eye centres on the
+  // visible panel rather than on the span.
   fin.updateWorldMatrix(true, false);
   const yAt = (x) => new THREE.Vector3(x, 0, 0).applyMatrix4(fin.matrixWorld).y;
-  const finMid = (yAt(0) + yAt(fin.userData.height)) / 2;
+  const root = yAt(0), tip = yAt(fin.userData.height);
+  const want = root + (tip - root) * TAIL_HEIGHT;
   const box = new THREE.Box3().setFromObject(art);
   const artMid = (yAt(box.min.x) + yAt(box.max.x)) / 2;
-  console.log(`  centre ${artMid.toFixed(3)} vs fin mid ${finMid.toFixed(3)}` +
+  console.log(`  centre ${artMid.toFixed(3)} at ` +
+              `${(100 * (artMid - root) / (tip - root)).toFixed(1)}% of height ` +
+              `(wanted ${(100 * TAIL_HEIGHT).toFixed(0)}%)` +
               `   fore-aft anchor ${u.chord.toFixed(2)} of chord` +
               (u.requestedChord === 'auto' ? ' (solved)' : ''));
-  if (Math.abs(artMid - finMid) > 1e-3) {
-    fail(`${name} sits ${(artMid - finMid).toFixed(3)} m off the fin's mid height`);
+  if (Math.abs(artMid - want) > 1e-3) {
+    fail(`${name} sits ${(artMid - want).toFixed(3)} m off ${(100 * TAIL_HEIGHT).toFixed(0)}% of the fin's height`);
   }
 
   for (const mesh of art.children) {
@@ -211,5 +218,160 @@ for (const name of artNames) {
   if (worst < 5e-4) fail('a flat quad was not distinguishable from the conformal one');
 }
 
-console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork lies on the fin, both faces, right way round');
+/* ---- the titles along the body ---------------------------------------- */
+console.log('\n=== fuselage titles ===');
+const fuse = craft.userData.parts.fuselage;
+const R = craft.userData.deck.fuseRadius;
+// The window row is placed at R sin 20 with a half-height of 0.0825, so this is
+// where the glass actually reaches. Read from the same numbers the fuselage
+// uses rather than restated as a constant.
+const windowTop = R * Math.sin(20 * Math.PI / 180) + 0.0825;
+
+const fuseTris = [];
+{
+  const g = fuse.userData.skinMesh.geometry;
+  const p = g.getAttribute('position').array, ix = g.getIndex().array;
+  for (let t = 0; t < ix.length; t += 3) {
+    const v = [0, 1, 2].map((k) => new THREE.Vector3(
+      p[3 * ix[t + k]], p[3 * ix[t + k] + 1], p[3 * ix[t + k] + 2]));
+    fuseTris.push({ v, c: v[0].clone().add(v[1]).add(v[2]).multiplyScalar(1 / 3) });
+  }
+}
+const nearestFuse = (q) => {
+  let best = Infinity;
+  for (const t of fuseTris) {
+    if (t.c.distanceToSquared(q) > 1) continue;
+    const d = distToTri(q, t.v);
+    if (d < best) best = d;
+  }
+  return best;
+};
+console.log(`fuselage skin: ${fuseTris.length} triangles, radius ${R.toFixed(3)},` +
+            ` glass reaches y ${windowTop.toFixed(3)}`);
+
+const titles = fuselageTitles(fuse, {});
+const LIFT = 0.008;
+if (!titles.userData.fits) fail('a title ran off the top of the body');
+
+// Front to back, as asked: Mitsubishi, MIT, gold BEACH.
+const wanted = ['mhi', 'mit', 'beach-gold'];
+const got = titles.children.map((c) => c.name);
+if (got.join() !== wanted.join()) fail(`titles are ordered ${got.join(', ')}, wanted ${wanted.join(', ')}`);
+
+let prevAft = Infinity;
+for (const piece of titles.children) {
+  const d = piece.userData;
+  const box = new THREE.Box3().setFromObject(piece);
+  console.log(`\n${piece.name}  ${d.widthMetres.toFixed(2)} x ${d.heightMetres.toFixed(2)} m` +
+              `  z ${d.zRange[1].toFixed(2)} .. ${d.zRange[0].toFixed(2)}` +
+              `  y ${box.min.y.toFixed(2)} .. ${box.max.y.toFixed(2)}`);
+
+  // Above the windows, which is where they were asked to go.
+  if (box.min.y <= windowTop) {
+    fail(`${piece.name} reaches down to y ${box.min.y.toFixed(3)}, into the window line at ${windowTop.toFixed(3)}`);
+  }
+  // Nose to tail with no overlap: each starts aft of where the last ended.
+  if (d.zRange[1] > prevAft) fail(`${piece.name} starts at ${d.zRange[1].toFixed(2)}, overlapping the one ahead`);
+  prevAft = d.zRange[0];
+
+  for (const mesh of piece.children) {
+    const pos = mesh.geometry.getAttribute('position');
+    const uv = mesh.geometry.getAttribute('uv');
+    // Measured against the ANALYTIC surface, which is what the artwork was
+    // built from, rather than against the triangles that approximate it.
+    // Against the mesh a correct decal reads high over the middle of every
+    // facet -- the tessellation is inscribed in the true surface -- and that
+    // says something about the skin's resolution, not about the artwork.
+    //
+    // Exact here because the titles lie on the barrel, where the surface
+    // normal is in the plane of the section.
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < pos.count; i += 3) {
+      const p = new THREE.Vector3().fromBufferAttribute(pos, i);
+      const s = fuse.userData.shapeAt(p.z);
+      const th = Math.atan2(p.y - s.yc, p.x);
+      const q = fuse.userData.surfaceAt(p.z, th);
+      const d2 = Math.hypot(p.x, p.y - s.yc) - Math.hypot(q.x, q.y - s.yc);
+      lo = Math.min(lo, d2); hi = Math.max(hi, d2);
+    }
+    console.log(`  ${mesh.name.padEnd(20)} standoff ${lo.toFixed(5)}..${hi.toFixed(5)} m` +
+                `  (spread ${(1000 * (hi - lo)).toFixed(3)} mm)`);
+    if (Math.abs(lo - LIFT) > 1e-4 || Math.abs(hi - LIFT) > 1e-4) {
+      fail(`${mesh.name} standoff ${lo.toFixed(5)}..${hi.toFixed(5)}, wanted ${LIFT}`);
+    }
+
+    // And separately: it must never sink INTO the rendered skin, which is the
+    // thing that would actually show. Facets can only put it further out.
+    let worstIn = Infinity;
+    for (let i = 0; i < pos.count; i += 23) {
+      worstIn = Math.min(worstIn, nearestFuse(new THREE.Vector3().fromBufferAttribute(pos, i)));
+    }
+    if (worstIn < 1e-4) fail(`${mesh.name} touches or enters the skin (${worstIn.toFixed(5)})`);
+
+    // Reads the right way round, by the same rule as the fin: nose is +z, and
+    // a viewer off the starboard side sees +z to their left.
+    let meanX = 0;
+    for (let i = 0; i < pos.count; i++) meanX += pos.getX(i);
+    meanX /= pos.count;
+    const onStarboard = meanX > 0;
+    if (onStarboard !== mesh.name.endsWith('Starboard')) {
+      fail(`${mesh.name} is named for the wrong side (x = ${meanX.toFixed(2)})`);
+    }
+    let iL = 0, iR = 0;
+    for (let i = 0; i < uv.count; i++) {
+      if (uv.getY(i) > 1e-9) continue;
+      if (uv.getX(i) < uv.getX(iL)) iL = i;
+      if (uv.getX(i) > uv.getX(iR)) iR = i;
+    }
+    if ((pos.getZ(iL) > pos.getZ(iR)) !== onStarboard) {
+      fail(`${mesh.name} reads backwards`);
+    }
+  }
+}
+
+/* ---- is the artwork evenly spaced on the SKIN? ------------------------- */
+// The property arc-length stepping exists for. Rows placed at equal HEIGHT, or
+// at equal ANGLE, would bunch up as the band climbs towards the crown and the
+// logo would come out squashed at the top. Measured on the built geometry, so
+// it tests the result rather than the intention.
+{
+  const mesh = titles.children[0].children[0];
+  const pos = mesh.geometry.getAttribute('position');
+  const uv = mesh.geometry.getAttribute('uv');
+  const nu = new Set(Array.from({ length: uv.count }, (_, i) => uv.getY(i).toFixed(6))).size;
+  const perRow = uv.count / nu;
+  let lo = Infinity, hi = -Infinity;
+  const col = Math.floor(perRow / 2);
+  for (let r = 0; r < nu - 1; r++) {
+    const a = new THREE.Vector3().fromBufferAttribute(pos, r * perRow + col);
+    const b = new THREE.Vector3().fromBufferAttribute(pos, (r + 1) * perRow + col);
+    const d = a.distanceTo(b);
+    lo = Math.min(lo, d); hi = Math.max(hi, d);
+  }
+  console.log(`\nrow spacing up the side: ${lo.toFixed(4)}..${hi.toFixed(4)} m` +
+              `  (${(100 * (hi - lo) / lo).toFixed(2)}% variation)`);
+  if ((hi - lo) / lo > 0.02) {
+    fail(`artwork is stretched up the side: rows vary by ${(100 * (hi - lo) / lo).toFixed(1)}%`);
+  }
+
+  // Control: the same band stepped by equal HEIGHT instead of equal arc, which
+  // is the obvious wrong thing and has to be distinguishable from the right one.
+  const d0 = titles.children[0].userData;
+  const yLo = d0.y - d0.heightMetres / 2, yHi = d0.y + d0.heightMetres / 2;
+  let clo = Infinity, chi = -Infinity;
+  const zMid = d0.z;
+  for (let r = 0; r < nu - 1; r++) {
+    const ya = yLo + (yHi - yLo) * (r / (nu - 1));
+    const yb = yLo + (yHi - yLo) * ((r + 1) / (nu - 1));
+    const pa = fuse.userData.surfaceAt(zMid, Math.asin(ya / R));
+    const pb = fuse.userData.surfaceAt(zMid, Math.asin(yb / R));
+    const d = pa.distanceTo(pb);
+    clo = Math.min(clo, d); chi = Math.max(chi, d);
+  }
+  console.log(`control: stepped by equal height instead, rows vary by ` +
+              `${(100 * (chi - clo) / clo).toFixed(1)}%`);
+  if ((chi - clo) / clo < 0.05) fail('the equal-height control was not distinguishable');
+}
+
+console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork lies on the fin and the body, right way round');
 process.exit(bad ? 1 : 0);
