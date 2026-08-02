@@ -77,6 +77,7 @@ const CASES = [
   { name: 'tight taper', build: () => wing({ crankRatio: 0.55, tipRatio: 0.08 }) },
   { name: 'thick root',  build: () => wing({ rootThickness: 0.17, crankThickness: 0.13,
                                              tipThickness: 0.085 }) },
+  { name: 'const t/c',   build: () => wing({ thickness: 0.12 }) },
   { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2,
                                              crankRatio: 0.73, tipRatio: 0.27 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
@@ -99,15 +100,19 @@ for (const c of CASES) {
   // chord inboard of it. Checked as a chain, because that is the failure mode:
   // a tip ratio applied to the root instead of the crank looks plausible and is
   // 27% wrong.
+  // Crankless surfaces take the plain taper ratio; cranked ones chain crankRatio
+  // then tipRatio. Reading the wrong one gives a tip chord that is plausible and
+  // 10% out, which is what this caught when the tail changed to taperRatio.
   const wantKink = p.kink == null ? null : p.rootChord * p.crankRatio;
-  const wantTip = (wantKink ?? p.rootChord) * p.tipRatio;
+  const ratio = p.kink == null ? (p.taperRatio ?? p.tipRatio) : p.tipRatio;
+  const wantTip = (wantKink ?? p.rootChord) * ratio;
   if (Math.abs(u.rootChord - p.rootChord) > 1e-12)
     bad(`root chord ${u.rootChord}, asked ${p.rootChord}`);
   if (wantKink != null && Math.abs(u.kinkChord - wantKink) > 1e-12)
     bad(`crank chord ${u.kinkChord}, root x crankRatio is ${wantKink}`);
   if (Math.abs(u.tipChord - wantTip) > 1e-12)
-    bad(`tip chord ${u.tipChord}, ${p.kink == null ? 'root' : 'crank'} x tipRatio ` +
-        `is ${wantTip}`);
+    bad(`tip chord ${u.tipChord}, ${p.kink == null ? 'root' : 'crank'} x ` +
+        `${p.kink == null ? 'taperRatio' : 'tipRatio'} is ${wantTip}`);
 
   /* area and aspect ratio are RESULTS, and must be the right ones --------- */
   // Against the two-trapezoid formula worked straight off the inputs, which the

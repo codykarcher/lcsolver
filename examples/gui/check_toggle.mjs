@@ -19,17 +19,22 @@ const src = readFileSync(join(HERE, 'wing_test.html'), 'utf8');
 const sliders = Object.fromEntries(
   [...src.matchAll(/<input type="range" id="(\w+)"[^>]*value="([-\d.]+)"/g)]
     .map((m) => [m[1], parseFloat(m[2])]));
-const NUMS = [...src.match(/const NUMS = \[([^\]]*)\]/s)[1].matchAll(/'(\w+)'/g)].map((m) => m[1]);
+const listOf = (name) =>
+  [...src.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`, 's'))[1]
+    .matchAll(/'(\w+)'/g)].map((m) => m[1]);
+const NUMS = listOf('NUMS'), WING_NUMS = listOf('WING_NUMS'), TAIL_NUMS = listOf('TAIL_NUMS');
 
 // The page loads the component's defaults into the sliders on toggle, so
 // reproduce that rather than using the markup values for the tail.
 let bad = 0;
 for (const [kind, ref] of [['wing', wing()], ['tail', horizontalTail()]]) {
+  // The page's own rule: shared keys plus the selected kind's, loaded from the
+  // component's defaults on toggle and overridden by the sliders.
   const d = defaults[kind];
+  const keys = [...NUMS, ...(kind === 'tail' ? TAIL_NUMS : WING_NUMS)];
   const vals = {};
-  for (const k of NUMS) vals[k] = kind === 'wing' ? sliders[k] : (d[k] ?? sliders[k]);
+  for (const k of keys) vals[k] = kind === 'wing' ? sliders[k] : (d[k] ?? sliders[k]);
   const p = { ...d, ...vals };
-  if (kind === 'tail') { p.kink = null; p.crankThickness = null; }
   const got = liftingSurface(p).userData, want = ref.userData;
   let worst = 0, what = '';
   for (let i = 0; i <= 40; i++) {

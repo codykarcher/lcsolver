@@ -29,7 +29,9 @@ const PAGES = {
   // A lifting surface has no single size slider and no `shape` object -- its
   // parameters are the planform itself -- so it is compared through its own
   // list rather than through the fuselage convention.
-  'wing_test.html': { build: W.liftingSurface, flat: 'NUMS' },
+  // Two lists, because the page's wing state is described by both. Its tail
+  // state is a different parameter set entirely and is check_toggle's job.
+  'wing_test.html': { build: W.liftingSurface, flat: ['NUMS', 'WING_NUMS'] },
 };
 
 /** Pull `const NAME = [ 'a', 'b' ]` out of a page's script. */
@@ -48,7 +50,8 @@ for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
     [...src.matchAll(/<input type="range" id="(\w+)"[^>]*value="([-\d.]+)"/g)]
       .map((m) => [m[1], parseFloat(m[2])]));
 
-  const deck = listOf(src, page.flat ?? 'DECK');
+  const deck = (Array.isArray(page.flat) ? page.flat : [page.flat ?? 'DECK'])
+    .flatMap((n) => listOf(src, n));
   const shapeKeys = page.flat ? [] : listOf(src, 'SHAPE');
   const args = page.flat ? {} : { shape: {} };
   for (const k of deck) {

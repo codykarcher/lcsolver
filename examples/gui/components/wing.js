@@ -52,7 +52,8 @@ const WING = {
   span:         34.1,  // tip to tip
   rootChord:     6.0,  // at the centreline, in the same units as the span
   crankRatio:   0.73,  // crank chord / ROOT chord
-  tipRatio:     0.27,  // tip chord / CRANK chord (/ root, if there is no crank)
+  tipRatio:     0.27,  // tip chord / CRANK chord
+  taperRatio:   null,  // CRANKLESS surfaces only: tip chord / root chord
   sweep:        27.0,  // degrees, at the LEADING EDGE
   // Locked. Still parameters -- a different aircraft can pass its own -- but
   // not things the deck sets or the page exposes.
@@ -71,6 +72,7 @@ const WING = {
   rootThickness: 0.13,
   crankThickness: 0.11,
   tipThickness:  0.10,
+  thickness:    null,  // one t/c for the whole surface; overrides the three
 
 
   nChord:         80,  // points around each section
@@ -81,23 +83,31 @@ const WING = {
 /** A plain swept trapezoid: no crank, symmetric sections. */
 const TAIL = {
   ...WING,
-  span:         12.8, rootChord: 3.94, tipRatio: 0.30,
+  // A tail has no crank, so it takes the plain taper ratio -- tip over root --
+  // and one thickness for the whole surface. Neither is a special case in the
+  // loft; they are the crankless spellings of the same two ideas, and having
+  // them named plainly is worth more than reusing a chained ratio that happens
+  // to reduce to the same thing.
+  span:         12.8, rootChord: 3.94,
+  taperRatio:   0.30, thickness: 0.10,
   sweep:        32.0, dihedral: 5.0,
   twistTip:      0.0, kink: null,
   root: '0010', tip: '0010',
-  rootThickness: 0.10, crankThickness: null, tipThickness: 0.10,
   nInner:          2, nOuter: 20,
 };
 
 /**
  * The three chords, from one length and two ratios. Nothing is solved for.
  *
- * Without a crank there is nothing for `crankRatio` to apply to, so `tipRatio`
- * falls back to being measured off the root -- otherwise a tail would silently
- * get a tip chord scaled by a ratio it never had.
+ * Without a crank, `taperRatio` is the plain tip-over-root and is what a tail
+ * uses. `tipRatio` still works there as a fallback, measured off the root,
+ * since with no crank the two mean the same thing.
  */
-function chords({ rootChord, crankRatio, tipRatio, kink }) {
-  if (kink == null) return { cRoot: rootChord, cKink: null, cTip: rootChord * tipRatio };
+function chords({ rootChord, crankRatio, tipRatio, taperRatio, kink }) {
+  if (kink == null) {
+    return { cRoot: rootChord, cKink: null,
+             cTip: rootChord * (taperRatio ?? tipRatio) };
+  }
   const cKink = rootChord * crankRatio;
   return { cRoot: rootChord, cKink, cTip: cKink * tipRatio };
 }
@@ -126,9 +136,11 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   // Thickness runs as its own spanwise distribution, independent of which
   // aerofoil is where. So a t/c at the crank does not require a crank aerofoil,
   // and changing an aerofoil does not silently change the thickness.
-  const tRoot = p.rootThickness ?? thicknessOf(rootFoil);
-  const tTip = p.tipThickness ?? thicknessOf(tipFoil);
-  const tKink = p.crankThickness
+  // A single `thickness` beats the three, which is how a tail is described: one
+  // number for the whole surface rather than a distribution.
+  const tRoot = p.thickness ?? p.rootThickness ?? thicknessOf(rootFoil);
+  const tTip = p.thickness ?? p.tipThickness ?? thicknessOf(tipFoil);
+  const tKink = p.thickness ?? p.crankThickness
     ?? (kinkFoil ? thicknessOf(kinkFoil) : null);
   const thickAt = (t) => alongSpan(t, p.kink, tRoot, tKink, tTip);
 
@@ -256,6 +268,7 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
      */
     taperRatio: cTip / cRoot,
     crankRatio: cKink ? cKink / cRoot : null, tipRatio: cTip / (cKink ?? cRoot),
+    constantThickness: p.thickness ?? null,
     sweep: p.sweep, dihedral: p.dihedral,
     mac, yMac: yNum / S, xMacLE: xNum / S, xMacQuarter: xNum / S + 0.25 * mac,
     /** Thickness as built, at the three stations. */

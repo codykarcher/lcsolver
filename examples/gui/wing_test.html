@@ -26,6 +26,9 @@
   input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
   input:disabled { opacity: .3; }
   .off { opacity: .35; }
+  .tailOnly { display: none; }
+  body.tail .tailOnly { display: block; }
+  body.tail .wingOnly { display: none; }
   input[type=text] { width: 100%; margin: 1px 0 9px; padding: 3px 6px; font: inherit;
     font-size: 11.5px; color: #e6a34a; background: #14161a;
     border: 1px solid #363d47; border-radius: 4px; font-variant-numeric: tabular-nums; }
@@ -66,11 +69,18 @@
   <div class="row"><label for="rootChord">root chord</label><output id="oRootChord"></output></div>
   <input type="range" id="rootChord" min="0.5" max="14.0" step="0.05" value="6.0">
 
-  <div class="row"><label for="crankRatio">crank / root</label><output id="oCrankRatio"></output></div>
-  <input type="range" id="crankRatio" min="0.15" max="1.00" step="0.005" value="0.73">
+  <div class="wingOnly">
+    <div class="row"><label for="crankRatio">crank / root</label><output id="oCrankRatio"></output></div>
+    <input type="range" id="crankRatio" min="0.15" max="1.00" step="0.005" value="0.73">
 
-  <div class="row"><label for="tipRatio">tip / crank</label><output id="oTipRatio"></output></div>
-  <input type="range" id="tipRatio" min="0.05" max="1.00" step="0.005" value="0.27">
+    <div class="row"><label for="tipRatio">tip / crank</label><output id="oTipRatio"></output></div>
+    <input type="range" id="tipRatio" min="0.05" max="1.00" step="0.005" value="0.27">
+  </div>
+
+  <div class="tailOnly">
+    <div class="row"><label for="taperRatio">taper &middot; tip / root</label><output id="oTaperRatio"></output></div>
+    <input type="range" id="taperRatio" min="0.05" max="1.00" step="0.005" value="0.30">
+  </div>
 
   <div class="row"><label for="sweep">LE sweep &middot; deg</label><output id="oSweep"></output></div>
   <input type="range" id="sweep" min="-15" max="60" step="0.5" value="27">
@@ -86,12 +96,18 @@
 
 
   <h2>thickness &middot; t/c</h2>
-  <div class="row"><label for="rootThickness">root</label><output id="oRootThickness"></output></div>
-  <input type="range" id="rootThickness" min="0.04" max="0.24" step="0.002" value="0.13">
-  <div class="row"><label for="crankThickness">crank</label><output id="oCrankThickness"></output></div>
-  <input type="range" id="crankThickness" min="0.04" max="0.24" step="0.002" value="0.11">
-  <div class="row"><label for="tipThickness">tip</label><output id="oTipThickness"></output></div>
-  <input type="range" id="tipThickness" min="0.04" max="0.24" step="0.002" value="0.10">
+  <div class="wingOnly">
+    <div class="row"><label for="rootThickness">root</label><output id="oRootThickness"></output></div>
+    <input type="range" id="rootThickness" min="0.04" max="0.24" step="0.002" value="0.13">
+    <div class="row"><label for="crankThickness">crank</label><output id="oCrankThickness"></output></div>
+    <input type="range" id="crankThickness" min="0.04" max="0.24" step="0.002" value="0.11">
+    <div class="row"><label for="tipThickness">tip</label><output id="oTipThickness"></output></div>
+    <input type="range" id="tipThickness" min="0.04" max="0.24" step="0.002" value="0.10">
+  </div>
+  <div class="tailOnly">
+    <div class="row"><label for="thickness">constant</label><output id="oThickness"></output></div>
+    <input type="range" id="thickness" min="0.04" max="0.24" step="0.002" value="0.10">
+  </div>
 
   <h2>sections</h2>
   <div class="row"><label for="root">root NACA</label><output></output></div>
@@ -186,10 +202,17 @@ scene.add(grid);
 const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
-const NUMS = ['span', 'rootChord', 'crankRatio', 'tipRatio', 'sweep', 'kink',
-              'rootThickness', 'crankThickness', 'tipThickness'];
+// Shared, then the two kinds' own. A tail is not a wing with some sliders
+// greyed out -- it is described differently: a plain taper ratio instead of two
+// chained ones, and one thickness instead of a distribution. Passing a wing's
+// set to a tail would apply parameters it does not have.
+const NUMS = ['span', 'rootChord', 'sweep'];
+const WING_NUMS = ['crankRatio', 'tipRatio', 'kink',
+                   'rootThickness', 'crankThickness', 'tipThickness'];
+const TAIL_NUMS = ['taperRatio', 'thickness'];
+const ALL = [...NUMS, ...WING_NUMS, ...TAIL_NUMS];
 const FOILS = ['root', 'kinkFoil', 'tip'];
-const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
+const DEFAULTS = Object.fromEntries([...ALL, ...FOILS].map((k) => [k, el(k).value]));
 
 /**
  * Load one of the component's own default sets into the sliders.
@@ -201,16 +224,12 @@ const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).val
  */
 function loadDefaults(which) {
   const d = defaults[which];
-  for (const k of NUMS) if (d[k] != null) el(k).value = d[k];
+  for (const k of ALL) if (d[k] != null) el(k).value = d[k];
   for (const k of FOILS) el(k).value = d[k] ?? '';
-  // A tail has no crank, so those three say nothing. Disabled rather than
-  // hidden, so it is clear they exist and why they are not doing anything.
-  const noCrank = which === 'tail';
-  for (const k of ['kink', 'crankRatio', 'crankThickness', 'kinkFoil']) {
-    el(k).disabled = noCrank;
-    el(k).closest('div')?.classList.toggle('off', noCrank);
-    el(k).previousElementSibling?.classList?.toggle('off', noCrank);
-  }
+  // The two kinds' own controls swap rather than grey out, because they are
+  // alternative descriptions and not one description with parts switched off.
+  document.body.classList.toggle('tail', which === 'tail');
+  el('kinkFoil').disabled = which === 'tail';
 }
 
 let surface = null, extra = [];
@@ -234,9 +253,9 @@ function build() {
   // then override with the sliders. The locked values -- dihedral, twist -- are
   // not sliders and differ between the two, so a page that only passed slider
   // values would build a tail with the wing's dihedral and washout.
+  const keys = [...NUMS, ...(tail ? TAIL_NUMS : WING_NUMS)];
   const p = { ...defaults[tail ? 'tail' : 'wing'],
-              ...Object.fromEntries(NUMS.map((k) => [k, num(k)])) };
-  if (tail) { p.kink = null; p.crankThickness = null; }
+              ...Object.fromEntries(keys.map((k) => [k, num(k)])) };
   for (const k of FOILS) {
     const v = el(k).value.trim();
     p[k] = v === '' ? null : v;
@@ -289,8 +308,8 @@ function build() {
   grid.position.y = -u.semiSpan * 0.3;
   grid.scale.setScalar(u.semiSpan / 17);
 
-  for (const k of NUMS) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
-    num(k).toFixed(k.endsWith('Thickness') ? 3 : 2);
+  for (const k of ALL) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
+    num(k).toFixed(k.endsWith('Thickness') || k === 'thickness' ? 3 : 2);
 
   el('locked').innerHTML = [
     ['dihedral &middot; deg', u.dihedral],
@@ -309,12 +328,14 @@ function build() {
     `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
     `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
     `MAC c/4 <span>${u.xMacQuarter.toFixed(3)}</span> aft of the root LE<br>` +
-    `t/c <span>${(100 * u.rootThickness).toFixed(1)}</span> / ` +
-    (u.crankThickness ? `<span>${(100 * u.crankThickness).toFixed(1)}</span> / ` : '') +
-    `<span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; ` +
+    (u.constantThickness != null
+      ? `t/c <span>${(100 * u.constantThickness).toFixed(1)}%</span> constant &middot; `
+      : `t/c <span>${(100 * u.rootThickness).toFixed(1)}</span> / ` +
+        (u.crankThickness ? `<span>${(100 * u.crankThickness).toFixed(1)}</span> / ` : '') +
+        `<span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; `) +
     `${u.sections.root}${u.sections.kink ? ' / ' + u.sections.kink : ''} / ${u.sections.tip}`;
 
-  el('params').textContent = `{ ${NUMS.map((k) => `${k}: ${num(k)}`).join(', ')}, ` +
+  el('params').textContent = `{ ${keys.map((k) => `${k}: ${num(k)}`).join(', ')}, ` +
     `root: '${p.root}', tip: '${p.tip}' }`;
 }
 
@@ -343,7 +364,7 @@ function ortho(axis) {
   controls.update();
 }
 
-for (const id of NUMS) el(id).addEventListener('input', build);
+for (const id of ALL) el(id).addEventListener('input', build);
 for (const id of FOILS) el(id).addEventListener('input', build);
 for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid'])
   el(id).addEventListener('change', build);
