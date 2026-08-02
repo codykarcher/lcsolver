@@ -50,6 +50,8 @@ const P = {
   above:     6,     // ... and above it
   nSide:     22,    // section points per side
   fillet:    0.14,  // corner radius on the over-mount outline
+  reach:     1.85,  // side-mount: out to the fuselage side
+  sideStations: 10,
 };
 
 /** Half-thickness of the streamwise section at chord fraction `s`. */
@@ -157,6 +159,28 @@ export function underMountPylon(engine, opts = {}) {
   g.userData.kinkY = yKink;
   g.name = 'underMountPylon';
   return g;
+}
+
+/**
+ * Reverse a geometry's winding if it faces inward.
+ *
+ * Cheaper than reasoning about handedness. The side-mount stacks its sections
+ * along X where the others stack along Y, which flips the sense of the same
+ * index pattern -- and getting that wrong costs a whole component rendered
+ * inside out.
+ */
+function faceOutward(geo) {
+  if (volumeOf(geo) >= 0) return geo;
+  const idx = geo.getIndex();
+  if (idx) {
+    const a = idx.array;
+    for (let t = 0; t + 2 < a.length; t += 3) {
+      const tmp = a[t + 1]; a[t + 1] = a[t + 2]; a[t + 2] = tmp;
+    }
+    idx.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+  return geo;
 }
 
 /**
@@ -327,6 +351,102 @@ export function overMountPylon(engine, opts = {}) {
   g.userData.outline = rounded.length;
   g.userData.volumes = g.children.map((c) => volumeOf(c.geometry));
   g.name = 'overMountPylon';
+  return g;
+}
+
+/**
+ * Side-mount pylon: the engine hangs off the side of a fuselage.
+ *
+ * A horizontal stub rather than a vertical one, so the section is stacked in Y
+ * and the planform lives in the XZ plane. Both edges come off the core case:
+ *
+ *   LEADING EDGE  leaves the front of the core case -- which is the back of
+ *                 the fan case -- and runs STRAIGHT OUT, unswept.
+ *   TRAILING EDGE leaves the rear of the core case and tapers to a point.
+ *
+ * So in plan it is a triangle: full core-case chord at the engine, closing to
+ * nothing outboard. `reach` is where the fuselage is; on an installation that
+ * comes from the fuselage geometry, not from here.
+ *
+ * The root is buried inside the core rather than started on its skin, for the
+ * same reason as the other two: the load goes into the core's structure, and a
+ * stub that begins at the surface reads as bolted to the fairing.
+ */
+export function sideMountPylon(engine, opts = {}) {
+  const u = engine.userData;
+  const R = u.rFan ?? (u.rMax ? u.rMax / 1.037 : 1);
+  const g = new THREE.Group();
+
+  const engineZ = opts.engineZ ?? 0;
+  const side = opts.side ?? 1;
+  const reach = (opts.reach ?? P.reach) * R;          // fuselage side
+  const w = u.coreWall;
+  const zLE = (u.caseAft ?? -0.70 * R) + engineZ;     // front of the core case
+  const zTErt = (w ? w[w.length - 1][0] : -2.90 * R) + engineZ;
+
+  // Start inside the core: half the core radius at mid-chord.
+  const rc = w
+    ? (() => {
+        const zm = (zLE + zTErt) / 2 - engineZ;
+        for (let i = 0; i < w.length - 1; i++) {
+          if (zm <= w[i][0] && zm >= w[i + 1][0]) {
+            return w[i][1] + (w[i + 1][1] - w[i][1])
+              * ((w[i][0] - zm) / ((w[i][0] - w[i + 1][0]) || 1));
+          }
+        }
+        return w[w.length - 1][1];
+      })()
+    : 0.35 * R;
+  const xRoot = 0.5 * rc;
+
+  const nS = P.sideStations, nP = P.nSide;
+  const pos = [], idx = [], ring = [];
+  for (let i = 0; i < nS; i++) {
+    const t = i / (nS - 1);
+    const x = side * (xRoot + (reach - xRoot) * t);
+    // Trailing edge closing on the leading edge; a sliver rather than a true
+    // apex, so the last ring is not a pile of coincident vertices.
+    const zTE = zTErt + (zLE - zTErt) * (t * (1 - 0.02));
+    const c = zLE - zTE;
+    const tMax = P.rootT * R * (1 - 0.55 * t);
+
+    ring.push(pos.length / 3);
+    for (let s2 = 0; s2 < 2; s2++) {
+      for (let j = 0; j <= nP; j++) {
+        if (s2 === 1 && (j === 0 || j === nP)) continue;
+        const sv = s2 === 0 ? j / nP : 1 - j / nP;
+        pos.push(x, (s2 === 0 ? 1 : -1) * halfT(sv, tMax), zLE - sv * c);
+      }
+    }
+  }
+  const perRing = 2 * (nP + 1) - 2;
+  for (let i = 0; i < nS - 1; i++) {
+    for (let j = 0; j < perRing; j++) {
+      const a = ring[i] + j, b = ring[i] + ((j + 1) % perRing);
+      const a2 = ring[i + 1] + j, b2 = ring[i + 1] + ((j + 1) % perRing);
+      idx.push(a, b, a2, b, b2, a2);
+    }
+  }
+  for (const [base, flip] of [[ring[0], true], [ring[nS - 1], false]]) {
+    for (let j = 1; j < perRing - 1; j++) {
+      if (flip) idx.push(base, base + j + 1, base + j);
+      else idx.push(base, base + j, base + j + 1);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  faceOutward(geo);
+  const strut = new THREE.Mesh(geo, M.structure);
+  strut.name = 'pylonStrut';
+  g.add(strut);
+
+  g.userData.attachX = side * reach;
+  g.userData.rootZ = [zLE, zTErt];
+  g.userData.volumes = [volumeOf(geo)];
+  g.name = 'sideMountPylon';
   return g;
 }
 

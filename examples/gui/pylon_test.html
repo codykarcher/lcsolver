@@ -55,7 +55,9 @@
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="nacelle" checked><label for="nacelle">nacelle</label></div>
   <div class="check"><input type="checkbox" id="wing" checked><label for="wing">wing stub</label></div>
-  <div class="check"><input type="checkbox" id="over"><label for="over">over-mount</label></div>
+  <div class="check"><input type="radio" name="mt" id="mUnder" checked><label for="mUnder">under-mount</label></div>
+  <div class="check"><input type="radio" name="mt" id="mOver"><label for="mOver">over-mount</label></div>
+  <div class="check"><input type="radio" name="mt" id="mSide"><label for="mSide">side-mount</label></div>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
@@ -79,7 +81,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { turbofan, bareTurbofan } from './components/engines.js';
-import { underMountPylon, overMountPylon } from './components/pylon.js';
+import { underMountPylon, overMountPylon, sideMountPylon }
+  from './components/pylon.js';
 import { structure } from './components/materials.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -156,23 +159,33 @@ function build() {
   engine.position.set(0, 0, engineZ);
   scene.add(engine);
 
-  const mount = el('over').checked ? overMountPylon : underMountPylon;
+  const mount = el('mSide').checked ? sideMountPylon
+    : el('mOver').checked ? overMountPylon : underMountPylon;
   const py = mount(engine, { engineZ });
   scene.add(py);
   extra.push(py);
 
   // A stub of wing at the attachment, purely so the top face has something to
   // meet. Not a wing model -- that is a component of its own.
-  if (el('wing').checked) {
+  if (el('wing').checked && !el('mSide').checked) {
     const c = py.userData.attachZ;
     const stub = new THREE.Mesh(
       new THREE.BoxGeometry(rFan * 3.2, rFan * 0.34, (c[0] - c[1]) * 1.35),
       structure);
-    const sign = el('over').checked ? -1 : 1;
+    const sign = el('mOver').checked ? -1 : 1;
     stub.position.set(0, py.userData.attachY + sign * rFan * 0.17,
                       (c[0] + c[1]) / 2 - rFan * 0.1);
     scene.add(stub);
     extra.push(stub);
+  }
+  if (el('wing').checked && el('mSide').checked) {
+    // A slab of fuselage side for the stub to land on.
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(rFan * 0.30, rFan * 3.4, rFan * 4.2), structure);
+    wall.position.set(py.userData.attachX + rFan * 0.15, 0,
+                      (py.userData.rootZ[0] + py.userData.rootZ[1]) / 2);
+    scene.add(wall);
+    extra.push(wall);
   }
 
   rebuildAxes(rFan * 1.55);
@@ -201,8 +214,10 @@ function build() {
     `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
     `r core <span>${engine.userData.rCore.toFixed(3)}</span><br>` +
     `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span><br>` +
-    `pylon root <span>${py.userData.rootZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span> &middot; ` +
-    `kink y <span>${py.userData.kinkY.toFixed(2)}</span>`;
+    `pylon root <span>${py.userData.rootZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span>` +
+    (py.userData.attachX !== undefined
+      ? ` &middot; reach <span>${py.userData.attachX.toFixed(2)}</span>`
+      : ` &middot; kink y <span>${py.userData.kinkY.toFixed(2)}</span>`);
 }
 
 function frameEngine() {
@@ -225,7 +240,8 @@ function lookAtOrigin() {
 }
 
 for (const id of ['rFan', 'bpr', 'ez']) el(id).addEventListener('input', build);
-for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing', 'over']) el(id).addEventListener('change', build);
+for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing',
+                  'mUnder', 'mOver', 'mSide']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
 
