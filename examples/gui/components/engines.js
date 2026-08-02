@@ -462,35 +462,17 @@ const NAC = {
   maxZ:     -0.15,   // ... and where it occurs
   highlight: 0.94,   // inlet highlight radius
   lipZ:      0.78,   // highlight station, ahead of the fan plane
-  lipR:      0.055,  // lip radius
-  throatR:   0.925,  // throat, just aft of the highlight
+  lipR:      0.075,  // lip radius
+  throatR:   0.862,  // throat, aft of the highlight
   duct:      1.055,  // bypass duct outer wall over the fan
   cowlAft:  -1.70,   // fan cowl trailing edge
   exitOuter: 1.02,
   exitInner: 0.95,
-  coreGap:   0.055,  // minimum clearance from the core skin
-  coreWall:  0.030,  // core cowl thickness
+  skinFwd:   0.060,  // core cowl standoff at its forward end
+  skinAft:   0.010,  // ... and at the outlet, where it fairs in flush
+  skinIn:    0.004,  // inner face, effectively on the core
   coreAft:  -0.14,   // core cowl ends this far forward of the core outlet
 };
-
-/**
- * Core cowl outer line, x fan radius, as [z, r]. A fixed aerodynamic shape:
- * the cowl does not follow whatever the core is doing underneath, so it stays
- * a clean body of revolution at any bypass ratio rather than picking up the
- * core's turbine bulge as a lump in the fairing.
- *
- * It ends short of the core outlet, leaving the primary nozzle and plug in the
- * open -- which is both what an installation looks like and what stops the
- * cowl having to neck down around the nozzle.
- *
- * Sized to clear the core unscaled from about BPR 5 up, which covers every
- * engine that would be podded like this. Below that the core is fat enough
- * that something has to give, and the cowl grows bodily rather than deforming.
- */
-const CORE_COWL = [
-  [-1.48, 0.800], [-1.90, 0.790], [-2.25, 0.735], [-2.55, 0.640],
-  [-2.72, 0.560],
-];
 
 /**
  * Podded turbofan: the bare engine inside a nacelle.
@@ -522,33 +504,39 @@ export function turbofan(opts = {}) {
   const hi = NAC.highlight * R;
 
   // ---- fan cowl -----------------------------------------------------------
-  // Inner wall, running forward from the bypass exit to the lip. It diffuses
-  // outward from the throat to the fan, which is what an inlet does.
+  // The lip is a half-circle about a centre one lip-radius aft of the
+  // highlight, so the forward-most point is the highlight and BOTH tangent
+  // points are axial. The inner and outer surfaces then have to arrive flat
+  // to match, which is what the doubled control points at each end do -- the
+  // previous version ran a spline straight into the arc at a slope, and the
+  // join showed as a crease all the way round.
+  const zc = zLip - lipR;
+  const rIn0 = hi - lipR, rOut0 = hi + lipR;
+
   const inner = new THREE.SplineCurve([
     new THREE.Vector2(zAft, NAC.exitInner * R),
     new THREE.Vector2(-1.15 * R, 1.030 * R),
     new THREE.Vector2(-0.70 * R, NAC.duct * R),
     new THREE.Vector2(0.00 * R, 1.048 * R),
-    new THREE.Vector2(zLip - 0.24 * R, NAC.throatR * R),
-    new THREE.Vector2(zLip, hi - lipR),
-  ]).getPoints(40);
+    new THREE.Vector2(zLip - 0.34 * R, NAC.throatR * R),
+    new THREE.Vector2(zc - 0.055 * R, rIn0 * 0.999),
+    new THREE.Vector2(zc, rIn0),
+  ]).getPoints(44);
 
-  // Rounded lip, an arc about the highlight from the inner tangent round to
-  // the outer. A cowl that comes to an edge here reads as sheet metal.
   const lip = [];
-  for (let i = 1; i < 8; i++) {
-    const a = -Math.PI / 2 + (i / 8) * Math.PI;
-    lip.push(new THREE.Vector2(zLip + lipR * Math.cos(a),
-                               hi + lipR * Math.sin(a)));
+  for (let i = 1; i < 24; i++) {
+    const a = -Math.PI / 2 + (i / 24) * Math.PI;
+    lip.push(new THREE.Vector2(zc + lipR * Math.cos(a), hi + lipR * Math.sin(a)));
   }
 
   const outer = new THREE.SplineCurve([
-    new THREE.Vector2(zLip, hi + lipR),
-    new THREE.Vector2(zLip - 0.20 * R, 1.115 * R),
+    new THREE.Vector2(zc, rOut0),
+    new THREE.Vector2(zc - 0.055 * R, rOut0 * 1.001),
+    new THREE.Vector2(zLip - 0.30 * R, 1.105 * R),
     new THREE.Vector2(NAC.maxZ * R, NAC.maxR * R),
     new THREE.Vector2(-0.95 * R, 1.170 * R),
     new THREE.Vector2(zAft, NAC.exitOuter * R),
-  ]).getPoints(40);
+  ]).getPoints(44);
 
   const cowl = [
     ...inner.map((q) => [q.x, q.y]),
@@ -561,10 +549,11 @@ export function turbofan(opts = {}) {
   g.add(fanCowl);
 
   // ---- core cowl ----------------------------------------------------------
-  // A standard profile, scaled bodily if the core inside would otherwise come
-  // through it. Scaling preserves the shape -- the alternative, following the
-  // core station by station, drags the turbine bulge out into the fairing and
-  // gives a different cowl for every bypass ratio.
+  // A SKIN ON THE CORE, not a shell standing off it. Offsetting the engine's
+  // own profile keeps the cowl smooth -- the core is a spline, and a constant
+  // offset from a smooth curve is smooth -- while leaving no cavity between
+  // the two. The standoff tapers away aft so the cowl fairs flush into the
+  // outlet instead of stopping above it and showing an annular step.
   const wall = core.userData.coreWall;
   const coreRadiusAt = (zPos) => {
     for (let i = 0; i < wall.length - 1; i++) {
@@ -573,22 +562,22 @@ export function turbofan(opts = {}) {
         return r0 + (r1 - r0) * ((z0 - zPos) / ((z0 - z1) || 1));
       }
     }
-    return NaN;
+    return wall[wall.length - 1][1];
   };
 
-  const spineCtrl = CORE_COWL.map(([zf, rf]) =>
-    new THREE.Vector2(zf * R, rf * R));
-  const spine = new THREE.SplineCurve(spineCtrl).getPoints(30);
-
-  let fit = 1;
-  for (const q of spine) {
-    const rc = coreRadiusAt(q.x);
-    if (!isFinite(rc)) continue;
-    fit = Math.max(fit, (rc + NAC.coreGap * R) / (q.y - NAC.coreWall * R));
+  const zCC0 = zAft + 0.24 * R;                 // starts inside the fan cowl
+  const zCC1 = wall[wall.length - 1][0];        // ... and ends at the outlet
+  const nCC = 34;
+  const ccOut = [], ccIn = [];
+  for (let i = 0; i <= nCC; i++) {
+    const t = i / nCC;
+    const zPos = zCC0 + (zCC1 - zCC0) * t;
+    const rc = coreRadiusAt(zPos);
+    const e = t * t * (3 - 2 * t);              // smoothstep, so the taper
+    const skin = (NAC.skinFwd + (NAC.skinAft - NAC.skinFwd) * e) * R;
+    ccOut.push([zPos, rc + skin]);
+    ccIn.push([zPos, rc + NAC.skinIn * R]);
   }
-
-  const ccOut = spine.map((q) => [q.x, q.y * fit]);
-  const ccIn = spine.map((q) => [q.x, q.y * fit - NAC.coreWall * R]);
   const coreCowl = latheZ([...ccOut, ...[...ccIn].reverse(), ccOut[0]],
                           M.casing, SEG);
   coreCowl.name = 'coreCowl';
@@ -606,7 +595,6 @@ export function turbofan(opts = {}) {
   g.userData.highlightRadius = hi;
   g.userData.nacelleNoseZ = zLip + lipR;
   g.userData.bypassExitZ = zAft;
-  g.userData.coreCowlScale = fit;
   g.userData.bare = core.userData;
   return finish(g, core.userData.length, NAC.maxR * R, 'turbofan');
 }
