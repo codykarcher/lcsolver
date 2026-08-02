@@ -897,6 +897,29 @@ function buildFuselage({
     crownAt: (z) => extremeY(shape, section, z, 1),
     keelAt: (z) => extremeY(shape, section, z, -1),
     halfWidthAt: (z) => halfWidth(shape, section, z),
+    /**
+     * How far inside the body a point is: positive within, negative without,
+     * and zero exactly on the skin.
+     *
+     * Exact, and cheap, for the same reason the section is limiting elsewhere:
+     * the section is one radius per angle about its own centre, so it is
+     * star-shaped about that centre by construction, and a point is inside iff
+     * it is nearer that centre than the surface is on the same ray. No ray
+     * casting against the mesh, no marching.
+     *
+     * Signed rather than boolean because anything cutting geometry against the
+     * body has to interpolate to the crossing. A predicate can only put the cut
+     * on whichever sample happened to fall inside.
+     */
+    depthInside: (x, y, z) => {
+      if (z > 0) return -(z + 1e-3);
+      if (z < -L) return -(-L - z + 1e-3);
+      const { r, yc } = shape.at(z);
+      if (!(r > 1e-9)) return -1e-3;
+      const dy = y - yc;
+      return r * section(Math.atan2(dy, x), z) - Math.hypot(x, dy);
+    },
+    contains: (x, y, z) => g.userData.depthInside(x, y, z) > 0,
   });
   return g;
 }

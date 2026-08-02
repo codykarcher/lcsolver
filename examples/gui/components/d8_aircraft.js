@@ -17,6 +17,7 @@ import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
 import { bareTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
+import { carveDuct } from './carve.js';
 
 const DEG = Math.PI / 180;
 const IN = 0.0254;
@@ -61,6 +62,17 @@ export const D8_CHOICES = {
   htSweepC4:     22.0,
   vtSweepC4:     30.0,
   tcRoot: 0.145, tcCrank: 0.125, tcTip: 0.105, tcTail: 0.09,
+  /**
+   * Carve the engine duct out of the afterbody.
+   *
+   * A toggle, and defaulted on, because the shape underneath it is the one
+   * that was arrived at by hand and is not to be disturbed: turning this off
+   * gives back exactly that body, vertex for vertex, rather than some earlier
+   * approximation of it. See `carve.js` for why this cannot be a section.
+   */
+  ductCarve:      true,
+  /** Clearance between the duct's walls and the engines they hold. */
+  ductGap:        0.04,
 };
 
 /** Leading-edge sweep from a quarter-chord one. `k` is 1/2 tip-to-tip, 1/4 for a fin. */
@@ -276,6 +288,52 @@ export function d8Aircraft(deck, opts = {}) {
     pod.userData.side = side;
     pod.name = side > 0 ? 'starboardPod' : 'portPod';
     g.add(pod); parts.engines.push(pod);
+  }
+
+  /* ---- the duct the engines sit in ------------------------------------ */
+  /**
+   * Cut AFTER everything is placed, and out of the mesh rather than out of the
+   * section, so the body's shape is bit-for-bit what it was and everything
+   * hung on it -- fins, tailplane, engines, decals -- still sits where it did.
+   *
+   * The duct's size is the engines', not a choice: its walls round up at their
+   * radius, stand a clearance outboard of their outer extent, and its floor is
+   * a clearance below them. It runs from the trailing edge, where it is
+   * deepest, forward to the end of the cabin, where it closes on the crown and
+   * the body is untouched.
+   */
+  if (opts.ductCarve ?? d.ductCarve) {
+    carveDuct(fuse, {
+      floor: engineAxisY - rNac - d.ductGap,
+      /**
+       * The walls stand exactly on the engines' outer extent -- no clearance,
+       * where the floor gets `ductGap`.
+       *
+       * Because `tailSpan` is 1.00 there is nothing to spare. The body's
+       * trailing edge is as wide as the engines and no wider, and the fins hang
+       * off its back upper corners, 20 mm outboard of that. A duct even 40 mm
+       * wider takes those corners with it and the fin roots come out floating
+       * 189 mm above the trough with nothing under them. So the wall goes on
+       * the engine line and the last 20 mm of body is what carries the fins.
+       *
+       * The engines then touch the wall at their equator. That is the whole
+       * clearance the configuration has: a wider duct costs the fins their
+       * mounting, and a wider BODY is a change to the shape.
+       */
+      halfWidth: d.engineY + rNac,
+      cornerR: rNac + d.ductGap,
+      toX: d.fuseLength,
+      fromX: -u.cabinZ[1],
+      /**
+       * Level from the engines' NOSE aft, not just at the trailing edge. The
+       * ramp is what closes the duct into the cabin roof, and if it is still
+       * descending where the engines are then the floor cuts through them: at
+       * the engine's own station it stood 270 mm above the bottom of the fan,
+       * and a third of the nacelle stayed buried.
+       */
+      deepFrom: engineNoseX - d.ductGap,
+      crown: u.crownAt(u.cabinZ[1]),
+    });
   }
 
   /* ---- undercarriage --------------------------------------------------- */
