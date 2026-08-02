@@ -69,45 +69,134 @@ _N_FUEL_ADD = (_FUEL['elements']['H'] / 4.0) / _FUEL['wt']
 # fitted-property expressions (pyomo-compatible)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# ZERO-CANCELLATION thermo forms (SMA / posynomial; fits.py emits them).
+#
+# The original free-sign signomial fits carried 65-410x internal
+# cancellation, and the free-design isolation showed the SIA can VERIFY
+# such rows but not NAVIGATE them. Every thermo equality now enters the
+# model as monomial == posynomial: for an SMA fit with softness a,
+#     y == (sum_k m_k(x))^(1/a)   becomes   y**a == sum_k m_k(x)**a,
+# no negative terms anywhere. The float-callable evaluators below keep the
+# ORIGINAL function contracts so warm_start and all guess arithmetic stay
+# consistent with the rows to fit precision.
+# ---------------------------------------------------------------------------
+_PA = TH.AIR_PSI_SMA
+_HA = TH.AIR_H_SMA
+_PV = TH.VIT_PSI_SMA
+_GV = TH.G_VIT
+_CPA = TH.CP_AIR_POSY
+
+
+def _sma_posy(fit, *xs):
+    """sum_k m_k**a -- the posynomial side of an SMA equality."""
+    a = fit['a1']
+    out = 0.0
+    for c, e in zip(fit['c'], fit['e']):
+        term = c**a
+        for x, ei in zip(xs, e):
+            term = term * x ** (a * ei)
+        out = out + term
+    return out
+
+
+def psi_air_posy(T):
+    return _sma_posy(_PA, T / _PA['T_ref_K'])
+
+
+def h_air_posy(T):
+    return _sma_posy(_HA, T / _HA['T_ref_K'])
+
+
+def psi_vit_posy(T, far):
+    return _sma_posy(_PV, T / _PV['T_ref_K'], far)
+
+
+def cp_air_posy(T):
+    t = T / _CPA['T_ref_K']
+    p = sum(c * t**e[0] for c, e in zip(_CPA['c'], _CPA['e']))
+    return (1.0 / p) if _CPA['inv'] else p
+
+
+def g_vit_core(T, far):
+    """The integrated-cp part of G_vit (small negative T_lo constants,
+    cancellation <= 2 like the species enthalpies)."""
+    Tr, Tlo = _GV['T_ref_K'], _GV['T_lo_K']
+    t, tlo = T / Tr, Tlo / Tr
+    return sum(c * Tr / (e[0] + 1.0)
+               * (t ** (e[0] + 1.0) - tlo ** (e[0] + 1.0)) * far ** e[1]
+               for c, e in zip(_GV['cp_c'], _GV['cp_e']))
+
+
+def c0_posy(far):
+    """C0 is fitted INVERSE (1/posy); rows multiply through by this."""
+    return sum(c * far ** e[0] for c, e in zip(_GV['c0_c'], _GV['c0_e']))
+
+
+# row helpers: each returns one monomial == posynomial constraint
+def row_psi_air(psi, T):
+    return psi ** _PA['a1'] == psi_air_posy(T)
+
+
+def row_h_air(ht_shifted, T):
+    return ht_shifted ** _HA['a1'] == h_air_posy(T)
+
+
+def row_psi_vit(psi, T, far):
+    return psi ** _PV['a1'] == psi_vit_posy(T, far)
+
+
+def row_G(h_shifted, far, T):
+    """(1+far)*h_shifted == G_vit(T,far), multiplied through by the C0
+    posynomial so both sides stay near-posynomial."""
+    c0p = c0_posy(far)
+    return ((1.0 + far) * h_shifted * c0p
+            == g_vit_core(T, far) * c0p + 1.0)
+
+
+def row_cp_vit(cp, far, T):
+    """(1+far)*cp == dG/dT, the fitted cp posynomial directly."""
+    Tr = _GV['T_ref_K']
+    rhs = sum(c * (T / Tr) ** e[0] * far ** e[1]
+              for c, e in zip(_GV['cp_c'], _GV['cp_e']))
+    return (1.0 + far) * cp == rhs
+
+
+def row_cp_air(cp, T):
+    t = T / _CPA['T_ref_K']
+    p = sum(c * t**e[0] for c, e in zip(_CPA['c'], _CPA['e']))
+    if _CPA['inv']:
+        return cp * p == 1.0
+    return cp == p
+
+
+# float-callable evaluators with the ORIGINAL contracts
 def h_air(T):
-    c, Tr = TH.AIR_H['c'], TH.AIR_H['T_ref_K']
-    return sum(ck * (T / Tr)**k for k, ck in enumerate(c))
+    return h_air_posy(T) ** (1.0 / _HA['a1']) - _HA['H_SHIFT']
 
 
 def cp_air(T):
-    c, Tr = TH.AIR_H['c'], TH.AIR_H['T_ref_K']
-    return sum(k * ck * (T / Tr)**(k - 1) / Tr
-               for k, ck in enumerate(c) if k)
+    return cp_air_posy(T)
 
 
 def psi_air(T):
-    Tr = TH.AIR_PSI['T_ref_K']
-    return sum(ck * (T / Tr)**a for ck, a in TH.AIR_PSI['terms'])
+    return psi_air_posy(T) ** (1.0 / _PA['a1'])
 
 
 def h_vit(T, far):
-    """(1+far) * h_abs of vitiated gas, J/kg."""
-    t = T / TH.VIT_H['T_ref_K']
-    A = sum(c * t**i for i, c in enumerate(TH.VIT_H['cA']))
-    B = sum(c * t**i for i, c in enumerate(TH.VIT_H['cB']))
-    C = sum(c * t**i for i, c in enumerate(TH.VIT_H['cC']))
-    return A + far * B + far**2 * C
+    """(1+far) * h_abs of vitiated gas, J/kg (original contract)."""
+    G = g_vit_core(T, far) + 1.0 / c0_posy(far)
+    return G - (1.0 + far) * _GV['H_SHIFT']
 
 
 def cp_vit_times_1pf(T, far):
-    Tr = TH.VIT_H['T_ref_K']
-    t = T / Tr
-    dA = sum(i * c * t**(i - 1) for i, c in enumerate(TH.VIT_H['cA']) if i)
-    dB = sum(i * c * t**(i - 1) for i, c in enumerate(TH.VIT_H['cB']) if i)
-    dC = sum(i * c * t**(i - 1) for i, c in enumerate(TH.VIT_H['cC']) if i)
-    return (dA + far * dB + far**2 * dC) / Tr
+    Tr = _GV['T_ref_K']
+    return sum(c * (T / Tr) ** e[0] * far ** e[1]
+               for c, e in zip(_GV['cp_c'], _GV['cp_e']))
 
 
 def psi_vit(T, far):
-    """far enters directly (see fits.py on the collinear (1+far) basis)."""
-    Tr = TH.VIT_PSI['T_ref_K']
-    return sum(ck * (T / Tr)**a * far**b
-               for ck, a, b in TH.VIT_PSI['terms'])
+    return psi_vit_posy(T, far) ** (1.0 / _PV['a1'])
 
 
 def h_molar(sp, T):
@@ -123,6 +212,24 @@ def kp_inv(sp, T):
 
 def map2d(terms, x, y):
     return sum(c * x**a * y**b for c, a, b in terms)
+
+
+def sma_map_posy(fit, x1, x2):
+    """posynomial side of an SMA map equality."""
+    a = fit['a1']
+    return sum((c**a) * x1 ** (a * e[0]) * x2 ** (a * e[1])
+               for c, e in zip(fit['c'], fit['e']))
+
+
+def row_sma_map(var, fit, x1, x2):
+    """var == SMA(x1,x2) as monomial == posynomial (inverse-fit aware)."""
+    a = fit['a1'] * (-1.0 if fit['inv'] else 1.0)
+    return var ** a == sma_map_posy(fit, x1, x2)
+
+
+def sma_map_val(fit, x1, x2):
+    v = sma_map_posy(fit, x1, x2) ** (1.0 / fit['a1'])
+    return (1.0 / v) if fit['inv'] else v
 
 
 # ---------------------------------------------------------------------------
@@ -291,11 +398,15 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     ht0 = V(P("ht0"), h0s_g + u0g**2 / 2 + H_SHIFT, "shifted total h, J/kg")
     psi0 = V(P("psi0"), psi0s_g * ram**3.5, "psi at Tt0")
     Pt0 = V(P("Pt0"), P0g * ram**3.5, "freestream total pressure, Pa")
+    h0sv = V(P("h0stat"), h0s_g + H_SHIFT, "shifted static h at T0, J/kg")
+    psi0sv = V(P("psi0stat"), psi0s_g, "psi at T0")
     cons += [
-        ht0 == H_SHIFT + h_air(Tt0),                       # [SP] SigEq
-        ht0 == H_SHIFT + h_air(T0) + u0**2 / 2.0,          # [SP] SigEq
-        psi0 == psi_air(Tt0),                              # [SP] SigEq
-        Pt0 * psi_air(T0) == P0 * psi0,                    # [SP] SigEq
+        row_h_air(ht0, Tt0),
+        row_h_air(h0sv, T0),
+        row_psi_air(psi0sv, T0),
+        ht0 == h0sv + u0**2 / 2.0,                          # SigEq (posy)
+        row_psi_air(psi0, Tt0),
+        Pt0 * psi0sv == P0 * psi0,
     ]
     Pt2 = V(P("Pt2"), P0g * ram**3.5, "station 2 total pressure, Pa")
     cons += [Pt2 == Pt0 * pins.ram_recovery]
@@ -341,15 +452,18 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                bounds=(1e2, 1.5e6))
         ht = V(n("ht"), h_g, f"{key} exit shifted ht, J/kg",
                bounds=(4e5, 3.5e6))
+        hts = V(n("hts"), H_SHIFT + float(h_air(T_guess * 0.97)),
+                f"{key} ideal exit shifted ht, J/kg")
         cons.extend([
             Pt == Pt_in * PR,
             psis == psi_in * PR,          # isentrope: monomial, exact
-            psis == psi_air(Tts),                          # [SP] SigEq
-            H_SHIFT + h_air(Tts) == ht_in + dhs,           # [SP] SigEq
+            row_psi_air(psis, Tts),
+            row_h_air(hts, Tts),
+            hts == ht_in + dhs,                             # SigEq (posy)
             dh * eff == dhs,
             ht == ht_in + dh,
-            ht == H_SHIFT + h_air(Tt),                     # [SP] SigEq
-            psi == psi_air(Tt),                            # [SP] SigEq
+            row_h_air(ht, Tt),
+            row_psi_air(psi, Tt),
         ])
         return dict(Tt=Tt, ht=ht, psi=psi, Pt=Pt, dh=dh, PR=PR, eff=eff,
                     Tt_in=Tt_in, Pt_in=Pt_in, Nmech=Nmech,
@@ -368,7 +482,9 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         x0c, y0c = M['x0'], M['y0']
         at = {k: float(map2d(M[f'terms_{k}'], M['NcMap_d'] / x0c,
                              M['RlineMap_d'] / y0c))
-              for k in ('Wc', 'PR', 'eff')}
+              for k in ('PR', 'eff')}
+        at['Wc'] = float(sma_map_val(M['sma_Wc'], M['NcMap_d'] / x0c,
+                                     M['RlineMap_d'] / y0c))
         Wc = V(n("Wc"), 300.0, f"{key} corrected flow, kg/s")
         Nc = V(n("Nc"), 4000.0, f"{key} corrected speed, rpm")
         cons.extend([
@@ -404,10 +520,14 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             Rl = V(n("R"), M['RlineMap_d'], f"{key} map R-line",
                    bounds=tuple(wR))
             prm1 = V(n("prm1"), at['PR'] - 1.0, f"{key} map PR - 1")
+            WcM = V(n("WcMv"), at['Wc'], f"{key} map corrected-flow value")
             cons.extend([
                 NcM * shared[f"s_Nc_{key}"] == Nc,
-                Wc == shared[f"s_Wc_{key}"] * LB2KG
-                      * map2d(M['terms_Wc'], NcM / x0c, Rl / y0c),  # [SP] SigEq
+                # Wc through the zero-cancellation SMA surface; PR and eff
+                # stay signomial (not log-convex either way; their SMA fits
+                # are 2.5-5% where the signomials hold 0.5-2%)
+                row_sma_map(WcM, M['sma_Wc'], NcM / x0c, Rl / y0c),
+                Wc == shared[f"s_Wc_{key}"] * LB2KG * WcM,
                 prm1 + 1.0 == map2d(M['terms_PR'], NcM / x0c,
                                     Rl / y0c),             # [SP] SigEq
                 c['PR'] == 1.0 + shared[f"s_PR_{key}"] * prm1,  # SigEq (posy)
@@ -475,8 +595,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             htb == ht25 + b.frac_work * dh_hpc,
             # Pt interpolation is ARITHMETIC in pycycle; mirrored exactly.
             Ptb == Pt_hpc_in * (1.0 - b.frac_P) + b.frac_P * Pt3,  # [SP] SigEq
-            htb == H_SHIFT + h_air(Ttb),                           # [SP] SigEq
-            psib == psi_air(Ttb),                                  # [SP] SigEq
+            row_h_air(htb, Ttb),
+            row_psi_air(psib, Ttb),
         ])
         return htb, Ptb, Ttb, psib
 
@@ -550,7 +670,7 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         (1.0 + far) * h4m == ht3 + far * H_SHIFT,           # [SP] SigEq
     ]
     psi4 = V(P("psi4"), 6.0, "psi_vit at Tt4", bounds=(1e-2, 1e3))
-    cons += [psi4 == psi_vit(T4, far)]                      # [SP] SigEq
+    cons += [row_psi_vit(psi4, T4, far)]
 
     # ---- turbines --------------------------------------------------------
     def turbine(key, W_in, Tt_in, h_in, psi_in, Pt_in, far_in, Nmech,
@@ -558,8 +678,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         nm = lambda s: P(f"{key}_{s}")
         M = {'hpt': MAPS.HPT, 'lpt': MAPS.LPT}[key]
         x0t, y0t = M['x0'], M['y0']
-        at = {k: float(map2d(M[f'terms_{k}'], M['NpMap_d'] / x0t,
-                             M['PRmap_d'] / y0t))
+        at = {k: float(sma_map_val(M[f'sma_{k}'], M['NpMap_d'] / x0t,
+                                   M['PRmap_d'] / y0t))
               for k in ('Wp', 'eff')}
         # Bounds on the expansion blocks are the same NUMERICAL GUARDS as
         # the nozzle's: the slacked restoration phases found unbounded rays
@@ -580,9 +700,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                       f"{key} adiabatic efficiency"))
         cons.extend([
             psii * Pt_in == psi_in * Pt_out,
-            psii == psi_vit(Ti, far_in),                    # [SP] SigEq
-            (1.0 + far_in) * hi == (1.0 + far_in) * H_SHIFT
-                + h_vit(Ti, far_in),                        # [SP] SigEq
+            row_psi_vit(psii, Ti, far_in),
+            row_G(hi, far_in, Ti),
             hi + dh == h_in,                                # SigEq (posy)
         ])
         # frac_P=1 cooling enters at the TURBINE's inlet pressure (pycycle
@@ -597,8 +716,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                 bounds=(1e2, 2e6))
         cons.extend([
             psci * Pt_in == psici * Pt_out,
-            psci == psi_air(Tci),                           # [SP] SigEq
-            hci == H_SHIFT + h_air(Tci),                    # [SP] SigEq
+            row_psi_air(psci, Tci),
+            row_h_air(hci, Tci),
             hci + dhc == htci,                              # SigEq (posy)
         ])
         Wce, htce = cool_at_exit
@@ -617,9 +736,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                             + Wci * (htci - eff * dhc)
                             + Wce * htce,                   # [SP] SigEq
             far_out * W_out == Wf * (1.0 + far_out),        # SigEq (posy)
-            (1.0 + far_out) * ht_out == (1.0 + far_out) * H_SHIFT
-                + h_vit(Tt_out, far_out),                   # [SP] SigEq
-            psi_out == psi_vit(Tt_out, far_out),            # [SP] SigEq
+            row_G(ht_out, far_out, Tt_out),
+            row_psi_vit(psi_out, Tt_out, far_out),
         ])
 
         # map rows. Wp is scaled x1e-4 from SI (kg sqrt(K) / (s Pa)) to
@@ -651,15 +769,15 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                     bounds=tuple(wNp))
             PRm = V(nm("PRmap"), M['PRmap_d'], f"{key} map PR",
                     bounds=tuple(wPR))
+            WpM = V(nm("WpMv"), at['Wp'], f"{key} map referred-flow value")
+            effM = V(nm("effMv"), at['eff'], f"{key} map efficiency value")
             cons.extend([
                 NpM * shared[f"s_Np_{key}"] == Np,
-                Wp == shared[f"s_Wp_{key}"]
-                      * map2d(M['terms_Wp'], NpM / x0t,
-                              PRm / y0t),                  # [SP] SigEq
+                row_sma_map(WpM, M['sma_Wp'], NpM / x0t, PRm / y0t),
+                Wp == shared[f"s_Wp_{key}"] * WpM,
                 PRv == 1.0 + shared[f"s_PR_{key}"] * (PRm - 1.0),  # [SP] SigEq
-                eff == shared[f"s_eff_{key}"]
-                       * map2d(M['terms_eff'], NpM / x0t,
-                               PRm / y0t),                 # [SP] SigEq
+                row_sma_map(effM, M['sma_eff'], NpM / x0t, PRm / y0t),
+                eff == shared[f"s_eff_{key}"] * effM,
             ])
         return dict(Pt_out=Pt_out, W_out=W_out, ht_out=ht_out,
                     far_out=far_out, Tt_out=Tt_out, psi_out=psi_out,
@@ -727,14 +845,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
               bounds=(1e-3, 30.0))
         if vit:
             cons.extend([
-                psis_ == psi_vit(Ts, farv),                 # [SP] SigEq
-                (1.0 + farv) * hs == (1.0 + farv) * H_SHIFT
-                    + h_vit(Ts, farv),                      # [SP] SigEq
+                row_psi_vit(psis_, Ts, farv),
+                row_G(hs, farv, Ts),
             ])
         else:
             cons.extend([
-                psis_ == psi_air(Ts),                       # [SP] SigEq
-                hs == H_SHIFT + h_air(Ts),                  # [SP] SigEq
+                row_psi_air(psis_, Ts),
+                row_h_air(hs, Ts),
             ])
         cons.extend([
             hs + Vx**2 / 2.0 == htn,                        # SigEq (posy)
@@ -748,10 +865,9 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             cp_ = V(P(f"cp_{key}"), 1010.0, f"{key} throat cp, J/(kg K)")
             cv_ = V(P(f"cv_{key}"), 723.0, f"{key} throat cv, J/(kg K)")
             if vit:
-                cons.extend([(1.0 + farv) * cp_
-                             == cp_vit_times_1pf(Ts, farv)])  # [SP] SigEq
+                cons.extend([row_cp_vit(cp_, farv, Ts)])
             else:
-                cons.extend([cp_ == cp_air(Ts)])            # [SP] SigEq
+                cons.extend([row_cp_air(cp_, Ts)])
             cons.extend([
                 cv_ + Rgas == cp_,                          # SigEq (posy)
                 Vx**2 * cv_ == cp_ * Rgas * Ts,   # sonic; monomial equality
