@@ -91,6 +91,21 @@ for (const name of artNames) {
   if (!u.fits) fail(`${name} runs ${u.overrun.toFixed(3)} chords off the fin`);
   if (art.children.length !== 2) fail(`${name} has ${art.children.length} faces, wanted 2`);
 
+  // Centred on the fin's height, measured in the WORLD -- the fin stands up
+  // through a quarter turn, so its own frame calls the vertical `x` and a
+  // check written there would not be checking what anyone looks at.
+  fin.updateWorldMatrix(true, false);
+  const yAt = (x) => new THREE.Vector3(x, 0, 0).applyMatrix4(fin.matrixWorld).y;
+  const finMid = (yAt(0) + yAt(fin.userData.height)) / 2;
+  const box = new THREE.Box3().setFromObject(art);
+  const artMid = (yAt(box.min.x) + yAt(box.max.x)) / 2;
+  console.log(`  centre ${artMid.toFixed(3)} vs fin mid ${finMid.toFixed(3)}` +
+              `   fore-aft anchor ${u.chord.toFixed(2)} of chord` +
+              (u.requestedChord === 'auto' ? ' (solved)' : ''));
+  if (Math.abs(artMid - finMid) > 1e-3) {
+    fail(`${name} sits ${(artMid - finMid).toFixed(3)} m off the fin's mid height`);
+  }
+
   for (const mesh of art.children) {
     const pos = mesh.geometry.getAttribute('position');
     const uv = mesh.geometry.getAttribute('uv');
@@ -99,15 +114,11 @@ for (const name of artNames) {
     // Every eleventh vertex: the standoff is a property of the construction,
     // so a sample that lands on all four edges and the interior is enough, and
     // the full cross-product against 6k triangles is not cheap.
-    let lo = Infinity, hi = -Infinity, wrongSide = 0;
+    let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < pos.count; i += 11) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, i);
       const d = nearestSkin(p);
       lo = Math.min(lo, d); hi = Math.max(hi, d);
-      // The fin is symmetric about y = 0 in its own frame, so which side a
-      // vertex is on is simply the sign of y -- and the two faces must differ.
-      const wantPositive = mesh.name.endsWith('Starboard');
-      if ((p.y > 0) !== wantPositive) wrongSide++;
     }
     const span = hi - lo;
     console.log(`  ${mesh.name.padEnd(22)} standoff ${lo.toFixed(4)}..${hi.toFixed(4)} m` +
@@ -116,7 +127,43 @@ for (const name of artNames) {
       fail(`${mesh.name} standoff ${lo.toFixed(4)}..${hi.toFixed(4)}, wanted ${OFFSET}`);
     }
     if (span > 5e-4) fail(`${mesh.name} standoff varies by ${(1000 * span).toFixed(2)} mm -- not conformal`);
-    if (wrongSide) fail(`${mesh.name} has ${wrongSide} vertices on the wrong face`);
+
+    /* ---- does it read the right way round? ---------------------------- */
+    // Stated in WORLD terms and in terms of what a viewer sees, because the
+    // loft's own frame is exactly what misled me: the fin carries a quarter
+    // turn, so its local +y face is the PORT one, and a check phrased in local
+    // coordinates agreed with the code and with nothing else.
+    //
+    // The aeroplane's nose is +z. A viewer off the starboard side sees +z to
+    // their left, so on a starboard face the image's left edge (u = 0) must be
+    // the FORWARD one -- larger z. Off the port side, the reverse.
+    fin.updateWorldMatrix(true, false);
+    const world = (i) => new THREE.Vector3()
+      .fromBufferAttribute(pos, i).applyMatrix4(fin.matrixWorld);
+
+    let meanX = 0;
+    for (let i = 0; i < pos.count; i++) meanX += world(i).x;
+    meanX /= pos.count;
+    const onStarboard = meanX > 0;
+    if (onStarboard !== mesh.name.endsWith('Starboard')) {
+      fail(`${mesh.name} is named for the wrong side: it sits at x = ${meanX.toFixed(3)}`);
+    }
+
+    // The two ends of the bottom row: u = 0 at one, u = 1 at the other.
+    let iLeft = 0, iRight = 0;
+    for (let i = 0; i < uv.count; i++) {
+      if (uv.getY(i) > 1e-9) continue;                 // bottom row only
+      if (uv.getX(i) < uv.getX(iLeft)) iLeft = i;
+      if (uv.getX(i) > uv.getX(iRight)) iRight = i;
+    }
+    const zLeft = world(iLeft).z, zRight = world(iRight).z;
+    const readsForward = zLeft > zRight;               // image left is further forward
+    console.log(`    ${onStarboard ? 'starboard' : 'port     '}: image left at z ` +
+                `${zLeft.toFixed(2)}, right at ${zRight.toFixed(2)} ` +
+                `(nose is +z) -- ${readsForward === onStarboard ? 'reads correctly' : 'BACKWARDS'}`);
+    if (readsForward !== onStarboard) {
+      fail(`${mesh.name} reads backwards: from that side the image runs right to left`);
+    }
 
     // UVs must cover the image exactly once, and the two faces must run
     // opposite ways, or the logo reads backwards from one side.

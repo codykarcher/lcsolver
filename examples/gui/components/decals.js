@@ -149,11 +149,11 @@ export function surfaceArt(surface, {
    * sized on the centre chord alone would hang off the back at the top while
    * looking correct where it was measured.
    */
-  const overrunOf = (sz) => {
+  const overrunOf = (sz, cf) => {
     const halfH = (sz * semi) / 2;
     const w = 2 * halfH * aspect;
     const mid = u.at(hMid);
-    const sMid = mid.xLE + chord * mid.chord;
+    const sMid = mid.xLE + cf * mid.chord;
     let worst = 0;
     for (let iv = 0; iv < nv; iv++) {
       const x = (xMid - halfH) + 2 * halfH * (iv / (nv - 1));
@@ -165,19 +165,41 @@ export function surfaceArt(surface, {
     return worst;
   };
 
-  // Auto-fit. A catalogue can then ask for a generous size and get the largest
-  // one that actually lands on the fin, instead of every entry having to be
-  // hand-tuned against whatever the current solve made the tail.
-  let used = size, shrunk = false;
-  if (fit && overrunOf(used) > 0) {
-    let lo = 0, hi = used;
+  /** The largest size that lands on the fin at a given fore-aft anchor. */
+  const fittedSize = (cf) => {
+    if (!fit || overrunOf(size, cf) <= 0) return size;
+    let lo = 0, hi = size;
     for (let i = 0; i < 40; i++) {
-      const midSz = (lo + hi) / 2;
-      if (overrunOf(midSz) > 0) hi = midSz; else lo = midSz;
+      const m = (lo + hi) / 2;
+      if (overrunOf(m, cf) > 0) hi = m; else lo = m;
     }
-    used = lo * (1 - margin);
-    shrunk = true;
+    return lo * (1 - margin);
+  };
+
+  /**
+   * Where fore and aft the artwork sits.
+   *
+   * `'auto'` puts it wherever it can be LARGEST, which is not the middle of the
+   * chord and is not the same place for every mark. The fin's leading edge is
+   * swept a third of a turn back, so the usable box narrows towards the top on
+   * the front side; a tall monogram wants to sit aft of centre to clear it,
+   * while a wordmark six times wider than it is tall is limited by the chord at
+   * its own row and wants the middle. Solving for it means the catalogue does
+   * not carry six hand-tuned numbers that quietly go wrong the next time the
+   * solve changes the tail's sweep or taper.
+   */
+  let anchor = chord, used;
+  if (chord === 'auto') {
+    anchor = 0.5; used = 0;
+    for (let i = 0; i <= 90; i++) {
+      const cf = 0.25 + (0.50 * i) / 90;
+      const sz = fittedSize(cf);
+      if (sz > used) { used = sz; anchor = cf; }
+    }
+  } else {
+    used = fittedSize(anchor);
   }
+  const shrunk = used < size - 1e-12;
 
   const half = (used * semi) / 2;
   const x0 = xMid - half, x1 = xMid + half;
@@ -188,14 +210,33 @@ export function surfaceArt(surface, {
   // fin instead of shearing with the leading edge.
   const w = 2 * half * aspect;
   const mid = u.at(hMid);
-  const sMid = mid.xLE + chord * mid.chord;      // aft of the surface origin
+  const sMid = mid.xLE + anchor * mid.chord;     // aft of the surface origin
   const s0 = sMid - w / 2, s1 = sMid + w / 2;
 
   const group = new THREE.Group();
   group.name = name;
   let worstU = 0;                                 // how far off the chord we ran
 
+  // Which way round the artwork reads is decided in WORLD terms, not in the
+  // loft's. A fin's group carries a quarter turn, so its local +y face comes
+  // out on the port side, and taking the local frame at face value puts the
+  // logo on backwards -- on both faces, since each gets the other's answer.
+  //
+  // The rule, once the side is known: the aeroplane's nose is +z, and a viewer
+  // standing off the starboard side sees +z to their LEFT. So on a
+  // starboard-facing surface the image's left edge belongs at the FORWARD end,
+  // and on a port-facing one at the aft end.
+  surface.updateWorldMatrix(true, false);
+  const toWorld = (v) => v.clone().transformDirection(surface.matrixWorld);
+
   for (const [side, chain] of [[1, faceA], [-1, faceB]]) {
+    // The outward direction of this face, at the artwork's centre, in world
+    // axes. Read from the geometry rather than assumed, so a canted fin -- or
+    // one canted past the vertical -- still gets it right.
+    const midRing = ringAt(loft, hMid);
+    const outward = toWorld(
+      facepoint(midRing, chain, anchor).sub(facepoint(midRing, side > 0 ? faceB : faceA, anchor)));
+    const faceStarboard = outward.x > 0;
     const pos = [], uv = [], idx = [];
     for (let iv = 0; iv < nv; iv++) {
       const x = x0 + (x1 - x0) * (iv / (nv - 1));
@@ -218,9 +259,9 @@ export function surfaceArt(surface, {
         const len = n.length();
         if (len > 1e-9) p.addScaledVector(n, offset / len);
         pos.push(p.x, p.y, p.z);
-        // Mirrored on the second face. Both faces are seen from opposite sides,
-        // so identical UVs would put the logo on backwards on one of them.
-        uv.push(side > 0 ? fu : 1 - fu, iv / (nv - 1));
+        // `fu` runs forward to aft. On the starboard face that is left to right
+        // as the image is read; on the port face it is right to left.
+        uv.push(faceStarboard ? fu : 1 - fu, iv / (nv - 1));
       }
     }
     for (let iv = 0; iv < nv - 1; iv++) {
@@ -236,12 +277,14 @@ export function surfaceArt(surface, {
     g.setIndex(idx);
     g.computeVertexNormals();
     const mesh = new THREE.Mesh(g, artMaterial(texture));
-    mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}`;
+    // Named for the side it actually ends up on, which is not the sign of the
+    // local face -- that was the whole mistake this now derives its way out of.
+    mesh.name = `${name}${faceStarboard ? 'Starboard' : 'Port'}`;
     group.add(mesh);
   }
 
   Object.assign(group.userData, {
-    isArt: true, height: hMid, chord, aspect,
+    isArt: true, height: hMid, chord: anchor, requestedChord: chord, aspect,
     /** What was asked for, and what it had to become to land on the fin. */
     size: used, requestedSize: size, shrunk,
     /** Metres, on the surface, so a caller can report the size it got. */
@@ -268,21 +311,19 @@ export const finArt = surfaceArt;
  * a decal that guessed square and corrected later would resize itself visibly
  * one frame after appearing.
  *
- * Placement differs per mark because their proportions do. A tall monogram
- * centres on the fin and can be large; a wordmark six times wider than it is
- * tall has to sit low, where the chord is longest, and is still limited by it.
- * Sizes here are what each mark WANTS -- `surfaceArt` shrinks any that will not
- * fit the tail the current solve produced, so these need no upkeep when the
- * fin changes.
+ * Every mark is centred on the fin's height. Fore and aft is solved rather than
+ * chosen, and the size each asks for is an upper bound that the fit reduces to
+ * whatever the tail actually allows -- so the only per-mark number here is the
+ * one the image file itself decides, its aspect ratio.
  */
 export const TAIL_ART = {
   'none':          null,
-  'beach black':  { file: 'beach-black.png', aspect: 929 / 149,   height: 0.42, chord: 0.56, size: 0.30 },
-  'beach gold':   { file: 'beach-gold.png',  aspect: 929 / 149,   height: 0.42, chord: 0.56, size: 0.30 },
-  'LB gold':      { file: 'lb-gold.png',     aspect: 1181 / 1272, height: 0.60, chord: 0.60, size: 0.46 },
-  'LB black':     { file: 'lb-black.png',    aspect: 1181 / 1272, height: 0.60, chord: 0.60, size: 0.46 },
-  'mitsubishi':   { file: 'mhi.png',         aspect: 156 / 109,   height: 0.58, chord: 0.58, size: 0.42 },
-  'MIT':          { file: 'mit.png',         aspect: 1400 / 724,  height: 0.55, chord: 0.58, size: 0.38 },
+  'beach black':  { file: 'beach-black.png', aspect: 929 / 149,   height: 0.5, chord: 'auto', size: 0.9 },
+  'beach gold':   { file: 'beach-gold.png',  aspect: 929 / 149,   height: 0.5, chord: 'auto', size: 0.9 },
+  'LB gold':      { file: 'lb-gold.png',     aspect: 1181 / 1272, height: 0.5, chord: 'auto', size: 0.9 },
+  'LB black':     { file: 'lb-black.png',    aspect: 1181 / 1272, height: 0.5, chord: 'auto', size: 0.9 },
+  'mitsubishi':   { file: 'mhi.png',         aspect: 156 / 109,   height: 0.5, chord: 'auto', size: 0.9 },
+  'MIT':          { file: 'mit.png',         aspect: 1400 / 724,  height: 0.5, chord: 'auto', size: 0.9 },
 };
 
 export const artNames = Object.keys(TAIL_ART);
