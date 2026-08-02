@@ -345,6 +345,27 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     W_dry = V("W_dry", 7.4e4, "lbf", "zero-fuel aircraft weight")
     W_ftotal = V("W_f_total", 2.1e4, "lbf", "total fuel weight")
     W_fprimary = V("W_f_primary", 1.75e4, "lbf", "fuel less reserves")
+    # ---- DESCENT, as bookkeeping calibrated from TASOPT's own profile ------
+    # The mission's five segments are 3 climb + 2 cruise: descent was not
+    # modelled AT ALL, though TASOPT flies four descent points at partial
+    # thrust. From the D8.2 printout (d82.out mission summary): descent
+    # covers 174.7 nmi of the 3,000 nmi mission -- 5.8 PERCENT -- burning
+    # 788 lbf, which is 0.64 of the cruise burn-per-mile at an effective
+    # 2.25 degree path (deck prescribes -2.0 to -2.5). Omitting it charged
+    # every aircraft cruise fuel for range that is nearly free, and skewed
+    # SHORT missions worst -- exactly where the battery sweep lives.
+    #
+    # The compact model: range credit from the end-of-cruise altitude down
+    # the calibrated path, fuel at the calibrated fraction of cruise
+    # burn-per-mile. Full descent points (idle-throttle engine states) wait
+    # on the map-domain work in the rubber-engine project.
+    R_desc = V("R_descent", 150.0, "nmi", "range covered in descent")
+    Wfdesc = V("W_f_descent", 800.0, "lbf", "descent fuel burn")
+    k_desc = C("k_descent", 6076.12 * 0.0393, "ft/nmi",
+               "descent altitude per unit range, tan(2.25 deg) -- the "
+               "effective path of TASOPT's D8 descent (d82.out)")
+    f_desc = C("f_descent_burn", 0.64, "-",
+               "descent burn-per-mile / cruise burn-per-mile (d82.out)")
     W_fclimb = V("W_f_climb", 5e3, "lbf", "fuel burned in climb")
     W_fcruise = V("W_f_cruise", 1.25e4, "lbf", "fuel burned in cruise")
     Wmisc = V("W_misc", 1e4, "lbf", "sum of miscellaneous weights")
@@ -1006,7 +1027,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
         W_ftotal + W_dry + fu.W_payload <= W_total,
         W_ftotal >= W_fprimary + ReserveFraction * W_fprimary,
-        W_fprimary >= W_fclimb + W_fcruise,
+        W_fprimary >= W_fclimb + W_fcruise + Wfdesc,
+        # Descent geometry and fuel; the electric branch replaces the fuel
+        # row with its energy analogue below.
+        R_desc * k_desc == st.hft[N - 1],
+        Wfdesc == f_desc * W_burn[N - 1] * R_desc / Rseg[N - 1],
         W_totalmax >= W_total,
 
         # ---- landing gear: empirical floor from TASOPT's own deck ----------
@@ -2376,10 +2401,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # would shrink it by 0.80, and the two nearly cancel (1.03). Changing
         # only one would have been worse than changing neither.
         vt.T_e == Fsafetyfac * F_TO * f_lapse,
-        W_dry + fu.W_payload + ReserveFraction * W_fprimary <= W_end[N - 1],
+        # End-of-CRUISE weight must still cover the descent burn AND the
+        # reserves -- descent happens after W_end[N-1].
+        W_dry + fu.W_payload + Wfdesc
+            + ReserveFraction * W_fprimary <= W_end[N - 1],
         W_fclimb >= f.sum(W_burn[:Nclimb]),
         W_fcruise >= f.sum(W_burn[Nclimb:]),
-        f.sum(Rseg) >= ReqRng,
+        # Descent range is real range: TASOPT's D8 covers its last 174.7 nmi
+        # descending.
+        f.sum(Rseg) + R_desc >= ReqRng,
     ]
 
     # ---- SECONDARY MISSIONS: every corner is a lower bound -----------------
