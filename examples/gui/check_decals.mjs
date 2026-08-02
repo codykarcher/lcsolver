@@ -616,6 +616,44 @@ console.log('\n=== windscreen ===');
     }
   }
 
+  /* ---- the carved lower edge ------------------------------------------ */
+  // The upper edge is the cut line and never moves; only the bottom is carved.
+  // What is checked is that each pane's corners lift by what was asked, and
+  // that the lifts AGREE across the dividers -- the lower edge is meant to be
+  // one unbroken line, and a mismatched pair either side of a post would read
+  // as a step.
+  {
+    const bandH = su.yHigh - su.yLow;
+    const panes = scr.children.filter((m) => m.userData.side > 0)
+      .sort((a, b) => a.userData.pane - b.userData.pane);
+    let worst = 0;
+    panes.forEach((m, k) => {
+      const pos = m.geometry.getAttribute('position');
+      const nvv = m.userData.nv, rows = pos.count / nvv;
+      const gotIn = (pos.getY((rows - 1) * nvv) - su.yLow) / bandH;
+      const gotOut = (pos.getY((rows - 1) * nvv + nvv - 1) - su.yLow) / bandH;
+      const [wIn, wOut] = su.lowerRaise[k];
+      console.log(`  pane ${k + 1} lower edge lifted ` +
+                  `${(100 * gotIn).toFixed(1)}% / ${(100 * gotOut).toFixed(1)}% ` +
+                  `(asked ${(100 * wIn).toFixed(0)} / ${(100 * wOut).toFixed(0)})`);
+      // A per-cent of tolerance: the lift is applied by walking a fraction less
+      // far down a marched column, and the standoff moves the last vertex too.
+      if (Math.abs(gotIn - wIn) > 0.01 || Math.abs(gotOut - wOut) > 0.01) {
+        fail(`pane ${k + 1} lower edge lifted ${(100 * gotIn).toFixed(1)}/` +
+             `${(100 * gotOut).toFixed(1)}%, wanted ${(100 * wIn).toFixed(0)}/${(100 * wOut).toFixed(0)}`);
+      }
+      if (k) {
+        const prev = panes[k - 1];
+        const pp = prev.geometry.getAttribute('position');
+        const pr = pp.count / prev.userData.nv;
+        const yPrev = pp.getY((pr - 1) * prev.userData.nv + prev.userData.nv - 1);
+        worst = Math.max(worst, Math.abs(yPrev - pos.getY((rows - 1) * nvv)));
+      }
+    });
+    console.log(`  lower edge is continuous across the posts to ${(1000 * worst).toFixed(1)} mm`);
+    if (worst > 2e-3) fail(`the lower edge steps ${(1000 * worst).toFixed(1)} mm at a post`);
+  }
+
   /* ---- inside its own cut lines --------------------------------------- */
   const sbox = new THREE.Box3().setFromObject(scr);
   const tol = su.lift + 1e-4;

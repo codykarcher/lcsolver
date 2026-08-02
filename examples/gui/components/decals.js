@@ -745,6 +745,18 @@ export const WINDSCREEN = {
    */
   paneWidths: [0.40, 0.30, 0.30],
   /**
+   * How far each pane's LOWER edge is lifted, as a fraction of the band's
+   * height, given at the pane's inner corner and its outer one.
+   *
+   * The upper edge never moves -- it is the cut line. Only the bottom is
+   * carved, and the values are continuous across the dividers so the lower
+   * edge is one unbroken line rather than a set of steps: level and lifted
+   * along the windscreen, falling to full depth by the back of the sliding
+   * window, and lifting again to the aft corner of the quarter light. That
+   * carved-out middle is what a real flight deck's glazing does.
+   */
+  lowerRaise: [[0.15, 0.15], [0.15, 0.00], [0.00, 0.15]],
+  /**
    * How tall the glass still is where it stops outboard.
    *
    * The band closes to nothing at the widest point of its lower edge, so
@@ -792,6 +804,7 @@ export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
   colour = WINDSCREEN.colour, paneWidths = WINDSCREEN.paneWidths,
+  lowerRaise = WINDSCREEN.lowerRaise,
   post = WINDSCREEN.post, nv = 8, nMarch = 220, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
@@ -1031,11 +1044,18 @@ export function windscreen(fuselage, {
                  th: path[i].th + (path[i + 1].th - path[i].th) * f };
       };
 
+      // How far this pane's lower edge is lifted, across its width. Applied by
+      // scaling how far DOWN each column is walked, so the top of the glass --
+      // the cut line -- is untouched.
+      const [rIn, rOut] = lowerRaise[k] ?? [0, 0];
+
       const pos = [], idx = [];
       for (let i = 0; i < M; i++) {
         const t = i / (M - 1);
         for (let j = 0; j < nv; j++) {
-          const q = sample(paths[j], t);
+          const g = j / (nv - 1);
+          const raise = rIn + (rOut - rIn) * g;
+          const q = sample(paths[j], t * (1 - raise));
           const tt = side > 0 ? q.th : Math.PI - q.th;
           const p = fu.surfaceAt(q.z, tt), n = fu.normalAt(q.z, tt);
           pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
@@ -1066,7 +1086,7 @@ export function windscreen(fuselage, {
   Object.assign(group.userData, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown, zRange: [zBack, null],
-    zInner, topLength, paneWidths, post, edges, dividers,
+    zInner, topLength, paneWidths, lowerRaise, post, edges, dividers,
     dividerPaths, outerPath, offsetPath,
     panesPerSide: paneWidths.length, paneCount: 2 * paneWidths.length,
     panes: built, nv,
