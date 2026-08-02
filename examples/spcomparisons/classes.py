@@ -50,6 +50,14 @@ class SizeClass:
     #: certification/family margin puts its real Vh near 1.5 against a
     #: derived 1.12).
     v_ht_min: float | None = None
+    #: MISSIONS: the payload-range points this class must fly, each one a
+    #: LOWER BOUND on the shared design -- structure, tanks, engine and
+    #: field performance all bind against their worst mission. None (the
+    #: default) derives the single mission (n_pass*215 lbf, range_nmi),
+    #: which is exactly the pre-multi-mission behaviour. State more corners
+    #: as (payload_lbf, range_nmi) tuples; the 787 is the class that needs
+    #: it (its full-cabin and long-range corners sit ~2,000 nmi apart).
+    missions: tuple | None = None
     #: Cabin radius floor, m. The model's seat-pitch tube is a MINIMUM
     #: section; a class whose real aircraft is deliberately roomier (the
     #: E-jet double-dome is 3.0 m across against the 4-abreast minimum of
@@ -253,6 +261,12 @@ CLASSES = {
         # here more than anywhere because the 787's corners are 2,000 nmi
         # apart where the 737's nearly coincide.
         n_pass=359, seats_abreast=9, range_nmi=5800,
+        # THE OTHER CORNER: 242 two-class seats (52,030 lbf at 215 lbf/seat)
+        # over the quoted 7,355 nmi. As a secondary mission it is a lower
+        # bound on the shared design -- it sizes the tanks and MTOW while
+        # the full-cabin primary sizes the cabin and structure -- which is
+        # the two-corner payload-range reality one mission cannot state.
+        missions=((52_030.0, 7355.0),),
         R_fuse_guess=2.87, ref_MTOW_lb=502_500, ref_OEW_lb=264_500,
         ref_mach=0.85,
         n_aisles=2, ceiling_ft=43000.0,

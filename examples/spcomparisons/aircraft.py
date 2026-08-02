@@ -792,6 +792,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     CLgnd = C("C_L_ground_TO", 0.9, "-",
               "wing C_L at the ground attitude, takeoff flaps")
     Wrot = V("W_rot", 8.0e4, "lbf", "weight still on the gear at rotation")
+
     # Deck values: d82.tas CLhCGfwd = -0.85 (iHTsize=2 is the ACTIVE branch
     # there, so this is exactly the number TASOPT sizes the D8's tail with);
     # 737.tas carries -0.70. The conventional path keeps 0.65 it was
@@ -1114,6 +1115,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     cons += far_link(
         far, farv,
         W_TO=W_totalmax,
+        # PRIMARY-mission landing weight, deliberately: coupling this to a
+        # max-over-missions payload variable was tried and re-created the
+        # free-lever defect -- V_s_land^2 appears on the BENEFIT side of the
+        # go-around authority rows, so a heavier claimed landing weight
+        # bought a smaller tail (D8 -425 lbf, measured). Secondary corners
+        # bind MTOW and tank volume in v1; a max-payload landing case needs
+        # its own stall/approach speeds, not a bigger number in this one.
         W_land=W_dry + fu.W_payload,
         S=wing.S,
         # THE FIELD CONDITION, not sea level. rho_field feeds the stall speeds,
@@ -2350,6 +2358,48 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         W_fclimb >= f.sum(W_burn[:Nclimb]),
         W_fcruise >= f.sum(W_burn[Nclimb:]),
         f.sum(Rseg) >= ReqRng,
+    ]
+
+    # ---- SECONDARY MISSIONS: every corner is a lower bound -----------------
+    # size_class.missions states additional payload-range points beyond the
+    # primary (which keeps the full per-segment machinery above). Each corner
+    # flies a REDUCED mission -- single-leg Breguet in the SPaircraft
+    # posynomial form, z + z^2/2 + z^3/6 + z^4/24 -- borrowing the primary's
+    # top-of-cruise L/D, TSFC and speed. That borrowing is a physical
+    # invariance, not laziness: at constant-CL cruise-climb both L/D and
+    # TSFC are weight-invariant to first order, which is exactly why Breguet
+    # has a closed form. Climb fuel is shared with the primary (same
+    # airframe, similar TOW; a documented approximation). Each corner then
+    # pushes the SHARED design:
+    #   W_total_max      -- structure, gear, field length, every load path
+    #   wing tank volume -- through the same f_wingfuel chain as the primary
+    #   W_pay_max        -- landing weight and the approach/landing rows
+    # A class with missions=None builds none of this and is bit-identical to
+    # the single-mission model.
+    for _j, (_pay_lb, _rng_nmi) in enumerate(size_class.missions or ()):
+        _Wp = C(f"W_pay_M{_j}", _pay_lb, "lbf",
+                f"payload, secondary mission {_j}")
+        _Rr = C(f"R_M{_j}", _rng_nmi, "nmi",
+                f"range, secondary mission {_j}")
+        _Wf = V(f"W_fuel_M{_j}", 2.0e4, "lbf",
+                f"mission fuel, secondary mission {_j}")
+        _zb = V(f"z_bre_M{_j}", 0.3, "-",
+                f"Breguet argument, secondary mission {_j}")
+        _icr = N - 1
+        cons += [
+            # z = R * TSFC / (V * L/D); FS_V is in knots and TSFC in 1/hr,
+            # so R[nmi]/V[kt] is hours and z is dimensionless as written.
+            _zb == _Rr * eng.TSFC[_icr] / (st.V[_icr] * LoD[_icr]),
+            # Cruise fuel over zero-fuel weight, 4-term Breguet posynomial;
+            # climb fuel shared with the primary mission.
+            _Wf / (W_dry + _Wp) >= (_zb + _zb ** 2 / 2.0
+                                    + _zb ** 3 / 6.0 + _zb ** 4 / 24.0)
+                                   + W_fclimb / (W_dry + _Wp),
+            W_totalmax >= W_dry + _Wp + (1.0 + ReserveFraction) * _Wf,
+            wing.W_fuel_wing >= f_wingfuel * (1.0 + ReserveFraction)
+                                * _Wf / FuelFrac,
+        ]
+    cons += [
         # EQUALITIES. These are the distances from the nose and main gear to the
         # CG -- geometry, not quantities with slack.
         #
