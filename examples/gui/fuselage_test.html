@@ -48,15 +48,24 @@
   <div class="row"><label for="fine">fineness L/D</label><output id="oFine"></output></div>
   <input type="range" id="fine" min="5.0" max="14.0" step="0.1" value="10.1">
 
+  <div class="row"><label for="droop">nose droop</label><output id="oDroop"></output></div>
+  <input type="range" id="droop" min="0.00" max="0.60" step="0.01" value="0.30">
+
   <h2>features</h2>
-  <div class="check"><input type="checkbox" id="windows" checked><label for="windows">windows &amp; flight deck</label></div>
-  <div class="check"><input type="checkbox" id="doors" checked><label for="doors">doors &amp; exits</label></div>
+  <div class="check"><input type="checkbox" id="radome" checked><label for="radome">radome (nose cap)</label></div>
+  <div class="check"><input type="checkbox" id="deck" checked><label for="deck">flight deck glass</label></div>
+  <div class="check"><input type="checkbox" id="cabin" checked><label for="cabin">cabin windows</label></div>
+  <div class="check"><input type="checkbox" id="doors" checked><label for="doors">entry doors</label></div>
+  <div class="check"><input type="checkbox" id="exits" checked><label for="exits">overwing exits</label></div>
 
   <h2>view</h2>
+  <div class="check"><input type="checkbox" id="xray"><label for="xray">translucent OML</label></div>
+  <div class="row"><label for="opac">skin opacity</label><output id="oOpac"></output></div>
+  <input type="range" id="opac" min="0.03" max="0.60" step="0.01" value="0.16">
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
-  <div class="check"><input type="checkbox" id="prof"><label for="prof">profile &amp; centreline</label></div>
+  <div class="check"><input type="checkbox" id="prof"><label for="prof">crown, keel &amp; centreline</label></div>
 
   <button id="frame">frame body</button>
   <button id="side">side view</button>
@@ -77,10 +86,15 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { jetlinerFuselage } from './components/fuselage.js';
 import { disposeTree } from './components/geom.js';
-import { all as MATERIALS } from './components/materials.js';
+import { all as MATERIALS, setTranslucent } from './components/materials.js';
 
 const canvas = document.getElementById('view');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+// A body tens of metres long, inspected from a metre away, spans a depth range
+// a linear 24-bit buffer cannot resolve -- and the first symptom is decals and
+// skin trading places in patches as the camera moves. Log depth fixes it at the
+// source; the polygon offset on the decal materials handles the rest.
+const renderer = new THREE.WebGLRenderer({
+  canvas, antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 
 const scene = new THREE.Scene();
@@ -136,10 +150,15 @@ function build() {
   body = jetlinerFuselage({
     radius,
     length: num('fine') * 2 * radius,
-    windows: el('windows').checked,
+    droop: num('droop'),
+    radome: el('radome').checked,
+    flightDeck: el('deck').checked,
+    cabinWindows: el('cabin').checked,
     doors: el('doors').checked,
+    exits: el('exits').checked,
   });
   scene.add(body);
+  setTranslucent(el('xray').checked, num('opac'));
 
   // The two functions the body is actually built from, drawn: the silhouette
   // r(z) top and bottom, and the centreline yc(z) between them. When the shape
@@ -149,9 +168,9 @@ function build() {
     const u = body.userData, L = u.length;
     const top = [], bot = [], mid = [];
     for (let i = 0; i <= 220; i++) {
-      const z = -L * i / 220, { r, yc } = u.shapeAt(z);
-      top.push(new THREE.Vector3(0, yc + r, z));
-      bot.push(new THREE.Vector3(0, yc - r, z));
+      const z = -L * i / 220, { yc } = u.shapeAt(z);
+      top.push(new THREE.Vector3(0, u.crownAt(z), z));
+      bot.push(new THREE.Vector3(0, u.keelAt(z), z));
       mid.push(new THREE.Vector3(0, yc, z));
     }
     for (const [pts, colour] of [[top, 0xe6a34a], [bot, 0xe6a34a], [mid, 0x5b8ff5]]) {
@@ -170,6 +189,8 @@ function build() {
 
   el('oRad').textContent = radius.toFixed(2);
   el('oFine').textContent = num('fine').toFixed(1);
+  el('oDroop').textContent = (num('droop') * radius).toFixed(2);
+  el('oOpac').textContent = num('opac').toFixed(2);
 
   const u = body.userData;
   const b = new THREE.Box3().setFromObject(body);
@@ -182,7 +203,12 @@ function build() {
     `tailcone <span>${u.tailLength.toFixed(2)}</span><br>` +
     `barrel <span>${u.cabinZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span> ` +
     `(<span>${(u.cabinZ[0] - u.cabinZ[1]).toFixed(2)}</span>)<br>` +
-    `upsweep tip y <span>${u.shapeAt(-u.length).yc.toFixed(2)}</span><br>` +
+    `crown <span>${u.crownAt(u.cabinZ[1]).toFixed(2)}</span> at the barrel, ` +
+    `<span>${u.crownAt(-u.length).toFixed(2)}</span> at the tip<br>` +
+    `keel <span>${u.keelAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
+    `<span>${u.keelAt(-u.length).toFixed(2)}</span> (belly sweep)<br>` +
+    `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> &middot; ` +
+    `${u.decals.length} decals<br>` +
     `y extent <span>${b.min.y.toFixed(2)} &hellip; ${b.max.y.toFixed(2)}</span>`;
 }
 
@@ -205,8 +231,10 @@ function sideView() {
   controls.update();
 }
 
-for (const id of ['rad', 'fine']) el(id).addEventListener('input', build);
-for (const id of ['axes', 'grid', 'wire', 'prof', 'windows', 'doors'])
+for (const id of ['rad', 'fine', 'droop', 'opac'])
+  el(id).addEventListener('input', build);
+for (const id of ['axes', 'grid', 'wire', 'prof', 'xray',
+                  'radome', 'deck', 'cabin', 'doors', 'exits'])
   el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameBody);
 el('side').addEventListener('click', sideView);

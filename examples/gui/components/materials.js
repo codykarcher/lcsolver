@@ -110,6 +110,47 @@ export const winding = new THREE.MeshStandardMaterial({
   color: 0xa8632f, roughness: 0.55, metalness: 0.8,
 });
 
+/**
+ * A decal version of a material: same look, but biased toward the camera so it
+ * cannot fight with the surface it is lying on.
+ *
+ * Anything applied to a fuselage sits a few millimetres off a body tens of
+ * metres long, which is far below the resolution of the depth buffer at that
+ * range. Without a bias the window and the skin behind it win the depth test in
+ * alternating patches as the camera moves, and the result reads as triangles
+ * flickering across the surface -- not as a window at all.
+ *
+ * Cached per base material, so a hundred windows still share one material and
+ * one shader program, and so the wireframe toggle below reaches them.
+ */
+const decals = new Map();
+export function decal(base) {
+  if (decals.has(base)) return decals.get(base);
+  const m = base.clone();
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = -4;
+  m.polygonOffsetUnits = -4;
+  decals.set(base, m);
+  const name = Object.keys(all).find((k) => all[k] === base);
+  all[name ? `${name}Decal` : `decal${decals.size}`] = m;
+  return m;
+}
+
+/**
+ * Show a body's outer mould line as a shell you can see through.
+ *
+ * `depthWrite` off is the part that matters: with it on, the near side of the
+ * skin would occlude everything behind it and the body would look solid but
+ * dim rather than open. Off, and anything inside or on it shows through.
+ */
+export function setTranslucent(on, opacity = 0.16) {
+  skin.transparent = on;
+  skin.opacity = on ? opacity : 1;
+  skin.depthWrite = !on;
+  skin.side = on ? THREE.DoubleSide : THREE.FrontSide;
+  skin.needsUpdate = true;
+}
+
 export const all = { tire, rim, piston, structure, hardware,
                      skin, glass, trim,
                      casing, blade, hot, painted, marking, cavity, accessory, finned,

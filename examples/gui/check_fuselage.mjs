@@ -123,8 +123,74 @@ for (const c of CASES) {
     if (Math.abs(slope) > 1e-3) bad(`${what} join has dr/dz = ${slope.toFixed(5)}`);
   }
 
+  /* 5. the crown is level aft ------------------------------------------- */
+  // The tailcone taper is supposed to come entirely off the belly. If any of it
+  // leaks into the centreline the roof develops a hump, which is hard to see
+  // in a three-quarter view and glaring in profile.
+  let crownDrift = 0, keelRise = 0;
+  for (let i = 0; i <= 60; i++) {
+    const z = u.cabinZ[1] - (u.length + u.cabinZ[1]) * (i / 60);
+    crownDrift = Math.max(crownDrift, Math.abs(u.crownAt(z) - u.radius));
+    keelRise = Math.max(keelRise, u.keelAt(z) - u.keelAt(u.cabinZ[1]));
+  }
+  if (crownDrift > 1e-9) bad(`crown moves ${crownDrift.toFixed(4)} over the tailcone`);
+  if (keelRise < u.radius) bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
+
+  /* 6. no degenerate triangles ------------------------------------------ */
+  // Slivers of near-zero area are what a collapsed grid row leaves behind, and
+  // they are the classic source of shards flickering over a surface. The skin's
+  // two apex fans are the one legitimate exception and are excluded above.
+  let slivers = 0, worstPart = null;
+  for (const child of body.children) {
+    if (!child.isMesh || !child.geometry.getIndex()) continue;
+    const p = child.geometry.getAttribute('position');
+    const ix = child.geometry.getIndex().array;
+    const scale = new THREE.Box3().setFromBufferAttribute(p).getSize(new THREE.Vector3()).length();
+    let here = 0;
+    for (let t = 0; t + 2 < ix.length; t += 3) {
+      a.fromBufferAttribute(p, ix[t]);
+      b.fromBufferAttribute(p, ix[t + 1]);
+      cc.fromBufferAttribute(p, ix[t + 2]);
+      const area = n.crossVectors(b.sub(a), cc.sub(a)).length() / 2;
+      if (area < 1e-6 * scale * scale) here++;
+    }
+    if (child !== body.children[0] && here) { slivers += here; worstPart = child; }
+  }
+  if (slivers) bad(`${slivers} degenerate triangles on applied parts ` +
+                   `(first at z=${worstPart.geometry.getAttribute('position').getZ(0).toFixed(2)})`);
+
+  /* 7. no two decals over the same skin ---------------------------------- */
+  // Two decals on the same patch of skin are two surfaces a few millimetres
+  // apart competing for the depth buffer, which reads as flicker rather than as
+  // either of them. This caught the overwing exits sitting on top of the window
+  // row, which shared both a station and an angle band.
+  const boxes = u.decals.map((m) => {
+    const p = m.geometry.getAttribute('position');
+    const bb = { z0: -1e9, z1: 1e9, t0: 1e9, t1: -1e9 };
+    for (let i = 0; i < p.count; i++) {
+      const z = p.getZ(i), yc = u.shapeAt(z).yc;
+      const th = Math.atan2(p.getY(i) - yc, p.getX(i));
+      bb.z0 = Math.max(bb.z0, z); bb.z1 = Math.min(bb.z1, z);
+      bb.t0 = Math.min(bb.t0, th); bb.t1 = Math.max(bb.t1, th);
+    }
+    return bb;
+  });
+  let overlaps = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const A = boxes[i], B = boxes[j];
+      if (A.t1 - A.t0 > 3 || B.t1 - B.t0 > 3) continue;   // the radome, all round
+      if (A.z1 < B.z0 && B.z1 < A.z0 && A.t0 < B.t1 && B.t0 < A.t1) overlaps++;
+    }
+  }
+  if (overlaps) bad(`${overlaps} pairs of decals overlap on the skin`);
+
   console.log(`  ${patches} applied patches, volume ${vol.toFixed(2)}, ` +
-              `${open} open edges, ${inward} inward normals`);
+              `${open} open edges, ${inward} inward normals, ` +
+              `${slivers} slivers, ${overlaps} overlaps`);
+  console.log(`  crown level to ${crownDrift.toExponential(1)}, ` +
+              `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
+              `nose droop ${(u.droop * u.radius).toFixed(2)}`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nPASS: bodies are closed, outward and clean at the joins');
