@@ -39,7 +39,7 @@ export function rod(a, b, radius, material, segments = 16) {
  * here, by signed volume -- see the comment in the body for why that and not
  * something simpler.
  */
-function orientOutward(geo) {
+export function orientOutward(geo) {
   const idx = geo.getIndex();
   const pos = geo.getAttribute('position');
   if (!idx || !pos) return geo;

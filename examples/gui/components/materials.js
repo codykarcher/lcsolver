@@ -38,6 +38,23 @@ export const hardware = new THREE.MeshStandardMaterial({
   color: 0x3f4650, roughness: 0.45, metalness: 0.9,
 });
 
+/* ---- airframe --------------------------------------------------------- */
+
+/** Painted fuselage skin. Off-white: pure white blows out under a key light. */
+export const skin = new THREE.MeshStandardMaterial({
+  color: 0xe9eaec, roughness: 0.42, metalness: 0.05,
+});
+
+/** Cabin windows and flight-deck glass. */
+export const glass = new THREE.MeshStandardMaterial({
+  color: 0x14181d, roughness: 0.18, metalness: 0.30,
+});
+
+/** A cheatline or a door outline -- anything painted onto the skin. */
+export const trim = new THREE.MeshStandardMaterial({
+  color: 0x2f3742, roughness: 0.45, metalness: 0.10,
+});
+
 /* ---- engines ---------------------------------------------------------- */
 
 /** Engine casing: light, slightly warm metal. */
@@ -94,6 +111,7 @@ export const winding = new THREE.MeshStandardMaterial({
 });
 
 export const all = { tire, rim, piston, structure, hardware,
+                     skin, glass, trim,
                      casing, blade, hot, painted, marking, cavity, accessory, finned,
                      winding };
 

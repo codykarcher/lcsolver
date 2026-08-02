@@ -19,34 +19,46 @@ import { fileURLToPath } from 'url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const E = await import(join(HERE, 'components/engines.js'));
+const F = await import(join(HERE, 'components/fuselage.js'));
 
-/** page -> the variants it can build */
+/**
+ * page -> { build: the variants it can build, vars: what it calls the object }
+ *
+ * `vars` is needed because a page reads its object through whatever local name
+ * it gave it -- `engine.userData.rFan` on an engine page, `u.length` after
+ * destructuring on a fuselage page -- and the whole point of this check is to
+ * see the same field names the page actually writes.
+ */
 const PAGES = {
-  'turbofan_test.html': [() => E.turbofan({}), () => E.bareTurbofan({})],
-  'pylon_test.html': [() => E.turbofan({}), () => E.bareTurbofan({})],
-  'turbojet_test.html': [() => E.turbojet({})],
-  'turboshaft_test.html': [() => E.turboshaft({})],
-  'piston_test.html': [() => E.pistonEngine({})],
-  'motor_test.html': [() => E.electricMotor({})],
+  'turbofan_test.html': { build: [() => E.turbofan({}), () => E.bareTurbofan({})],
+                          vars: ['engine.userData', 'd'] },
+  'pylon_test.html':    { build: [() => E.turbofan({}), () => E.bareTurbofan({})],
+                          vars: ['engine.userData', 'd'] },
+  'turbojet_test.html': { build: [() => E.turbojet({})], vars: ['engine.userData', 'd'] },
+  'turboshaft_test.html': { build: [() => E.turboshaft({})], vars: ['engine.userData', 'd'] },
+  'piston_test.html':   { build: [() => E.pistonEngine({})], vars: ['engine.userData', 'd'] },
+  'motor_test.html':    { build: [() => E.electricMotor({})], vars: ['engine.userData', 'd'] },
+  'fuselage_test.html': { build: [() => F.jetlinerFuselage({}),
+                                  () => F.jetlinerFuselage({ windows: false, doors: false })],
+                          vars: ['body.userData', 'u'] },
 };
 
 let bad = 0;
 for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
-  const builders = PAGES[file];
-  if (!builders) { console.log(`${file.padEnd(24)} (no builder registered)`); continue; }
+  const page = PAGES[file];
+  if (!page) { console.log(`${file.padEnd(24)} (no builder registered)`); continue; }
   const src = readFileSync(join(HERE, file), 'utf8');
-  // Pages read either engine.userData.x or, after destructuring, d.x
-  const fields = [...new Set([
-    ...[...src.matchAll(/engine\.userData\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]),
-    ...[...src.matchAll(/\bd\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]),
-  ])];
-  for (const make of builders) {
+  const fields = [...new Set(page.vars.flatMap((v) => {
+    const re = new RegExp(`\\b${v.replace('.', '\\.')}\\.([A-Za-z_$][\\w$]*)`, 'g');
+    return [...src.matchAll(re)].map((m) => m[1]);
+  }))];
+  for (const make of page.build) {
     const u = make().userData;
     const missing = fields.filter((f) => u[f] === undefined);
     if (missing.length) { bad++; console.log(`  ${file}: MISSING ${missing.join(', ')}`); }
   }
   console.log(`${file.padEnd(24)} ${String(fields.length).padStart(2)} fields, `
-              + `${builders.length} variant(s)`);
+              + `${page.build.length} variant(s)`);
 }
 console.log(bad ? `FAIL: ${bad} variant(s) missing fields`
                 : 'PASS: every field the pages read exists');
