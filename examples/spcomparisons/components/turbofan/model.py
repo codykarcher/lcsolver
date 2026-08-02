@@ -88,10 +88,63 @@ ETAS = {
 }
 
 
+def fitzgerald_coeffs(BPR, geared=False, advanced=False):
+    """``(a, b, c)`` for TASOPT's ``We1 = a (mdotc/45.35)^b (OPR/40)^c``.
+
+    A port of ``_fitzgerald_coeffs`` in tasopt_py/engine/weight.py, which is
+    itself ``tfweight.f``'s ``iengwgt = 1, 2`` branch. ``a`` comes out in lbf.
+
+    Evaluated at the DECK's design bypass ratio, which is what makes this
+    usable here: ``b`` and ``c`` are exponents on ``mdotc`` and ``OPR``, so a
+    BPR-dependent ``b`` would put a variable in an exponent and leave GP.
+    TASOPT has the same structure -- its BPR is a deck input, not a solved
+    quantity -- so evaluating at the design value is the source behaviour, not
+    an approximation of it.
+    """
+    if not geared:
+        if not advanced:
+            return (18.09 * BPR ** 2 + 476.9 * BPR + 701.3,
+                    0.001077 * BPR ** 2 - 0.03716 * BPR + 1.190,
+                    -0.01058 * BPR + 0.3259)
+        return (15.38 * BPR ** 2 + 401.1 * BPR + 631.5,
+                0.001057 * BPR ** 2 - 0.03693 * BPR + 1.171,
+                -0.01022 * BPR + 0.2321)
+    if not advanced:
+        return (-0.6590 * BPR ** 2 + 292.8 * BPR + 1915.0,
+                0.00006784 * BPR ** 2 - 0.006488 * BPR + 1.061,
+                -0.001969 * BPR + 0.07107)
+    return (-0.6204 * BPR ** 2 + 237.3 * BPR + 1702.0,
+            0.00005845 * BPR ** 2 - 0.005866 * BPR + 1.045,
+            -0.001918 * BPR + 0.06765)
+
+
 def exponents(engine: str) -> dict:
     """The polytropic exponents, exactly as Engine.setvals() forms them."""
     g = GAMMAS
     faneta, lpceta, hpceta, hpteta, lpteta = ETAS[engine]
+    # FAN EFFICIENCY LAPSE WITH PRESSURE RATIO, from the TASOPT decks:
+    #
+    #     epolf_actual = epolf + K_epf * (FPR - FPRo)
+    #
+    # (runs/737/737.tas:485-486, runs/D8/d82.tas:490-491, both K_epf = -0.077).
+    # A higher-pressure-ratio fan is a harder fan to make efficient, and this
+    # is the ONLY thing in TASOPT that opposes a runaway FPR -- there is no
+    # constraint on FPR itself. We had the reference value and not the lapse:
+    # ETAS stores epolf AT FPRo, and applying it at every FPR made high fan
+    # pressure ratio free. Unanchored, the D8's design FPR ran to 1.889 against
+    # the deck's 1.605, which shrank the fan to 0.83 of TASOPT's diameter and
+    # the bare engine to 0.615 of Webare.
+    #
+    # Evaluated at the DESIGN FPR, as TASOPT does -- its FPR is a deck input
+    # and off-design excursions ride the fan map. That matters here for a
+    # second reason: it keeps the result a CONSTANT. The polytropic exponent
+    # is used as `pi_f ** fexp1`, so an efficiency that varied with the
+    # operating pi_f would put a variable in an exponent and leave GP.
+    _sub = SUBS.get(engine, {})
+    _fpro, _kepf, _pifd = (_sub.get("FPRo"), _sub.get("K_epf"),
+                           _sub.get("pi_f_D"))
+    if _fpro is not None and _kepf is not None and _pifd is not None:
+        faneta = faneta + _kepf * (_pifd - _fpro)
     return dict(
         fexp1=(g["fgamma"] - 1) / (faneta * g["fgamma"]),
         lpcexp1=(g["lpcgamma"] - 1) / (lpceta * g["lpcgamma"]),
@@ -132,7 +185,8 @@ SUBS = {
                   alpha_OD=None, alpha_max=None, hf=40.8, OPR_max=32.0,
                   eta_B=0.9827, r_uc=0.01, alpha_c=0.19036, M_takeoff=0.9556,
                   pi_tn=0.98, pi_d=0.98, pi_fn=0.98),
-    "TASOPT_737800": dict(pi_f_D=1.685, pi_lc_D=4.744, pi_hc_D=3.75,
+    "TASOPT_737800": dict(FPRo=1.685, K_epf=-0.077,
+                          BPR_D=5.1, iengwgt=1, Gearf=1.0,pi_f_D=1.685, pi_lc_D=4.744, pi_hc_D=3.75,
                           alpha_OD=None, alpha_max=None, hf=43.003,
                           OPR_max=32.0, eta_B=0.9827, r_uc=0.01,
                           alpha_c=0.19036, M_takeoff=0.9556,
@@ -141,7 +195,7 @@ SUBS = {
                  alpha_OD=None, alpha_max=8.7877, hf=43.003, OPR_max=40.0,
                  eta_B=0.9970, r_uc=0.1, alpha_c=0.14, M_takeoff=0.955,
                  pi_tn=0.98, pi_d=0.98, pi_fn=0.98),
-    "D82": dict(pi_f_D=1.60474, pi_lc_D=4.98, pi_hc_D=35. / 8.,
+    "D82": dict(Tt4_TO=1750.0, Tt4_CR=1450.0, pi_f_D=1.60474, pi_lc_D=4.98, pi_hc_D=35. / 8.,
                 alpha_OD=None, alpha_max=None, hf=43.003, OPR_max=32.0,
                 eta_B=0.9827, r_uc=0.01, alpha_c=0.19036, M_takeoff=0.9556,
                 pi_tn=0.995, pi_d=0.995, pi_fn=0.985),
@@ -152,7 +206,20 @@ SUBS = {
     # the three design pressure ratios so the optimizer picks them. alpha_OD
     # and alpha_max are likewise absent, leaving bypass ratio free under the
     # aircraft-level bound alpha_max <= 100. Anything None here is free.
-    "D82_SPaircraft": dict(pi_f_D=None, pi_lc_D=None, pi_hc_D=None,
+    # pi_f_D PINNED to the D8.2 deck's FPR (runs/D8/d82.tas). It was None --
+    # a free design fan pressure ratio with nothing anchoring it -- and it ran
+    # to 1.889 against TASOPT's 1.605. High FPR and high BPR are
+    # contradictory: bypass exists to give LOW jet velocity, and a 1.9 fan
+    # throws that away. Unanchored it gave high specific thrust, a fan 0.83 of
+    # TASOPT's diameter, and a bare engine at 0.615 of Webare, because the
+    # York/Hoburg/Drela weight fit scales with core mass flow.
+    #
+    # The other two decks were already anchored this way (CFM56 1.685,
+    # TASOPT_737800 1.685); this one was the outlier. pi_lc_D and pi_hc_D stay
+    # free -- the deck gives OPR 35 and pilc, not a full spool split.
+    "D82_SPaircraft": dict(Tt4_TO=1750.0, Tt4_CR=1450.0, pi_f_D=1.60474,
+                           FPRo=1.50, K_epf=-0.077, pi_lc_D=None, pi_hc_D=None,
+                           BPR_D=6.9674, iengwgt=1, Gearf=1.0,
                            alpha_OD=None, alpha_max=None, hf=43.003,
                            OPR_max=35.0, eta_B=0.985, r_uc=0.01,
                            alpha_c=0.16, M_takeoff=0.9556,
@@ -173,7 +240,7 @@ SUBS = {
     # the entire fuel switch as far as the cycle is concerned -- the
     # burner solves for a fuel-air ratio 2.79x smaller for the same
     # turbine inlet temperature.
-    "D82_LH2": dict(pi_f_D=None, pi_lc_D=None, pi_hc_D=None,
+    "D82_LH2": dict(Tt4_TO=1750.0, Tt4_CR=1450.0, FPRo=1.50, K_epf=-0.077, pi_f_D=None, pi_lc_D=None, pi_hc_D=None,
                            alpha_OD=None, alpha_max=None, hf=120.0,
                            OPR_max=35.0, eta_B=0.985, r_uc=0.01,
                            alpha_c=0.16, M_takeoff=0.9556,
@@ -465,8 +532,15 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     # kept the cycle near its reference point. Unpinning BPR walked straight
     # out of it: Tt4 went to 2490 K, 660 K past takeoff limit and 900 K past
     # the metal temperature, which is not a hot engine, it is a liquid one.
-    Tt4TO = C("T_t_4_TO", 1833.0, "K", "max takeoff turbine inlet temperature")
-    Tt4CR = C("T_t_4_CR", 1587.0, "K", "max cruise turbine inlet temperature")
+    # PER DECK. 1833/1587 K is the CFM56-era pair (737s.tas). The D8's engine
+    # runs COOLER -- 1750/1450 in runs/D8/d82.tas -- because its component
+    # efficiencies are better (epolf 0.93 against 0.8948), so it does not need
+    # the turbine temperature to make up the difference. Left hard-coded, the
+    # advanced cycle would have been handed the old engine's thermal limits.
+    Tt4TO = C("T_t_4_TO", sub.get("Tt4_TO", 1833.0), "K",
+              "max takeoff turbine inlet temperature")
+    Tt4CR = C("T_t_4_CR", sub.get("Tt4_CR", 1587.0), "K",
+              "max cruise turbine inlet temperature")
     ht4  = Vn("h_t_4", 1.8e6, "J/kg", "combustor exit stagnation enthalpy")
     Pt41 = Vn("P_t_41", 950.0, "kPa", "turbine inlet stagnation pressure")
     Tt41 = Vn("T_t_41", 1400.0, "K", "turbine inlet stagnation temperature")
@@ -831,12 +905,72 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
         # NOTE the fit was made against twins. Dividing by n_eng recovers the
         # per-engine weight only if that holds; a four-engine deck would need
         # the fit revisited, not just the divisor changed.
-        cons += [
-            W_engine / units.kg >= (mtot[i] / alphap1[i]) / n_eng
-                * ((1 / (100 * units.lb / units.s)) * 9.81 * units.m / units.s ** 2)
-                * (1684.5 + 17.7 * (pif[i] * pilc[i] * pihc[i]) / 30
-                   + 1662.2 * (alpha[i] / 5) ** 1.2),
-        ]
+        # WHICH WEIGHT MODEL. tfweight.f carries three behind `iengwgt`:
+        #   0     Drela's original, additive in OPR with a 1.2 power in BPR
+        #   1,2   Fitzgerald's, a(BPR) * mdotc^b(BPR) * (OPR/40)^c(BPR)
+        #   3,4   Pantalone Gaussian-process surrogates (not ported anywhere)
+        #
+        # This row was model 0. BOTH TASOPT decks select model 1 --
+        # runs/737/737.tas:542 and runs/D8/d82.tas:548, `iengwgt = 1` -- so we
+        # were comparing against a model TASOPT does not use. Measured at our
+        # own operating points the two differ by 1.16x on the D8 and 1.01x on
+        # the 737, so this is a correctness fix rather than a large one.
+        #
+        # a, b and c are evaluated ONCE at the deck's design BPR, which is what
+        # keeps this GP: b and c are exponents on mdotc and OPR, and a
+        # BPR-dependent b would put a variable in an exponent. TASOPT has the
+        # same structure -- BPR is a deck input there -- so this is the source
+        # behaviour rather than an approximation of it.
+        _iw = sub.get("iengwgt", 0)
+        _bprd = sub.get("BPR_D")
+        if _iw and _bprd is not None:
+            _a, _b, _c = fitzgerald_coeffs(_bprd,
+                                           abs(sub.get("Gearf", 1.0) - 1.0) >= 1e-3,
+                                           _iw == 2)
+            cons += [
+                # NO /n_eng. TASOPT's We1 is already PER ENGINE from a
+                # per-engine mdotc (`Webare = We1*neng`), and our m_core is
+                # per-engine too -- 48.4 kg/s against TASOPT's back-solved
+                # 53.3 for the same 737.
+                #
+                # The model-0 row below DOES divide, and that divisor is not a
+                # per-engine conversion: it is cancelling a unit slip. That row
+                # multiplies the correlation's bracket by 9.81, treating it as
+                # kilograms-force, where tfweight.f divides by LB_N -- i.e.
+                # treats it as POUNDS-force. 9.81/4.44822 = 2.205, and /n_eng =
+                # 2 hides all but 10% of it. Left alone rather than fixed here
+                # so this change moves one thing at a time; model 0 is now off
+                # the default path for both TASOPT decks anyway.
+                W_engine / units.N >= _a * 4.44822
+                    * ((mtot[i] / alphap1[i])
+                       / (45.35 * units.kg / units.s)) ** _b
+                    * ((pif[i] * pilc[i] * pihc[i]) / 40.0) ** _c,
+            ]
+        else:
+            # UNIT SLIP FIXED, and the compensating divisor removed with it.
+            # This row read
+            #
+            #     W/kg >= (mtot/alphap1)/n_eng * (1/(100 lb/s)) * 9.81 * bracket
+            #
+            # i.e. it multiplied the correlation's bracket by g, treating it as
+            # KILOGRAMS-force. tfweight.f divides by LB_N, which treats it as
+            # POUNDS-force -- a factor of 9.81/4.44822 = 2.205 too heavy.
+            #
+            # The `/n_eng` was not a per-engine conversion. TASOPT's We1 is
+            # already per engine from a per-engine mdotc (`Webare = We1*neng`),
+            # and our m_core is per-engine too -- 49.4 kg/s against TASOPT's
+            # 53.3 on the same 737. It was cancelling the unit error: 2.205/2
+            # left a residual 10%, which is why the engine looked roughly right
+            # and the row survived scrutiny.
+            #
+            # Reaches the CFM56, GE90 and hydrogen decks. The two decks with a
+            # TASOPT source now select iengwgt = 1 above and do not come here.
+            cons += [
+                W_engine / units.N >= (mtot[i] / alphap1[i])
+                    / (45.35 * units.kg / units.s) * 4.44822
+                    * (1684.5 + 17.7 * (pif[i] * pilc[i] * pihc[i]) / 30
+                       + 1662.2 * (alpha[i] / 5) ** 1.2),
+            ]
 
     out = dict(W_engine=W_engine, TSFC=TSFC, F=F, F_6=F6, F_8=F8, R=R,
                M_2=M2v, M_25=M25v, hold_2=hold2, hold_25=hold25, c1=c1,

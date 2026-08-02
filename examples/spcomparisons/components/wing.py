@@ -38,6 +38,23 @@ from numpy import cos, pi, tan
 from .polars import POLARS, YORK_C
 from .wingbox import add_wingbox
 
+#: Empirical mass correction on the Hoburg wing box, applied to the cap and
+#: the web and therefore to W_struct and every secondary fraction taken off it.
+#: 0.95 means the wing comes out at 95% of what the closed-form box predicts.
+#:
+#: WHY IT IS HERE. With sweep priced the box over-predicts against TASOPT's
+#: station-based calculation: measured on the 737 the wing lands at 1.134 with
+#: caps 1.104 and web 1.766. The documented single-taper (uncranked) penalty is
+#: W_cap 1.241 / W_web 1.423 / W_wing 1.249, so most of that overshoot has a
+#: named cause and a real fix -- the cranked box in wingbox_tasopt.py.
+#:
+#: This factor is NOT that fix. It is a flat empirical scale with no physics in
+#: it, kept as a single named constant so it is trivial to find and delete when
+#: the cranked box lands. WING ONLY: the tails come out LIGHT (H_tail 0.839 of
+#: the real stabiliser), so scaling them down would widen a gap, not close one.
+#: The box divides by this internally (`_wc * W >= RHS`), hence the reciprocal.
+WING_MASS_FACTOR = 0.95
+
 
 #: NO WING WEIGHT CORRECTION. Two lived here and both are gone.
 #:
@@ -265,6 +282,7 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
     wb, wbcons = add_wingbox("wing", AR=AR, b=b, S=S, p=p, q=q, tau=tau,
                              Lmax=Lmax, tau_max=tau_max, group=box,
                              cosL=cosL if sweep_pricing else None,
+                             weight_credit=1.0 / WING_MASS_FACTOR,
                              material=material)
     cons += wbcons
     out["box"] = wb

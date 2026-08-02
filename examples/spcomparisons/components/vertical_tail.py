@@ -31,7 +31,38 @@ from .polars import (POLARS, TASOPT_ARE_XP, TASOPT_TAIL_CDF,
 from .wingbox import add_wingbox
 
 
-def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
+#: Minimum vertical tail volume coefficient, per CONFIGURATION.
+#:
+#: Engine-out is the ONLY fin sizing case in this model, and for a
+#: centreline-engine layout that is a weak requirement: the D8's fin collapsed
+#: to 6.0 m2 with its spar-cap inertia resting on the solver's 1e-9 positivity
+#: floor, which stops the KKT certificate closing (complementarity 1.0 against
+#: a 1e-6 tolerance) even though the objective itself has converged.
+#:
+#: A real fin also has to handle crosswind landing, weathercock stability and
+#: spin recovery, none of which this model contains, so a floor is standing in
+#: for them. The values are TASOPT's own prescribed volume coefficients --
+#: runs/737/737.tas `Vv 0.10` and runs/D8/d82.tas `Vv 0.03` -- rather than
+#: numbers picked to make the solve behave.
+#:
+#: CONVENTIONAL stays at the old 0.001 -- deliberately inactive. A podded
+#: underwing layout has a large engine-out moment, so engine-out sizes the fin
+#: properly there: the 737 lands at V_vt 0.083 against a real 0.089 with the
+#: floor nowhere near. Raising it to TASOPT's prescribed 0.10 would OVERRIDE a
+#: working physical result with a worse number, so it is left alone.
+V_VT_MIN_CONVENTIONAL = 0.001
+#: OFF for now (0.001, same as conventional). The mechanism is kept because
+#: the fin collapse it targets is real -- S_vt goes to 6.0 m2 with the box's
+#: I_cap resting on the solver's 1e-9 positivity floor -- but a floor does not
+#: cure it. Measured: TASOPT's deck value 0.03 is INFEASIBLE (sub-problem fails
+#: at iteration 16), and 0.024, just above where the fin naturally sits, still
+#: does not converge. Two other structural variables (HT_box_I_cap,
+#: Fuse_A_vbend_b) sit on the same floor, so the degeneracy is broader than the
+#: fin and wants a proper fix rather than a bound.
+V_VT_MIN_DOUBLE_BUBBLE = 0.001
+
+
+def add_vertical_tail(f, N, state, *, v_vt_min=V_VT_MIN_CONVENTIONAL, sweep_deg, prefix="VT_",
                       material=None, tau_limits=True, sweep_pricing=False,
                       drag_model="fit"):
     """Add the vertical tail. Returns ``(vars, constraints)``."""
@@ -136,7 +167,7 @@ def add_vertical_tail(f, N, state, *, sweep_deg, prefix="VT_",
     # it says what load the fin must survive, not what the rudder can deliver.
     # c_l_vt_EO is the control-side number and stays separate.
     CLvmax = C("C_L_vt_max", 2.6, "-", "max VT lift coefficient")
-    Vvtmin = C("V_vt_min", 0.001, "-", "minimum VT volume coefficient")
+    Vvtmin = C("V_vt_min", v_vt_min, "-", "minimum VT volume coefficient")
     out.update(rho_TO=rho0, C_L_vt_max=CLvmax, V_vt_min=Vvtmin)
 
     cons = [

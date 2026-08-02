@@ -186,12 +186,31 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
     h_scr = C("h_screen", 10.668, "m", "35 ft screen height, FAR 25.109")
     h_scl = C("h_screen_land", 15.24, "m", "50 ft screen height, FAR 25.125")
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
+    # ---- SECOND TAKEOFF CASE: sea level, standard day ---------------------
+    # A transport has to meet its published field length at SEA LEVEL, and also
+    # get out of a longer runway on a hot-and-high day. Those are two different
+    # requirements and the model needs both: with only the hot-and-high one, at
+    # the sea-level number, the 737 bought its way to 7700 ft with a 1.09 wing
+    # AND 1.22 thrust, because it was being asked to do a sea-level job in
+    # Denver air. The climb cases stay hot-and-high -- those are the ones that
+    # genuinely bite at altitude -- and only the takeoff DISTANCE gets a second,
+    # sea-level evaluation against the published number.
+    Vs_sl = V("V_s_TO_sl", 60.0, "m/s", "stall speed, takeoff, sea level")
+    Vlof_sl = V("V_LOF_sl", 70.0, "m/s", "lift-off speed, sea level")
+    a_sl = V("a_TO_sl", 2.0, "m/s^2", "mean takeoff acceleration, sea level")
+    sg_sl = V("s_ground_sl", 1500.0, "m", "ground roll, sea level")
+    sair_sl = V("s_air_sl", 400.0, "m", "air distance to screen, sea level")
+    sTO_sl = V("s_TO_sl", 2000.0, "m", "takeoff field length, sea level")
+    rho_sl_c = C("rho_sl_TO", 1.225, "kg/m^3", "sea-level takeoff density")
     kmcg = C("k_MCG", k_mcg, "-",
              "V_MCG as a fraction of V_s_TO (calibrated; see SizeClass)")
 
     out = dict(_ruleset=rs, _n_eng=ne,
                V_s_TO=Vs_to, V_s_land=Vs_ld, V_2=V2, V_LOF=Vlof, V_ref=Vref,
                V_MC=Vmc, V_MCG=Vmcg,
+               V_s_TO_sl=Vs_sl, V_LOF_sl=Vlof_sl, a_TO_sl=a_sl,
+               s_ground_sl=sg_sl, s_air_sl_to=sair_sl, s_TO_sl=sTO_sl,
+               rho_sl_TO=rho_sl_c,
                s_ground=s_g, s_air=s_air, s_TO=s_TO, s_land=s_land, a_TO=a_TO,
                s_air_land=s_air_ld,
                C_Lmax_TO=CLmaxTO, C_Lmax_land=CLmaxLD, dC_D_flap_TO=dCD_to,
@@ -244,6 +263,7 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
         # 25.109 / 25.125: demonstrated distance factored to field length.
         s_TO == rs.takeoff_field_factor * (s_g + s_air),      # [SP] SigEq
     ]
+
     if field_length_max_ft is not None:
         smax = C("s_TO_max", field_length_max_ft * 0.3048, "m",
                  "runway length available for takeoff")
@@ -259,7 +279,8 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
 
 
 def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
-         n_eng, ruleset=None):
+         n_eng, ruleset=None, cos_sweep=None, cos_sweep_ref=None,
+         T_TO_sl=None, field_len_sl_ft=None):
     """Tie the certification model to the aircraft. Returns constraints.
 
     ``T_TO`` is TOTAL all-engine thrust at takeoff, ``D_clean_TO`` the clean
@@ -273,6 +294,24 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
     s_g, s_air, s_TO, s_land, a = (o["s_ground"], o["s_air"], o["s_TO"],
                                    o["s_land"], o["a_TO"])
     CLmaxTO, CLmaxLD = o["C_Lmax_TO"], o["C_Lmax_land"]
+    # SWEEP-CORRECTED MAXIMUM LIFT. A swept wing reaches a lower streamwise
+    # C_Lmax than its section does, because only the velocity component normal
+    # to the quarter chord does the lifting: C_Lmax ~ c_lmax * cos^2(Lambda).
+    #
+    # Without this, sweep is FREE in the model. The structural penalty is off
+    # by default (sweep_pricing), and the one row that mentioned the effect --
+    # `C_L_w_max * cos^2(Lambda) == 2.15` in aircraft.py -- is consumed by no
+    # constraint at all, so nothing anywhere charged sweep for the stall speed
+    # and field length it costs. Both takeoff and landing C_Lmax scale, since
+    # both are flapped section values seen through the same sweep.
+    #
+    # Referenced to the sweep the constants were quoted at, so the calibration
+    # is preserved: at cos_sweep == cos_sweep_ref the factor is exactly 1 and
+    # C_Lmax_TO/land keep their 2.2/2.8. Only DEPARTURES from that sweep move.
+    if cos_sweep is not None and cos_sweep_ref is not None:
+        _swf = (cos_sweep / cos_sweep_ref) ** 2
+        CLmaxTO = CLmaxTO * _swf
+        CLmaxLD = CLmaxLD * _swf
     dCD_to, dCD_ld, dCD_lg, mu, g = (o["dC_D_flap_TO"], o["dC_D_flap_land"],
                                      o["dC_D_gear"], o["mu_roll"], o["g"])
     h_screen = o["h_screen"]
@@ -358,4 +397,24 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
         # Air distance from 50 ft at a 3 degree approach, flared.
         s_air_land * 0.0524 == h_screen_land,                      # [SP] SigEq
     ]
+    # ---- the same takeoff, evaluated at SEA LEVEL --------------------------
+    # Identical chain to the one above, at rho = 1.225 and with the engine's
+    # UNLAPSED sea-level thrust. Only the takeoff distance is duplicated; the
+    # climb gradients above stay at the hot-and-high condition, which is where
+    # they are actually critical.
+    if T_TO_sl is not None and field_len_sl_ft is not None:
+        Vs_sl, Vlof_sl = o["V_s_TO_sl"], o["V_LOF_sl"]
+        a_sl, sg_sl = o["a_TO_sl"], o["s_ground_sl"]
+        sair_sl, sTO_sl = o["s_air_sl_to"], o["s_TO_sl"]
+        rho_sl = o["rho_sl_TO"]
+        cons += [
+            0.5 * rho_sl * Vs_sl ** 2 * S * CLmaxTO == W_TO,      # [SP] SigEq
+            Vlof_sl == 1.10 * Vs_sl,
+            a_sl * W_TO == g * (T_TO_sl - mu_eff * W_TO),         # [SP] SigEq
+            sg_sl * 2.0 * a_sl == Vlof_sl ** 2,                   # [SP] SigEq
+            sair_sl * rs.second_segment[ne] == h_screen,          # [SP] SigEq
+            sTO_sl == rs.takeoff_field_factor * (sg_sl + sair_sl),  # [SP] SigEq
+            sTO_sl <= far.Constant("s_TO_max_sl", field_len_sl_ft * 0.3048,
+                                   "m", "sea-level runway available"),
+        ]
     return cons

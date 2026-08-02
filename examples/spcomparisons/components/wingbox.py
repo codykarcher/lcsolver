@@ -98,6 +98,17 @@ def add_wingbox(surfacetype, *, AR, b, S, p, q, tau, Lmax, group,
     # of cosL in each row: measured on the E175 that drove the wing to 4.2
     # degrees and cruise to M 0.55, which is not an airliner. Net, as TASOPT
     # has it: web weight ~ 1/cosL, cap weight ~ 1/cosL^3.
+    # ON BY DEFAULT as of this change (aircraft.py `sweep_pricing=True`). It
+    # was off, and with it off sweep was FREE: the aerodynamic benefit of
+    # cos(Lambda)*M was collected and neither the structural penalty here nor
+    # any C_Lmax penalty was charged. Measured on the 737, turning it on takes
+    # empty weight from 0.909 to 0.998 of the real aircraft and wing aspect
+    # ratio from 1.052 to 0.999 -- the high-AR tendency was span being
+    # structurally free, not an aerodynamic preference.
+    #
+    # It also exposes a debt: the wing goes to 1.20 of TASOPT, and the
+    # single-taper over-prediction documented below is 1.249. The two multiply
+    # rather than cancel, so the cranked credit is now REQUIRED, not optional.
     _cv = cosL if cosL is not None else 1.0
     # CRANKED-PLANFORM CREDIT, applied to the cap and web directly so the
     # COMPONENTS match a reference rather than only their sum.

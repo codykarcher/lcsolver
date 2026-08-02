@@ -45,7 +45,18 @@ from __future__ import annotations
 from numpy import pi
 
 
+#: Window weight per unit cabin length, N/m. Per CONFIGURATION, not per class:
+#: TASOPT's 737 deck carries `W'window = 145.0 * 3.0` and the D8.2 deck carries
+#: `145.0` flat (runs/737/737.tas:319, runs/D8/d82.tas:323). A D8 has far less
+#: window line per unit length than a conventional tube -- one row of windows
+#: over a much wider cabin -- and applying the 737's value to it put window
+#: weight at 2.85x TASOPT's.
+WP_WINDOW_CONVENTIONAL = 435.0
+WP_WINDOW_DOUBLE_BUBBLE = 145.0
+
+
 def add_fuselage(f, *, prefix="Fuse_", l_tank=None, SPR=8.0,
+                 w_p_window=WP_WINDOW_CONVENTIONAL,
                  cabin_aux_m=1.61):
     """Add the fuselage. Returns ``(vars, constraints)``."""
     fuse = f.group("fuse", prefix=prefix)
@@ -204,7 +215,7 @@ def add_fuselage(f, *, prefix="Fuse_", l_tank=None, SPR=8.0,
     Wppfloor = con("Wpp_floor", 60.0, "N/m^2", "floor weight per unit area")
     Wppinsul = con("Wpp_insul", 22.0, "N/m^2", "insulation weight per area")
     Wpseat = con("Wp_seat", 1.0, "N", "weight per seat")
-    Wpwindow = con("Wp_window", 435.0, "N/m", "window weight per unit length")
+    Wpwindow = con("Wp_window", w_p_window, "N/m", "window weight per unit length")
     ffadd = con("f_fadd", 0.2, "-", "fractional added weight, reinforcements")
     fframe = con("f_frame", 0.25, "-", "fractional frame weight")
     fstring = con("f_string", 0.35, "-", "fractional stringer weight")

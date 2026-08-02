@@ -42,6 +42,10 @@ from __future__ import annotations
 import os as _os
 import numpy as np
 
+#: Runway available for the HOT-AND-HIGH takeoff case (Denver, 95 F). The
+#: sea-level case uses the SizeClass's published `field_length_ft`.
+HOT_FIELD_FT = 10000.0
+
 #: Gear attachment station as a fraction of the wingbox at the gear's own
 #: spanwise station: 0 = front spar, 1 = rear spar. Set GEAR_BOX_FRAC to
 #: sweep it; see the note at the constraint itself.
@@ -73,9 +77,11 @@ from edi import Formulation
 
 from components.far import add_far, link as far_link
 from components.flight_state import add_flight_state
+from components import fuselage as _fuse
 from components.fuselage import add_fuselage
 from components.horizontal_tail import add_horizontal_tail
 from components.landing_gear import add_landing_gear
+from components import vertical_tail as _vt_mod
 from components.vertical_tail import add_vertical_tail
 from components.wing import add_wing
 from components.wing_tasopt import add_wing_tasopt
@@ -102,7 +108,7 @@ NCLIMB, NCRUISE = 3, 2
 
 def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           pi_tail_supports: str = "fixed", seed: str | None = None,
-          tau_limits: bool = True, sweep_pricing: bool = False,
+          tau_limits: bool = True, sweep_pricing: bool = True,
           # MSES refits are the default. York's fit was valid only to
           # M_perp ~0.74 and under-predicted drag 3-6x beyond it, so the model
           # carried a hard fence at that Mach -- and the FENCE, not
@@ -198,6 +204,9 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                         rho_fuel=70.0 if arch.fuel == "lh2" else 817.0)
     cons += c
     vt, c = add_vertical_tail(f, N, st, sweep_deg=SWEEP_VT, material=_mat,
+                              v_vt_min=(_vt_mod.V_VT_MIN_DOUBLE_BUBBLE
+                                        if arch.double_bubble
+                                        else _vt_mod.V_VT_MIN_CONVENTIONAL),
                               tau_limits=tau_limits,
                               sweep_pricing=sweep_pricing,
                               drag_model=tail_drag); cons += c
@@ -216,8 +225,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     _ne = int(size_class.n_fans) if arch.fuel == "electric" else 2
     far, c, farv = add_far(f, n_eng=_ne,
                            ruleset=getattr(size_class, "far_ruleset", "FAR25"),
-                           field_length_max_ft=getattr(size_class,
-                                                       "field_length_ft", None),
+                           # HOT-AND-HIGH runway. The class's field_length_ft
+                           # is a SEA-LEVEL published number and is applied as
+                           # such in far_link below; demanding it in Denver air
+                           # was inflating wing area to 1.09 and thrust to 1.22.
+                           # 8500 ft is the runway the aircraft must still get
+                           # out of on a hot day at altitude.
+                           field_length_max_ft=HOT_FIELD_FT,
                            k_mcg=getattr(size_class, "k_mcg", 0.88))
     cons += c
     # The tank is sized first so the fuselage knows how much shell to add.
@@ -241,6 +255,9 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     _gear_scale = size_class.R_fuse_guess / 1.88
     SPR_val = size_class.seats_abreast
     fu, c = add_fuselage(f, cabin_aux_m=size_class.cabin_aux_m,
+                         w_p_window=(_fuse.WP_WINDOW_DOUBLE_BUBBLE
+                                     if arch.double_bubble
+                                     else _fuse.WP_WINDOW_CONVENTIONAL),
                          l_tank=(tank.l_tank if tank else None),
                          SPR=SPR_val); cons += c
     electric = arch.fuel == "electric"
@@ -342,7 +359,62 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # aisles. A single-aisle 737 or Citation needs its own count.
     numaisle = C("n_aisle", size_class.n_aisles, "-", "number of aisles")
     Vne = C("V_ne", 143.92, "m/s", "never-exceed speed")
+    # SEA LEVEL, and it stays that way -- this one carries the STRUCTURAL
+    # design loads (L_ht_max and L_vt_max at V_ne), which are sea-level cases.
+    # The takeoff PERFORMANCE cases moved to the hot-and-high field condition
+    # below; see `rho_field`.
     rhoTO = C("rho_TO_ac", 1.225, "kg/m^3", "air density at takeoff")
+
+    # ---- HOT-AND-HIGH TAKEOFF FIELD CONDITION ------------------------------
+    # The certification climb and field-length cases are sized HERE, not at sea
+    # level on a standard day, because that is what actually sets a transport's
+    # thrust. Evaluating them at sea level ISA left every one of them slack --
+    # 25.121(b) second segment was the tightest at 1.052 -- and thrust fell out
+    # of an arbitrary `RC[0] >= 2500 ft/min` instead, landing at 0.79 of the
+    # real CFM56-7B26 on the 737 AND 0.79 on the E175. Two classes agreeing to
+    # half a percent is what identified the requirement as the problem rather
+    # than the engine.
+    #
+    # Denver in summer: a mile high and 95 F. TASOPT carries the same pair as
+    # deck inputs (`altTO`, `T0TO` in runs/737/737.tas) but leaves them at
+    # 0 m / 288 K, so it does not exercise the condition either.
+
+    # CORRECTED ALTITUDE MODEL, and the correction is the point. Field PRESSURE
+    # comes from the ISA at the field ELEVATION -- pressure does not care about
+    # the temperature anomaly, it is set by the column of air above. Field
+    # DENSITY then comes from that pressure at the ACTUAL temperature, which is
+    # what makes a hot day behave like a much higher altitude:
+    #     p     = p_sl * (1 - L h / T_sl) ^ (g / (L R))
+    #     rho   = p / (R * T_field)                     <- hot T, not ISA T
+    # At Denver on a 95 F day that is ISA+30.5 K, p/p_sl = 0.823 and
+    # rho/rho_sl = 0.770. Taking rho straight from the ISA at 5280 ft instead
+    # would give 0.86 and miss a third of the penalty.
+    # Overridable, because the condition has to be able to MATCH THE BASIS a
+    # reference was published at. TASOPT's decks quote lBFmax at sea level and
+    # 288 K (altTO/T0TO), and demanding the D8.2's 4960 ft at Denver on a 95 F
+    # day is not merely pessimistic, it is INFEASIBLE -- the solve fails at
+    # iteration 18. Set H_FIELD_FT=0 and T_FIELD_K=288.15 to reproduce a
+    # sea-level basis; the defaults are the hot-and-high sizing case.
+    _h_f = float(_os.environ.get("H_FIELD_FT", 5280.0)) * 0.3048
+    _T_f = float(_os.environ.get("T_FIELD_K", 308.15))
+    h_field_ft = C("h_field", _h_f / 0.3048, "ft", "takeoff field elevation")
+    T_field_K = C("T_field", _T_f, "K", "takeoff ambient temperature")
+    _p_field = 101325.0 * (1.0 - 0.0065 * _h_f / 288.15) ** (9.81 / (0.0065 * 287.0))
+    _rho_field = _p_field / (287.0 * _T_f)
+    rho_field = C("rho_field", _rho_field, "kg/m^3",
+                  "air density at the hot-and-high takeoff field")
+    p_field = C("p_field", _p_field, "Pa", "ambient pressure at the field")
+
+    # THRUST LAPSE to the field condition. F_takeoff is the sea-level-static
+    # rating -- the number a CFM56-7B26 datasheet quotes as 26,300 lbf -- and
+    # the engine cannot deliver that at Denver on a hot day. At a fixed cycle
+    # the thrust follows the mass flow, and mdot = rho A V goes as p/sqrt(T):
+    #     F_field / F_sl = (p/p_sl) * sqrt(T_sl/T) = 0.823 * 0.967 = 0.796
+    # So the certification cases below see about 80% of the rating, and the
+    # rating has to be correspondingly larger to pass them.
+    _lapse = (_p_field / 101325.0) * (288.15 / _T_f) ** 0.5
+    f_lapse = C("f_thrust_lapse_field", _lapse, "-",
+                "thrust available at the field / sea-level-static rating")
     ReserveFraction = C("f_fuel_res", 0.20, "-", "fuel reserve fraction")
     # Zero: the hydrogen is in the fuselage. Small but nonzero keeps the
     # row well posed without giving the wing any meaningful relief.
@@ -388,12 +460,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # below. Both corrected together -- the correlation IS TASOPT's (NASA CR
     # 151970), so its input should be too. This area also drives nacelle
     # drag, which was correspondingly light.
-    rSnace = C("r_S_nacelle", 16.0, "-", "nacelle and pylon wetted area factor")
+    # PER ARCHITECTURE. 16.0 is the 737's podded underwing nacelle (737s.tas);
+    # the D8's rear BLI nacelles are far shorter and its deck says 6.0
+    # (d82.tas), which also drops Snace/S from 0.45 to 0.18. Held at the 737
+    # value this would have charged the D8 for nacelles it does not have.
+    rSnace = C("r_S_nacelle", 6.0 if arch.rear_engines else 16.0, "-",
+               "nacelle and pylon wetted area factor")
     rvnace = C("r_v_nacelle", 0.925, "-", "incoming nacelle velocity ratio")
     # 0.10 from the same deck (737s.tas:357, "fpylon  Wpylon/We+a+n"). Was
     # 0.05, exactly half, which is the whole of the pylon discrepancy:
     # 262 lbf per engine against TASOPT's 558.
-    fpylon = C("f_pylon", 0.10, "-", "pylon weight fraction")
+    # 0.10 podded underwing, 0.05 for the D8 (d82.tas) -- a rear-mounted
+    # engine sits on a much shorter pylon.
+    fpylon = C("f_pylon", 0.05 if arch.rear_engines else 0.10, "-",
+               "pylon weight fraction")
     feadd = C("f_eadd", 0.1, "-", "additional engine weight fraction")
     Ceng = C("C_engsys", 1.0, "-", "engine system weight margin")
     Dreduct = C("D_reduct", 0.98416 if arch.BLI else 1.0, "-",
@@ -416,7 +496,6 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # class, and it is not what regulation asks for -- FAR 25 constrains climb
     # GRADIENT in the one-engine-inoperative configurations, not the clock.
     # The model already carries the physical requirements:
-    #     RC[0]              >= 2500 ft/min   initial climb rate
     #     RC[1:Nclimb]       >= 500 ft/min    minimum through the climb
     #     theta[Nclimb-1]    >= 0.015         1.5% gradient at top of climb
     # The last of those is the FAR-shaped one (25.121(b) asks 2.4% OEI for a
@@ -934,11 +1013,26 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         W_TO=W_totalmax,
         W_land=W_dry + fu.W_payload,
         S=wing.S,
-        rho_TO=rhoTO,
-        T_TO=numeng * F_TO,
+        # THE FIELD CONDITION, not sea level. rho_field feeds the stall speeds,
+        # the ground roll and every climb-gradient row; the thrust handed over
+        # is what the engine can actually make there, F_TO * 0.796. Both halves
+        # matter and they compound: less density raises V_2 (and so the drag
+        # the climb must overcome) while the same density cuts the thrust.
+        rho_TO=rho_field,
+        T_TO=numeng * F_TO * f_lapse,
         D_clean_TO=D[0],
         AR=wing.AR,
         e=wing.e,
+        # C_Lmax falls as cos^2(Lambda) away from the sweep the 2.2/2.8
+        # constants were quoted at -- so sweeping now costs stall speed and
+        # field length, which nothing in the model charged for before.
+        cos_sweep=wing.cos_Lambda,
+        cos_sweep_ref=cos(SWEEP_W * pi / 180),
+        # The SEA-LEVEL takeoff, at the class's published field length and the
+        # engine's unlapsed rating. The hot-and-high case above keeps the climb
+        # gradients and gets its own, longer runway (see h_field_max_ft).
+        T_TO_sl=numeng * F_TO,
+        field_len_sl_ft=getattr(size_class, "field_length_ft", None),
         n_eng=_ne,
     )
     cons += [
@@ -1099,7 +1193,17 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         lg.L_n <= 0.15 * W_totalmax,
         lg.L_m == W_totalmax * lg.dx_n / lg.B,
         lg.L_n_dyn >= 0.31 * ((lg.z_CG + lg.l_m) / lg.B) * W_totalmax,
-        y_eng >= lg.y_m,
+        # UNDERWING ONLY. This says the engine hangs outboard of the retracted
+        # main gear, which is true for a podded installation and meaningless
+        # for engines mounted on the AFT FUSELAGE -- there the gear is under
+        # the wing and the engines are on the tail, and nothing relates them.
+        #
+        # Applied unconditionally it was inflating the D8's fuselage. The rear
+        # branch below sets `y_eng == 0.5*w_fuse`, so the chain ran
+        #     lateral tip-over -> y_m -> y_eng -> w_fuse -> R_fuse
+        # and the double-bubble radius came out at 3.02 m against TASOPT's
+        # 1.715. The landing gear track was sizing the cabin.
+        *([] if arch.rear_engines else [y_eng >= lg.y_m]),
         # MAIN GEAR TRACK -- set by retraction into the fuselage.
         #
         # The gear stows into the fuselage, so the axle has to sit within the
@@ -1716,7 +1820,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         #
         # The residual is written as an all-positive identity so the moment row
         # carries one subtraction rather than a product of two.
-        Wrot + 0.5 * rhoTO * farv["V_LOF"] ** 2 * wing.S * CLgnd
+        # rho_field, not rhoTO. These control cases all happen AT THE FIELD,
+        # and their speeds already come from farv, which now solves at field
+        # density. Leaving the density at sea level while the speeds rose 10.5%
+        # overstated the tail's dynamic pressure by 1.225/0.943 = 1.299 and
+        # made the stabiliser look MORE effective in thin air, which is
+        # backwards -- S_ht shrank to 0.87 of its previous value when it should
+        # have grown.
+        Wrot + 0.5 * rho_field * farv["V_LOF"] ** 2 * wing.S * CLgnd
             == W_totalmax,                                    # [SP] SigEq
 
         # ---- LONGITUDINAL CONTROL POWER ------------------------------------
@@ -1762,7 +1873,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # same `x_m - x_CG_fwd` the weight moment already uses.
         dxrot + xCGfwd == lg.x_m,                             # [SP] SigEq
         Iyrot >= Iy + W_totalmax / g * dxrot ** 2,
-        0.5 * rhoTO * farv["V_LOF"] ** 2 * ht.S_ht * CLhrot
+        0.5 * rho_field * farv["V_LOF"] ** 2 * ht.S_ht * CLhrot
             * (xCG[Nclimb] + ht.l_ht - lg.x_m)
             >= Wrot * dxrot + qdotrot * Iyrot,
 
@@ -1774,7 +1885,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # already spoken for at CLhfwd, so only the REMAINDER of the authority
         # is available for the manoeuvre.
         dCLhga + CLhfwd <= CLhauth,                           # [SP]
-        0.5 * rhoTO * farv["V_ref"] ** 2 * ht.S_ht * dCLhga * ht.l_ht
+        0.5 * rho_field * farv["V_ref"] ** 2 * ht.S_ht * dCLhga * ht.l_ht
             >= qdotga * Iy,
 
         # 2(a) STALL RECOVERY at -4.0 deg/s^2, AFT CG, at stall speed. The
@@ -1784,7 +1895,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # for the manoeuvre -- which is why this one is written against the
         # full CLhauth rather than a remainder. The low speed is what makes it
         # bite: q at stall is the smallest of the three cases.
-        0.5 * rhoTO * farv["V_s_land"] ** 2 * ht.S_ht * CLhauth * ht.l_ht
+        0.5 * rho_field * farv["V_s_land"] ** 2 * ht.S_ht * CLhauth * ht.l_ht
             >= qdotst * Iy,
         SM <= (xAC - xCG) / wing.mac,
         SM >= SMmin,
@@ -2034,13 +2145,25 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # viscosity air). With the two-layer ISA in flight_state.py the band is
         # modelled properly to 55,000 ft and the floor has nothing left to do.
         #     st.hft[Nclimb - 1] >= MinCruiseAlt,
-        RC[0] >= 2500. * units.ft / units.min,
+        # No `RC[0]` floor. There was one at 2500 ft/min, and it was the ONLY
+        # binding thrust constraint in the model -- every certification climb
+        # case sat slack behind it (25.121(b) second segment was the tightest
+        # at 1.052) and takeoff thrust came out at 0.79 of the real engine on
+        # BOTH the 737 and the E175. Two classes agreeing to half a percent is
+        # what identified the requirement, not the engine, as the problem.
+        # Thrust is now sized by the FAR climb cases and the field length.
         theta[Nclimb - 1] >= 0.015,
         # Engine-out thrust at SEA LEVEL, not at 12,379 ft. This is the whole
         # reason the fin was half-size: the yawing moment is proportional to
         # the thrust of the failed engine, and it was being computed with
         # climb thrust at altitude for an event that happens on the runway.
-        vt.T_e == Fsafetyfac * F_TO,
+        # LAPSED. The engine-out case is at the field as well, so the
+        # asymmetric thrust is what the engine makes THERE, not its sea-level
+        # rating. This has to move together with the fin's dynamic pressure
+        # below: lower q alone would grow the fin by 1.30, lower thrust alone
+        # would shrink it by 0.80, and the two nearly cancel (1.03). Changing
+        # only one would have been worse than changing neither.
+        vt.T_e == Fsafetyfac * F_TO * f_lapse,
         W_dry + fu.W_payload + ReserveFraction * W_fprimary <= W_end[N - 1],
         W_fclimb >= f.sum(W_burn[:Nclimb]),
         W_fcruise >= f.sum(W_burn[Nclimb:]),
@@ -2213,7 +2336,28 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # TASOPT's. Keeping 0.5 on top of the harder speed penalised the fin
         # twice for the same missing physics.
         #
-        # 0.6 is calibrated against the REAL aircraft rather than borrowed.
+        # RE-CALIBRATED AGAIN, 0.6 -> 0.7, when the engine-out case moved to
+        # the hot-and-high field. 0.6 was fitted against the SEA-LEVEL case,
+        # where it left the fin slightly conservative; at the field the same
+        # value gave S_vt = 35.0 m2, 1.33 of the real fin, because both the
+        # dynamic pressure and the thrust moved and the two did not cancel the
+        # way I expected -- F_TO is an OUTPUT and it grew chasing field length,
+        # so the asymmetric thrust rose faster than q fell.
+        #
+        # Higher is also more physical. A fin at V_MCG has full rudder
+        # deflection available and a real one reaches 1.0-1.3; 0.5 and 0.6 were
+        # both standing in for rudder physics the model does not have, and the
+        # conservatism stopped being free once the sizing case got harder.
+        #
+        # 0.8 was measured and lands S_vt at 26.33 m2, 0.997 of the real fin --
+        # but it takes the aft fuselage down with it, because L_vt_max sets the
+        # tailcone torsion and the vertical bending material: W_vbend fell to
+        # 0.855 of TASOPT and the cone to 0.660. 0.7 is the middle ground,
+        # trading a slightly large fin for aft structure that stays honest.
+        #
+        # The note below is the original 0.6 calibration, kept as the record.
+        #
+        # 0.6 was calibrated against the REAL aircraft rather than borrowed.
         # Matching the 737-800's 26.4 m2 fin exactly needs c_l = 0.717, and
         # 0.7 delivers it (S_vt 25.88 m2, V_vt 0.090 against a real 0.089).
         # That was TOO FAR, and the reason is worth recording: the oversized
@@ -2247,7 +2391,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # and wing.py declare rho with 1.225 baked in, and the solved reference
         # carries 1.225 for \rho_{TO}, \rho_0 and \rho_{T/O} alike. The
         # substitution does not take. Matching the reference, not the subs dict.
-        (vt, "rho_TO", 1.225, units.kg / units.m ** 3),
+        # FIELD density. vt.rho_TO feeds L_vt_EO and the yaw-rate row, both
+        # of which are field conditions; the fin's STRUCTURAL load (L_vt_max at
+        # V_ne) uses the aircraft-level rhoTO and stays at sea level.
+        (vt, "rho_TO", _rho_field, units.kg / units.m ** 3),
         (ht, "lambda_ht", 0.3, None),
         # C_L_ht_fCG removed: it was declared, pinned at 0.85, and used in
         # exactly zero constraints -- vestigial from SPaircraft's original tail

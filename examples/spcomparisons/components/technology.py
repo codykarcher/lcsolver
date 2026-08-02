@@ -93,7 +93,31 @@ MODERN_COMPOSITE = Technology(
     source='wingbox.py COMPOSITE as it stood',
 )
 
-TECHNOLOGIES = {t.name: t for t in (CFM56_ERA, MODERN, MODERN_COMPOSITE)}
+#: The D8.2's technology, read off runs/D8/d82.tas. NOTE the structure is
+#: UNCHANGED from the 737 -- sigcap, tauweb, Ecap and the densities are
+#: identical in the two decks (rhocap 0.0975*27680.4 = 2698.8 vs 2700). The
+#: D8's advantage is aerodynamic and propulsive, not materials, and giving it
+#: composite allowables would flatter it for a reason its own deck disclaims.
+D8_ERA = Technology(
+    name='d8_era',
+    sigma_cap=30000.0 / 0.000145,      # identical to CFM56_ERA
+    tau_web=20000.0 / 0.000145,
+    rho_cap=2700.0,
+    opr_max=35.0,                      # d82.tas OPR 35
+    # d82.tas BPR 6.9674, EXACTLY. This was 7.5 -- "small headroom" -- and the
+    # headroom became a binding constraint: bypass ratio pinned to the ceiling
+    # in every D8 solve, because higher bypass at fixed FPR shrinks the core
+    # and the York/Hoburg/Drela weight fit scales with core mass flow, so the
+    # engine got lighter the further BPR was allowed to run.
+    #
+    # TASOPT has no BPR coupling to port -- it is a plain deck input there, so
+    # this ceiling IS the equivalent of TASOPT's input and should carry the
+    # deck's value rather than a guess above it.
+    bpr_max=6.9674,
+    source='Tasopt2.16/runs/D8/d82.tas',
+)
+
+TECHNOLOGIES = {t.name: t for t in (CFM56_ERA, MODERN, MODERN_COMPOSITE, D8_ERA)}
 
 
 def current():
