@@ -85,6 +85,26 @@ export function deckFromSolve(sol, overrides = {}) {
     mainTyreIn: g('LG_d_t_m'),
     noseX: g('LG_x_n'), noseStrut: g('LG_l_n'), noseTyreIn: g('LG_d_t_n'),
 
+    /**
+     * The cabin, as the solve describes it.
+     *
+     * `x_shell1` and `x_shell2` bound the PRESSURE SHELL, which is where the
+     * passengers are and therefore where windows can be. They come out equal to
+     * the nose length and to the start of the tailcone on this solve, which is
+     * not a coincidence and not something to rely on -- a solve that moved a
+     * bulkhead would separate them, and reading the shell directly means the
+     * windows follow it rather than following the barrel.
+     *
+     * Seat pitch is NOT a variable in the solve; it is the shell divided by the
+     * rows, which comes out at 0.8637 m -- 34.0 inches, to a tenth. That it
+     * lands on a round number in the units seats are actually specified in is
+     * the check that this is the right reading of the two.
+     */
+    cabinStart: g('Fuse_x_shell1'), cabinEnd: g('Fuse_x_shell2'),
+    cabinRows: g('Fuse_n_rows'), passengers: g('Fuse_n_pass'),
+    seatsAbreast: g('Fuse_n_pass') / g('Fuse_n_rows'),
+    seatPitch: g('Fuse_l_shell') / g('Fuse_n_rows'),
+
     /** What the solve said its own areas were, to check the assembly against. */
     solvedAreas: { wing: g('Wing_S'), horizontalTail: g('HT_S_ht'),
                    verticalTail: g('VT_S_vt') },
@@ -154,6 +174,14 @@ export const B737_TASOPT = {
   noseX:           6.0960,   // LG_x_n
   noseStrut:       2.1909,   // LG_l_n
   noseTyreIn:     34.0108,   // LG_d_t_n
+
+  // Cabin. Seat pitch is derived, not read: l_shell / n_rows.
+  cabinStart:      5.1820,   // Fuse_x_shell1
+  cabinEnd:       31.0920,   // Fuse_x_shell2
+  cabinRows:         30.0,   // Fuse_n_rows
+  passengers:       180.0,   // Fuse_n_pass
+  seatsAbreast:       6.0,   // n_pass / n_rows
+  seatPitch:      0.86367,   // l_shell / n_rows
 
   /* ---- not from the deck -------------------------------------------- */
   // A sizing solve is two-dimensional about these. They are choices.

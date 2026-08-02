@@ -62,6 +62,8 @@
   <p class="hint" id="artNote" style="margin-top:5px"></p>
   <div class="check"><input type="checkbox" id="titles" checked><label for="titles">fuselage titles</label></div>
   <p class="hint" id="titleNote"></p>
+  <div class="check"><input type="checkbox" id="windows" checked><label for="windows">cabin windows</label></div>
+  <p class="hint" id="windowNote"></p>
 
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
@@ -102,7 +104,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, TAIL_ART, TITLE_LAYOUT, artNames }
+import { surfaceArt, fuselageTitles, cabinWindows, TAIL_ART, TITLE_LAYOUT, artNames }
   from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -301,6 +303,22 @@ function build() {
     el('titleNote').textContent = '';
   }
 
+  // Windows: where they go is the solve's answer, not a styling choice, so the
+  // note says which numbers produced them.
+  if (el('windows').checked) {
+    const win = cabinWindows(u.parts.fuselage, {
+      texture: textureFor('window.png'), deck,
+    });
+    u.parts.fuselage.add(win);
+    u.parts.windows = win;
+    const w = win.userData;
+    el('windowNote').textContent =
+      `${w.rows} per side at ${(w.pitch / 0.0254).toFixed(0)} in seat pitch ` +
+      `\u2014 ${w.passengers} pax, ${w.seatsAbreast.toFixed(0)} abreast`;
+  } else {
+    el('windowNote').textContent = '';
+  }
+
   if (el('ground').checked) {
     plane = new THREE.Mesh(
       new THREE.PlaneGeometry(120, 120),
@@ -373,7 +391,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'windows'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {

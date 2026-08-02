@@ -13,10 +13,12 @@
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
-import { surfaceArt, fuselageTitles, TAIL_ART, TAIL_HEIGHT, artNames } from './components/decals.js';
+import { surfaceArt, fuselageTitles, cabinWindows, TAIL_ART, TAIL_HEIGHT, artNames }
+  from './components/decals.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_conventional_solve.json', import.meta.url), 'utf8'));
-const craft = conventionalAircraft(deckFromSolve(sol), { sitOnGround: false });
+const deck = deckFromSolve(sol);
+const craft = conventionalAircraft(deck, { sitOnGround: false });
 const fin = craft.userData.parts.verticalTail;
 
 let bad = 0;
@@ -405,5 +407,78 @@ for (const piece of titles.children) {
   if ((chi - clo) / clo < 0.05) fail('the equal-height control was not distinguishable');
 }
 
-console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork lies on the fin and the body, right way round');
+/* ---- cabin windows ----------------------------------------------------- */
+// The point of these is that they are not a styling choice: the solve says how
+// many rows and where the shell is, so what is checked is that the geometry
+// AGREES with the solve rather than that it looks plausible.
+console.log('\n=== cabin windows ===');
+const wins = cabinWindows(fuse, { deck });
+const wu = wins.userData;
+console.log(`${wu.rows} per side, pitch ${wu.pitch.toFixed(4)} m ` +
+            `(${(wu.pitch / 0.0254).toFixed(1)} in), ${wu.passengers} pax ` +
+            `${wu.seatsAbreast.toFixed(0)} abreast`);
+
+if (Math.round(deck.cabinRows) !== wu.rows) {
+  fail(`solve says ${deck.cabinRows} rows, built ${wu.rows}`);
+}
+// Derived two independent ways: the pitch times the rows must be the shell.
+const shell = Math.abs(deck.cabinEnd - deck.cabinStart);
+if (Math.abs(wu.pitch * wu.rows - shell) > 1e-6) {
+  fail(`${wu.rows} rows at ${wu.pitch} does not fill the ${shell} shell`);
+}
+
+const wbox = new THREE.Box3().setFromObject(wins);
+console.log(`window band y ${wbox.min.y.toFixed(3)}..${wbox.max.y.toFixed(3)}` +
+            `  z ${wbox.min.z.toFixed(2)}..${wbox.max.z.toFixed(2)}` +
+            `  (shell ${(-deck.cabinStart).toFixed(2)}..${(-deck.cabinEnd).toFixed(2)})`);
+if (wbox.max.z > -deck.cabinStart + 1e-6 || wbox.min.z < -deck.cabinEnd - 1e-6) {
+  fail('windows run outside the pressure shell -- into the nose or the tailcone');
+}
+
+// Evenly spaced, and none doubled up. Measured from the built centres.
+const zs = wins.children.map((c) => c.userData.z).sort((a, b) => b - a);
+let glo = Infinity, ghi = -Infinity;
+for (let i = 1; i < zs.length; i++) {
+  const g2 = zs[i - 1] - zs[i];
+  glo = Math.min(glo, g2); ghi = Math.max(ghi, g2);
+}
+console.log(`gaps ${glo.toFixed(5)}..${ghi.toFixed(5)} m`);
+if (ghi - glo > 1e-9) fail(`window pitch is uneven: ${glo} to ${ghi}`);
+if (Math.abs(glo - wu.pitch) > 1e-9) fail(`gap ${glo} is not the stated pitch ${wu.pitch}`);
+
+// On the skin, facing out, both sides -- the same properties as everything else.
+{
+  const piece = wins.children[Math.floor(wins.children.length / 2)];
+  for (const mesh of piece.children) {
+    const pos = mesh.geometry.getAttribute('position');
+    let lo2 = Infinity, hi2 = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      const p = new THREE.Vector3().fromBufferAttribute(pos, i);
+      const s2 = fuse.userData.shapeAt(p.z);
+      const th = Math.atan2(p.y - s2.yc, p.x);
+      const q = fuse.userData.surfaceAt(p.z, th);
+      const d2 = Math.hypot(p.x, p.y - s2.yc) - Math.hypot(q.x, q.y - s2.yc);
+      lo2 = Math.min(lo2, d2); hi2 = Math.max(hi2, d2);
+    }
+    console.log(`  ${mesh.name.padEnd(22)} standoff ${lo2.toFixed(5)}..${hi2.toFixed(5)} m`);
+    if (Math.abs(lo2 - 0.004) > 1e-4 || Math.abs(hi2 - 0.004) > 1e-4) {
+      fail(`${mesh.name} standoff ${lo2.toFixed(5)}..${hi2.toFixed(5)}, wanted 0.004`);
+    }
+    facesOutward(mesh, (p) => {
+      const s2 = fuse.userData.shapeAt(p.z);
+      return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
+    }, mesh.name);
+  }
+}
+
+// Titles must clear the windows: they are two rows of artwork on one patch of
+// skin, and overlapping decals fight for the depth buffer rather than stacking.
+{
+  const tb = new THREE.Box3().setFromObject(titles);
+  const clear = tb.min.y - wbox.max.y;
+  console.log(`titles sit ${clear.toFixed(3)} m above the window band`);
+  if (clear <= 0) fail(`titles overlap the windows by ${(-clear).toFixed(3)} m`);
+}
+
+console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork and windows lie on the skin, placed as the solve says');
 process.exit(bad ? 1 : 0);

@@ -369,7 +369,11 @@ export const FUSELAGE_TITLES = [
  */
 export const TITLE_LAYOUT = {
   startNoseLengths: 2.0,
-  y: 1.15,
+  // Raised to clear the windows. A 0.32 m window centred at 20 degrees reaches
+  // y 0.78, and titles at 1.15 came down to 0.77 -- overlapping by half a
+  // degree of arc, which is the kind of miss that reads as a rendering fault
+  // rather than as a placement one.
+  y: 1.25,
   height: 0.9,
   gap: 1.2,
 };
@@ -585,6 +589,82 @@ export function fuselageArt(fuselage, {
 }
 
 /**
+ * The cabin windows.
+ *
+ * Where they go is not a styling choice: the solve says how many rows there
+ * are and where the pressure shell starts and stops, and a window belongs at
+ * every row inside it. So the row count, the extent and the pitch are all read
+ * from the deck, and the only numbers here are the ones about the window
+ * itself -- how big it is and how high up the side it sits.
+ *
+ * One window per SEAT ROW, at the pitch the solve implies. A real aeroplane
+ * carries windows at the FRAME pitch instead, which is finer than the seat
+ * pitch and gives roughly five windows for every three rows -- but frame
+ * spacing is not something this solve knows, and inventing a number for it
+ * would put windows where nothing in the model asked for them. Pass a `pitch`
+ * to override if the denser row is wanted.
+ */
+export const WINDOW = {
+  /** Fore-aft and vertical size on the skin, matching textures/window.png. */
+  width: 0.23,
+  height: 0.32,
+  /** Degrees above the section centre. Windows sit a fixed height above a
+   *  level floor, so this is converted to a height once and held there. */
+  angle: 20,
+  lift: 0.004,
+};
+
+export function cabinWindows(fuselage, {
+  texture, deck, pitch, name = 'windows',
+  width = WINDOW.width, height = WINDOW.height, angle = WINDOW.angle,
+  lift = WINDOW.lift,
+} = {}) {
+  if (!deck) throw new Error('cabinWindows: needs the deck for the cabin extent');
+  const group = new THREE.Group();
+  group.name = name;
+
+  // The solve measures x from the nose, positive aft; the model runs z
+  // negative aft from the same origin. One negation, stated once.
+  const zStart = -deck.cabinStart, zEnd = -deck.cabinEnd;
+  const step = pitch ?? deck.seatPitch;
+  // The row COUNT is read, not recomputed. Dividing the shell by the pitch
+  // gives 29.999999999999996 on this solve -- the pitch was derived from those
+  // same two numbers -- and flooring that quietly drops the last row. Only an
+  // overridden pitch has to be divided out, because then nothing states it.
+  const rows = pitch == null
+    ? Math.round(deck.cabinRows)
+    : Math.max(0, Math.floor(Math.abs(zEnd - zStart) / step + 1e-9));
+
+  // Held at a fixed HEIGHT rather than a fixed angle, for the same reason the
+  // row of titles is: the floor is level, so a window line referenced to it
+  // cannot climb with the section.
+  const y = fuselage.userData.shapeAt(zStart).r * Math.sin(angle * Math.PI / 180);
+
+  // Centred within the shell: the leftover after fitting whole rows is split
+  // between the two ends, so the row does not crowd the forward bulkhead and
+  // leave a gap at the back.
+  const used = rows * step;
+  const z0 = zStart - (Math.abs(zEnd - zStart) - used) / 2 - step / 2;
+
+  for (let i = 0; i < rows; i++) {
+    const w = fuselageArt(fuselage, {
+      texture, z: z0 - i * step, y, height, aspect: width / height,
+      offset: lift, nu: 6, nv: 6, name: `window${i}`,
+    });
+    group.add(w);
+  }
+
+  Object.assign(group.userData, {
+    isArt: true, rows, pitch: step, y, width, height,
+    zRange: [z0 - (rows - 1) * step, z0],
+    /** Declared so a page can say what it is showing without recomputing it. */
+    passengers: deck.passengers, seatsAbreast: deck.seatsAbreast,
+    perRow: 1,
+  });
+  return group;
+}
+
+/**
  * The material for one piece of artwork.
  *
  * Biased toward the camera by the same amounts the fuselage decals use: a few
@@ -601,7 +681,7 @@ const materials = new Map();
 function artMaterial(texture) {
   if (materials.has(texture)) return materials.get(texture);
   const m = new THREE.MeshStandardMaterial({
-    map: texture, transparent: true, alphaTest: 0.02,
+    map: texture ?? null, transparent: true, alphaTest: 0.02,
     roughness: 0.44, metalness: 0.0,
     polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
   });
