@@ -23,6 +23,7 @@ const E = await import(join(HERE, 'components/engines.js'));
 /** page -> the variants it can build */
 const PAGES = {
   'turbofan_test.html': [() => E.turbofan({}), () => E.bareTurbofan({})],
+  'pylon_test.html': [() => E.turbofan({}), () => E.bareTurbofan({})],
   'turbojet_test.html': [() => E.turbojet({})],
   'turboshaft_test.html': [() => E.turboshaft({})],
   'piston_test.html': [() => E.pistonEngine({})],
