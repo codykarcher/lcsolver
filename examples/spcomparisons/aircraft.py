@@ -1701,11 +1701,30 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         Izfuse >= ((fu.W_fuse + fu.W_payload_max) / fu.l_fuse
                    * (fu.x_wing ** 3. + vt.l_vt ** 3.) / (3. * g)),
         # Streamwise engine station: in the tailcone if rear-mounted, at the
-        # wing box if podded underwing.
+        # LOCAL WING LEADING EDGE if podded underwing.
+        #
+        # The old underwing bracket, 0.8*x_wing <= x_eng <= x_wing, had no
+        # wing geometry in it -- and engine weight forward is a free CG lever
+        # (it eases the aft-CG nose-load row), so the optimiser slammed
+        # x_eng onto the 0.8 floor: solved 14.32 m against a local leading
+        # edge at 17.38 m, an engine 3.1 m ahead of the wing. A real 737's
+        # fan face sits ~1-1.5 m ahead of the LE, which puts the engine
+        # REFERENCE station (CG of engine+nacelle, what x_eng arms in the
+        # weight and inertia rows) at the leading edge itself.
+        #
+        # x_LE at the engine's span: the box centre rides at 0.40c (TASOPT's
+        # Xaxis), the LE runs straight from the fuselage side eta_o*b/2, so
+        #   x_LE(y_eng) = x_wing - 0.40 c_root + (y_eng - eta_o b/2) tanLE,
+        # written all-positive. Hoburg's wing has no LE geometry, so the
+        # selectable legacy model keeps the old bracket.
         *( [xeng <= fu.x_shell2 + 1.00 * fu.l_cone,
             xeng >= fu.x_shell2 + 0.75 * fu.l_cone]
            if _rear else
-           [xeng <= fu.x_wing, xeng >= 0.8 * fu.x_wing] ),
+           ([xeng + 0.40 * wing.c_root
+                  + wing.eta_o[0] * (wing.b / 2) * wing.tan_Lambda_LE
+             == fu.x_wing + y_eng * wing.tan_Lambda_LE]   # [SP] SigEq
+            if wing_model == "tasopt" else
+            [xeng <= fu.x_wing, xeng >= 0.8 * fu.x_wing]) ),
 
         # ---- floor loading, BY FUSELAGE TYPE ---------------------------------
         # fusew.f branches on whether there is a centre support:
