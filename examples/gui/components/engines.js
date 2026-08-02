@@ -139,7 +139,7 @@ function spinner(rBase, len, material, zBase = 0) {
  * spanning it the two read as unrelated parts floating together.
  */
 export function turbofan({
-  rFan = 0.90, bypassRatio = 9, blades = 40, vanes = 40,
+  rFan = 0.90, bypassRatio = 9, length = null, blades = 40, vanes = 40,
 } = {}) {
   if (!(bypassRatio > 0)) throw new Error('turbofan: bypassRatio must be > 0');
 
@@ -157,10 +157,23 @@ export function turbofan({
   const rCore = R / Math.sqrt(bypassRatio + 1);
   const rHub = 0.62 * rCore;              // fan hub sits inside the core line
 
-  // Core length scales with the core, not the fan: tied to fan radius instead,
-  // a high-bypass engine would grow into a needle.
+  // `length` is the whole extent aft of the origin, plug tip included -- the
+  // same number reported as userData.length, so what you ask for is what you
+  // can measure. Left null it is derived, the core running 5.2 core radii:
+  // scaled off the core rather than the fan, because tied to fan radius a
+  // high-bypass engine would grow into a needle.
+  //
+  // Note the fan case is NOT stretched by this. Its length follows from fan
+  // chord and vane row, which are the fan's business; a longer engine is a
+  // longer core.
   const z0 = -0.30 * R;                   // core front, just behind the fan
-  const Lc = 5.2 * rCore;
+  const NOSE = -z0, TAIL = 1.40;          // length = NOSE + TAIL * Lc
+  const Lc = length == null
+    ? 5.2 * rCore
+    // A core shorter than about a diameter stops looking like a core, so a
+    // very short request is clamped and userData.length reports what was
+    // actually built rather than what was asked for.
+    : Math.max(1.2 * rCore, (length - NOSE) / TAIL);
   const zAft = z0 - Lc;
 
   const rotor = new THREE.Group();
@@ -255,7 +268,8 @@ export function turbofan({
 
   g.userData.rCore = rCore;
   g.userData.bypassRatio = bypassRatio;
-  return finish(g, -(zAft - 0.40 * Lc), rCaseOut, 'turbofan');
+  g.userData.coreLength = Lc;
+  return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');
 }
 
 /* ==================================================================== *
