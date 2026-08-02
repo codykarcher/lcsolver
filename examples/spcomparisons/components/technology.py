@@ -88,7 +88,10 @@ MODERN_COMPOSITE = Technology(
     sigma_cap=450e6,
     tau_web=300e6,
     rho_cap=1600.0,
-    opr_max=45.0,
+    # 60: the GE9X generation's overall pressure ratio. 45 was BINDING on
+    # the 787 -- the cycle wanted more, which is faithful to where that
+    # engine generation actually went.
+    opr_max=60.0,
     bpr_max=15.0,
     source='wingbox.py COMPOSITE as it stood',
 )

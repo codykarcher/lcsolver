@@ -83,7 +83,12 @@ ETAS = {
     "D82_LH2":       (0.9300, 0.9200, 0.8900, 0.9100, 0.9200),
     "CFM56":         (0.9005, 0.9306, 0.9030, 0.8731, 0.8851),
     "TASOPT_737800": (0.8948, 0.8800, 0.8700, 0.8990, 0.8890),
-    "GE90":          (0.9153, 0.9037, 0.9247, 0.9121, 0.9228),
+    # x1.01 uniform on the GE90 row: the deck stands in for a GEnx -- one
+    # engine generation newer than the GE90 it was fitted to -- and the
+    # 787's TSFC ran 11% over the real aircraft's with the old values and
+    # the OPR cap binding. Used only by the b787 class; the TASOPT-anchored
+    # decks (737, D8) are untouched.
+    "GE90":          (0.9245, 0.9127, 0.9339, 0.9212, 0.9320),
     "D82":           (0.9300, 0.9200, 0.8900, 0.9100, 0.9200),
 }
 

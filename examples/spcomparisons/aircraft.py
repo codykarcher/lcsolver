@@ -1797,14 +1797,16 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         2.0 * pi * fu.R_fuse + 4.0 * fu.theta_db * fu.R_fuse
             + 2.0 * fu.dR_fuse <= pi * d_eq_fuse,
         DAfuse >= k_fdrag * fu.l_fuse ** 0.9062 * d_eq_fuse ** 1.1036,
-        # The Mach term is SPaircraft's compressibility correction, retained
-        # for M above the fit's reference but FLOORED AT 1 below it: profile
-        # drag is friction-dominated and does not fall as M^2, and the D8 at
-        # M 0.70 against a 0.79 reference was buying a 22% fuselage drag
-        # discount from that scaling. Two lower bounds ARE the max().
-        Dfuse >= (0.5 * st.rho * st.V ** 2 * DAfuse
-                     * (st.M ** 2 / fu.M_fuseD ** 2)),
-        Dfuse >= 0.5 * st.rho * st.V ** 2 * DAfuse,
+        # NO MACH FACTOR, in either direction. The (M/M_fuseD)^2 term was
+        # SPaircraft's compressibility correction; TASOPT has no equivalent
+        # -- fusebl runs at each flight condition and its printed CDfuse is
+        # FLAT across the whole mission (measured: 0.00866 at every D8
+        # point, climb through cruise). Below the reference Mach the factor
+        # handed out a discount friction physics does not offer (floored
+        # earlier); above it, it charged a penalty with no source -- 19% on
+        # the 737's cruise (M 0.785 against the 0.72 reference) and 16% on
+        # the 787's (M 0.85). The fit's drag area stands on its own.
+        Dfuse == 0.5 * st.rho * st.V ** 2 * DAfuse,
         # BLI, TASOPT's way (cdsum.f:322): the airframe is credited the
         # ingested fraction of the FUSELAGE WAKE dissipation only,
         # dCD_BLI = -fBLIf * DAfwake/S, not a flat factor on total drag.
