@@ -47,22 +47,81 @@ export const circularSection = () => 1;
  * so they hold at any size. Numbers are off a 737-800 / A320: 37-38 m long,
  * 3.8-4.0 m across, so a fineness ratio right around 10.
  *
- * The two taper laws are both `(1 - x^A)^B`. That family is worth the two
- * exponents: B < 1 makes the tip round rather than pointed, A > 1 makes the
- * slope vanish where the taper meets the barrel. So the nose and the tailcone
- * each blend into the constant section with no crease, which is the thing you
- * notice immediately if it is missing.
+ * Both taper laws come from `(1 - x^A)^B`. B < 1 makes the end round rather
+ * than pointed, A > 1 makes the slope vanish where the taper meets the barrel,
+ * so neither end blends in with a crease. The tailcone still takes both
+ * exponents directly; the nose does not, because B there is pinned at 1/2 and A
+ * is solved for from the tip radius -- see noseRadiusExponent below.
  */
 const JET = {
-  fineness:  10.1,   // overall length / diameter
-  noseD:      1.70,  // nose length, in diameters
-  tailD:      2.90,  // tailcone length, in diameters
-  noseA: 2.2, noseB: 0.55,
+  fineness:   10.1,  // overall length / diameter
+  noseD:       1.70, // nose length, in diameters
+  tailD:       2.90, // tailcone length, in diameters
+  noseRadius:  0.50, // RADIUS OF CURVATURE at the nose point, in radii
+  tipFlat:     0.18, // see noseCentre(): how the tip cap is kept spherical
   tailA: 1.6, tailB: 0.75,
-  tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
-  keelHold:   0.85,  // fraction of the NOSE taper taken off the crown
-  crownHold:  1.00,  // fraction of the TAILCONE taper taken off the belly
+  tipR:        0.10, // tailcone tip radius, in radii -- the APU exhaust
+  keelHold:    0.85, // fraction of the NOSE taper taken off the crown
+  crownHold:   1.00, // fraction of the TAILCONE taper taken off the belly
 };
+
+/**
+ * The nose profile: a sphere of radius `rho` at the point, faired out to the
+ * barrel.
+ *
+ * Asking for the nose by its tip RADIUS rather than by an exponent is worth a
+ * little algebra, because a radius is a thing you can picture and an exponent
+ * is not. The family r = R*(1 - (1-t)^A)^B turns out to give it up cheaply:
+ * near the point, (1-t)^A ~ 1 - At, so
+ *
+ *     r ~ R * (A t)^B      against a sphere's      r = sqrt(2 rho |z|)
+ *
+ * The sphere's square-root is B = 1/2 exactly. So B is not a free parameter at
+ * all -- it is 1/2, or the tip is not spherical -- and with it fixed, matching
+ * the coefficients gives the tip radius outright:
+ *
+ *     rho = R^2 A / (2 * lNose)      i.e.   A = 2 rho lNose / R^2
+ *
+ * One knob, and it is the one that means something. A also sets how the taper
+ * meets the barrel, and that comes out right on its own: a blunt nose needs a
+ * large A, which is a soft join, and A stays above 1 -- the condition for no
+ * crease -- for any tip radius above about 0.15 of the body radius.
+ */
+function noseRadiusExponent(rho, lNose, radius) {
+  return Math.max(1.02, 2 * rho * lNose / (radius * radius));
+}
+
+/**
+ * How far the section centre has climbed by the time the body has grown to a
+ * fraction `u` of full radius, as a fraction of the total climb.
+ *
+ * This exists because a spherical tip and a dead-straight keel are not quite
+ * compatible, and the obvious ways of reconciling them both fail.
+ *
+ * Tie the centre to the radius -- yc proportional to (R - r), the tailcone's
+ * own rule -- and the keel is straight and monotonic, but dyc/dz inherits the
+ * sphere's vertical tangent at the point. The tip then comes out as a beak:
+ * radius of curvature 3.4 rho along the crown and 0.02 rho along the keel,
+ * which is a crease under the nose rather than a nose.
+ *
+ * Tie it to the station instead -- a smoothstep in z -- and the tip is properly
+ * spherical, but the centre keeps climbing after the section has stopped
+ * growing, and the keel develops a wobble: it dips, rises and falls again.
+ *
+ * So: tie it to the radius, but ramp the rate in from zero over the first
+ * `flat` of the growth. Near the point the centre is stationary, so the cap is
+ * a true sphere; past the ramp the rate is constant, so the keel is straight.
+ * The ramp integrates a smoothstep, making the result C2 at the junction.
+ *
+ * The rate outside the ramp is hold/(1 - flat/2), which must stay below 1 or
+ * the keel turns back on itself -- that, and not taste, is what caps `hold`.
+ */
+function noseCentre(u, hold, flat) {
+  const m = hold / (1 - flat / 2);
+  return u >= flat
+    ? m * (u - flat / 2)
+    : m * (u ** 3 / flat ** 2 - u ** 4 / (2 * flat ** 3));
+}
 
 /**
  * Build the r(z) and yc(z) pair for a three-part body: taper, barrel, taper.
@@ -78,6 +137,10 @@ const JET = {
  * into the other one; at 0 the section stays centred and both lines close in
  * symmetrically. Nothing else changes between the two ends.
  *
+ * The nose runs that rate through noseCentre() rather than applying it flat,
+ * which holds the centre still over the first sliver of the growth so the point
+ * can be a true sphere. Everywhere past the tip it is the plain rule above.
+ *
  * Aft that is structural. The cabin ceiling and the fin root both run along the
  * top of the tube, so nothing up there is free to move, while the space under
  * the aft floor is exactly what gets given up for rotation clearance.
@@ -89,10 +152,11 @@ const JET = {
  * forebody bending downward, which is what a centreline offset applied
  * independently of the taper produces.
  *
- * Keeping hold at or below 1 makes it impossible for either end to bulge past
- * the barrel: yc -/+ r is monotonic in r over [0, radius], running from
+ * Keeping the rate at or below 1 makes it impossible for either end to bulge
+ * past the barrel: yc -/+ r is monotonic in r over [0, radius], running from
  * -/+ hold*radius at the point to -/+ radius at the join, so the nose cannot
- * hang below the belly nor the tailcone rise above the roof.
+ * hang below the belly nor the tailcone rise above the roof. Forward the rate
+ * is hold/(1 - tipFlat/2), which is why keelHold is clamped a little under 1.
  *
  * Both are C1 at their join for free, whatever the blend exponents are set to,
  * because dr/dz already vanishes there -- so no setting of the sliders can put
@@ -110,14 +174,22 @@ function jetShape({ length, radius, p = JET }) {
   const zTail = -(length - lTail);         // tailcone begins here
   const rTip  = p.tipR * radius;
 
+  const rho = p.noseRadius * radius;
+  const noseA = noseRadiusExponent(rho, lNose, radius);
+  // Above hold = 1 - tipFlat/2 the keel turns back on itself. Clamp rather than
+  // let a slider produce a shape the geometry cannot support, and publish what
+  // was actually used so the read-out cannot claim otherwise.
+  const keelHold = Math.min(p.keelHold, 0.995 * (1 - p.tipFlat / 2));
+
   function at(z) {
     if (z > zNose) {                                     // nose
       const t = Math.min(1, Math.max(0, -z / lNose));
-      // Closes to a POINT, not to an area -- but noseB < 1 gives r a vertical
-      // tangent there, so crown and keel both arrive at the tip vertically and
-      // the profile is round rather than pointed.
-      const r = radius * Math.pow(1 - Math.pow(1 - t, p.noseA), p.noseB);
-      return { r, yc: -p.keelHold * (radius - r) };
+      // Exponent 1/2 is not a choice: it is what makes the point spherical.
+      const r = radius * Math.sqrt(1 - Math.pow(1 - t, noseA));
+      return {
+        r,
+        yc: radius * (noseCentre(r / radius, keelHold, p.tipFlat) - keelHold),
+      };
     }
     if (z > zTail) return { r: radius, yc: 0 };          // barrel
     const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone
@@ -125,7 +197,8 @@ function jetShape({ length, radius, p = JET }) {
     return { r, yc: p.crownHold * (radius - r) };
   }
 
-  return { at, length, radius, lNose, lTail, zNose, zTail, rTip };
+  return { at, length, radius, lNose, lTail, zNose, zTail, rTip,
+           rho, noseA, keelHold };
 }
 
 /* ---- lofting ----------------------------------------------------------- */
@@ -498,7 +571,9 @@ export function jetlinerFuselage({
 
   Object.assign(g.userData, {
     length: L, radius, section, shapeParams: p,
-    keelHold: p.keelHold, crownHold: p.crownHold,
+    keelHold: shape.keelHold, crownHold: p.crownHold,
+    /** What the tip radius and derived blend exponent actually came out as. */
+    noseRadius: shape.rho, noseExponent: shape.noseA,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),

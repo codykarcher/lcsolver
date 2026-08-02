@@ -90,10 +90,43 @@ for (const c of CASES) {
   if (inward) bad(`${inward} vertex normals face inward`);
 
   /* 3. applied patches sit proud ---------------------------------------- */
-  // Every window, door and pane is a lift off the surface. Measure each vertex
-  // against the surface radius at its own station and angle.
+  // Every window, door and pane is placed by lifting off the surface along the
+  // local normal, so the standoff should be exactly the lift, everywhere.
+  //
+  // It has to be measured as a true PERPENDICULAR distance. Comparing "how far
+  // out from the centreline" against "the body radius at this station" is only
+  // the same thing where the surface is parallel to the axis; on a surface of
+  // slope m it over-reads by sqrt(1 + m^2), because the lift moved the vertex
+  // in z as well as outward. That is harmless on the barrel and wrong by a
+  // factor of four on a blunt nose -- which is exactly what this check reported
+  // the first time the nose was given a real tip radius.
+  //
+  // So: minimise the distance from the vertex to the section circle over
+  // station, coarse then fine. A handful of thousand vertices, once.
   const lift = u.radius * 0.004;
-  let sunk = 0, floating = 0, off = 0, patches = 0;
+  const toSurface = (v) => {
+    const gap = (z) => {
+      const { r, yc } = u.shapeAt(z);
+      return Math.hypot(z - v.z, Math.hypot(v.x, v.y - yc) - r);
+    };
+    let best = Infinity, bz = v.z;
+    const span = u.radius * 2;
+    for (let k = -40; k <= 40; k++) {
+      const z = Math.min(0, Math.max(-u.length, v.z + span * k / 40));
+      const g = gap(z);
+      if (g < best) { best = g; bz = z; }
+    }
+    for (let step = span / 40; step > 1e-5; step /= 4) {
+      for (let k = -4; k <= 4; k++) {
+        const z = Math.min(0, Math.max(-u.length, bz + step * k / 4));
+        const g = gap(z);
+        if (g < best) { best = g; bz = z; }
+      }
+    }
+    return best;
+  };
+
+  let sunk = 0, floating = 0, off = 0, patches = 0, worstStand = 0;
   const v = new THREE.Vector3();
   for (const child of body.children.slice(1)) {
     if (!child.isMesh || !child.geometry.getAttribute('position')) continue;
@@ -102,16 +135,12 @@ for (const c of CASES) {
     const p = child.geometry.getAttribute('position');
     for (let i = 0; i < p.count; i++) {
       v.fromBufferAttribute(p, i);
-      // Tolerance of one lift at each end: near a tip the outward normal
-      // points along the axis, so lifting a patch off the skin there legally
-      // carries it a hair past the nose. The radome does exactly this.
+      // Tolerance of one lift at each end: at a tip the outward normal points
+      // along the axis, so lifting a patch off the skin there legally carries
+      // it a hair past the nose. The radome does exactly this.
       if (v.z > lift || v.z < -u.length - lift) { off++; continue; }
-      // Within a few lifts of the nose the surface is normal to the axis and
-      // dr/dz is unbounded, so "distance out from the centreline at this z" is
-      // not a measure of how proud anything is. Only the radome reaches here.
-      if (v.z > -4 * lift) continue;
-      const { r, yc } = u.shapeAt(v.z);
-      const d = Math.hypot(v.x, v.y - yc) - r;
+      const d = toSurface(v);
+      worstStand = Math.max(worstStand, d);
       if (d < lift * 0.15) sunk++;
       if (d > lift * 3.0) floating++;
     }
@@ -168,6 +197,29 @@ for (const c of CASES) {
   const joinYc = Math.abs(u.shapeAt(u.cabinZ[0]).yc);
   if (joinYc > 1e-6) bad(`centreline is ${joinYc.toFixed(4)} off axis at the nose join`);
 
+  /* 5c. the point is a sphere of the radius asked for -------------------- */
+  // The nose is specified by its tip radius of curvature, so measure it -- and
+  // measure it on BOTH meridians, because the failure this replaced was a tip
+  // that had the right curvature over the crown and a crease under the keel.
+  // For a circle tangent to the axis, a lateral offset d from the tip sits at
+  // an axial depth d^2/(2 rho); invert that at a small d.
+  const tipRho = (which) => {
+    const yTip = u.shapeAt(0).yc, d = 0.016 * u.radius;
+    let lo = 0, hi = -u.noseLength;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (Math.abs(u[which](mid) - yTip) < d) lo = mid; else hi = mid;
+    }
+    return d * d / (2 * Math.abs(lo));
+  };
+  const rhoC = tipRho('crownAt'), rhoK = tipRho('keelAt');
+  for (const [what, got] of [['crown', rhoC], ['keel', rhoK]]) {
+    if (Math.abs(got / u.noseRadius - 1) > 0.08)
+      bad(`${what} tip radius ${got.toFixed(3)} vs ${u.noseRadius.toFixed(3)} asked`);
+  }
+  if (Math.abs(rhoK / rhoC - 1) > 0.08)
+    bad(`tip is not round: keel/crown curvature ratio ${(rhoK / rhoC).toFixed(3)}`);
+
   /* 6. no degenerate triangles ------------------------------------------ */
   // Slivers of near-zero area are what a collapsed grid row leaves behind, and
   // they are the classic source of shards flickering over a surface. The skin's
@@ -217,6 +269,7 @@ for (const c of CASES) {
   }
   if (overlaps) bad(`${overlaps} pairs of decals overlap on the skin`);
 
+  console.log(`  standoff: lift ${lift.toFixed(4)}, worst ${worstStand.toFixed(4)}`);
   console.log(`  ${patches} applied patches, volume ${vol.toFixed(2)}, ` +
               `${open} open edges, ${inward} inward normals, ` +
               `${slivers} slivers, ${overlaps} overlaps`);
@@ -224,6 +277,9 @@ for (const c of CASES) {
               `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
               `nose: keel moves ${keelDrift.toFixed(3)}/${keelBudget.toFixed(3)}, ` +
               `crown falls ${crownFall.toFixed(2)}, tip y ${u.shapeAt(0).yc.toFixed(2)}`);
+  console.log(`  tip radius asked ${u.noseRadius.toFixed(3)}, ` +
+              `crown ${rhoC.toFixed(3)}, keel ${rhoK.toFixed(3)} ` +
+              `(round to ${(100 * Math.abs(rhoK / rhoC - 1)).toFixed(1)}%)`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nPASS: bodies are closed, outward and clean at the joins');

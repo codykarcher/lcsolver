@@ -56,12 +56,10 @@
   <h2>nose</h2>
   <div class="row"><label for="noseD">length &middot; diameters</label><output id="oNoseD"></output></div>
   <input type="range" id="noseD" min="0.60" max="3.50" step="0.01" value="1.70">
-  <div class="row"><label for="noseA">blend into barrel</label><output id="oNoseA"></output></div>
-  <input type="range" id="noseA" min="1.00" max="4.50" step="0.01" value="2.20">
-  <div class="row"><label for="noseB">tip fullness</label><output id="oNoseB"></output></div>
-  <input type="range" id="noseB" min="0.25" max="1.20" step="0.01" value="0.55">
+  <div class="row"><label for="noseRadius">tip radius &middot; radii</label><output id="oNoseRadius"></output></div>
+  <input type="range" id="noseRadius" min="0.12" max="1.30" step="0.01" value="0.50">
   <div class="row"><label for="keelHold">keel hold</label><output id="oKeelHold"></output></div>
-  <input type="range" id="keelHold" min="0.00" max="1.00" step="0.01" value="0.85">
+  <input type="range" id="keelHold" min="0.00" max="0.90" step="0.01" value="0.85">
 
   <h2>tailcone</h2>
   <div class="row"><label for="tailD">length &middot; diameters</label><output id="oTailD"></output></div>
@@ -162,7 +160,7 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 /** Every slider that feeds the shape law, by the name the law knows it by. */
-const SHAPE = ['fineness', 'noseD', 'noseA', 'noseB', 'keelHold',
+const SHAPE = ['fineness', 'noseD', 'noseRadius', 'keelHold',
                'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
 const DEFAULTS = Object.fromEntries(
   [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
@@ -245,6 +243,11 @@ function build() {
   el('oRad').textContent = radius.toFixed(2);
   for (const k of SHAPE) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
     num(k).toFixed(k === 'tipR' ? 3 : 2);
+  // The tip radius is asked for in radii and delivered in metres, and the blend
+  // exponent is solved for rather than set -- show both, or the one knob that
+  // now drives the nose is the one thing you cannot read back.
+  el('oNoseRadius').textContent =
+    `${num('noseRadius').toFixed(2)} = ${body.userData.noseRadius.toFixed(2)}m`;
 
   el('readout').innerHTML =
     `L <span>${L.toFixed(2)}</span> &middot; D <span>${(2 * radius).toFixed(2)}</span> ` +
@@ -256,6 +259,8 @@ function build() {
     `<span>${u.crownAt(-L).toFixed(2)}</span> ` +
     `&middot; keel <span>${u.keelAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
     `<span>${u.keelAt(-L).toFixed(2)}</span><br>` +
+    `tip radius <span>${u.noseRadius.toFixed(2)}</span> ` +
+    `(blend exp <span>${u.noseExponent.toFixed(2)}</span>)<br>` +
     `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
     `(keel <span>${u.keelAt(u.cabinZ[0]).toFixed(2)}</span> &rarr; ` +
     `<span>${u.keelAt(0).toFixed(2)}</span>) &middot; ` +
