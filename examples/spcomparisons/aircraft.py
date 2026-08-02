@@ -407,6 +407,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Wengsys = V("W_engsys", 1e4, "lbf", "total engine system weight")
     xeng = V("x_eng", 32.0, "m", "engine x-location")
     y_eng = V("y_eng", 2.0, "m", "engine moment arm")
+    # Lateral clearance between the retracted main gear and the inboard edge
+    # of the nacelle, as a multiple of the fan radius. 1.2 puts the engine
+    # centreline 1.2 radii outboard of the gear leg -- i.e. the nacelle wall
+    # clears the leg by ~20% of the radius plus whatever the cowl adds.
+    k_eng_clear = C("k_eng_clear", 1.2, "-",
+                    "engine-centreline clearance outboard of the main gear, "
+                    "in fan radii")
 
     # ---- aircraft-level constants ------------------------------------------
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
@@ -1368,7 +1375,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         #     lateral tip-over -> y_m -> y_eng -> w_fuse -> R_fuse
         # and the double-bubble radius came out at 3.02 m against TASOPT's
         # 1.715. The landing gear track was sizing the cabin.
-        *([] if arch.rear_engines else [y_eng >= lg.y_m]),
+        # ... and not merely OUTBOARD of the gear but clear of it: at
+        # y_eng == y_m the nacelle centreline sits ON the gear leg and the
+        # two occupy the same space. The engine centreline stands off by
+        # k_eng_clear fan radii (see the constant at its declaration).
+        *([] if arch.rear_engines
+          else [y_eng >= lg.y_m + k_eng_clear * eng.d_f / 2.0]),
         # MAIN GEAR TRACK -- set by retraction into the fuselage.
         #
         # The gear stows into the fuselage, so the axle has to sit within the
