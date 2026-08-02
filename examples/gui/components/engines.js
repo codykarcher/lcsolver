@@ -279,15 +279,18 @@ export function turbofan({
     g.add(ogv);
   }
 
-  // Core body. A spline through five stations rather than straight segments:
-  // it swells through the turbine and then falls away to the outlet with the
-  // curvature staying continuous, where a piecewise profile creases at every
-  // joint and catches the light as a ring.
+  // Core body. A spline through six stations rather than straight segments:
+  // it necks in behind the fan, swells through the turbine and falls away to
+  // the outlet with the curvature staying continuous, where a piecewise
+  // profile creases at every joint and catches the light as a ring. Only the
+  // inlet station is load-bearing -- it is what bypass ratio sets -- the rest
+  // are shape.
   const ctrl = [
-    new THREE.Vector2(z0, rCore),
-    new THREE.Vector2(z0 - 0.28 * Lc, 1.04 * rCore),
-    new THREE.Vector2(z0 - 0.56 * Lc, 1.13 * rCore),   // turbine
-    new THREE.Vector2(z0 - 0.80 * Lc, 1.03 * rCore),
+    new THREE.Vector2(z0, rCore),                      // inlet, sets the BPR
+    new THREE.Vector2(z0 - 0.11 * Lc, 0.86 * rCore),   // waist behind the fan
+    new THREE.Vector2(z0 - 0.36 * Lc, 0.99 * rCore),
+    new THREE.Vector2(z0 - 0.63 * Lc, 1.17 * rCore),   // turbine, aft of before
+    new THREE.Vector2(z0 - 0.85 * Lc, 1.04 * rCore),
     new THREE.Vector2(zAft, 0.78 * rCore),             // outlet
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
