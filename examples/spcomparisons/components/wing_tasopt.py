@@ -126,7 +126,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                     rho_fuel=817.0, material=None, sweep_pricing=False,
                     polar=YORK_C, W_engine=None, eta_break=ETA_BREAK,
                     tau_max=0.14, lam_s_pin=None, lam_t_pin=None,
-                    f_L_total=1.0, f_slat=0.1):
+                    f_L_total=1.0, f_slat=0.1, e_model="nita"):
     """Add the cranked-planform wing. Returns ``(group, constraints)``.
 
     Same signature and same exposed names as ``wing.add_wing``, so
@@ -272,9 +272,15 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         # is a free variable and a higher one is pure profit -- induced drag
         # goes as 1/e -- which is the same defect that let q, taper and x_n
         # drift elsewhere in this model.
-        fl >= (0.0524 * lam_t ** 4 - 0.15 * lam_t ** 3 + 0.1659 * lam_t ** 2
-               - 0.0706 * lam_t + 0.0119),
-        e * (1 + fl * AR) <= 1,
+        # e_model="nita": the Nita-Scholz taper correlation, as wing.py.
+        # e_model="trefftz": e is left FREE HERE and closed by the
+        # aircraft-level Trefftz-plane surrogate rows (they need the tail
+        # and fuselage, which do not exist yet when the wing builds). The
+        # flag is a contract: selecting "trefftz" and not adding those rows
+        # leaves e dangling.
+        *([fl >= (0.0524 * lam_t ** 4 - 0.15 * lam_t ** 3
+                  + 0.1659 * lam_t ** 2 - 0.0706 * lam_t + 0.0119),
+           e * (1 + fl * AR) <= 1] if e_model == "nita" else []),
         # ---- chord slopes, and the leading edge --------------------------
         # D is defined as -dc/dy, positive for a chord that decreases
         # outboard, so every coefficient below stays positive.

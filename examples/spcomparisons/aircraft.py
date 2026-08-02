@@ -208,7 +208,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                  # so its induced drag charges total lift, TASOPT's basis.
                  "f_L_total": 1.195 if arch.double_bubble else 1.02,
                  # d82.tas fslat = 0.000: the D8 has no slats.
-                 "f_slat": 0.0 if arch.double_bubble else 0.1}
+                 "f_slat": 0.0 if arch.double_bubble else 0.1,
+                 "e_model": "trefftz"}
                 if wing_model == "tasopt" else {})
     wing, c = _wing_add(f, N, st, sweep_deg=sweep_deg, material=_mat,
                         sweep_pricing=sweep_pricing, polar=polar,
@@ -2678,6 +2679,53 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # wing sees it through cos^2(Lambda). Pinned it was consistent with the
     # D8.2's 13.237 degrees only.
     cons += [CLwmax * wing.cos_Lambda ** 2 == 2.15]
+
+    # ---- Oswald efficiency from the TREFFTZ PLANE (trefftz1, surrogate) ----
+    # cdsum.f computes CDi by a discrete Trefftz-plane solve over the wing
+    # (cranked loading, fuselage carryover image) and the tail (download,
+    # vertical offset). That solve is not GP-representable, so -- the fusebl
+    # recipe -- trefftz1 itself was swept 420 points over the study's ranges
+    # (driver: tpsweep.f, mirroring cdsum.f:386-476 panel-for-panel;
+    # validated on the D8.2 cruise point: e 0.892-0.913 for the two loading
+    # bases against the printed 0.9051) and d = 1/e - 1 fitted as a 2-term
+    # posynomial in log space: max error 2.0%, rms 0.7% inside the design
+    # region (gam_t 0.10-0.35, gam_s 0.70-1.15, eta_o 0.08-0.15, eta_s
+    # 0.27-0.37, |CLh|Sh/S/CL 0.004-0.022, bh/b 0.32-0.43). The valley --
+    # e has an interior optimum in loading taper a monomial cannot hold --
+    # is exactly what the two opposed gam_s exponents (+/-4.3, +5.1) carry.
+    if wing_model == "tasopt":
+        from components.wingbox_tasopt import ETA_S as _ETA_S_W
+        from components.wingbox_tasopt import RCLS as _RCLS_C, RCLT as _RCLT_C
+        _icr = N - 2   # cruise segment, where cdsum's e is evaluated
+        _RCLS, _RCLT = _RCLS_C, _RCLT_C
+        ETA_S_W = _ETA_S_W
+        _m1 = C("m_unit_tp", 1.0, "m", "unit length for the dz feature")
+        _gs = wing.lambda_s * _RCLS
+        _gt = wing.lambda_ * _RCLT
+        _dz = C("dz_tail_wing",
+                (13.0 + 2.0) * 0.3048 if arch.double_bubble
+                else (0.0 + 5.5) * 0.3048, "m",
+                "HT-to-wing vertical gap in the Trefftz plane (deck z's)")
+        _clhf = V("CLh_frac_tp", 0.01, "-",
+                  "|C_Lh| Sh/S / CL at cruise, Trefftz surrogate input")
+        _dtp = V("d_trefftz", 0.08, "-", "1/e - 1, Trefftz surrogate")
+        _CLtot = Ltow * wing.C_L[_icr]
+        cons += [
+            _clhf == (ht.C_L_ht[_icr] * ht.S_ht
+                      / (wing.S * _CLtot)),
+            _dtp >= 0.00349709
+                * _gs ** -4.2562 * _gt ** -0.9435 * wing.eta_o[_icr] ** 0.4532
+                * ETA_S_W ** -1.6012 * _clhf ** 0.0047
+                * (ht.b_ht / wing.b) ** 0.0675 * (_dz / _m1) ** 0.1187
+                * _CLtot ** -0.1697
+                + 0.0293595
+                * _gs ** 5.1283 * _gt ** -1.2154 * wing.eta_o[_icr] ** 0.4852
+                * ETA_S_W ** 0.3482 * _clhf ** 0.1591
+                * (ht.b_ht / wing.b) ** -0.3664 * (_dz / _m1) ** 0.0235
+                * _CLtot ** 0.1383,
+            # e wants to be large (CDi ~ 1/e), so the pair binds.
+            wing.e * (1.0 + _dtp) <= 1.0,
+        ]
 
     # ---- CG envelope from cabin loading (TASOPT cglpay) ----------------------
     # cglpay asks how much payload can be loaded from each end of the cabin
