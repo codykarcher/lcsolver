@@ -36,7 +36,8 @@ for i in range(5):
         # solved values are unit-corrected to base SI: already Pa
         P0=vals_A[f"FS_P_atm[{i}]"],
         M=vals_A[f"FS_M[{i}]"],
-        V=vals_A[f"FS_V[{i}]"],
+        # FS_V is in KNOTS (house rule 8)
+        V=vals_A[f"FS_V[{i}]"] * 0.514444,
         F=vals_A[f"Eng_F[{i}]"] * N_LBF,     # stored lbf -> N
     ))
 for i, sg in enumerate(segs):
@@ -221,65 +222,108 @@ free_vals["Eng_A_2"] = A2v
 free_vals["Eng_A_25"] = A25v
 free_vals["Eng_d_f"] = (4 * A2v / (_math.pi * (1 - 0.30**2))) ** 0.5
 free_vals["Eng_d_LPC"] = (4 * A25v / (_math.pi * (1 - 0.60**2))) ** 0.5
+# per-segment interface variables must be B-CONSISTENT, not deck values:
+# the deck's u6/u8/m_fan differ 10-23% from the SP cycle's and loading
+# them seeded the interface rows violated.
+seg_iface = {}
+for i in range(5):
+    t = "" if i == i_des else f"s{i}_"
+    seg_iface[f"Eng_cyc_T0_{i}"] = segs[i]['T0']
+    seg_iface[f"Eng_cyc_P0_{i}"] = segs[i]['P0']
+    seg_iface[f"Eng_cyc_u0_{i}"] = segs[i]['V']
+    seg_iface[f"Eng_u_6[{i}]"] = vals_B[t + "V_core"]
+    seg_iface[f"Eng_u_8[{i}]"] = vals_B[t + "V_byp"]
+    seg_iface[f"Eng_m_fan[{i}]"] = vals_B[t + "W"]
+    seg_iface[f"Eng_T_t_4[{i}]"] = vals_B[t + "Tt4"]
 for v in cm.component_data_objects(pyo.Var):
     n = v.name
     if n.startswith("Eng_TSFC["):
         i = int(n[len("Eng_TSFC["):-1])
         v.set_value(float(tsfc_map[i]))
+    elif n in seg_iface:
+        v.set_value(float(seg_iface[n]))
     elif n in free_vals:
         v.set_value(float(free_vals[n]))
 
 print(f"  built + warmed: A-values {n_set_A}, B-values {n_set_B} "
       f"({time.time()-t0:.0f}s)", flush=True)
 
-# coupling continuation, pass 1: PIN the flight state at the stage-A
-# profile with ROWS (var.fix() is ignored by the detector, exactly like
-# variable bounds -- measured: the "frozen" pass reproduced the free
-# pass byte for byte, moving fixed variables to 371 K). Rows are the only
-# thing every layer of this stack respects.
+# coupling continuation, staged: pin flight state + thrust profile, then
+# release thrust, then release everything. Each pass rebuilds fresh (pin
+# rows cannot be removed once added) and warm-starts from the previous
+# pass. var.fix() and variable bounds are both ignored by the detector;
+# ROWS are the only pinning mechanism every layer respects.
 from pyomo.environ import units as _u
-n_pin = 0
-pin_rows = []
-for v in cm.component_data_objects(pyo.Var):
-    if v.name.startswith("FS_") and v.value and v.value > 0:
-        vu = _u.get_units(v)
-        pin_rows.append(v == float(pyo.value(v)) * (vu if vu is not None
+
+def build_warmed(source_vals):
+    cm_ = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
+                                        seed="reference"))
+    for v in cm_.component_data_objects(pyo.Var):
+        n = v.name
+        if n in source_vals and source_vals[n] and source_vals[n] > 0:
+            v.set_value(float(source_vals[n]))
+    return cm_
+
+def snapshot(cm_, st_, x):
+    for v, val in zip(st_["variables"], x):
+        v.set_value(float(val))
+    return {v.name: float(pyo.value(v))
+            for v in cm_.component_data_objects(pyo.Var)}
+
+def add_pins(cm_, pred):
+    rows, n_ = [], 0
+    for v in cm_.component_data_objects(pyo.Var):
+        if pred(v.name) and v.value and v.value > 0:
+            vu = _u.get_units(v)
+            rows.append(v == float(pyo.value(v)) * (vu if vu is not None
                                                     else 1.0))
-        n_pin += 1
-cm.ConstraintList(pin_rows)
-print(f"  pass 1: {n_pin} flight-state variables pinned by rows",
-      flush=True)
-st = structure_detector(cm)
+            n_ += 1
+    cm_.ConstraintList(rows)
+    return n_
+
 opts = SIAOptions(max_iterations=400)
 opts.stationarity_tolerance = 1e-5
 opts.condense_numerator = True
 opts.ipopt_options = dict(opts.ipopt_options, tol=1e-9,
                           constr_viol_tol=1e-9)
-res = solve_sia(st, options=opts, presolve=False)
-print(f"  pass 1: converged={res.converged} it={res.iterations}", flush=True)
-if res.converged:
-    pass1_vals = {}
-    for v, val in zip(st["variables"], res.x):
-        v.set_value(float(val))
-    for v in cm.component_data_objects(pyo.Var):
-        pass1_vals[v.name] = float(pyo.value(v))
-    print("  pass 2: rebuilding without pins, warm from pass 1",
-          flush=True)
-    cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
-                                       seed="reference"))
-    for v in cm.component_data_objects(pyo.Var):
-        if v.name in pass1_vals and pass1_vals[v.name] > 0:
-            v.set_value(pass1_vals[v.name])
+
+# assemble the initial warm source from A + B (already set on cm)
+warm0 = {v.name: float(pyo.value(v))
+         for v in cm.component_data_objects(pyo.Var)
+         if pyo.value(v, exception=False) and pyo.value(v) > 0}
+
+_DESIGN = {"Eng_cyc_pi_f_D", "Eng_cyc_pi_lc_D", "Eng_cyc_pi_hc_D",
+           "Eng_cyc_BPR_D", "Eng_cyc_eff_fan_D", "Eng_cyc_Tt4"}
+# Pin only the INDEPENDENT mission coordinates (altitude and Mach) plus
+# thrusts and design variables: pinning all 65 FS_* variables duplicated
+# the flight-state block's own internal equality rows -- LICQ death, house
+# rule 2 -- and the solver drifted off a fully-determined manifold.
+_prof = lambda n: (n.startswith("FS_h[") or n.startswith("FS_M[")
+                   or n.startswith("Eng_F["))
+passes = [
+    ("prof+D", lambda n: _prof(n) or n in _DESIGN),
+    ("prof", _prof),
+    ("free", None),
+]
+src = warm0
+res = None
+for label, pred in passes:
+    cm = build_warmed(src)
+    if pred is not None:
+        n_p = add_pins(cm, pred)
+    else:
+        n_p = 0
     st = structure_detector(cm)
     res = solve_sia(st, options=opts, presolve=False)
-print(f"  converged={res.converged} it={res.iterations} "
-      f"({time.time()-t0:.0f}s total {time.time()-t_all:.0f}s)")
-print(f"  status: {str(res.status)[:200]}")
-if not res.converged:
-    rep = getattr(res, "report", None)
-    if rep:
-        print(str(rep)[:2500])
-    sys.exit(1)
+    print(f"  pass {label:5s} ({n_p} pinned): converged={res.converged} "
+          f"it={res.iterations}", flush=True)
+    if not res.converged:
+        print("  status:", str(res.status)[:160])
+        rep = getattr(res, "report", None)
+        if rep:
+            print(str(rep)[:1600])
+        sys.exit(1)
+    src = snapshot(cm, st, res.x)
 
 for v, val in zip(st["variables"], res.x):
     v.set_value(float(val))

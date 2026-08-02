@@ -146,7 +146,8 @@ class _EnginePins:
 
 
 def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
-                  Nclimb=3, seg_choked=None):
+                  Nclimb=3, seg_choked=None, debug_float_conds=None,
+                  debug_skip=frozenset()):
     """Add the rubber engine. Returns ``(group, cons)`` with the same
     attribute surface the aircraft reads from the deck engine."""
     eng = f.group("eng_sp", prefix=prefix)
@@ -198,14 +199,39 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         # atmosphere is below 2 kPa or above 200 kPa.
         P0g_raw = float(pyo.value(state.P_atm[i]))
         P0g = P0g_raw * 1e3 if P0g_raw < 2000.0 else P0g_raw
-        u0g = float(pyo.value(state.V[i]))
+        # FS_V is in KNOTS (house rule 8; declared "kts" and NOT rescaled
+        # by the unit corrector, unlike kPa->Pa which is). Feeding the
+        # knots magnitude as m/s put Tt0 at 321 K and was the entire
+        # "spurious attractor" the coupled solves kept finding.
+        KT2MS = 0.514444
+        u0g = float(pyo.value(state.V[i])) * KT2MS
         MNg = float(pyo.value(state.M[i]))
         ch_core, ch_byp = (seg_choked[i] if seg_choked is not None
                            else ((True, True) if i >= Nclimb
                                  else (False, True)))
-        c = dict(T0=state.T_atm[i] / units.K,
-                 P0=state.P_atm[i] / units.Pa,
-                 V0=state.V[i] / (units.m / units.s),
+        if debug_float_conds is not None:
+            # bisection hook: pin conditions as plain numbers, exactly the
+            # validated standalone structure
+            fc = debug_float_conds[i]
+            c = dict(T0=fc['T0'], P0=fc['P0'], V0=fc['V'], MN=fc['M'],
+                     mode=mode, choked_core=ch_core, choked_byp=ch_byp)
+            c['u0'] = c['V0']
+            return c
+        # BRIDGE VARIABLES: the cycle's polynomial/fit rows must touch
+        # only dimensionless variables (the unit-carrying expressions
+        # produced nan gradients in the detector -- house rule 3's
+        # mistranslation, measured in the mini harness). Three trivial
+        # conversion rows per segment carry all the units.
+        T0v = V(f"T0_{i}", T0g, f"segment {i} ambient T bridge, K")
+        P0v = V(f"P0_{i}", P0g, f"segment {i} ambient P bridge, Pa")
+        u0v = V(f"u0_{i}", u0g, f"segment {i} airspeed bridge, m/s")
+        cons.extend([
+            T0v * units.K == state.T_atm[i],
+            P0v * units.Pa == state.P_atm[i],
+            u0v * (units.m / units.s) == state.V[i] * KT2MS
+                * (units.m / units.s) / units.kts,
+        ])
+        c = dict(T0=T0v, P0=P0v, V0=u0v,
                  MN=MNg,
                  T0_g=T0g, P0_g=P0g, u0_g=u0g, MN_g=MNg,
                  mode=mode,
@@ -258,6 +284,8 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
                                out_by_tag)
         out_by_tag[tag] = seg_out[i]
 
+    if "iface" in debug_skip:
+        return eng, cons
     # ---- interface: per-segment -------------------------------------------
     TSFC = Vn("TSFC", 0.65, "1/hr", "thrust specific fuel consumption")
     u6 = Vn("u_6", 400.0, "m/s", "core exhaust velocity")
@@ -287,6 +315,8 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
             Tt4x[i] == g_("Tt4") * units.K,
         ]
 
+    if "scalars" in debug_skip:
+        return eng, cons
     # ---- interface: engine-level scalars ----------------------------------
     W_engine = Vu("W_engine", 1e4, "N", "weight of a single turbofan")
     df = Vu("d_f", 1.5, "m", "fan diameter")
@@ -301,28 +331,40 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # design corrected flow (map rows carry it), OPR = pilc*pihc.
     from .model import fitzgerald_coeffs
     _a, _b, _c = fitzgerald_coeffs(tech.BPR_ref, tech.geared, tech.advanced)
-    cons += [
-        W_engine / units.N >= _a * 4.44822
-            * (eng.cyc_lpc_Wc / 45.35) ** _b
-            * ((PIlc * PIhc) / 40.0) ** _c,
-        mFanD == eng.cyc_fan_Wc * units.kg / units.s,
-        # fan/LPC areas from SLS-corrected design flows at the standard
-        # face Mach (0.60 fan, 0.55 HPC): corrected flow per unit area is
-        # then a CONSTANT of the atmosphere.
-        A2 * (_corr_flow_per_area(0.60)
-              * units.kg / units.s / units.m**2) == mFanD,
-        A25 * (_corr_flow_per_area(0.55)
-               * units.kg / units.s / units.m**2)
-            == eng.cyc_hpc_Wc * units.kg / units.s,
-        df == (4.0 * A2 / (math.pi * (1.0 - tech.HTR_fan**2)
-                           * units.m**2)) ** 0.5 * units.m,
-        dlpc == (4.0 * A25 / (math.pi * (1.0 - tech.HTR_lpc**2)
-                              * units.m**2)) ** 0.5 * units.m,
-        A5 == eng.cyc_A_core * units.m**2,
-        A7 == eng.cyc_A_byp * units.m**2,
-        A5 + A7 <= A2,
-    ]
+    if "fitz" not in debug_skip:
+        cons += [
+            W_engine / units.N >= _a * 4.44822
+                * (eng.cyc_lpc_Wc / 45.35) ** _b
+                * ((PIlc * PIhc) / 40.0) ** _c,
+            # W_engine's only other pressure is the airframe weight chain,
+            # which is absent from the restoration phases' feasibility
+            # subproblems -- leaving a one-sided row's up-direction as a
+            # free ray (the fitz-only bisection crash). Physical ceiling:
+            # no single-aisle turbofan weighs 300 kN.
+            W_engine <= 3.0e5 * units.N,
+            W_engine >= 2.0e3 * units.N,
+        ]
+    if "areas" not in debug_skip:
+        cons += [
+            mFanD == eng.cyc_fan_Wc * units.kg / units.s,
+            A2 * (_corr_flow_per_area(0.60)
+                  * units.kg / units.s / units.m**2) == mFanD,
+            A25 * (_corr_flow_per_area(0.55)
+                   * units.kg / units.s / units.m**2)
+                == eng.cyc_hpc_Wc * units.kg / units.s,
+            A5 == eng.cyc_A_core * units.m**2,
+            A7 == eng.cyc_A_byp * units.m**2,
+            A5 + A7 <= A2,
+        ]
+    if "diam" not in debug_skip:
+        cons += [
+            df == (4.0 * A2 / (math.pi * (1.0 - tech.HTR_fan**2))) ** 0.5,
+            dlpc == (4.0 * A25 / (math.pi
+                                  * (1.0 - tech.HTR_lpc**2))) ** 0.5,
+        ]
 
+    if "cool" in debug_skip:
+        return eng, cons
     # ---- tfcool.f at the takeoff rating, against the fixed budget ---------
     # Total cooling budget as a fraction of core flow, from the validated
     # cycle's bleed fractions (cool1+cool2 of core, cool3+cool4 of W3):

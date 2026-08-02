@@ -40,7 +40,10 @@ GATES = {
     "b737/conventional_M": {"W_total": 166289.7, "W_f_total": 46709.0},
     # Free-Mach d8: the double-bubble build pins cruise near M 0.72 itself;
     # d8_M would wrongly lock it to the 737 class's 0.785.
-    "b737/d8": {"W_total": 140594.5, "W_f_total": 26978.1},
+    # D8 re-baselined at 6ecf10d (rear-engine spacing walls): its message
+    # documents "CANONICAL D8: MTOW ... 142,520 ... fuel 27,601",
+    # bit-identical to this runner.
+    "b737/d8": {"W_total": 142519.3, "W_f_total": 27601.4},
 }
 
 # Per-case environment: the D8 gate needs its own tech level and knobs.
