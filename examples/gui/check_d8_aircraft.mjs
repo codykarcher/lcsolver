@@ -89,7 +89,24 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
               `(${(100 * d.engineX / d.fuseLength).toFixed(0)}% aft), y +/-${d.engineY.toFixed(3)}`);
   console.log(`     nacelle spans y ${b.min.y.toFixed(2)}..${b.max.y.toFixed(2)}, ` +
               `body crown there ${crown.toFixed(2)}`);
-  if (b.max.y < crown) bad('the nacelles are entirely below the crown -- buried in the body');
+  /**
+   * The engine axis is a HEIGHT, checked against the height it was given.
+   *
+   * Not "is it above the crown", which is what this asked while the engines
+   * were perched on top of the afterbody. They are set into it now, so being
+   * below the crown is the intended state and asking the old question reports
+   * a fault that is not one. Whether the body has been opened to receive them
+   * is a separate matter and is not yet true.
+   */
+  const wantY = -d.fuseHalfHeight + d.engineHeight * 2 * d.fuseHalfHeight;
+  console.log(`     axis at y ${u.engineAxisY.toFixed(4)} = ` +
+              `${(100 * d.engineHeight).toFixed(0)}% of the body's height up from its keel`);
+  if (Math.abs(u.engineAxisY - wantY) > 1e-9) {
+    bad(`engine axis at ${u.engineAxisY}, wanted ${wantY}`);
+  }
+  if (b.max.y < crown) {
+    console.log('     and wholly within the body -- no channel cut for it yet');
+  }
   if (d.engineX < 0.6 * d.fuseLength) bad('the engines are not on the afterbody');
   // Inboard of the fins, as the arrangement has them.
   const finX = Math.abs(new THREE.Box3().setFromObject(u.parts.verticalTails[0]).min.x);

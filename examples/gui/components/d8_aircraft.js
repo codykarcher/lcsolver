@@ -32,7 +32,14 @@ export const D8_CHOICES = {
   wingRootY:     -0.55,   // wing root chord height, in body half-heights
   finY:           0.62,   // fin root, as a fraction of the body's half-width
   finCant:       14.0,    // degrees outboard from vertical
-  engineSink:     0.45,   // engine radius let into the upper skin
+  /**
+   * Engine axis height, as a fraction of the BODY's height up from its keel.
+   *
+   * Referred to the cabin's height rather than the local one: the afterbody is
+   * closing where the engines sit, and a fraction of a collapsing number is not
+   * a place. Set against the arrangement drawing, not derived.
+   */
+  engineHeight:   0.55,
   tailSpan:       1.06,   // trailing edge half-width, in engine outer extents
   tailHold:       4.0,    // how squarely the afterbody holds its depth aft
   tailTrough:     0.30,   // valley between the lobes, in local half-heights
@@ -60,6 +67,8 @@ export function d8Aircraft(deck, opts = {}) {
   // `radius` is the body's HALF-HEIGHT and `cabinWidth` its width over that,
   // which is exactly the pair the solve reports.
   const halfH = d.fuseHalfHeight, halfW = d.fuseHalfWidth;
+  // 55% of the body's height up from its keel.
+  const engineAxisY = -halfH + d.engineHeight * 2 * halfH;
   const fuse = d8Fuselage({
     radius: halfH,
     length: d.fuseLength,
@@ -196,9 +205,7 @@ export function d8Aircraft(deck, opts = {}) {
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
     pod.add(bareTurbofan({ rFan, bypassRatio: 9 }));
-    pod.position.set(side * d.engineY,
-                     u.crownAt(-d.engineX) + rNac * (1 - d.engineSink),
-                     -d.engineX);
+    pod.position.set(side * d.engineY, engineAxisY, -d.engineX);
     pod.userData.isEnginePod = true;
     pod.userData.side = side;
     pod.name = side > 0 ? 'starboardPod' : 'portPod';
@@ -253,7 +260,7 @@ export function d8Aircraft(deck, opts = {}) {
       // Every fin together, which is what the deck's solvedAreas counts.
       verticalTail: parts.verticalTails.reduce((t, f) => t + f.userData.area, 0),
     },
-    fin, finCount: parts.verticalTails.length,
+    fin, finCount: parts.verticalTails.length, engineAxisY,
     wheelbase, groundAttitude: attitude, ground,
     noseContact, mainContact,
     leadingEdgeSweeps: {
