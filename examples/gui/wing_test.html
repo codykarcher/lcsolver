@@ -39,6 +39,9 @@
   #readout { margin-top: 11px; padding-top: 9px; border-top: 1px solid #2e343d;
     font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
   #readout span { color: #98a2ae; }
+  #locked { font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #locked div { display: grid; grid-template-columns: 1fr auto; }
+  #locked b { color: #8b939f; font-weight: 500; }
   #params { margin-top: 7px; font-size: 10px; color: #59616c;
     word-break: break-all; user-select: all; }
   .hint { margin-top: 9px; font-size: 10.5px; color: #565e69; }
@@ -70,8 +73,6 @@
   <div class="row"><label for="sweep">LE sweep &middot; deg</label><output id="oSweep"></output></div>
   <input type="range" id="sweep" min="-15" max="60" step="0.5" value="27">
 
-  <div class="row"><label for="dihedral">dihedral &middot; deg</label><output id="oDihedral"></output></div>
-  <input type="range" id="dihedral" min="-10" max="20" step="0.25" value="3">
 
   <h2>crank</h2>
   <div class="row"><label for="kink">station &middot; of semispan</label><output id="oKink"></output></div>
@@ -81,12 +82,6 @@
 
 
 
-  <h2>twist</h2>
-  <div class="row"><label for="twistRoot">root &middot; deg</label><output id="oTwistRoot"></output></div>
-  <input type="range" id="twistRoot" min="-6" max="6" step="0.1" value="0">
-
-  <div class="row"><label for="twistTip">tip &middot; deg</label><output id="oTwistTip"></output></div>
-  <input type="range" id="twistTip" min="-10" max="6" step="0.1" value="-3">
 
   <h2>thickness &middot; t/c</h2>
   <div class="row"><label for="rootThickness">root</label><output id="oRootThickness"></output></div>
@@ -103,6 +98,9 @@
   <input type="text" id="kinkFoil" value="" spellcheck="false">
   <div class="row"><label for="tip">tip NACA</label><output></output></div>
   <input type="text" id="tip" value="2410" spellcheck="false">
+
+  <h2>locked</h2>
+  <div id="locked"></div>
 
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="outline" checked><label for="outline">planform &amp; MAC</label></div>
@@ -186,8 +184,7 @@ scene.add(grid);
 const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
-const NUMS = ['span', 'rootChord', 'crankRatio', 'tipRatio', 'sweep', 'dihedral',
-              'kink', 'twistRoot', 'twistTip',
+const NUMS = ['span', 'rootChord', 'crankRatio', 'tipRatio', 'sweep', 'kink',
               'rootThickness', 'crankThickness', 'tipThickness'];
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
@@ -268,6 +265,13 @@ function build() {
 
   for (const k of NUMS) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
     num(k).toFixed(k.endsWith('Thickness') ? 3 : 2);
+
+  el('locked').innerHTML = [
+    ['dihedral &middot; deg', u.dihedral],
+    ['root twist &middot; deg', u.planform.twistRoot],
+    ['tip twist &middot; deg', u.planform.twistTip],
+    ['twist axis &middot; chord', u.planform.twistAxis],
+  ].map(([k, v]) => `<div>${k}<b>${(+v).toFixed(2)}</b></div>`).join('');
 
   el('readout').innerHTML =
     `chords: root <span>${u.rootChord.toFixed(3)}</span>` +

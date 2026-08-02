@@ -54,6 +54,8 @@ const WING = {
   crankRatio:   0.73,  // crank chord / ROOT chord
   tipRatio:     0.27,  // tip chord / CRANK chord (/ root, if there is no crank)
   sweep:        27.0,  // degrees, at the LEADING EDGE
+  // Locked. Still parameters -- a different aircraft can pass its own -- but
+  // not things the deck sets or the page exposes.
   dihedral:      3.0,  // degrees
   twistRoot:     0.0,  // degrees, positive leading edge up
   twistKink:    null,  // null interpolates between root and tip
