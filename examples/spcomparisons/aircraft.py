@@ -205,7 +205,9 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                  "lam_t_pin": 0.15 if arch.double_bubble else 0.25,
                  # Same number as Ltow below; the wing needs it at build time
                  # so its induced drag charges total lift, TASOPT's basis.
-                 "f_L_total": 1.195 if arch.double_bubble else 1.02}
+                 "f_L_total": 1.195 if arch.double_bubble else 1.02,
+                 # d82.tas fslat = 0.000: the D8 has no slats.
+                 "f_slat": 0.0 if arch.double_bubble else 0.1}
                 if wing_model == "tasopt" else {})
     wing, c = _wing_add(f, N, st, sweep_deg=sweep_deg, material=_mat,
                         sweep_pricing=sweep_pricing, polar=polar,

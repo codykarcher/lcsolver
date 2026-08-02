@@ -126,7 +126,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                     rho_fuel=817.0, material=None, sweep_pricing=False,
                     polar=YORK_C, W_engine=None, eta_break=ETA_BREAK,
                     tau_max=0.14, lam_s_pin=None, lam_t_pin=None,
-                    f_L_total=1.0):
+                    f_L_total=1.0, f_slat=0.1):
     """Add the cranked-planform wing. Returns ``(group, constraints)``.
 
     Same signature and same exposed names as ``wing.add_wing``, so
@@ -312,9 +312,12 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
     # correlation. Same fuel, one volume.
     cons += [Vfuel == wb["V_fuel"]]
 
-    # Secondary structure, TASOPT's 737 deck lines 219-225. Same set and same
-    # sum (0.640) as wing.py -- these are not planform dependent.
-    fnames = [("f_flap", 0.2), ("f_slat", 0.1), ("f_aileron", 0.04),
+    # Secondary structure fractions. The 737 deck's set sums to 0.640; the
+    # D8 deck's to 0.540 -- because the D8 HAS NO SLATS (d82.tas fslat =
+    # 0.000, and its printed Wslat is 0.0). Hardwiring the 737's 0.10 slat
+    # fraction onto a slatless aeroplane was ~450 lbf of phantom hardware,
+    # masking part of the spar-cap undercount. f_slat comes from the caller.
+    fnames = [("f_flap", 0.2), ("f_slat", f_slat), ("f_aileron", 0.04),
               ("f_lete", 0.1), ("f_ribs", 0.15), ("f_spoiler", 0.02),
               ("f_watt", 0.03)]
     fracs = [C(n, v, "-", f"{n} fractional weight") for n, v in fnames]
