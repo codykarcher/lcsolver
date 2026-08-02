@@ -65,8 +65,9 @@ const CASES = [
   { name: 'htail',       build: () => horizontalTail() },
   { name: 'no crank',    build: () => wing({ kink: null }) },
   { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
-  { name: 'tight taper', build: () => wing({ taperRatio: 0.08, kinkTaper: 0.55 }) },
-  { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2 }) },
+  { name: 'tight taper', build: () => wing({ kinkChord: 3.3, tipChord: 0.26 }) },
+  { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2,
+                                             kinkChord: 3.8, tipChord: 1.02 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
 ];
@@ -83,12 +84,14 @@ for (const c of CASES) {
 
   /* the chords are what was asked for ----------------------------------- */
   if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
-  if (Math.abs(u.rootChord - p.rootChord) > 1e-12)
-    bad(`root chord ${u.rootChord}, asked ${p.rootChord}`);
-  if (Math.abs(u.taperRatio - p.taperRatio) > 1e-9)
-    bad(`taper ${u.taperRatio.toFixed(4)}, asked ${p.taperRatio}`);
-  if (p.kink != null && Math.abs(u.kinkTaper - p.kinkTaper) > 1e-9)
-    bad(`crank taper ${u.kinkTaper.toFixed(4)}, asked ${p.kinkTaper}`);
+  // The three chords come out exactly as given. Nothing scales them, nothing
+  // solves for them, so anything other than equality is a transcription bug.
+  for (const [what, got, want] of [['root', u.rootChord, p.rootChord],
+                                   ['tip', u.tipChord, p.tipChord],
+                                   ...(p.kink != null
+                                       ? [['crank', u.kinkChord, p.kinkChord]] : [])]) {
+    if (Math.abs(got - want) > 1e-12) bad(`${what} chord ${got}, asked ${want}`);
+  }
 
   /* area and aspect ratio are RESULTS, and must be the right ones --------- */
   // Against the two-trapezoid formula worked straight off the inputs, which the
@@ -96,10 +99,10 @@ for (const c of CASES) {
   // routes to the same number is the only way this is worth checking at all.
   {
     const semi = p.span / 2, cR = p.rootChord;
-    const cK = p.kink == null ? null : cR * p.kinkTaper;
-    const cT = (cK ?? cR) * p.taperRatio;
+    const cK = p.kink == null ? null : p.kinkChord;
+    const cT = p.tipChord;
     const full = p.kink == null
-      ? semi * cR * (1 + p.taperRatio)
+      ? semi * (cR + cT)
       : semi * ((cR + cK) * p.kink + (cK + cT) * (1 - p.kink));
     if (Math.abs(u.referenceArea - full) / full > 1e-6)
       bad(`reference area ${u.referenceArea.toFixed(4)}, by hand ${full.toFixed(4)}`);
