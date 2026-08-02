@@ -200,7 +200,8 @@ function tick() {
       // Direction comes from the component: which way a rotor has to turn to
       // push air aft is set by the pitch its blades were built with, so it is
       // the component's business and not the viewer's.
-      if (o.userData.rotating) o.rotation.z += dt * 2.4 * (o.userData.spin ?? 1);
+      if (o.userData.rotating)
+        o.rotation.z += dt * 2.4 * (o.userData.spin ?? 1) * (o.userData.rate ?? 1);
     });
   }
   controls.update();

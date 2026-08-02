@@ -245,7 +245,8 @@ const clock = new THREE.Clock();
 function tick() {
   const dt = clock.getDelta();
   if (el('spin').checked)
-    for (const s of spinners) s.rotation.z += dt * 2.2 * (s.userData.spin ?? 1);
+    for (const s of spinners)
+      s.rotation.z += dt * 2.2 * (s.userData.spin ?? 1) * (s.userData.rate ?? 1);
 
   controls.update();
   renderer.render(scene, camera);

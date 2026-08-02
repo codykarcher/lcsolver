@@ -40,7 +40,7 @@
 
 <div id="panel">
   <h1>Turboshaft</h1>
-  <p class="sub">gearbox forward, diffuser aft</p>
+  <p class="sub">turbojet with a top-mounted gearbox</p>
 
   <div class="row"><label for="power">shaft power</label><output id="oP"></output></div>
   <input type="range" id="power" min="150" max="5000" step="10" value="700">
@@ -148,6 +148,8 @@ function build() {
     `(<span>${d.diameter.toFixed(3)}</span>)<br>` +
     `length <span>${d.lengthInches.toFixed(1)}&Prime;</span> &middot; ` +
     `L/D <span>${(d.lengthInches / d.diameterInches).toFixed(2)}</span><br>` +
+    `gear ratio <span>${d.gearRatio}</span> &middot; ` +
+    `output at <span>${(d.gearRatio * 100).toFixed(0)}%</span> of spool<br>` +
     `z extent <span>${bx.min.z.toFixed(2)} &hellip; ${bx.max.z.toFixed(2)}</span>`;
 }
 
@@ -190,7 +192,8 @@ function tick() {
       // Direction comes from the component: which way a rotor has to turn to
       // push air aft is set by the pitch its blades were built with, so it is
       // the component's business and not the viewer's.
-      if (o.userData.rotating) o.rotation.z += dt * 2.4 * (o.userData.spin ?? 1);
+      if (o.userData.rotating)
+        o.rotation.z += dt * 2.4 * (o.userData.spin ?? 1) * (o.userData.rate ?? 1);
     });
   }
   controls.update();
