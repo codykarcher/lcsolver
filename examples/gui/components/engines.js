@@ -42,8 +42,11 @@ import { latheZ, tubeZ, bladeRow, epitrochoid, rod } from './geom.js';
 
 const SEG = 48;
 
-/** Default turbofan slenderness: overall length over fan diameter. */
-const LENGTH_OVER_DIAMETER = 2.5;
+/**
+ * Default turbofan slenderness: nose-to-tail length over FAN diameter (blade
+ * tips, 2 x rFan) -- not over the case, which is 3.7% wider.
+ */
+const LENGTH_OVER_DIAMETER = 2.0;
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
@@ -287,10 +290,10 @@ export function turbofan({
   // are shape.
   const ctrl = [
     new THREE.Vector2(z0, rCore),                      // inlet, sets the BPR
-    new THREE.Vector2(z0 - 0.11 * Lc, 0.86 * rCore),   // waist behind the fan
-    new THREE.Vector2(z0 - 0.36 * Lc, 0.99 * rCore),
-    new THREE.Vector2(z0 - 0.63 * Lc, 1.17 * rCore),   // turbine, aft of before
-    new THREE.Vector2(z0 - 0.85 * Lc, 1.04 * rCore),
+    new THREE.Vector2(z0 - 0.12 * Lc, 0.86 * rCore),   // waist behind the fan
+    new THREE.Vector2(z0 - 0.40 * Lc, 1.02 * rCore),
+    new THREE.Vector2(z0 - 0.70 * Lc, 1.28 * rCore),   // turbine
+    new THREE.Vector2(z0 - 0.89 * Lc, 1.12 * rCore),
     new THREE.Vector2(zAft, 0.78 * rCore),             // outlet
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
