@@ -674,20 +674,26 @@ export function turboprop({ rProp = 1.25, blades = 4 } = {}) {
  * Turboshaft
  * ==================================================================== */
 
-/** Visual proportions, as fractions of core DIAMETER and overall length. */
+/**
+ * Visual proportions. `D` is core diameter, `L` overall length; radii are
+ * fractions of D and stations are fractions of L aft of the nose.
+ */
 const TS = {
-  shaft:     0.085,  // output shaft radius, x D
-  shaftLen:  0.10,   // x L, forward of the gearbox
-  coupling:  0.20,   // coupling flange radius, x D
-  gearbox:   0.62,   // gearbox drum radius, x D
-  gearboxZ0: 0.07,   // gearbox front, x L aft of the nose
-  gearboxZ1: 0.30,
-  inletZ1:   0.42,   // annular inlet ends here
-  coreR:     0.50,   // core radius, x D
-  burnerR:   0.56,   // combustor bulge
-  burnerZ0:  0.68,
-  burnerZ1:  0.87,
-  exitR:     0.60,   // exhaust diffuser mouth
+  shaftR:    0.075,
+  shaftZ:    0.13,   // shaft runs from the nose to here
+  flangeR:   0.60,   // front housing / mounting flange
+  flangeZ0:  0.035,
+  flangeZ1:  0.20,
+  inletZ1:   0.25,
+  coreR:     0.50,
+  burnerR:   0.55,
+  burnerZ0:  0.56,
+  burnerZ1:  0.73,
+  exitR:     0.70,   // exhaust mouth, wider than the core
+  gearR:     0.19,   // top gearbox radius
+  gearY:     0.66,   // its axis height
+  gearZ0:    0.16,
+  gearZ1:    0.64,
 };
 
 /**
@@ -715,14 +721,16 @@ export function turboshaftSizing(power) {
 }
 
 /**
- * Turboshaft: gearbox and output shaft forward, annular inlet, core,
- * combustor, and a flared exhaust diffuser aft.
+ * Turboshaft: a turbojet-like body with a cylindrical gearbox along the top.
  *
- * What separates this from a turbojet in silhouette is the two ends. There is
- * a shaft and a gearbox at the front where a jet has an inlet, and the back is
- * a DIFFUSER rather than a nozzle -- a turboshaft takes nearly all the energy
- * out through the turbine, so its exhaust leaves slowly through an opening
- * wider than the core, where a jet's converges to a throat.
+ * That top-mounted drum is the whole silhouette. Everything below it could be
+ * a small turbojet -- flanged front housing, parallel core, combustor bulge --
+ * and the two things that say turboshaft are the gearbox riding on top and the
+ * output shaft coming forward out of the nose.
+ *
+ * The exhaust is a DIFFUSER, not a nozzle. A turboshaft takes nearly all the
+ * energy out through the turbine, so its gas leaves slowly through a mouth
+ * wider than the core; drawn converging it would read as a jet.
  */
 export function turboshaft({ power = 700, diameter = null, length = null } = {}) {
   const sized = turboshaftSizing(power);
@@ -731,83 +739,110 @@ export function turboshaft({ power = 700, diameter = null, length = null } = {})
   const g = new THREE.Group();
   const z = (f) => -f * L;
 
-  // ---- output shaft and coupling ----------------------------------------
+  // ---- output shaft, forward out of the nose -----------------------------
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
   const sh = new THREE.Mesh(
-    new THREE.CylinderGeometry(TS.shaft * D, TS.shaft * D,
-                               TS.shaftLen * L + 0.04 * L, 24), M.hardware);
+    new THREE.CylinderGeometry(TS.shaftR * D, TS.shaftR * D, TS.shaftZ * L, 24),
+    M.hardware);
   sh.rotation.x = Math.PI / 2;
-  sh.position.z = -(TS.shaftLen * L + 0.04 * L) / 2;
+  sh.position.z = -TS.shaftZ * L / 2;
   rotor.add(sh);
-  rotor.add(tubeZ(TS.shaft * D, TS.coupling * D,
-                  z(0.055), z(0.075), M.hardware, 28));
+  rotor.add(tubeZ(TS.shaftR * D, TS.shaftR * 2.4 * D,
+                  z(0.045), z(0.065), M.hardware, 24));
   g.add(rotor);
 
-  // ---- gearbox ------------------------------------------------------------
+  // ---- front housing and mounting flange ---------------------------------
   g.add(latheZ([
-    [z(TS.gearboxZ0), 0], [z(TS.gearboxZ0), TS.coupling * 1.5 * D],
-    [z(TS.gearboxZ0 + 0.03), TS.gearbox * D],
-    [z(TS.gearboxZ1 - 0.02), TS.gearbox * D],
-    [z(TS.gearboxZ1), TS.gearbox * 0.86 * D], [z(TS.gearboxZ1), 0],
-  ], M.accessory, SEG));
+    [z(TS.flangeZ0), 0], [z(TS.flangeZ0), TS.flangeR * 0.80 * D],
+    [z(TS.flangeZ0 + 0.02), TS.flangeR * D],
+    [z(TS.flangeZ0 + 0.05), TS.flangeR * D],
+    [z(TS.flangeZ0 + 0.07), TS.flangeR * 0.90 * D],
+    [z(TS.flangeZ1), TS.flangeR * 0.86 * D], [z(TS.flangeZ1), 0],
+  ], M.casing, SEG));
 
-  // Accessory pads on top of the gearbox, which is where they live.
-  for (const [dx, dz, r, h] of [[0.30, 0.13, 0.15, 0.16],
-                                [-0.30, 0.20, 0.12, 0.13]]) {
-    const pad = new THREE.Mesh(
-      new THREE.CylinderGeometry(r * D, r * D, h * D, 20), M.accessory);
-    pad.position.set(dx * D, TS.gearbox * D * 0.86,
-                     z(TS.gearboxZ0 + dz + 0.02));
-    g.add(pad);
+  // Bolt circle on the flange face -- small, but it is what makes a flange
+  // read as a flange rather than as a step in the diameter.
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const bolt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022 * D, 0.022 * D, 0.03 * D, 10),
+      M.hardware);
+    bolt.rotation.x = Math.PI / 2;
+    bolt.position.set(Math.cos(a) * TS.flangeR * 0.90 * D,
+                      Math.sin(a) * TS.flangeR * 0.90 * D,
+                      z(TS.flangeZ0 + 0.035));
+    g.add(bolt);
   }
 
   // ---- annular inlet ------------------------------------------------------
-  // Read as a screened gap: a dark recess with a lip either side.
   g.add(latheZ([
-    [z(TS.gearboxZ1), 0], [z(TS.gearboxZ1), 0.52 * D],
-    [z(TS.gearboxZ1 + 0.015), 0.44 * D],
-    [z(TS.inletZ1 - 0.015), 0.44 * D],
-    [z(TS.inletZ1), 0.50 * D], [z(TS.inletZ1), 0],
+    [z(TS.flangeZ1), 0], [z(TS.flangeZ1), 0.50 * D],
+    [z(TS.flangeZ1 + 0.012), 0.43 * D],
+    [z(TS.inletZ1 - 0.012), 0.43 * D],
+    [z(TS.inletZ1), 0.49 * D], [z(TS.inletZ1), 0],
   ], M.cavity, SEG));
 
-  // ---- core, combustor, diffuser -----------------------------------------
+  // ---- core, combustor, exhaust diffuser ---------------------------------
   g.add(latheZ([
     [z(TS.inletZ1), 0], [z(TS.inletZ1), TS.coreR * D],
     [z(TS.burnerZ0), TS.coreR * D],
-    [z(TS.burnerZ0 + 0.04), TS.burnerR * D],
+    [z(TS.burnerZ0 + 0.035), TS.burnerR * D],
     [z(TS.burnerZ1), TS.burnerR * D],
-    [z(TS.burnerZ1 + 0.03), TS.burnerR * 0.96 * D],
+    [z(TS.burnerZ1 + 0.06), TS.burnerR * 0.99 * D],
     [z(0.985), TS.exitR * D], [z(0.985), 0],
   ], M.casing, SEG));
 
-  // Igniter and fuel-nozzle bosses round the combustor.
-  for (let i = 0; i < 2; i++) {
-    const a = Math.PI * (0.25 + i);
-    const boss = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06 * D, 0.06 * D, 0.10 * D, 14), M.hardware);
-    boss.position.set(Math.cos(a) * TS.burnerR * D, Math.sin(a) * TS.burnerR * D,
-                      z(TS.burnerZ0 + 0.09));
-    boss.rotation.z = Math.PI / 2 - a;
-    g.add(boss);
+  // Case bands, as on the model.
+  for (const f of [0.36, 0.50]) {
+    g.add(tubeZ(TS.coreR * D, TS.coreR * 1.06 * D,
+                z(f - 0.012), z(f + 0.012), M.accessory, SEG));
   }
 
-  // Exhaust mouth: wide and dark. A turboshaft's exhaust is an opening, not
-  // a nozzle, and drawing it as a converging cone would read as a jet.
-  g.add(tubeZ(TS.exitR * 0.86 * D, TS.exitR * D,
-              z(0.985), z(1.0), M.hot, SEG));
+  g.add(tubeZ(TS.exitR * 0.88 * D, TS.exitR * D, z(0.985), z(1.0), M.hot, SEG));
   const mouth = new THREE.Mesh(
-    new THREE.CircleGeometry(TS.exitR * 0.87 * D, SEG), M.cavity);
+    new THREE.CircleGeometry(TS.exitR * 0.89 * D, SEG), M.cavity);
   mouth.rotation.y = Math.PI;
   mouth.position.z = z(0.992);
   g.add(mouth);
+
+  // ---- top-mounted gearbox -----------------------------------------------
+  // A capsule rather than a cylinder: the ends are domed on the real unit and
+  // flat discs up there catch the light as two bright rings.
+  const gLen = (TS.gearZ1 - TS.gearZ0) * L;
+  const box = new THREE.Mesh(
+    new THREE.CapsuleGeometry(TS.gearR * D, gLen - 2 * TS.gearR * D, 6, 24),
+    M.painted);
+  box.rotation.x = Math.PI / 2;
+  box.position.set(0, TS.gearY * D, z((TS.gearZ0 + TS.gearZ1) / 2));
+  g.add(box);
+
+  // Sitting proud on two mounting saddles, so it is carried rather than
+  // floating above the case.
+  for (const f of [TS.gearZ0 + 0.07, TS.gearZ1 - 0.09]) {
+    const saddle = roundedBox(0.30 * D, 0.26 * D, 0.11 * L, 0.05 * D,
+                              M.accessory);
+    saddle.position.set(0, (TS.gearY - TS.gearR * 0.75) * D, z(f));
+    g.add(saddle);
+  }
+
+  // Drive fairing running down the front of the gearbox into the housing.
+  // Note: Object3D.add() returns the PARENT, so positioning the result of
+  // g.add(...) moves the whole engine -- which is exactly what it did, putting
+  // the nose at -0.134 instead of 0.
+  const fairing = roundedBox(0.20 * D, (TS.gearY - 0.34) * D, 0.09 * L,
+                             0.04 * D, M.accessory);
+  fairing.position.set(0, (TS.gearY + 0.34) * D / 2 + 0.06 * D,
+                       z(TS.gearZ0 + 0.02));
+  g.add(fairing);
 
   g.userData.power = power;
   g.userData.diameter = D;
   g.userData.diameterInches = D / 0.0254;
   g.userData.lengthInches = L / 0.0254;
-  return finish(g, L, TS.gearbox * D, 'turboshaft');
+  g.userData.height = (TS.gearY + TS.gearR) * D;
+  return finish(g, L, (TS.gearY + TS.gearR) * D, 'turboshaft');
 }
 
 /* ==================================================================== *
