@@ -236,7 +236,23 @@ CLASSES = {
              "reference point."),
     "b787": SizeClass(
         key="b787", label="Boeing 787-8",
-        n_pass=242, seats_abreast=8, range_nmi=7355,
+        # 359 single-class (the exit-limit airframe), 9-abreast -- the same
+        # convention correction the e175 class documents (76 -> 88): every
+        # public reference figure is for the certified airframe, and sizing
+        # the cabin for a two-class 242 built a fuselage 24% short and an
+        # aeroplane 22% light. 8-abreast/242 was the pre-convention setting.
+        # ... and the RANGE moves with the convention: 7,355 nmi is quoted
+        # at 242 two-class -- a partial-payload corner of the payload-range
+        # diagram -- and flying the full 359-seat cabin that far is not a
+        # point the real airframe offers (the model dutifully sized a
+        # 581,000 lb aircraft with more fuel than the real tanks hold).
+        # 5,800 nmi is the ~full-cabin range off the published diagram, so
+        # cabin and mission describe the same aeroplane. The structural fix
+        # -- separate cabin count from mission payload so a class can state
+        # BOTH corners -- is the right upgrade for the matrix, and matters
+        # here more than anywhere because the 787's corners are 2,000 nmi
+        # apart where the 737's nearly coincide.
+        n_pass=359, seats_abreast=9, range_nmi=5800,
         R_fuse_guess=2.87, ref_MTOW_lb=502_500, ref_OEW_lb=264_500,
         ref_mach=0.85,
         n_aisles=2, ceiling_ft=43000.0,
