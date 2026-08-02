@@ -731,6 +731,22 @@ export const WINDSCREEN = {
   panesPerSide: 3,
   post: 0.07,
   /**
+   * How the width is shared out, CENTRE FIRST.
+   *
+   * The pane against the centre post is the windscreen proper and is much the
+   * widest; the sliding window beside it is smaller, and the quarter light
+   * behind that smaller again. Equal thirds read as a bus, not a flight deck.
+   */
+  paneWidths: [0.50, 0.30, 0.20],
+  /**
+   * How tall the glass still is where it stops outboard.
+   *
+   * The band closes to nothing at the widest point of its lower edge, so
+   * running the outer pane all the way there ends it in a point. Stopping
+   * while it is still this tall gives the quarter light a real trailing edge.
+   */
+  edgeHeight: 0.12,
+  /**
    * How tall the glass still is where it stops at the front.
    *
    * The band tapers to nothing on the nose, and running the glass all the way
@@ -745,12 +761,11 @@ export const WINDSCREEN = {
 export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
-  colour = WINDSCREEN.colour, panesPerSide = WINDSCREEN.panesPerSide,
-  post = WINDSCREEN.post, tipEdge = WINDSCREEN.tipEdge,
-  nz = 72, nv = 5, name = 'windscreen',
+  colour = WINDSCREEN.colour, paneWidths = WINDSCREEN.paneWidths,
+  post = WINDSCREEN.post, edgeHeight = WINDSCREEN.edgeHeight,
+  nx = 14, ny = 10, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
-  const noseLength = fu.noseLength;
 
   // The two lines are fractions of the BARREL's height, taken from the body
   // itself rather than from twice a radius, so a section that is not a circle
@@ -759,119 +774,117 @@ export function windscreen(fuselage, {
   const keel = fu.keelAt(zRef), crown = fu.crownAt(zRef);
   const H = crown - keel;
   const yLo = keel + low * H, yHi = keel + high * H;
+  const zBack = -backFraction * fu.noseLength;
 
-  const zBack = -backFraction * noseLength;
-
-  /* ---- the band's two edges, as angles at a station ------------------- */
-  const thLoAt = (z) => angleAtHeight(fu, z, yLo);
-  const thHiRaw = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
-    ? Math.PI / 2
-    : angleAtHeight(fu, z, yHi));
   /**
-   * Half the centre post, as an angle at this station.
+   * The glass is worked in (x, y) -- across the nose and up it -- rather than
+   * in station and angle.
    *
-   * The post is a width in METRES, so a piece of structure a hand's breadth
-   * across whatever size the aeroplane is, which means it subtends more angle
-   * where the nose is narrow. Held back from the crown by this, the two sides'
-   * glass stops short of the centreline and the body between them IS the post.
+   * That is the frame the posts live in. A windscreen post is a VERTICAL member
+   * seen head on: it stands at a fixed distance off the centreline and runs
+   * from the lower frame to the upper one. In (x, y) it is simply x = constant,
+   * and the panes between them are columns. In station and angle it is neither
+   * a station nor an angle but a curve across both, which is why cutting in
+   * that frame gave posts along the glass or across it but never upright.
+   *
+   * The station each point sits at is then a RESULT: for a given height, the
+   * nose narrows going forward, so there is one station where the body is
+   * exactly this far off the centreline.
    */
-  const halfPost = (z) => (post / 2) / Math.max(fu.shapeAt(z).r, 1e-6);
-  const thHiAt = (z) => {
-    const raw = thHiRaw(z);
-    if (raw == null) return null;
-    return Math.min(raw, Math.PI / 2 - halfPost(z));
+  const xOnContour = (z, y) => {
+    const th = angleAtHeight(fu, z, y);
+    return th == null ? -1 : fu.surfaceAt(z, th).x;
+  };
+  const zAtXY = (X, y) => {
+    if (xOnContour(zBack, y) < X) return null;   // aft cut reaches no further out
+    let a = zBack, b = 0;
+    for (let i = 0; i < 48; i++) {
+      const m = (a + b) / 2;
+      if (xOnContour(m, y) > X) a = m; else b = m;
+    }
+    return a;
   };
 
   /**
-   * Forward end of the glass: where it is still `tipEdge` tall.
+   * How high the glass reaches at a given distance off the centreline.
    *
-   * The band tapers to nothing on the nose, so running to the vanishing point
-   * would end it in a sliver and a row of degenerate triangles. Stopping while
-   * it is still a hand's width tall gives it a blunt straight edge.
+   * The upper line where the body still reaches out that far, and the AFT CUT
+   * where it does not: out near the side the nose is at its widest at the back
+   * of the glazing, so the pane there is bounded by where the windscreen stops,
+   * not by the 80 per cent line. That is what slopes the outermost pane's top
+   * edge down, the way a quarter light's does.
    */
-  let a = zBack, b = 0;
-  for (let i = 0; i < 60; i++) {
-    const m = (a + b) / 2;
-    const lo = thLoAt(m), hi = thHiAt(m);
-    const tall = (lo != null && hi != null) ? (hi - lo) * fu.shapeAt(m).r : -1;
-    if (tall > tipEdge) a = m; else b = m;
-  }
-  const zTip = a;
-
-  /**
-   * The corner, where the crown drops past the upper line and the glass starts
-   * to wrap. The band's upper edge turns there, so a station lands on it.
-   */
-  let ca = zBack, cb = 0;
-  for (let i = 0; i < 60; i++) {
-    const m = (ca + cb) / 2;
-    if (fu.crownAt(m) > yHi) ca = m; else cb = m;
-  }
-  const zCorner = ca;
-  const hasCorner = zCorner > zBack + 1e-9 && zCorner < zTip - 1e-9;
-
-  /* ---- stations along the glass --------------------------------------- */
-  const cosine = (t) => (1 - Math.cos(Math.PI * t)) / 2;
-  const stations = [];
-  for (let i = 0; i < nz; i++) stations.push(zBack + (zTip - zBack) * cosine(i / (nz - 1)));
-  if (hasCorner) {
-    stations.push(zCorner);
-    for (let d = (zTip - zBack) * 0.04; d > 1e-4; d *= 0.4) {
-      if (zCorner - d > zBack) stations.push(zCorner - d);
-      if (zCorner + d < zTip) stations.push(zCorner + d);
+  const yTopAt = (X) => {
+    if (xOnContour(zBack, yHi) >= X) return yHi;
+    let a = yLo, b = yHi;
+    for (let i = 0; i < 48; i++) {
+      const m = (a + b) / 2;
+      if (xOnContour(zBack, m) >= X) a = m; else b = m;
     }
-    stations.sort((x, y) => x - y);
-  }
+    return a;
+  };
 
   /**
-   * The dividers run ALONG the glass, parallel to the centreline cut.
+   * How far out the glass goes.
    *
-   * The centre post is the body left between the two sides where the band wraps
-   * over the crown -- a line running fore and aft. The posts that split each
-   * side are the same kind of line: they follow the glass from its aft edge to
-   * its forward one, evenly spaced across its height, so all five posts lie
-   * parallel. Cutting the other way, across the band, put them at right angles
-   * to the centre post, which is not how a windscreen is framed.
-   *
-   * Spaced evenly in the band's own height rather than in angle, so the panes
-   * stay equal shares of the glass as the band narrows towards the nose.
+   * Not to the widest point of its lower edge -- the band has closed to nothing
+   * by then and the outer pane would end in a point. Out to where it is still
+   * `edgeHeight` tall, which gives the quarter light a real trailing edge.
    */
+  const xLimit = xOnContour(zBack, yLo);
+  let xa = post / 2, xb = xLimit;
+  for (let i = 0; i < 48; i++) {
+    const m = (xa + xb) / 2;
+    if (yTopAt(m) - yLo > edgeHeight) xa = m; else xb = m;
+  }
+  const xMax = xa;
+  const xIn = post / 2;                          // half the centre post
+
+  /* ---- the posts: all upright, the widest pane against the centre ----- */
+  const panesPerSide = paneWidths.length;
+  const usable = (xMax - xIn) - post * (panesPerSide - 1);
+  const weight = paneWidths.reduce((a, b) => a + b, 0);
+  const columns = [];
+  {
+    let x0 = xIn;
+    for (const share of paneWidths) {
+      const w = (usable * share) / weight;
+      columns.push([x0, x0 + w]);
+      x0 += w + post;
+    }
+  }
+
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
   const built = [];
 
   for (const side of [1, -1]) {
-    for (let k = 0; k < panesPerSide; k++) {
+    columns.forEach(([X0, X1], k) => {
       const pos = [], idx = [];
-      const rows = [];
-      for (const z of stations) {
-        const lo = thLoAt(z), hi = thHiAt(z);
-        if (lo == null || hi == null || hi <= lo) { rows.push(null); continue; }
-        // The post as a fraction of THIS station's band height, so it stays a
-        // constant width in metres while the band narrows.
-        const r = fu.shapeAt(z).r;
-        const height = (hi - lo) * r;
-        const gap = Math.min(post / Math.max(height, 1e-6), 0.6 / panesPerSide);
-        const v0 = k / panesPerSide + (k === 0 ? 0 : gap / 2);
-        const v1 = (k + 1) / panesPerSide - (k === panesPerSide - 1 ? 0 : gap / 2);
-        rows.push([lo + (hi - lo) * v0, lo + (hi - lo) * v1]);
+      const cols = [];
+      for (let i = 0; i < nx; i++) {
+        const X = X0 + (X1 - X0) * (i / (nx - 1));
+        const yT = yTopAt(X);
+        if (yT <= yLo + 1e-6) continue;          // no glass this far out
+        cols.push([X, yT]);
       }
-      const kept = [];
-      rows.forEach((row, i) => { if (row) kept.push([stations[i], row]); });
-      if (kept.length < 2) continue;
+      if (cols.length < 2) return;
 
-      for (const [z, [thA, thB]] of kept) {
-        for (let j = 0; j < nv; j++) {
-          const th = thA + (thB - thA) * (j / (nv - 1));
-          const tt = side > 0 ? th : Math.PI - th;
-          const p = fu.surfaceAt(z, tt), n = fu.normalAt(z, tt);
+      for (const [X, yT] of cols) {
+        for (let j = 0; j < ny; j++) {
+          const y = yLo + (yT - yLo) * (j / (ny - 1));
+          const z = zAtXY(X, y);
+          if (z == null) { pos.push(0, 0, 0); continue; }
+          const th = angleAtHeight(fu, z, y) ?? Math.PI / 2;
+          const t = side > 0 ? th : Math.PI - th;
+          const p = fu.surfaceAt(z, t), n = fu.normalAt(z, t);
           pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
         }
       }
-      for (let i = 0; i < kept.length - 1; i++) {
-        for (let j = 0; j < nv - 1; j++) {
-          const p0 = i * nv + j, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
+      for (let i = 0; i < cols.length - 1; i++) {
+        for (let j = 0; j < ny - 1; j++) {
+          const p0 = i * ny + j, p1 = p0 + 1, p2 = p0 + ny, p3 = p2 + 1;
           idx.push(p0, p2, p1, p1, p2, p3);
         }
       }
@@ -884,22 +897,23 @@ export function windscreen(fuselage, {
         return fu.normalAt(q.z, Math.atan2(q.y - s.yc, q.x));
       });
       const mesh = new THREE.Mesh(g, material);
-      // Numbered from the LOWER edge up, so pane 3 is the one against the
-      // centre post where the glass wraps.
+      // Numbered outward from the centre post, as the panes are on an
+      // aeroplane: windscreen, then side window, then quarter light.
       mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}${k + 1}`;
-      mesh.userData = { pane: k + 1, side, nv, stations: kept.map((e) => e[0]) };
+      mesh.userData = { pane: k + 1, side, ny, xRange: [X0, X1] };
       group.add(mesh);
-      if (side > 0) built.push({ pane: k + 1, stations: kept.length });
-    }
+      if (side > 0) built.push({ pane: k + 1, xRange: [X0, X1], topAt: [yTopAt(X0), yTopAt(X1)] });
+    });
   }
 
   Object.assign(group.userData, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown,
-    zRange: [zBack, zTip],
-    zCorner: hasCorner ? zCorner : null, hasCorner,
-    post, tipEdge, panesPerSide, paneCount: 2 * panesPerSide,
-    panes: built, nv, thLoAt, thHiAt,
+    zRange: [zBack, null],
+    /** Where the glass stands off the centreline, and how wide each pane is. */
+    xRange: [xIn, xMax], xLimit, edgeHeight, paneWidths, columns,
+    post, panesPerSide, paneCount: 2 * panesPerSide, panes: built, ny,
+    yTopAt, zAtXY,
   });
   return group;
 }
