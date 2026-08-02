@@ -51,11 +51,14 @@
   <table id="compare"></table>
 
   <h2>view</h2>
-  <div class="check"><input type="checkbox" id="detail"><label for="detail">fuselage detail</label></div>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
   <div class="check"><input type="checkbox" id="sit" checked><label for="sit">sit on the gear</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
   <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
+
+  <h2>moving parts</h2>
+  <button id="gear">raise the gear</button>
+  <p class="hint" style="margin-top:6px">click an engine to spin it</p>
 
   <h2>view from</h2>
   <div class="pair three">
@@ -125,6 +128,46 @@ for (const [v, colour] of [[[4, 0, 0], 0xd8544f], [[0, 4, 0], 0x74c46a], [[0, 0,
 
 let plane = null, craft = null;
 
+/* ---- spin an engine by clicking it ----------------------------------- *
+ * The rotor carries its own direction and rate -- which way a fan has to turn
+ * to push air aft is set by the pitch its blades were built with -- so this
+ * only decides WHETHER, never which way.                                    */
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let dragged = false;
+
+canvas.addEventListener('pointerdown', () => { dragged = false; });
+canvas.addEventListener('pointermove', (e) => { if (e.buttons) dragged = true; });
+canvas.addEventListener('pointerup', (e) => {
+  // Orbiting ends in a pointerup too, and treating that as a click would make
+  // the engines start and stop every time the camera moved.
+  if (dragged || !craft) return;
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  for (const hit of raycaster.intersectObject(craft, true)) {
+    let o = hit.object;
+    while (o && !o.userData.isEnginePod) o = o.parent;
+    if (o) { o.userData.spinning = !o.userData.spinning; return; }
+  }
+});
+
+/* ---- gear retraction -------------------------------------------------- *
+ * Each leg knows its own axis and angle -- recorded where it was placed, since
+ * which way a leg folds is a property of where it is -- so this only drives one
+ * number from 0 to 1 and back.                                              */
+let gearT = 0, gearTarget = 0;
+const GEAR_SECONDS = 2.4;
+const ease = (t) => t * t * (3 - 2 * t);
+
+function applyGear() {
+  if (!craft) return;
+  const k = ease(gearT);
+  for (const lg of craft.userData.parts.gear) {
+    const r = lg.userData.retract;
+    lg.rotation[r.axis] = r.angle * k;
+  }
+}
+
 /** The numbers the solve produced, to compare the assembly against. */
 const SOLVE = [
   ['wing area', 'wing', 116.649],
@@ -138,12 +181,15 @@ function build() {
 
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
+  // No fuselage detail: windows, doors and the rest come later, and a bare
+  // skin is the right thing to judge the shape against meanwhile.
   craft = conventionalAircraft(B737_TASOPT, {
-    detail: el('detail').checked,
+    detail: false,
     sitOnGround: el('sit').checked,
   });
   scene.add(craft);
   const u = craft.userData;
+  applyGear();
 
   if (el('ground').checked) {
     plane = new THREE.Mesh(
@@ -212,11 +258,15 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['detail', 'ground', 'sit', 'wire', 'axes'])
+for (const id of ['ground', 'sit', 'wire', 'axes'])
   el(id).addEventListener('change', build);
 for (const v of ['side', 'plan', 'front']) el(v).addEventListener('click', () => ortho(v));
 el('three').addEventListener('click', () => ortho('three'));
 el('frame').addEventListener('click', frameAll);
+el('gear').addEventListener('click', () => {
+  gearTarget = gearTarget > 0.5 ? 0 : 1;
+  el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+});
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
@@ -225,7 +275,25 @@ function resize() {
 }
 addEventListener('resize', resize);
 
+const clock = new THREE.Clock();
 function tick() {
+  const dt = clock.getDelta();
+  if (craft) {
+    for (const pod of craft.userData.parts.engines) {
+      if (!pod.userData.spinning) continue;
+      pod.traverse((o) => {
+        if (o.userData.rotating) {
+          o.rotation.z += dt * 4.2 * (o.userData.spin ?? 1) * (o.userData.rate ?? 1);
+        }
+      });
+    }
+    if (gearT !== gearTarget) {
+      const step = dt / GEAR_SECONDS;
+      gearT += Math.sign(gearTarget - gearT) * Math.min(step, Math.abs(gearTarget - gearT));
+      applyGear();
+      el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+    }
+  }
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(tick);

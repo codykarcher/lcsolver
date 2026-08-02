@@ -225,6 +225,11 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
       topZ1: topAft / rFan,
     }));
     pod.position.set(side * d.engineY, engineY, -d.engineX);
+    // Tagged so a viewer can find a pod from a click without knowing how the
+    // assembly is put together.
+    pod.userData.isEnginePod = true;
+    pod.userData.side = side;
+    pod.name = side > 0 ? 'starboardPod' : 'portPod';
     g.add(pod); parts.engines.push(pod);
   }
 
@@ -245,6 +250,12 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   for (const side of [1, -1]) {
     const lg = mkMain();
     lg.position.set(side * d.mainY, mainAttachY, -d.mainX);
+    // Which way this leg retracts is a property of where it is, so it is
+    // recorded here rather than re-derived by whoever animates it.
+    lg.userData.gearKind = 'main';
+    lg.userData.side = side;
+    lg.userData.retract = { axis: 'z', angle: -side * Math.PI / 2 };
+    lg.name = side > 0 ? 'starboardGear' : 'portGear';
     g.add(lg); parts.gear.push(lg);
   }
   const noseTyre = d.noseTyreIn * IN / 2;
@@ -254,6 +265,13 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   });
   const noseAttachY = u.keelAt(-d.noseX);
   nose.position.set(0, noseAttachY, -d.noseX);
+  nose.userData.gearKind = 'nose';
+  nose.userData.side = 0;
+  // Forward, not sideways: a nose leg swings about the lateral axis into a bay
+  // ahead of it. Negative about X takes the leg from hanging down to pointing
+  // forward.
+  nose.userData.retract = { axis: 'x', angle: -Math.PI / 2 };
+  nose.name = 'noseGear';
   g.add(nose); parts.gear.push(nose);
   const noseContact = noseAttachY + nose.userData.contactY;
 
