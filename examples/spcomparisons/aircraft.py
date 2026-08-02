@@ -414,6 +414,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     k_eng_clear = C("k_eng_clear", 1.2, "-",
                     "engine-centreline clearance outboard of the main gear, "
                     "in fan radii")
+    # Nose-gear bay reach: the gear station may sit at most this many
+    # leg-lengths aft of the nose tip (retraction bay geometry; further aft
+    # interferes with cargo/cabin volume). See the row at its use.
+    k_ng_bay = C("k_ng_bay", 3.0, "-",
+                 "max nose-gear station, in nose-gear leg lengths")
 
     # ---- aircraft-level constants ------------------------------------------
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
@@ -1327,6 +1332,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # never settling). Same physics, one row, well behaved.
         (fu.l_fuse - lg.x_m) * lg.tan_theta_max
             <= lg.l_m + 1.5 * fu.R_fuse,
+        # NOSE-GEAR BAY: the gear must live within k_ng_bay leg-lengths of
+        # the nose tip. A retracting nose gear folds into a bay roughly its
+        # own length; park it further aft and the bay lands in revenue
+        # volume -- cargo or cabin. This is what was missing when the
+        # nose-load band alone placed the gear: the band is indifferent
+        # between a forward gear and a long wheelbase, and the solved 737
+        # carried its nose gear at 25% of the fuselage (10.1 m -- mid-cabin)
+        # against TASOPT's deck input of 4.27 m and the real 737's 5.2.
+        # Measured sweep first (NOSE_GEAR_XFRAC experiment, 2026-08-02): a
+        # hard 5%-of-fuselage cap converges on every architecture but
+        # overshoots FORWARD of the whole fleet; tying the cap to the leg
+        # length lands in the real aircraft's band and scales with the
+        # aircraft instead of with the fuselage fineness.
+        lg.x_n <= k_ng_bay * lg.l_n,
         # Forward gear margin: the nose gear carries 8-15% of the weight. This
         # is what places a nose gear, and it replaces the hard `x_n >= 5 m`
         # that used to sit in landing_gear.py sizing every aircraft's nose.
