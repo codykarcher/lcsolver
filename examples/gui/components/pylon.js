@@ -159,25 +159,47 @@ export function underMountPylon(engine, opts = {}) {
 }
 
 /**
+ * Signed volume; negative means the winding faces inward.
+ *
+ * Handles non-indexed geometry, which ExtrudeGeometry produces. An earlier
+ * version returned 1 when there was no index buffer, so the extruded fairing
+ * reported a clean orientation without ever being looked at.
+ */
+function volumeOf(geo) {
+  const pos = geo.getAttribute('position');
+  if (!pos) return 0;
+  const idx = geo.getIndex();
+  const n = pos.count, count = idx ? idx.count : n;
+  const at = (k) => (idx ? idx.getX(k) : k);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const x = new THREE.Vector3();
+  let v = 0;
+  for (let t = 0; t + 2 < count; t += 3) {
+    a.fromBufferAttribute(pos, at(t));
+    b.fromBufferAttribute(pos, at(t + 1));
+    c.fromBufferAttribute(pos, at(t + 2));
+    v += a.dot(x.crossVectors(b, c)) / 6;
+  }
+  return v;
+}
+
+/**
  * Over-mount pylon: the engine sits above the wing and the pylon hangs down.
  *
- * Not the under-mount mirrored, because both of its edges are defined by the
- * nacelle rather than by the strut:
+ * Three pieces, because three different things have to be joined:
  *
- *   LEADING EDGE runs from the wing up to the NACELLE'S LEADING EDGE, with no
- *   gap between them. An over-wing pylon sits in front of the engine and the
- *   two fair into one another; a strut that stopped short of the nose would
- *   leave a slot for the flow to find.
+ *   strut   the under-mount's strut, mirrored. This is what actually reaches
+ *           the CORE, with its forward edge at the back of the fan case and
+ *           its trailing edge at the trailing edge of the core case.
+ *   fairing the outer body, from the wing up to the cowl. Its leading edge
+ *           meets the NACELLE'S LEADING EDGE with no gap, and its trailing
+ *           edge meets the NACELLE'S TRAILING EDGE.
+ *   plate   the wing face.
  *
- *   TRAILING EDGE runs from the wing up to the NACELLE'S TRAILING EDGE, and
- *   from there aft to the trailing edge of the CORE CASE. So the aft edge
- *   steps inboard where the cowl ends, following the engine rather than
- *   cutting across it.
- *
- * Nothing may touch the fan or the stator row, and the shape is what keeps it
- * clear: the body is bounded above by the cowl's own lower surface, so at the
- * fan station it only exists outboard of the nacelle -- well outside the duct.
- * The structural root inside stays aft of the fan case, as on the under-mount.
+ * The wing attachment is fixed. It is set by topZ0/topZ1, which are the wing's
+ * business, so sliding the engine changes the pylon's rake and nothing else --
+ * an earlier version drove the fairing's lower edge off the engine's aft
+ * station and the mount slid along the wing with it.
  */
 export function overMountPylon(engine, opts = {}) {
   const u = engine.userData;
@@ -189,79 +211,57 @@ export function overMountPylon(engine, opts = {}) {
   const topZ0 = (opts.topZ0 ?? P.topZ0) * R;
   const topZ1 = (opts.topZ1 ?? P.topZ1) * R;
 
-  const w = u.coreWall;
-  const rootZ0 = (u.caseAft ?? P.rootZ0 * R) + engineZ;
-  const rootZ1 = (w ? w[w.length - 1][0] : P.rootZ1 * R) + engineZ;
+  // ---- strut: the piece that reaches the core ----------------------------
+  const under = underMountPylon(engine, opts);
+  const strut = under.getObjectByName('pylonStrut');
+  under.remove(strut);
+  strut.scale.y = -1;
+  strut.name = 'pylonStrut';
+  g.add(strut);
 
-  const cowl = u.cowlOuter ?? [[0.78 * R, 0.96 * R], [-2.35 * R, 1.03 * R]];
-  const zNoseC = cowl[0][0] + engineZ, rNose = cowl[0][1];
-  const zTailC = cowl[cowl.length - 1][0] + engineZ;
-  const rTail = cowl[cowl.length - 1][1];
-  const cowlR = (z) => {
-    for (let k = 0; k < cowl.length - 1; k++) {
-      const a0 = cowl[k][0] + engineZ, b0 = cowl[k + 1][0] + engineZ;
-      if (z <= a0 && z >= b0) {
-        return cowl[k][1] + (cowl[k + 1][1] - cowl[k][1])
-          * ((a0 - z) / ((a0 - b0) || 1));
-      }
+  // ---- fairing: wing up to the cowl --------------------------------------
+  const cowl = u.cowlOuter;
+  if (cowl) {
+    const pts = [];
+    pts.push(new THREE.Vector2(topZ0, -attachY));              // wing, forward
+    for (const [z, r] of cowl) {                               // along the cowl
+      pts.push(new THREE.Vector2(z + engineZ, -r * 0.995));
     }
-    return z > zNoseC ? rNose : rTail;
-  };
+    pts.push(new THREE.Vector2(topZ1, -attachY));              // wing, aft
 
-  // ---- forward body: wing up to the nacelle nose --------------------------
-  // Swept in z, each station spanning from the wing (or the leading edge line
-  // where that has lifted off it) up to the cowl's lower surface.
-  const leSlope = (-attachY + rNose) / (topZ0 - zNoseC);
-  const pos = [], idx = [], ring = [];
-  const N = 30;
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const z = zNoseC + (rootZ1 - zNoseC) * t;
-    const yTop = -cowlR(z) * 0.99;
-    // Above the nacelle's tail the body follows the core in, not the cowl.
-    const yTopUse = z < zTailC
-      ? -Math.max(0, rTail * (1 - (zTailC - z) / ((zTailC - rootZ1) || 1)))
-      : yTop;
-    const yBot = z >= topZ0
-      ? -rNose + (z - zNoseC) * leSlope       // the leading-edge line
-      : -attachY;
-    const th = P.rootT * R * Math.pow(Math.min(1, t * 3), 0.7);
-    ring.push(pos.length / 3);
-    pos.push(th, Math.min(yBot, yTopUse), z,  th, yTopUse, z,
-             -th, yTopUse, z, -th, Math.min(yBot, yTopUse), z);
-  }
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < 4; j++) {
-      const a = ring[i] + j, b = ring[i] + ((j + 1) % 4);
-      const a2 = ring[i + 1] + j, b2 = ring[i + 1] + ((j + 1) % 4);
-      idx.push(a, b, a2, b, b2, a2);
+    // Extrude wants a counter-clockwise outline; the sign of the enclosed
+    // area says which way this one runs, and it flips as the engine slides
+    // past the wing.
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p0 = pts[i], p1 = pts[(i + 1) % pts.length];
+      area += p0.x * p1.y - p1.x * p0.y;
     }
+    if (area < 0) pts.reverse();
+
+    const shape = new THREE.Shape(pts);
+    const th = P.rootT * 2 * R;
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth: th, bevelEnabled: false, curveSegments: 1,
+    });
+    geo.translate(0, 0, -th / 2);
+    geo.computeVertexNormals();
+    const fair = new THREE.Mesh(geo, M.structure);
+    fair.rotation.y = -Math.PI / 2;        // shape X -> world Z, extrude -> X
+    fair.name = 'pylonFairing';
+    g.add(fair);
   }
-  idx.push(ring[0], ring[0] + 2, ring[0] + 1, ring[0], ring[0] + 3, ring[0] + 2);
-  const e = ring[N];
-  idx.push(e, e + 1, e + 2, e, e + 2, e + 3);
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  const body = new THREE.Mesh(geo, M.structure);
-  body.name = 'pylonStrut';
-  g.add(body);
-
-  const plate = new THREE.Mesh(
-    new THREE.BoxGeometry(P.plateX * 2 * R, P.plateT * R, topZ0 - topZ1),
-    M.structure);
-  plate.position.set(0, -attachY - P.plateT * R * 0.5, (topZ0 + topZ1) / 2);
-  plate.name = 'pylonPlate';
+  const plate = under.getObjectByName('pylonPlate');
+  under.remove(plate);
+  plate.position.y = -plate.position.y;
   g.add(plate);
 
-  g.userData.attachY = -attachY - P.plateT * R;
+  g.userData.attachY = -under.userData.attachY;
   g.userData.attachZ = [topZ0, topZ1];
-  g.userData.rootZ = [rootZ0, rootZ1];
-  g.userData.kinkY = -rNose;
-  g.userData.noseJoin = [zNoseC, -rNose];
-  g.userData.tailJoin = [zTailC, -rTail];
+  g.userData.rootZ = under.userData.rootZ;
+  g.userData.kinkY = -under.userData.kinkY;
+  g.userData.volumes = g.children.map((c) => (c.geometry ? volumeOf(c.geometry) : 0));
   g.name = 'overMountPylon';
   return g;
 }
