@@ -80,18 +80,18 @@
 
 
 
-  <h2>winglet</h2>
-  <div class="check"><input type="checkbox" id="winglet" checked><label for="winglet">fit one (visual only)</label></div>
-  <div class="row"><label for="wingletHeight">height &middot; of semispan</label><output id="oWingletHeight"></output></div>
-  <input type="range" id="wingletHeight" min="0.02" max="0.30" step="0.005" value="0.11">
-  <div class="row"><label for="wingletCant">cant &middot; deg</label><output id="oWingletCant"></output></div>
-  <input type="range" id="wingletCant" min="10" max="90" step="1" value="70">
-  <div class="row"><label for="wingletSweep">LE sweep &middot; deg</label><output id="oWingletSweep"></output></div>
-  <input type="range" id="wingletSweep" min="0" max="70" step="1" value="42">
-  <div class="row"><label for="wingletTaper">taper</label><output id="oWingletTaper"></output></div>
-  <input type="range" id="wingletTaper" min="0.10" max="1.00" step="0.01" value="0.35">
-  <div class="row"><label for="wingletBlend">blend</label><output id="oWingletBlend"></output></div>
-  <input type="range" id="wingletBlend" min="0.10" max="0.95" step="0.01" value="0.55">
+  <h2>raked tip</h2>
+  <div class="check"><input type="checkbox" id="rakedTip" checked><label for="rakedTip">fit one (visual only)</label></div>
+  <div class="row"><label for="rakeLength">length &middot; of semispan</label><output id="oRakeLength"></output></div>
+  <input type="range" id="rakeLength" min="0.02" max="0.25" step="0.005" value="0.09">
+  <div class="row"><label for="rakeSweep">LE sweep &middot; deg</label><output id="oRakeSweep"></output></div>
+  <input type="range" id="rakeSweep" min="30" max="80" step="1" value="60">
+  <div class="row"><label for="rakeTip">tip chord &middot; of wing tip</label><output id="oRakeTip"></output></div>
+  <input type="range" id="rakeTip" min="0.01" max="0.30" step="0.005" value="0.06">
+  <div class="row"><label for="rakeCant">extra dihedral &middot; deg</label><output id="oRakeCant"></output></div>
+  <input type="range" id="rakeCant" min="0" max="25" step="0.5" value="3">
+  <div class="row"><label for="rakeBlend">LE turn-back</label><output id="oRakeBlend"></output></div>
+  <input type="range" id="rakeBlend" min="0.05" max="0.90" step="0.01" value="0.30">
 
   <h2>twist</h2>
   <div class="row"><label for="twistRoot">root &middot; deg</label><output id="oTwistRoot"></output></div>
@@ -192,8 +192,7 @@ const num = (id) => parseFloat(el(id).value);
 
 const NUMS = ['area', 'aspectRatio', 'rootChord', 'taperRatio', 'sweep', 'dihedral',
               'kink', 'twistRoot', 'twistTip',
-              'wingletHeight', 'wingletCant', 'wingletSweep', 'wingletTaper',
-              'wingletBlend'];
+              'rakeLength', 'rakeSweep', 'rakeTip', 'rakeCant', 'rakeBlend'];
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
 
@@ -218,8 +217,8 @@ function build() {
   // sweep, taper, twist, sections -- is the same parameter set, which is the
   // point of there being one builder.
   const p = Object.fromEntries(NUMS.map((k) => [k, num(k)]));
-  p.winglet = el('winglet').checked;
-  if (tail) { p.kink = null; p.winglet = false; }
+  p.rakedTip = el('rakedTip').checked;
+  if (tail) { p.kink = null; p.rakedTip = false; }
   for (const k of FOILS) {
     const v = el(k).value.trim();
     p[k] = v === '' ? null : v;
@@ -236,8 +235,8 @@ function build() {
   // reading a swept crank off a shaded surface in perspective is guesswork.
   if (el('outline').checked) {
     const le = [], te = [], c4 = [];
-    // The WING's planform only -- the winglet is decoration and does not belong
-    // on a three-view outline any more than it belongs in the reference area.
+    // The WING's planform only -- the raked tip is decoration and does not
+    // belong on a three-view outline any more than in the reference area.
     for (const s of u.frames.filter((f) => f.wing)) {
       le.push(new THREE.Vector3(s.x, 0, -s.zLE));
       te.push(new THREE.Vector3(s.x, 0, -(s.zLE + s.chord)));
@@ -287,10 +286,13 @@ function build() {
     `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
     `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
     `MAC c/4 <span>${u.xMacQuarter.toFixed(3)}</span> aft of the root LE<br>` +
-    (u.winglet
-      ? `winglet <span>${u.winglet.height.toFixed(2)}</span> up, ` +
-        `<span>${u.winglet.outboard.toFixed(2)}</span> out, tip chord ` +
-        `<span>${u.winglet.tipChord.toFixed(2)}</span><br>`
+    (u.rake
+      ? `rake <span>${u.rake.outboard.toFixed(2)}</span> out, ` +
+        `<span>${u.rake.rise.toFixed(2)}</span> up, tip chord ` +
+        `<span>${u.rake.tipChord.toFixed(3)}</span> ` +
+        `(<span>${(100 * u.rake.tipChord / u.tipChord).toFixed(0)}%</span>) &middot; ` +
+        `TE break <span>${u.rake.trailingBreak.toFixed(1)}&deg;</span><br>` +
+        `overall semispan <span>${(u.semiSpan + u.rake.outboard).toFixed(2)}</span><br>`
       : '') +
     `t/c root <span>${(100 * u.rootThickness).toFixed(1)}%</span> ` +
     `tip <span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; ` +
@@ -327,7 +329,7 @@ function ortho(axis) {
 
 for (const id of NUMS) el(id).addEventListener('input', build);
 for (const id of FOILS) el(id).addEventListener('input', build);
-for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid', 'kWing', 'kTail', 'winglet'])
+for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid', 'kWing', 'kTail', 'rakedTip'])
   el(id).addEventListener('change', build);
 for (const v of ['plan', 'front', 'side']) el(v).addEventListener('click', () => ortho(v));
 el('frame').addEventListener('click', frameSurface);
