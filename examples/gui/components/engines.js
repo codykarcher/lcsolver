@@ -70,6 +70,30 @@ const EXHAUST_GAP = 0.24;
 const PLUG_TIP = 0.25;
 const PLUG_EMBED = 0.05;
 
+/**
+ * The two movable stations that shape the core, between the fixed inlet and
+ * the fixed outlet.
+ *
+ *     z   fraction of core length aft of the inlet plane, 0 at the inlet and
+ *         1 at the exit
+ *     r   radius as a multiple of rCore
+ *
+ * The inlet is not adjustable because bypass ratio sets it, and the outlet is
+ * not adjustable because the exhaust annulus does. Everything between is
+ * these two points and the spline through them.
+ *
+ * Defaults give a plain cylinder that boat-tails into the outlet -- a
+ * starting point to sculpt from, not a shape anyone chose. The profile tuned
+ * by eye earlier was, for reference:
+ *
+ *     waist  {z: 0.12, r: 0.86}   pinch behind the fan
+ *     bulge  {z: 0.70, r: 1.28}   turbine
+ *
+ * which needed four stations rather than two; with two, expect to trade the
+ * waist against the bulge.
+ */
+const CORE_SECTIONS = [{ z: 0.33, r: 1.0 }, { z: 0.67, r: 1.0 }];
+
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
   g.name = name;
@@ -221,6 +245,7 @@ function spinner(rBase, len, material, zBase = 0) {
  */
 export function turbofan({
   rFan = 0.90, bypassRatio = 9, length = null, blades = 40, vanes = 40,
+  sections = CORE_SECTIONS,
 } = {}) {
   if (!(bypassRatio > 0)) throw new Error('turbofan: bypassRatio must be > 0');
 
@@ -311,13 +336,18 @@ export function turbofan({
   // profile creases at every joint and catches the light as a ring. Only the
   // inlet station is load-bearing -- it is what bypass ratio sets -- the rest
   // are shape.
+  // Sorted and clamped rather than trusted: two stations given out of order
+  // fold the profile back on itself, and the lathe of a folded profile is a
+  // shape with its inside out.
+  const secs = sections
+    .map((sec) => ({ z: Math.min(0.98, Math.max(0.02, sec.z)),
+                     r: Math.max(0.05, sec.r) }))
+    .sort((a, b) => a.z - b.z);
+
   const ctrl = [
     new THREE.Vector2(z0, rCore),                      // inlet, sets the BPR
-    new THREE.Vector2(z0 - 0.12 * Lc, 0.86 * rCore),   // waist behind the fan
-    new THREE.Vector2(z0 - 0.40 * Lc, 1.02 * rCore),
-    new THREE.Vector2(z0 - 0.70 * Lc, 1.28 * rCore),   // turbine
-    new THREE.Vector2(z0 - 0.89 * Lc, 1.12 * rCore),
-    new THREE.Vector2(zAft, R_OUTLET * rCore),          // outlet
+    ...secs.map((sec) => new THREE.Vector2(z0 - sec.z * Lc, sec.r * rCore)),
+    new THREE.Vector2(zAft, R_OUTLET * rCore),         // outlet, sets the gap
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
 
@@ -355,6 +385,7 @@ export function turbofan({
   g.userData.bypassRatio = bypassRatio;
   g.userData.coreLength = Lc;
   g.userData.noseZ = zNose;
+  g.userData.sections = secs;
   g.userData.overallLength = zNose + NOSE + TAIL * Lc;
   g.userData.lengthOverDiameter = g.userData.overallLength / (2 * R);
   return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');

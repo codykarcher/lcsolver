@@ -49,6 +49,20 @@
   <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
 
 
+  <h2>core profile</h2>
+
+  <div class="row"><label for="z1">station 1 &mdash; position</label><output id="oZ1"></output></div>
+  <input type="range" id="z1" min="0.02" max="0.98" step="0.01" value="0.33">
+  <div class="row"><label for="r1">station 1 &mdash; radius</label><output id="oR1"></output></div>
+  <input type="range" id="r1" min="0.30" max="2.00" step="0.01" value="1.00">
+
+  <div class="row"><label for="z2">station 2 &mdash; position</label><output id="oZ2"></output></div>
+  <input type="range" id="z2" min="0.02" max="0.98" step="0.01" value="0.67">
+  <div class="row"><label for="r2">station 2 &mdash; radius</label><output id="oR2"></output></div>
+  <input type="range" id="r2" min="0.30" max="2.00" step="0.01" value="1.00">
+
+  <button id="copy">copy profile</button>
+
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
@@ -135,6 +149,8 @@ function build() {
   engine = turbofan({
     rFan,
     bypassRatio: num('bpr'),
+    sections: [{ z: num('z1'), r: num('r1') },
+               { z: num('z2'), r: num('r2') }],
   });
   engine.position.set(0, 0, 0);           // at the origin, unshifted
   scene.add(engine);
@@ -147,6 +163,9 @@ function build() {
 
   el('oR').textContent = rFan.toFixed(2);
   el('oBPR').textContent = num('bpr').toFixed(1);
+  for (const id of ['z1', 'r1', 'z2', 'r2']) {
+    el('o' + id[0].toUpperCase() + id.slice(1)).textContent = num(id).toFixed(2);
+  }
 
   const b = new THREE.Box3().setFromObject(engine);
   el('readout').innerHTML =
@@ -155,6 +174,10 @@ function build() {
     `<br>` +
     `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
     `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
+    `core r <span>${engine.userData.rCore.toFixed(3)}</span> &middot; ` +
+    `stations <span>` +
+    engine.userData.sections.map((q) =>
+      `${(q.r * engine.userData.rCore).toFixed(3)}`).join(', ') + `</span><br>` +
     `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
     `r core <span>${engine.userData.rCore.toFixed(3)}</span><br>` +
     `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span>`;
@@ -179,8 +202,19 @@ function lookAtOrigin() {
   controls.update();
 }
 
-for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
+for (const id of ['rFan', 'bpr', 'z1', 'r1', 'z2', 'r2']) el(id).addEventListener('input', build);
 for (const id of ['axes', 'grid', 'wire']) el(id).addEventListener('change', build);
+// Hand the tuned profile back as source, so a shape found by eye can be
+// pasted into CORE_SECTIONS rather than transcribed off four sliders.
+el('copy').addEventListener('click', () => {
+  const txt = `const CORE_SECTIONS = [{ z: ${num('z1').toFixed(2)}, `
+    + `r: ${num('r1').toFixed(2)} }, { z: ${num('z2').toFixed(2)}, `
+    + `r: ${num('r2').toFixed(2)} }];`;
+  navigator.clipboard?.writeText(txt);
+  const b = el('copy'); const was = b.textContent;
+  b.textContent = 'copied'; setTimeout(() => { b.textContent = was; }, 900);
+  console.log(txt);
+});
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
 
