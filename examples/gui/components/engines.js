@@ -177,14 +177,19 @@ export function turbofan({
 
   // Outlet guide vanes span the bypass annulus. Without them the fan case and
   // the core read as two unrelated parts floating together.
+  //
+  // Sat well forward, the vanes left a bare stretch of case trailing behind
+  // them. Placed off the case's own aft end instead, so the trailing edge
+  // stays just inside the fairing whatever the case length is set to.
   if (vanes > 0) {
+    const cOgv = 0.26 * R;                            // vane chord, root
     const ogv = bladeRow({
       count: vanes, material: M.casing,
       rHub: rCore * 1.02, rTip: 1.02 * R,
-      chordRoot: 0.26 * R, chordTip: 0.24 * R,
+      chordRoot: cOgv, chordTip: 0.24 * R,
       twistRoot: 0.22, twistTip: 0.10, thickness: 0.09,
     });
-    ogv.position.z = -0.46 * R;
+    ogv.position.z = zCaseAft + 0.04 * R + 0.5 * cOgv;   // ~= -0.61 rFan
     g.add(ogv);
   }
 
