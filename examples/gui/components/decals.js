@@ -714,9 +714,15 @@ export function cabinWindows(fuselage, {
  * would have produced all along the wrap.
  */
 export const WINDSCREEN = {
-  /** Fractions of the body's height, measured up from the keel. */
-  low: 0.60,
-  high: 0.80,
+  /**
+   * Fractions of the body's height, measured up from the keel.
+   *
+   * Shifted down by a third of the band's own height from the 60/80 the shape
+   * was first cut at -- both lines move together, so the glass is the same size
+   * and sits lower on the nose.
+   */
+  low: 0.60 - 0.20 / 3,
+  high: 0.80 - 0.20 / 3,
   /** How far back along the NOSE the glass runs. */
   backFraction: 0.50,
   lift: 0.004,
@@ -737,7 +743,7 @@ export const WINDSCREEN = {
    * widest; the sliding window beside it is smaller, and the quarter light
    * behind that smaller again. Equal thirds read as a bus, not a flight deck.
    */
-  paneWidths: [0.50, 0.30, 0.20],
+  paneWidths: [0.40, 0.30, 0.30],
   /**
    * How tall the glass still is where it stops outboard.
    *
@@ -903,25 +909,78 @@ export function windscreen(fuselage, {
     return path;
   };
 
+  /**
+   * Move a point on the surface by a vector lying in its tangent plane.
+   *
+   * The same least squares the march uses, pulled out because the posts need it
+   * too: a post of constant thickness is the divider's own line offset
+   * sideways by half a post, and sideways is a direction in the tangent plane.
+   */
+  const stepOn = (z, th, vec) => {
+    const p = fu.surfaceAt(z, th);
+    const dz = 1e-4, dt = 1e-4;
+    const Pz = fu.surfaceAt(z + dz, th).sub(p).divideScalar(dz);
+    const Pt = fu.surfaceAt(z, th + dt).sub(p).divideScalar(dt);
+    const a11 = Pz.dot(Pz), a12 = Pz.dot(Pt), a22 = Pt.dot(Pt);
+    const b1 = Pz.dot(vec), b2 = Pt.dot(vec);
+    const det = a11 * a22 - a12 * a12;
+    if (Math.abs(det) < 1e-18) return { z, th };
+    return { z: z + (b1 * a22 - b2 * a12) / det,
+             th: th + (a11 * b2 - a12 * b1) / det };
+  };
+
+  /**
+   * A divider's line offset sideways by a constant distance.
+   *
+   * This is what makes a post the same thickness top to bottom. Marching two
+   * posts from anchors half a post apart does NOT: the two walks diverge across
+   * the nose, so the gap between them opens out towards the bottom. One walk,
+   * offset either way by half a post at every step, cannot.
+   *
+   * Sideways is normal cross tangent -- perpendicular to the walk and in the
+   * surface -- so the offset is measured on the skin, not through it.
+   */
+  const offsetPath = (path, d) => {
+    const out = [];
+    for (let i = 0; i < path.length; i++) {
+      const a2 = path[Math.max(0, i - 1)], b2 = path[Math.min(path.length - 1, i + 1)];
+      const tan = fu.surfaceAt(b2.z, b2.th).sub(fu.surfaceAt(a2.z, a2.th));
+      if (tan.lengthSq() < 1e-18) { out.push(path[i]); continue; }
+      tan.normalize();
+      const sideways = new THREE.Vector3()
+        .crossVectors(fu.normalAt(path[i].z, path[i].th), tan).normalize();
+      if (sideways.x < 0) sideways.negate();     // outboard, on the +x side
+      out.push(stepOn(path[i].z, path[i].th, sideways.multiplyScalar(d)));
+    }
+    return out;
+  };
+
   /* ---- where the posts stand ------------------------------------------ */
-  // Shares of the upper edge, centre first: the pane against the centre post is
-  // the windscreen proper and much the widest.
+  // Shares of the upper edge, centre first. The centre post spends half its
+  // width on this side; the two dividers spend a whole one each; the outer end
+  // is an edge, not a joint, and spends nothing.
   const weight = paneWidths.reduce((x, y) => x + y, 0);
-  const usable = topLength - post * paneWidths.length;   // a half post at each end
+  const usable = topLength - post / 2 - post * (paneWidths.length - 1);
+  const dividers = [0];                          // the centreline
   const edges = [];
   {
-    let s = post / 2;                            // half the centre post
-    for (const share of paneWidths) {
+    let s = post / 2;
+    paneWidths.forEach((share, k) => {
       const w = (usable * share) / weight;
       edges.push([s, s + w]);
-      s += w + post;
-    }
+      s += w;
+      if (k < paneWidths.length - 1) { dividers.push(s + post / 2); s += post; }
+    });
   }
 
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
   const built = [];
+
+  // One walk per divider, plus the outer edge, marched once and shared.
+  const dividerPaths = dividers.map((s) => marchPost(s));
+  const outerPath = marchPost(topLength);
 
   for (const side of [1, -1]) {
     edges.forEach(([s0, s1], k) => {
@@ -935,10 +994,20 @@ export function windscreen(fuselage, {
        */
       const paths = [];
       for (let j = 0; j < nv; j++) {
-        const sj = s0 + (s1 - s0) * (j / (nv - 1));
-        const path = marchPost(sj);
-        if (path.length < 2) return;
-        paths.push(path);
+        if (j === 0) {
+          // The pane's inner edge: the divider's own walk, offset out by half
+          // a post. Constant thickness follows from there being ONE walk.
+          paths.push(offsetPath(dividerPaths[k], post / 2));
+        } else if (j === nv - 1) {
+          paths.push(k < dividers.length - 1
+            ? offsetPath(dividerPaths[k + 1], -post / 2)
+            : outerPath);
+        } else {
+          const sj = s0 + (s1 - s0) * (j / (nv - 1));
+          const path = marchPost(sj);
+          if (path.length < 2) return;
+          paths.push(path);
+        }
       }
       const M = Math.max(...paths.map((q) => q.length));
       /**
@@ -997,7 +1066,8 @@ export function windscreen(fuselage, {
   Object.assign(group.userData, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown, zRange: [zBack, null],
-    zInner, topLength, paneWidths, post, edges,
+    zInner, topLength, paneWidths, post, edges, dividers,
+    dividerPaths, outerPath, offsetPath,
     panesPerSide: paneWidths.length, paneCount: 2 * paneWidths.length,
     panes: built, nv,
     marchPost, atArc, thHiAt, thAtHeight,

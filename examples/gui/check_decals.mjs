@@ -578,14 +578,40 @@ console.log('\n=== windscreen ===');
     }
   }
 
+  /* ---- a post is the same thickness top to bottom ---------------------- */
+  // Measured down each divider's own walk. Two walks launched half a post apart
+  // diverge across the nose and the gap opens out towards the bottom, which is
+  // what it used to do; one walk offset either way cannot.
+  {
+    let lo = Infinity, hi = 0;
+    for (let d = 0; d < su.dividers.length; d++) {
+      const A = su.offsetPath(su.dividerPaths[d], su.post / 2);
+      const B = su.offsetPath(su.dividerPaths[d], -su.post / 2);
+      for (let i = 0; i < Math.min(A.length, B.length); i++) {
+        const w = fud.surfaceAt(A[i].z, A[i].th).distanceTo(fud.surfaceAt(B[i].z, B[i].th));
+        lo = Math.min(lo, w); hi = Math.max(hi, w);
+      }
+    }
+    console.log(`  post thickness down its whole length: ` +
+                `${(1000 * lo).toFixed(1)}..${(1000 * hi).toFixed(1)} mm`);
+    if (hi - lo > 1e-3) {
+      fail(`a post varies by ${(1000 * (hi - lo)).toFixed(1)} mm along its length`);
+    }
+    if (Math.abs(lo - su.post) > 1e-3) {
+      fail(`posts measure ${(1000 * lo).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
+    }
+  }
+
   /* ---- widest against the centre post --------------------------------- */
   {
     const w = su.panes.map((p) => p.width);
     console.log(`  pane widths from the centre out: ${w.map((v) => v.toFixed(3)).join(', ')} m ` +
                 `(along the upper edge)`);
+    // Non-increasing, not strictly decreasing: 40/30/30 puts two equal panes
+    // outboard on purpose, and only the innermost has to be the widest.
     for (let i = 1; i < w.length; i++) {
-      if (w[i] >= w[i - 1]) {
-        fail(`pane ${i + 1} is not narrower than pane ${i}`);
+      if (w[i] > w[i - 1] + 1e-9) {
+        fail(`pane ${i + 1} is wider than pane ${i}`);
       }
     }
   }
