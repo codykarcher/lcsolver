@@ -94,6 +94,37 @@ for (const c of CASES) {
   }
   if (inward) bad(`${inward} vertex normals face inward`);
 
+
+  let ringRatio = 1;
+  /* 1b. every ring is evenly spaced around its own outline ----------------- */
+  // The single biggest thing that was ever wrong with this loft, and nothing
+  // else here would see it. Sections used to be sampled at uniform ANGLE, which
+  // is exact on a circle -- a tube measures 1:1 at every station either way --
+  // and falls apart as a section flattens, because the ray angle then sweeps
+  // most of its range over the corners and almost none over the middle. The
+  // D8's aft rings came out at 470:1, a 2.4 m edge beside a 5 mm one. The
+  // geometry was right and the mesh was unshadeable.
+  {
+    const pr = geo.getAttribute('position');
+    const va = new THREE.Vector3(), vb = new THREE.Vector3();
+    let worstRatio = 1, worstZ = 0;
+    for (let ring = 0; (ring + 1) * 64 <= pr.count - 2; ring++) {
+      let lo = Infinity, hi = 0;
+      for (let j = 0; j < 64; j++) {
+        va.fromBufferAttribute(pr, ring * 64 + j);
+        vb.fromBufferAttribute(pr, ring * 64 + ((j + 1) % 64));
+        const d = va.distanceTo(vb);
+        lo = Math.min(lo, d); hi = Math.max(hi, d);
+      }
+      if (lo < 1e-9) continue;                       // a ring closed on a point
+      if (hi / lo > worstRatio) { worstRatio = hi / lo; worstZ = pr.getZ(ring * 64); }
+    }
+    if (worstRatio > 1.5)
+      bad(`ring spacing is ${worstRatio.toFixed(1)}:1 at z ${worstZ.toFixed(1)} ` +
+          `-- the section is not sampled evenly`);
+    ringRatio = worstRatio;
+  }
+
   /* 3. applied patches sit proud ---------------------------------------- */
   // Every window, door and pane is placed by lifting off the surface along the
   // local normal, so the standoff should be exactly the lift, everywhere.
@@ -256,6 +287,7 @@ for (const c of CASES) {
   }
   if (overlaps) bad(`${overlaps} pairs of decals overlap on the skin`);
 
+  console.log(`  ring spacing ${ringRatio.toFixed(3)}:1 (1.0 is even)`);
   console.log(`  standoff: lift ${lift.toFixed(4)}, worst ${worstStand.toFixed(4)}`);
   console.log(`  ${patches} applied patches, volume ${vol.toFixed(2)}, ` +
               `${open} open edges, ${inward} inward normals, ` +

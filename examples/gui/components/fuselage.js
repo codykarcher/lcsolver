@@ -349,7 +349,49 @@ function faceOutward(geo, shape) {
 }
 
 /**
- * Skin the body: a grid of quads over (station, angle), closed at both ends.
+ * The points of one section, spaced evenly along its OUTLINE.
+ *
+ * Not evenly in angle, which is what this file did first and is the single
+ * biggest thing that was wrong with the D8. Uniform angle is exact on a circle
+ * -- a tube measures 1:1 between its longest and shortest edge at every station
+ * -- and it falls apart as a section flattens, because on a wide flat top the
+ * ray angle sweeps almost all of its range over the corners and almost none
+ * over the middle. Measured on the D8's aft rings: 470 to 1, a 2.4 m edge
+ * beside a 5 mm one. That is not a shape that can be shaded, and no amount of
+ * smoothing the profile touches it.
+ *
+ * So: sample densely in angle, accumulate arc length, and resample at equal
+ * spacing along it. Circles are unaffected, since for them the two are the same
+ * thing -- which is why the tube's mesh does not change at all.
+ *
+ * Correspondence between adjacent rings comes from both starting at theta = 0,
+ * the widest point, and from every section here being symmetric about it. That
+ * keeps the quads from twisting along the body.
+ */
+function ringPoints(shape, sec, z, nSeg, nDense = 720) {
+  const dense = [], cum = [0];
+  for (let j = 0; j <= nDense; j++) {
+    dense.push(surfacePoint(shape, sec, z, (j / nDense) * Math.PI * 2, new THREE.Vector3()));
+    if (j) cum.push(cum[j - 1] + dense[j].distanceTo(dense[j - 1]));
+  }
+  const total = cum[nDense];
+  const out = [];
+  if (total < 1e-9) {                       // a section collapsed to a point
+    for (let i = 0; i < nSeg; i++) out.push(dense[0].clone());
+    return out;
+  }
+  let k = 0;
+  for (let i = 0; i < nSeg; i++) {
+    const target = total * i / nSeg;
+    while (k < nDense - 1 && cum[k + 1] < target) k++;
+    const span = cum[k + 1] - cum[k];
+    out.push(dense[k].clone().lerp(dense[k + 1], span > 1e-12 ? (target - cum[k]) / span : 0));
+  }
+  return out;
+}
+
+/**
+ * Skin the body: a grid of quads over (station, outline), closed at both ends.
  *
  * Stations are clustered toward both ends rather than spaced evenly. The body
  * is nearly straight down the middle and turns hard at the tips, so uniform
@@ -377,10 +419,7 @@ function skinBody(shape, sec, { nStation = 140, nSeg = 64, cluster = 0.65 } = {}
   }
 
   for (const z of zs) {
-    for (let j = 0; j < nSeg; j++) {
-      surfacePoint(shape, sec, z, (j / nSeg) * Math.PI * 2, v);
-      pos.push(v.x, v.y, v.z);
-    }
+    for (const p of ringPoints(shape, sec, z, nSeg)) pos.push(p.x, p.y, p.z);
   }
   for (let i = 0; i < nStation - 1; i++) {
     for (let j = 0; j < nSeg; j++) {

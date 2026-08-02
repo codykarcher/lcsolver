@@ -75,6 +75,37 @@ for (const c of CASES) {
   }
   if (vol <= 0) bad(`enclosed volume ${vol.toFixed(2)} -- wound inward`);
 
+
+  let ringRatio = 1;
+  /* 1b. every ring is evenly spaced around its own outline ----------------- */
+  // The single biggest thing that was ever wrong with this loft, and nothing
+  // else here would see it. Sections used to be sampled at uniform ANGLE, which
+  // is exact on a circle -- a tube measures 1:1 at every station either way --
+  // and falls apart as a section flattens, because the ray angle then sweeps
+  // most of its range over the corners and almost none over the middle. The
+  // D8's aft rings came out at 470:1, a 2.4 m edge beside a 5 mm one. The
+  // geometry was right and the mesh was unshadeable.
+  {
+    const pr = geo.getAttribute('position');
+    const va = new THREE.Vector3(), vb = new THREE.Vector3();
+    let worstRatio = 1, worstZ = 0;
+    for (let ring = 0; (ring + 1) * 64 <= pr.count - 2; ring++) {
+      let lo = Infinity, hi = 0;
+      for (let j = 0; j < 64; j++) {
+        va.fromBufferAttribute(pr, ring * 64 + j);
+        vb.fromBufferAttribute(pr, ring * 64 + ((j + 1) % 64));
+        const d = va.distanceTo(vb);
+        lo = Math.min(lo, d); hi = Math.max(hi, d);
+      }
+      if (lo < 1e-9) continue;                       // a ring closed on a point
+      if (hi / lo > worstRatio) { worstRatio = hi / lo; worstZ = pr.getZ(ring * 64); }
+    }
+    if (worstRatio > 1.5)
+      bad(`ring spacing is ${worstRatio.toFixed(1)}:1 at z ${worstZ.toFixed(1)} ` +
+          `-- the section is not sampled evenly`);
+    ringRatio = worstRatio;
+  }
+
   /* 2. r(z) still means HALF-HEIGHT ---------------------------------------- */
   // The whole library rests on this: one size distribution and one centreline
   // law serve every section because every section is normalised to unit height.
@@ -345,6 +376,7 @@ for (const c of CASES) {
         `z ${worstZ.toFixed(1)} -- a ring`);
 
 
+  console.log(`  ring spacing ${ringRatio.toFixed(3)}:1 (1.0 is even)`);
   console.log(`  closed, volume ${vol.toFixed(1)}, half-height ${halfHeight.toFixed(3)}`);
   console.log(`  width/height: nose section ${noseW.toFixed(2)}, cabin ${gotWidth.toFixed(2)}`);
   console.log(`  nose-to-cabin section change ${secDiff.toFixed(3)}`);
