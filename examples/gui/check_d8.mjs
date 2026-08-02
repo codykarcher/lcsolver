@@ -115,6 +115,22 @@ for (const c of CASES) {
   if (p.trough > 0.05 && aftValley <= cabValley * 1.2)
     bad(`aft valley ${aftValley.toFixed(3)} is no deeper than the cabin's ${cabValley.toFixed(3)}`);
 
+  /* 4b. the point sits above the axis -------------------------------------- */
+  // The one thing about this nose that is not simply "wider than a tube's". A
+  // tube drops its point for the view over the nose; a D8 lifts it for moment.
+  // Sign errors here are invisible on a body this wide, so measure it.
+  const tipY = u.shapeAt(0).yc;
+  if (Math.abs(tipY - p.tipRise * R) > 1e-9)
+    bad(`point at ${tipY.toFixed(3)}, tipRise ${p.tipRise} asks ${(p.tipRise * R).toFixed(3)}`);
+  if (p.tipRise > 0 && tipY <= 0)
+    bad(`tipRise is positive but the point is at or below the axis`);
+  let outside = 0;
+  for (let i = 0; i <= 300; i++) {
+    const z = -u.noseLength * i / 300;
+    if (u.crownAt(z) > R + 1e-6 || u.keelAt(z) < -R - 1e-6) outside++;
+  }
+  if (outside) bad(`nose leaves the +/-R envelope at ${outside} stations`);
+
   /* 5. the morph leaves no ring ------------------------------------------- */
   // A jump in the SECTION is a crease running all the way round the body, which
   // is the one defect this construction can produce that a tube cannot. Walk
@@ -165,6 +181,8 @@ for (const c of CASES) {
               `(two lobes give ${wantWidth.toFixed(2)})`);
   console.log(`  valley below the lobes: cabin ${(100 * cabValley).toFixed(1)}%, ` +
               `aft ${(100 * aftValley).toFixed(1)}% of height`);
+  console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
+              `${outside} stations outside the envelope`);
   console.log(`  fastest SHAPE change ${worstStep.toFixed(2)} per unit length ` +
               `at z ${worstZ.toFixed(1)}`);
 }

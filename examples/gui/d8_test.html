@@ -61,7 +61,10 @@
 
   <h2>section</h2>
   <div class="row"><label for="noseWidth">nose ellipse W/H</label><output id="oNoseWidth"></output></div>
-  <input type="range" id="noseWidth" min="0.80" max="2.20" step="0.01" value="1.20">
+  <input type="range" id="noseWidth" min="0.80" max="2.40" step="0.01" value="1.55">
+
+  <div class="row"><label for="tipRise">tip above axis</label><output id="oTipRise"></output></div>
+  <input type="range" id="tipRise" min="-0.40" max="0.60" step="0.01" value="0.15">
 
   <div class="row"><label for="bubble">bubble offset</label><output id="oBubble"></output></div>
   <input type="range" id="bubble" min="0.00" max="0.85" step="0.01" value="0.45">
@@ -186,7 +189,7 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 const DECK = ['rad', 'fineness', 'noseD'];
-const SHAPE = ['noseWidth', 'bubble', 'trough', 'troughWidth',
+const SHAPE = ['noseWidth', 'tipRise', 'bubble', 'trough', 'troughWidth',
                'uBubble', 'uOpen', 'uTrough'];
 const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
 
@@ -343,6 +346,11 @@ function build() {
     `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +
     `tail <span>${u.tailLength.toFixed(2)}</span> &middot; ` +
     `widest at z <span>${u.maxHalfWidth.z.toFixed(1)}</span><br>` +
+    `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
+    `(<span>${u.tipRise.toFixed(2)}</span> half-heights ` +
+    `${u.tipRise >= 0 ? 'above' : 'below'} the axis)<br>` +
+    `nose W/H at the join <span>${(u.halfWidthAt(-u.noseLength) * 2
+      / (u.crownAt(-u.noseLength) - u.keelAt(-u.noseLength))).toFixed(3)}</span><br>` +
     `seat: z <span>${u.nacelleSeat(1).z.toFixed(2)}</span>, ` +
     `x <span>${u.nacelleSeat(1).point.x.toFixed(2)}</span>, ` +
     `y <span>${u.nacelleSeat(1).point.y.toFixed(2)}</span>`;
@@ -385,9 +393,17 @@ function ortho(axis) {
     camera.position.set(0, 0, -L * 0.30 + d);
     setNearFar(d);
   } else if (axis === 'nose') {
-    const N = u.noseLength, c = -N * 0.55, d = 2.3 * Math.max(N, 2 * R);
-    controls.target.set(0, -R * 0.15, c);
-    camera.position.set(d, -R * 0.15, c);
+    // Keeps the direction you are already looking from and only moves in. So
+    // `side` then `nose` is a side view OF THE NOSE, `top` then `nose` a plan
+    // of it, `front` then `nose` an end-on section. A fixed camera angle here
+    // would mean one of those three and a lot of orbiting for the other two.
+    const N = u.noseLength, c = new THREE.Vector3(0, R * 0.1, -N * 0.55);
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-9) dir.set(1, 0.25, 0.6);
+    dir.normalize();
+    const d = 2.2 * Math.max(N, 2.4 * R);
+    controls.target.copy(c);
+    camera.position.copy(c).addScaledVector(dir, d);
     setNearFar(d);
   } else if (axis === 'aft') {
     // The aft end is where the trough and the engine seats are, and it is a
@@ -434,7 +450,8 @@ function tick() {
 
 resize();
 build();
-ortho('aft');
+ortho('side');
+ortho('nose');
 tick();
 </script>
 </body>

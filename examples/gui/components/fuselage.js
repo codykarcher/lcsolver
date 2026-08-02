@@ -172,6 +172,12 @@ const JET = {
  * -/+ hold*radius at the point to -/+ radius at the join, so the nose cannot
  * hang below the belly nor the tailcone rise above the roof.
  *
+ * keelHold is SIGNED, and the negative half is not a trick -- it is the same
+ * law holding the crown instead of the keel, which lifts the point above the
+ * axis rather than dropping it below. A tube wants its point low, for the view
+ * over the nose. A D8 wants it high, to buy back some nose-up moment. Both are
+ * one number.
+ *
  * Returned as one object carrying `at(z)` and the stations it was cut at, so
  * that everything downstream -- skin, windows, doors, and later whatever mounts
  * to the side of it -- asks the same question of the same object and cannot
@@ -695,10 +701,16 @@ const D8 = {
   noseA: 2.4, noseB: 0.50,
   tailA: 1.5, tailB: 0.70,
   tipR:       0.20,  // aft body does not close to a point the way a tube does
-  keelHold:   0.80,  // a D8 is flat-bottomed: the keel holds almost all the way
   crownHold:  1.00,
 
-  noseWidth:  1.20,  // ellipse aspect at the point
+  // The point sits ABOVE the axis, which is the opposite of a tube and is the
+  // one thing about this nose that is not just "wider". A tube drops its point
+  // to buy the view over the nose; a D8 lifts it to buy back nose-up moment.
+  // Implemented as a negative keel hold, which is the same law holding the
+  // crown instead of the keel -- see jetShape.
+  tipRise:    0.15,  // height of the point above the axis, in half-heights
+
+  noseWidth:  1.55,  // ellipse aspect at the point -- WIDE, like the cabin
   bubble:     0.45,  // lobe offset, in lobe radii -- how far apart the bubbles
   trough:     0.30,  // depth of the aft valley, as a fraction of half-height
   troughWidth: 0.60, // angular width of that valley, radians
@@ -742,6 +754,9 @@ export function d8Fuselage({
     ...(fineness != null ? { fineness } : {}),
     ...(noseD != null ? { noseD } : {}),
   };
+  // Stated as a rise and stored as a hold, so the shape law stays one law and
+  // the parameter still reads the way the aeroplane does.
+  if (shapeOverrides.keelHold === undefined) p.keelHold = -p.tipRise;
   const L = length ?? p.fineness * 2 * radius;
 
   const bubble = doubleBubbleSection({ offset: p.bubble });
@@ -765,6 +780,8 @@ export function d8Fuselage({
   Object.assign(u, {
     isDoubleBubble: true,
     bubbleOffset: p.bubble,
+    tipRise: p.tipRise,
+    tipY: p.tipRise * radius,
     /** Section width over height at the cabin -- what makes it look like a D8. */
     cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
       / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
