@@ -1728,7 +1728,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         fu.A_1h_MLF >= (fu.N_lift * _plus_eng(fu.W_tail + fu.W_apu)
                            + fu.r_M_h * ht.L_ht_max) / (fu.h_fuse * fu.sigma_M_h),
         Izwing >= _iz_wing(),
-        Iztail >= (_plus_eng(fu.W_apu + vt.W_vt) * vt.l_vt ** 2. / g
+        # numVT: BOTH fins' mass swings in yaw. W_tail already charges
+        # numVT*W_vt; the CG and inertia rows were still counting one fin
+        # on the D8 -- weight in the ledger, moment missing from the sums.
+        Iztail >= (_plus_eng(fu.W_apu + numVT * vt.W_vt) * vt.l_vt ** 2. / g
                    + ht.W_ht * ht.l_ht ** 2. / g),
         # x_wing and l_vt stand in for CG-relative distances so I_z stays scalar.
         Izfuse >= ((fu.W_fuse + fu.W_payload_max) / fu.l_fuse
@@ -2269,7 +2272,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         xCG * W_avg >= (
             xmisc * Wmisc + lg.x_CG_lg * lg.W_lg
             + 0.5 * (fu.W_fuse + fu.W_payload) * fu.l_fuse
-            + ht.W_ht * ht.x_CG_ht + vt.W_vt * vt.x_CG_vt
+            + ht.W_ht * ht.x_CG_ht + numVT * vt.W_vt * vt.x_CG_vt
             + numeng * Wengsys * xeng
             + wing.W_wing * (fu.x_wing + wing.dx_AC_wing)
             + (PCFuel + ReserveFraction) * W_fprimary
@@ -2965,7 +2968,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # and under-sizes the tail, independently of anything else.
         xCGe * W_dry >= (xmisc * Wmisc + lg.x_CG_lg * lg.W_lg
                          + 0.5 * fu.W_fuse * fu.l_fuse
-                         + ht.W_ht * ht.x_CG_ht + vt.W_vt * vt.x_CG_vt
+                         + ht.W_ht * ht.x_CG_ht + numVT * vt.W_vt * vt.x_CG_vt
                          + numeng * Wengsys * xeng
                          + wing.W_wing * (fu.x_wing + wing.dx_AC_wing)),
         # ---- CG envelope: TASOPT cglpay, solved rather than sampled --------

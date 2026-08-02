@@ -115,7 +115,12 @@ def add_vertical_tail(f, N, state, *, v_vt_min=V_VT_MIN_CONVENTIONAL, sweep_deg,
     Te = V("T_e", 1e5, "N", "thrust per engine at takeoff")
     Iz = V("I_z_max", 1e7, "kg*m^2", "aircraft z-axis moment of inertia")
     Vvt = V("V_vt", 0.1, "-", "vertical tail volume coefficient")
-    Wvt = V("W_vt", 1e4, "N", "total VT system weight")
+    # PER FIN. The box below builds one fin and the aircraft multiplies by
+    # numVT everywhere it aggregates (W_tail, drag, V_vt, the EO row, the
+    # CG and inertia sums). The description said "total" for a long time
+    # while meaning this -- the mislabel is what let two aircraft rows get
+    # away with consuming it unmultiplied on the two-fin D8.
+    Wvt = V("W_vt", 1e4, "N", "VT system weight, one fin")
 
     # ---- constants --------------------------------------------------------
     # 1.0 -- NO empirical correction. Tried at 1.25 and pulled back out; what
