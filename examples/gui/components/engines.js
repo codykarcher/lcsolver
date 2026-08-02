@@ -73,6 +73,20 @@ const R_OUTLET = 1.25;
 const MAX_RADIUS = 0.95;
 
 /**
+ * Bypass ratio below which the core stops growing aft of the first shaping
+ * station.
+ *
+ * Bypass ratio properly sets the core radius at the fan duct's back face --
+ * that is the station the area ratio is about. Letting the whole core scale
+ * with it as well means a low-bypass engine swells along its entire length,
+ * and by BPR 2 the turbine and the exhaust are nearly as fat as the fan.
+ *
+ * So below this ratio the duct face and the first station keep tracking the
+ * bypass ratio, and everything aft of them holds the size it had here.
+ */
+const AFT_LOCK_BPR = 3;
+
+/**
  * Exhaust annulus, as a FRACTION of the outlet radius rather than an absolute
  * offset. That is what makes the plug scale with the outlet: widen the outlet
  * and the cone grows with it, keeping the slot in proportion, where a fixed
@@ -292,6 +306,9 @@ export function bareTurbofan({
   // engine near 1 puts it at 0.7, which is why those engines look like tubes.
   const rCoreIdeal = R / Math.sqrt(bypassRatio + 1);
   const rCore = Math.min(rCoreIdeal, MAX_RADIUS * R);
+  // Aft of the first station the core is frozen at its AFT_LOCK_BPR size.
+  const rCoreAft = Math.min(
+    R / Math.sqrt(Math.max(bypassRatio, AFT_LOCK_BPR) + 1), MAX_RADIUS * R);
   const rHub = 0.62 * rCore;              // fan hub sits inside the core line
 
   // `length` is NOSE TO TAIL -- spinner tip to plug tip -- not merely the
@@ -379,8 +396,9 @@ export function bareTurbofan({
   // PLANE, which is the only place the annulus is visible.
   // Multiples of rCore, so the profile follows bypass ratio; ceilinged
   // against fan radius, so it can never leave the duct.
-  const cap = (mult) => Math.min(Math.max(0.02, mult) * rCore, MAX_RADIUS * R);
-  const rOutlet = cap(outletRadius);
+  const cap = (mult, base) =>
+    Math.min(Math.max(0.02, mult) * base, MAX_RADIUS * R);
+  const rOutlet = cap(outletRadius, rCoreAft);
   const rPlugExit = rOutlet * (1 - EXHAUST_GAP_FRAC);
   // Continuing the same taper forward to the buried base.
   const rPlugBase = rPlugExit * (1 + PLUG_EMBED / PLUG_TIP);
@@ -395,7 +413,10 @@ export function bareTurbofan({
   const ctrl = [
     new THREE.Vector2(z0, rCore),                      // inside the duct
     new THREE.Vector2(zSplit, rCore),                  // duct back face: BPR
-    ...secs.map((sec) => new THREE.Vector2(zSplit - sec.z * Lv, cap(sec.r))),
+    // First station follows the bypass ratio with the duct face; the rest are
+    // held at the locked size, so a low-bypass core keeps a sensible tail.
+    ...secs.map((sec, i) => new THREE.Vector2(
+      zSplit - sec.z * Lv, cap(sec.r, i === 0 ? rCore : rCoreAft))),
     new THREE.Vector2(zAft, rOutlet),                  // outlet
   ];
   // Clamp the SAMPLED curve, not just the control points. A Catmull-Rom
@@ -432,6 +453,7 @@ export function bareTurbofan({
   ], M.hot, SEG));
 
   g.userData.rCore = rCore;
+  g.userData.rCoreAft = rCoreAft;
   g.userData.bypassRatio = bypassRatio;
   g.userData.bypassRatioEffective = (R * R - rCore * rCore) / (rCore * rCore);
   g.userData.coreLength = Lc;
