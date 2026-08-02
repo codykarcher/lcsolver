@@ -24,6 +24,8 @@
   .row label { font-size: 11.5px; color: #aab3bf; }
   .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
   input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
+  input:disabled { opacity: .3; }
+  .off { opacity: .35; }
   input[type=text] { width: 100%; margin: 1px 0 9px; padding: 3px 6px; font: inherit;
     font-size: 11.5px; color: #e6a34a; background: #14161a;
     border: 1px solid #363d47; border-radius: 4px; font-variant-numeric: tabular-nums; }
@@ -135,7 +137,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { liftingSurface } from './components/wing.js';
+import { liftingSurface, defaults } from './components/wing.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -189,6 +191,28 @@ const NUMS = ['span', 'rootChord', 'crankRatio', 'tipRatio', 'sweep', 'kink',
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
 
+/**
+ * Load one of the component's own default sets into the sliders.
+ *
+ * The toggle used to change the topology and nothing else, so picking
+ * "horizontal tail" gave a wing-sized trapezoid: 34 m of span with a tail's
+ * planform rules. Reading the defaults out of the component rather than keeping
+ * a copy here means the two cannot drift.
+ */
+function loadDefaults(which) {
+  const d = defaults[which];
+  for (const k of NUMS) if (d[k] != null) el(k).value = d[k];
+  for (const k of FOILS) el(k).value = d[k] ?? '';
+  // A tail has no crank, so those three say nothing. Disabled rather than
+  // hidden, so it is clear they exist and why they are not doing anything.
+  const noCrank = which === 'tail';
+  for (const k of ['kink', 'crankRatio', 'crankThickness', 'kinkFoil']) {
+    el(k).disabled = noCrank;
+    el(k).closest('div')?.classList.toggle('off', noCrank);
+    el(k).previousElementSibling?.classList?.toggle('off', noCrank);
+  }
+}
+
 let surface = null, extra = [];
 
 function line(pts, colour, opacity = 0.9) {
@@ -206,11 +230,13 @@ function build() {
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
   const tail = el('kTail').checked;
-  // A tail is this same loft with the crank switched off. Everything else --
-  // sweep, taper, twist, sections -- is the same parameter set, which is the
-  // point of there being one builder.
-  const p = Object.fromEntries(NUMS.map((k) => [k, num(k)]));
-  if (tail) p.kink = null;
+  // Start from the COMPONENT's own default set for whichever kind is selected,
+  // then override with the sliders. The locked values -- dihedral, twist -- are
+  // not sliders and differ between the two, so a page that only passed slider
+  // values would build a tail with the wing's dihedral and washout.
+  const p = { ...defaults[tail ? 'tail' : 'wing'],
+              ...Object.fromEntries(NUMS.map((k) => [k, num(k)])) };
+  if (tail) { p.kink = null; p.crankThickness = null; }
   for (const k of FOILS) {
     const v = el(k).value.trim();
     p[k] = v === '' ? null : v;
@@ -319,12 +345,15 @@ function ortho(axis) {
 
 for (const id of NUMS) el(id).addEventListener('input', build);
 for (const id of FOILS) el(id).addEventListener('input', build);
-for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid', 'kWing', 'kTail'])
+for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid'])
   el(id).addEventListener('change', build);
+for (const [id, which] of [['kWing', 'wing'], ['kTail', 'tail']]) {
+  el(id).addEventListener('change', () => { loadDefaults(which); build(); });
+}
 for (const v of ['plan', 'front', 'side']) el(v).addEventListener('click', () => ortho(v));
 el('frame').addEventListener('click', frameSurface);
 el('reset').addEventListener('click', () => {
-  for (const [k, v] of Object.entries(DEFAULTS)) el(k).value = v;
+  loadDefaults(el('kTail').checked ? 'tail' : 'wing');
   build();
 });
 

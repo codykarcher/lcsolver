@@ -281,4 +281,11 @@ export function horizontalTail(o = {}) { return liftingSurface({ ...TAIL, ...o }
 // different set of conventions rather than a wing with mirror off, and
 // pretending otherwise would put three numbers in userData that quietly mean
 // something else. `liftingSurface({ mirror: false })` builds the geometry.
+/**
+ * The two default sets, so a caller can start from either without restating
+ * them. A page that hard-codes its own copy is a second source of truth for the
+ * same numbers, which is the failure check_defaults exists to catch.
+ */
+export const defaults = { wing: WING, tail: TAIL };
+
 export const surfaces = { wing, horizontalTail };
