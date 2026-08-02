@@ -13,8 +13,8 @@
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
-import { surfaceArt, fuselageTitles, cabinWindows, TAIL_ART, TAIL_HEIGHT, artNames }
-  from './components/decals.js';
+import { surfaceArt, fuselageTitles, cabinWindows, cockpitGlazing, windowLayout,
+         TAIL_ART, TAIL_HEIGHT, artNames } from './components/decals.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_conventional_solve.json', import.meta.url), 'utf8'));
 const deck = deckFromSolve(sol);
@@ -279,7 +279,7 @@ const nearestFuse = (q) => {
 console.log(`fuselage skin: ${fuseTris.length} triangles, radius ${R.toFixed(3)},` +
             ` glass reaches y ${windowTop.toFixed(3)}`);
 
-const titles = fuselageTitles(fuse, {});
+const titles = fuselageTitles(fuse, { deck });
 const LIFT = 0.008;
 if (!titles.userData.fits) fail('a title ran off the top of the body');
 
@@ -480,5 +480,84 @@ if (Math.abs(glo - wu.pitch) > 1e-9) fail(`gap ${glo} is not the stated pitch ${
   if (clear <= 0) fail(`titles overlap the windows by ${(-clear).toFixed(3)} m`);
 }
 
-console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork and windows lie on the skin, placed as the solve says');
+/* ---- the cockpit ------------------------------------------------------- */
+console.log('\n=== cockpit glazing ===');
+{
+  const cock = cockpitGlazing(fuse, {});
+  const cu = cock.userData;
+  const cb = new THREE.Box3().setFromObject(cock);
+  const noseLength = fuse.userData.noseLength;
+  console.log(`${cu.widthMetres.toFixed(2)} x ${cu.heightMetres.toFixed(2)} m at ` +
+              `${cu.angle} deg, z ${cb.max.z.toFixed(2)}..${cb.min.z.toFixed(2)} ` +
+              `(nose 0..${(-noseLength).toFixed(2)})`);
+
+  // On the nose, not spilling onto the barrel or off the tip.
+  if (cb.max.z > 0 || cb.min.z < -noseLength) {
+    fail(`cockpit runs off the nose: ${cb.max.z.toFixed(2)}..${cb.min.z.toFixed(2)}`);
+  }
+  if (cu.clipped) fail(`cockpit had ${cu.clipped} nodes off the body`);
+
+  /**
+   * Standoff on the NOSE, where the radial shortcut used for the barrel does
+   * not hold: the surface slopes in z there, so its normal has a z component
+   * and a purely radial measurement under-reads. Found by search over (z, th)
+   * instead, which is the honest distance to the surface.
+   */
+  const nearestNose = (p) => {
+    const s0 = fuse.userData.shapeAt(p.z);
+    let bz = p.z, bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
+    for (let step = 0.2; step > 1e-5; step *= 0.45) {
+      for (const dz of [-step, 0, step]) {
+        for (const dt of [-step, 0, step]) {
+          const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
+          const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
+          if (d < best) { best = d; }
+        }
+      }
+      // re-centre on the best of this ring
+      let mz = bz, mt = bt;
+      for (const dz of [-step, 0, step]) for (const dt of [-step, 0, step]) {
+        const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
+        const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
+        if (Math.abs(d - best) < 1e-12) { mz = bz + dz; mt = bt + dt; }
+      }
+      bz = mz; bt = mt;
+    }
+    return best;
+  };
+
+  for (const mesh of cock.children) {
+    const pos = mesh.geometry.getAttribute('position');
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < pos.count; i += 5) {
+      const d = nearestNose(new THREE.Vector3().fromBufferAttribute(pos, i));
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    console.log(`  ${mesh.name.padEnd(20)} standoff ${lo.toFixed(5)}..${hi.toFixed(5)} m`);
+    if (lo < 1e-4) fail(`${mesh.name} touches or enters the nose`);
+    if (Math.abs(hi - 0.004) > 6e-4) {
+      fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}, wanted 0.004`);
+    }
+    facesOutward(mesh, (p) => {
+      const s2 = fuse.userData.shapeAt(p.z);
+      return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
+    }, mesh.name);
+  }
+
+  // Forward of the cabin, so it cannot land among the passenger windows.
+  if (cb.min.z < wbox.max.z) {
+    fail(`cockpit reaches ${cb.min.z.toFixed(2)}, aft of the first cabin window at ${wbox.max.z.toFixed(2)}`);
+  }
+}
+
+/* ---- the titles start at the window line ------------------------------ */
+{
+  const wl = windowLayout(deck);
+  const d = Math.abs(titles.userData.startZ - wl.zFwd);
+  console.log(`\ntitles start at ${titles.userData.startZ.toFixed(3)}, ` +
+              `window line front is ${wl.zFwd.toFixed(3)}`);
+  if (d > 1e-9) fail(`titles start ${d.toFixed(3)} m off the front of the window line`);
+}
+
+console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork, windows and cockpit lie on the skin, placed as the solve says');
 process.exit(bad ? 1 : 0);

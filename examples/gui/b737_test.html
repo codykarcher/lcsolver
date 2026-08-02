@@ -104,8 +104,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, cabinWindows, TAIL_ART, TITLE_LAYOUT, artNames }
-  from './components/decals.js';
+import { surfaceArt, fuselageTitles, cabinWindows, cockpitGlazing,
+         TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -292,13 +292,13 @@ function build() {
   // The row along the body. Onto the fuselage rather than the aircraft, so it
   // travels with the body if that ever moves relative to the rest.
   if (el('titles').checked) {
-    const row = fuselageTitles(u.parts.fuselage, { textureFor });
+    const row = fuselageTitles(u.parts.fuselage, { textureFor, deck });
     u.parts.fuselage.add(row);
     u.parts.titles = row;
     const [aft, fwd] = row.userData.zRange;
     el('titleNote').textContent =
-      `${row.children.length} marks, ${(fwd - aft).toFixed(1)} m of body ` +
-      `starting ${TITLE_LAYOUT.startNoseLengths} nose lengths aft`;
+      `${row.children.length} marks, ${(fwd - aft).toFixed(1)} m of body, ` +
+      `from the front of the window line`;
   } else {
     el('titleNote').textContent = '';
   }
@@ -315,6 +315,11 @@ function build() {
     el('windowNote').textContent =
       `${w.rows} per side at ${(w.pitch / 0.0254).toFixed(0)} in seat pitch ` +
       `\u2014 ${w.passengers} pax, ${w.seatsAbreast.toFixed(0)} abreast`;
+    // The cockpit rides with the windows: they are the same decision about
+    // whether the aeroplane is glazed at all.
+    const cock = cockpitGlazing(u.parts.fuselage, { texture: textureFor('cockpit.png') });
+    u.parts.fuselage.add(cock);
+    u.parts.cockpit = cock;
   } else {
     el('windowNote').textContent = '';
   }

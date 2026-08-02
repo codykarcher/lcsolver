@@ -368,12 +368,22 @@ export const FUSELAGE_TITLES = [
  * room left below the crown.
  */
 export const TITLE_LAYOUT = {
+  /**
+   * The row starts at the front of the WINDOW LINE, so it is referred to the
+   * cabin rather than to the nose. Both move when the solve changes, but they
+   * do not move together -- the shell can grow without the nose doing anything
+   * -- and it is the windows the titles have to sit alongside.
+   *
+   * `startNoseLengths` is the fallback for a caller with no deck to hand.
+   */
+  startAtWindows: true,
   startNoseLengths: 2.0,
-  // Raised to clear the windows. A 0.32 m window centred at 20 degrees reaches
-  // y 0.78, and titles at 1.15 came down to 0.77 -- overlapping by half a
-  // degree of arc, which is the kind of miss that reads as a rendering fault
-  // rather than as a placement one.
-  y: 1.25,
+  /**
+   * Clear of the glass by about twice a window's own corner radius. A 0.32 m
+   * window centred at 20 degrees reaches y 0.78; at 1.25 the titles came down
+   * to 0.89, which read as tight against them rather than as a band above.
+   */
+  y: 1.36,
   height: 0.9,
   gap: 1.2,
 };
@@ -385,13 +395,17 @@ export const TITLE_LAYOUT = {
  * are even in METRES on the skin whatever the marks' proportions are. Spacing
  * them by centre instead would bunch the wide wordmark against its neighbour.
  */
-export function fuselageTitles(fuselage, { textureFor, titles = FUSELAGE_TITLES,
+export function fuselageTitles(fuselage, { textureFor, deck, titles = FUSELAGE_TITLES,
                                            layout = {}, name = 'titles' } = {}) {
   const L = { ...TITLE_LAYOUT, ...layout };
   const noseLength = fuselage.userData.noseLength;
   const group = new THREE.Group();
   group.name = name;
-  let zFwd = -L.startNoseLengths * noseLength;    // z decreases aft
+  // z decreases aft, so the row starts at the largest z and works back.
+  const start = (L.startAtWindows && deck)
+    ? windowLayout(deck).zFwd
+    : -L.startNoseLengths * noseLength;
+  let zFwd = start;
   const placed = [];
   for (const t of titles) {
     const w = L.height * t.aspect;
@@ -405,12 +419,49 @@ export function fuselageTitles(fuselage, { textureFor, titles = FUSELAGE_TITLES,
     zFwd -= w + L.gap;
   }
   Object.assign(group.userData, {
-    isArt: true, pieces: placed,
+    isArt: true, pieces: placed, startZ: start,
     /** Where the row starts and ends, so a caller can say whether it fits. */
-    zRange: [zFwd + L.gap, -L.startNoseLengths * noseLength],
+    zRange: [zFwd + L.gap, start],
     fits: placed.every((p) => p.fits),
   });
   return group;
+}
+
+/**
+ * The cockpit glazing.
+ *
+ * One patch a side carrying all three panes, rather than three patches: the
+ * posts between them are part of the artwork, and separate patches would have
+ * to be placed relative to each other on a curved, tapering nose to keep those
+ * posts even.
+ *
+ * Placed by ANGLE, not by height. The nose section shrinks going forward, so a
+ * level band runs off the top of the body before the patch ends -- and a
+ * windscreen wraps the nose rather than sitting at one waterline in any case.
+ *
+ * Stationed as a fraction of the NOSE length, so it stays on the nose whatever
+ * length the solve gives it.
+ */
+export const COCKPIT = {
+  file: 'cockpit.png',
+  aspect: 3.0,          // matches textures/cockpit.png
+  startNoseFraction: 0.30,   // forward edge, back from the tip
+  height: 0.85,
+  angle: 52,            // degrees above the section centre
+  lift: 0.004,
+};
+
+export function cockpitGlazing(fuselage, { texture, name = 'cockpit', ...o } = {}) {
+  const p = { ...COCKPIT, ...o };
+  const w = p.height * p.aspect;
+  const zFwd = -p.startNoseFraction * fuselage.userData.noseLength;
+  const g = fuselageArt(fuselage, {
+    texture, z: zFwd - w / 2, angle: p.angle,
+    height: p.height, aspect: p.aspect, offset: p.lift,
+    nu: 30, nv: 14, name,
+  });
+  g.userData.zFwd = zFwd;
+  return g;
 }
 
 /**
@@ -515,6 +566,16 @@ export function fuselageArt(fuselage, {
   texture,
   z = -12,
   y = 1.15,
+  /**
+   * Degrees above the section centre. When given, the band follows the body's
+   * own curve instead of staying level.
+   *
+   * Level is right for anything referenced to the cabin floor and wrong on the
+   * nose, where the section shrinks forward: a constant height there runs off
+   * the top of the body before the patch ends, and cockpit glazing wraps the
+   * nose rather than sitting at one waterline anyway.
+   */
+  angle = null,
   height = 0.9,
   aspect = 1,
   offset = 0.008,
@@ -540,9 +601,14 @@ export function fuselageArt(fuselage, {
         const zs = zFwd + (zAft - zFwd) * fu2;
         // The band's centre angle is found afresh at every station, which is
         // what keeps it level rather than parallel to the section.
-        const thC = angleAtHeight(fu, zs, y);
-        if (thC == null) { clipped++; }
-        const base = thC ?? Math.PI / 2;
+        let base;
+        if (angle != null) {
+          base = (angle * Math.PI) / 180;
+        } else {
+          const thC = angleAtHeight(fu, zs, y);
+          if (thC == null) clipped++;
+          base = thC ?? Math.PI / 2;
+        }
         const arc = (fv - 0.5) * height;
         const th = angleAtArc(fu, zs, base, arc);
         const p = fu.surfaceAt(zs, side > 0 ? th : Math.PI - th);
@@ -579,7 +645,7 @@ export function fuselageArt(fuselage, {
   }
 
   Object.assign(group.userData, {
-    isArt: true, z, y, aspect,
+    isArt: true, z, y, angle, aspect,
     widthMetres: w, heightMetres: height,
     zRange: [zAft, zFwd],
     /** Stations where the band ran off the top of the body. Should be zero. */
@@ -614,6 +680,29 @@ export const WINDOW = {
   lift: 0.004,
 };
 
+/**
+ * Where the row of windows lands, as numbers, without building anything.
+ *
+ * Split out because two things need it and only one of them makes windows: the
+ * titles are asked to start at the front of the WINDOW LINE, and computing
+ * that separately in each place is how the two quietly drift apart.
+ */
+export function windowLayout(deck, { pitch, width = WINDOW.width } = {}) {
+  const zStart = -deck.cabinStart, zEnd = -deck.cabinEnd;
+  const step = pitch ?? deck.seatPitch;
+  const rows = pitch == null
+    ? Math.round(deck.cabinRows)
+    : Math.max(0, Math.floor(Math.abs(zEnd - zStart) / step + 1e-9));
+  const used = rows * step;
+  const z0 = zStart - (Math.abs(zEnd - zStart) - used) / 2 - step / 2;
+  return {
+    rows, step, z0,
+    /** Forward and aft EDGES of the glass, not the centres. */
+    zFwd: z0 + width / 2,
+    zAft: z0 - (rows - 1) * step - width / 2,
+  };
+}
+
 export function cabinWindows(fuselage, {
   texture, deck, pitch, name = 'windows',
   width = WINDOW.width, height = WINDOW.height, angle = WINDOW.angle,
@@ -623,28 +712,16 @@ export function cabinWindows(fuselage, {
   const group = new THREE.Group();
   group.name = name;
 
-  // The solve measures x from the nose, positive aft; the model runs z
-  // negative aft from the same origin. One negation, stated once.
-  const zStart = -deck.cabinStart, zEnd = -deck.cabinEnd;
-  const step = pitch ?? deck.seatPitch;
   // The row COUNT is read, not recomputed. Dividing the shell by the pitch
   // gives 29.999999999999996 on this solve -- the pitch was derived from those
-  // same two numbers -- and flooring that quietly drops the last row. Only an
-  // overridden pitch has to be divided out, because then nothing states it.
-  const rows = pitch == null
-    ? Math.round(deck.cabinRows)
-    : Math.max(0, Math.floor(Math.abs(zEnd - zStart) / step + 1e-9));
+  // same two numbers -- and flooring that quietly drops the last row.
+  const { rows, step, z0 } = windowLayout(deck, { pitch, width });
 
   // Held at a fixed HEIGHT rather than a fixed angle, for the same reason the
   // row of titles is: the floor is level, so a window line referenced to it
   // cannot climb with the section.
-  const y = fuselage.userData.shapeAt(zStart).r * Math.sin(angle * Math.PI / 180);
-
-  // Centred within the shell: the leftover after fitting whole rows is split
-  // between the two ends, so the row does not crowd the forward bulkhead and
-  // leave a gap at the back.
-  const used = rows * step;
-  const z0 = zStart - (Math.abs(zEnd - zStart) - used) / 2 - step / 2;
+  const y = fuselage.userData.shapeAt(-deck.cabinStart).r
+          * Math.sin(angle * Math.PI / 180);
 
   for (let i = 0; i < rows; i++) {
     const w = fuselageArt(fuselage, {
