@@ -71,7 +71,7 @@ __all__ = ["add_powertrain"]
 
 def add_powertrain(f, N, *, prefix: str = "PT_", n_fans: int = 2,
                    u_free: float = 232.0, rho_free: float = 0.38,
-                   state=None, d_max: float = 4.5):
+                   state=None, d_max: float = 4.5, BLI: bool = False):
     """Add inverter + motor + ducted fan for ``n_fans`` propulsors.
 
     ``state`` is an optional flight state (``add_flight_state``). Without it
@@ -123,6 +123,19 @@ def add_powertrain(f, N, *, prefix: str = "PT_", n_fans: int = 2,
     else:
         u_0 = [state.V[i] for i in range(N)]
         rho_0 = [state.rho[i] for i in range(N)]
+    # BLI, the actuator-disc form of the turbofan's f_BLI_V (same constant,
+    # same provenance: the D8.2's ingested-stream velocity defect). One
+    # substitution -- the inflow arrives at f_BLI_V * u_0 instead of u_0 --
+    # carries BOTH halves of the turbofan treatment at once: the momentum
+    # row's ram drag falls (the f_BLI_V benefit) and the power row's
+    # incoming-KE credit falls with it (the f_BLI_P penalty: re-energising
+    # the defect stream is charged automatically, because P = the excess KE
+    # flux over what actually arrived). Net, for the same thrust and mass
+    # flow, P = 0.5 F (F/mdot + 2 f_BLI_V u_0) < the free-stream case --
+    # the classic wake-filling propulsive-power saving, with no separate
+    # pressure-defect constant needed in an energy-form model.
+    fBLIV = C("f_BLI_V", 0.927288 if BLI else 1.0, "-",
+              "BLI inflow velocity ratio (1 = free stream)")
     # Fan-weight constants, straight from the port's ducted_fan.py.
     # Normalised by D_ref = 1 m so the fractional power acts on a
     # dimensionless ratio -- the same trick as j_ref in fuel_cell.py; a unit
@@ -153,22 +166,25 @@ def add_powertrain(f, N, *, prefix: str = "PT_", n_fans: int = 2,
     for i in range(N):
         cons += [
             P_shaft_max >= P_shaft[i],
-            # Momentum thrust, F = mdot (u_j - u_0). A difference, so
+            # Momentum thrust, F = mdot (u_j - u_in). A difference, so
             # signomial; written as a sum on the greater side exactly as York
-            # writes F <= F_6 + F_8.
-            F_net[i] + mdot_a[i] * u_0[i] <= mdot_a[i] * u_j[i],
+            # writes F <= F_6 + F_8. The inflow is f_BLI_V * u_0 -- free
+            # stream unless the fan ingests boundary layer (see fBLIV above).
+            F_net[i] + mdot_a[i] * fBLIV * u_0[i] <= mdot_a[i] * u_j[i],
             # The actuator disc: the flow the fans swallow is set by the disc
-            # area and the velocity through it, (u_0 + u_j)/2. Sum on the
+            # area and the velocity through it, (u_in + u_j)/2. Sum on the
             # greater side -- signomial -- and the row that makes mass flow
             # cost something.
             mdot_a[i] <= 0.5 * rho_0[i] * n_f
                 * (3.141592653589793 / 4.0) * D_fan ** 2
-                * (u_0[i] + u_j[i]),
-            # Ideal fan power is the *excess* kinetic energy over free stream,
-            # 0.5 mdot (u_j^2 - u_0^2). Using the absolute flux instead makes
-            # the propulsor look about twice as bad as it is, because it
-            # charges the fan for kinetic energy the air already had.
-            P_shaft[i] + 0.5 * mdot_a[i] * u_0[i] ** 2
+                * (fBLIV * u_0[i] + u_j[i]),
+            # Ideal fan power is the *excess* kinetic energy over the ARRIVING
+            # flow, 0.5 mdot (u_j^2 - u_in^2). Using the absolute flux instead
+            # makes the propulsor look about twice as bad as it is, because it
+            # charges the fan for kinetic energy the air already had; using
+            # u_0 with BLI on would hand out KE the defect stream never
+            # brought, which is where the re-energising cost lives.
+            P_shaft[i] + 0.5 * mdot_a[i] * (fBLIV * u_0[i]) ** 2
                 >= 0.5 * mdot_a[i] * u_j[i] ** 2,
         ]
 

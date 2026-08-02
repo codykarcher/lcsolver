@@ -96,6 +96,29 @@ ARCHS = {
 }
 
 # ---------------------------------------------------------------------------
+# Mixed rows: D8 airframe under electric energy carriers. Outside the
+# canonical five because they change BOTH axes at once -- legitimate designs,
+# and exactly the reason the axes are separate flags -- but read them against
+# their single-axis parents (battery, h2fc), not against the datum. The
+# electric powertrain takes the BLI inflow defect through f_BLI_V in
+# add_powertrain (the actuator-disc form of the turbofan's branch), so these
+# rows fly with the wake credit AND the fan paying for it, like the d8.
+ARCHS["battery_d8"] = Architecture(
+    key="battery_d8", label="Battery-electric D8 (BLI)",
+    double_bubble=True, BLI=True, rear_engines=True,
+    fuel="electric", engine="", cryo_tank=False,
+    fuel_cell=False, battery=True, wet_wing=False,
+    note="D8 airframe, pack + BLI electric fans. The airframe the electric "
+         "propulsor arguably wants: no core to distort, short inlets.")
+ARCHS["h2fc_d8"] = Architecture(
+    key="h2fc_d8", label="H2 fuel cell D8 (BLI)",
+    double_bubble=True, BLI=True, rear_engines=True,
+    fuel="electric", engine="", cryo_tank=True,
+    fuel_cell=True, battery=False, wet_wing=False,
+    note="D8 airframe, PEM stack + BLI electric fans + LH2 tank. Radiator "
+         "cooling drag charged inside the BLI drag row.")
+
+# ---------------------------------------------------------------------------
 # Mach-locked twins.
 #
 # With Mach free and fuel as the objective the optimiser flies slow -- 0.60

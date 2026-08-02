@@ -311,7 +311,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # sized at one (u, rho) is sized for a condition nobody has to fly.
         pt, c = add_powertrain(f, N, prefix="PT_",
                                n_fans=size_class.n_fans, state=st,
-                               d_max=size_class.fan_d_max)
+                               d_max=size_class.fan_d_max,
+                               # The fan pays for the momentum-deficient
+                               # inflow whenever the airframe claims the
+                               # wake credit -- same coupling as the
+                               # turbofan's f_BLI_P/f_BLI_V branch.
+                               BLI=arch.BLI)
         cons += c
         eng = ElectricPropulsor(f, N, pt, n_eng=float(size_class.n_fans))
         cons += eng.cons
@@ -1806,6 +1811,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             ]
 
     # ---- per-segment performance -----------------------------------------------
+    # The component-drag sum, named once so the BLI/radiator branches below
+    # stay four variants of one expression rather than four spellings of it.
+    _drag_sum = (wing.D_wing + Dfuse + numVT * vt.D_vt
+                 + ht.D_ht + numeng * Dnace)
     cons += [
         rhocabin == Pcabin / (st.R * Tcabin),
         st.V >= Vstall,
@@ -1868,17 +1877,18 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # grew with wing area. The engine side -- the fan paying for the
         # momentum-deficient inflow -- is f_BLI_P/f_BLI_V in the cycle,
         # active whenever arch.BLI is.
-        *([D + f_BLIf * f_wake_fuse * Dfuse
-           >= wing.D_wing + Dfuse + numVT * vt.D_vt
-            + ht.D_ht + numeng * Dnace]
+        # BLI and the radiator are INDEPENDENT axes (a fuel-cell D8 has
+        # both) and the drag row must compose them: the earlier three-way
+        # branch dropped rad.D_cool from the BLI case, which would have
+        # handed a fuel-cell D8 its megawatt cooling drag for free.
+        *([(D + f_BLIf * f_wake_fuse * Dfuse >= _drag_sum + rad.D_cool)
+           if rad is not None else
+           (D + f_BLIf * f_wake_fuse * Dfuse >= _drag_sum)]
           if arch.BLI else
           # The fuel-cell aircraft pays its cooling drag here -- the
           # radiator's per-segment ram-momentum cost.
-          ([D >= wing.D_wing + Dfuse + numVT * vt.D_vt
-               + ht.D_ht + numeng * Dnace + rad.D_cool]
-           if rad is not None else
-           [D >= wing.D_wing + Dfuse + numVT * vt.D_vt
-               + ht.D_ht + numeng * Dnace])),
+          [(D >= _drag_sum + rad.D_cool) if rad is not None else
+           (D >= _drag_sum)]),
         C_D == D / (.5 * st.rho * st.V ** 2 * wing.S),
         LoD == W_avg / D,
 
