@@ -119,7 +119,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           # TASOPT's two Mach-independent constants with a fit that has a real
           # transonic rise. See components/polars.py.
           polar="mses_c", tail_drag: str = "mses",
-          wing_model: str = "hoburg",
+          # "tasopt" -- the cranked-planform surfw.f wing -- IS THE BASELINE
+          # as of 2026-08-02: it reproduces TASOPT's box station-for-station
+          # (caps 0.91-1.18 across the matrix) where the closed-form single-
+          # taper box ran 1.17 heavy, and it carries the Trefftz-plane
+          # Oswald surrogate. "hoburg" remains selectable for comparison and
+          # is unmaintained-but-frozen.
+          wing_model: str = "tasopt",
           sweep_deg: float | None = None):
     """Build the LH2 D8.2. Returns an EDI ``Formulation``.
 
