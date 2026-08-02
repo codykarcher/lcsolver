@@ -125,7 +125,8 @@ ETA_BREAK = ETA_S
 def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                     rho_fuel=817.0, material=None, sweep_pricing=False,
                     polar=YORK_C, W_engine=None, eta_break=ETA_BREAK,
-                    tau_max=0.14):
+                    tau_max=0.14, lam_s_pin=None, lam_t_pin=None,
+                    f_L_total=1.0):
     """Add the cranked-planform wing. Returns ``(group, constraints)``.
 
     Same signature and same exposed names as ``wing.add_wing``, so
@@ -223,7 +224,17 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
     eo = etao[0] if N > 1 else etao
 
     cons = sweep_cons + [
-        AR == b ** 2 / S,
+        # AR == b^2/S is NOT written here: add_wingbox_tasopt writes exactly
+        # that row on exactly these objects (wingbox_tasopt.py, first row of
+        # its cons), and a duplicated equality is a LICQ failure -- the pair's
+        # gradients are linearly dependent, the multiplier becomes a ray, and
+        # the solver runs it to the tau ceiling where complementarity can
+        # never close. That is the "stationarity 4.45, stuck not slow" failure
+        # recorded in this module's docstring: the same defect was found and
+        # measured on the fin (three-row combination) and the horizontal tail
+        # (exact pair) via SVD of the equality Jacobian, and removing those
+        # plus this took the free-sweep D8 from non-convergent to a clean KKT
+        # point. One owner per identity: the box.
         # ---- cranked planform, all posynomial ----------------------------
         cs == lam_s * co,
         ct == lam_t * co,
@@ -248,6 +259,14 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         eo <= etas,
         lam_t <= lam_s, lam_s <= 1.0,
         lam_t >= 0.10, lam_s >= 0.25,
+        # TAPER PINS. Left free, lam_t runs to its 0.10 floor -- a 0.54 m tip
+        # chord on a 737 -- because nothing here prices tip stall or aileron
+        # authority. TASOPT's own optimizer has lambdat ACTIVE in the 737 deck
+        # and still lands on exactly the deck's 0.25, so whatever holds it
+        # there is not in our port either; until it is, the deck values are
+        # the defensible basis, same as BPR and FPR on the engine.
+        *([lam_s == lam_s_pin] if lam_s_pin is not None else []),
+        *([lam_t == lam_t_pin] if lam_t_pin is not None else []),
         # Oswald efficiency (Nita & Scholz). Taken on the TIP taper, which is
         # the ratio the correlation was fitted against. Without this pair `e`
         # is a free variable and a higher one is pure profit -- induced drag
@@ -314,7 +333,14 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         alpha <= amax,
         Dwing == 0.5 * rho * Vinf ** 2 * S * CDw,
         CDw >= CDp + CDi,
-        CDi >= TipReduct * CLw ** 2 / (pi * e * AR),
+        # Induced drag on TOTAL lift, not wing lift. TASOPT's Trefftz-plane
+        # CDi charges the aircraft CL -- its printed cruise numbers close
+        # exactly as CL_tot^2/(pi*AR*e) -- because the fuselage carryover
+        # lift still trails vorticity. Charging only C_L_wing handed the
+        # D8's Ltow = 1.195 carryover 19.5% of the lift induced-drag-free,
+        # a 1.43x discount on CDi. f_L_total is the caller's Ltow; the
+        # conventional tube's 1.02 makes this a 4% correction there.
+        CDi >= TipReduct * (f_L_total * CLw) ** 2 / (pi * e * AR),
         Re == rho * Vinf * mac / mu,
     ]
 

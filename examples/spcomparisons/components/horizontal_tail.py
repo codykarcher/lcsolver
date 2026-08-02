@@ -169,7 +169,13 @@ def add_horizontal_tail(f, N, state, *, sweep_deg=None, prefix="HT_",
         fl >= (0.0524 * taper ** 4 - 0.15 * taper ** 3 + 0.1659 * taper ** 2
                - 0.0706 * taper + 0.0119),
         e * (1 + fl * ARht) <= 1,
-        ARht == bht ** 2 / Sh,
+        # AR_ht == b_ht^2/S_h is NOT written here: add_wingbox below is handed
+        # AR=ARht, b=bht, S=Sh and imposes exactly that row itself. Writing it
+        # in both places is an exact duplicate equality -- the two gradients
+        # are linearly dependent, LICQ fails, and the pair's multipliers become
+        # a ray the solver can run to its tau ceiling, which is what pinned the
+        # D8's complementarity at 1.0 (the fin had the same defect through a
+        # three-row combination). One owner: the wingbox.
         # TODO in source: make less arbitrary.
         taper >= 0.2,
         taper <= 1,

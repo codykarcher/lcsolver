@@ -57,6 +57,15 @@ def _solve_one(args):
         # iterations going from 2e-04 to 6e-06, all of it in twelve Fuse_*
         # variables. res.report names them, so a run that stops short says why.
         _o.stationarity_tolerance = 1e-5
+        # The SUBPROBLEM tolerance, distinct from the outer KKT tolerances
+        # above, and load-bearing: at ipopt's default 1e-12 the linearized
+        # equality cluster around the free-sweep identity is declared
+        # infeasible at points whose true residuals are 1e-9, and the
+        # free-sweep D8 dies mid-run ("the SIA sub-problem failed:
+        # infeasible"). At 1e-9 the same cold start converges to the same
+        # optimum a warm start reaches, to 7 significant figures.
+        _o.ipopt_options = dict(_o.ipopt_options, tol=1e-9,
+                                constr_viol_tol=1e-9)
         r = solve_sia(st, options=_o, presolve=False)
         rec["status"] = str(r.status)[:120]
         rec["report"] = getattr(r, "report", None)

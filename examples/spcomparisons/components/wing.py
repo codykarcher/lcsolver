@@ -250,6 +250,20 @@ def add_wing(f, N, state, *, sweep_deg=None, prefix="Wing_",
         cons += [
             # tan^2 L cos^2 L + cos^2 L == 1, the Pythagorean identity written
             # so both sides are posynomial.
+            #
+            # It MUST be the equality. The GP-legal half (<= 1) was tried when
+            # this row's linearization was implicated in the free-sweep D8's
+            # subproblem failures, with the argument that the pressure on
+            # cos_Lambda is upward (the wingbox charges 1/cos^3, the FAR CLmax
+            # correction pays (cos/cos_ref)^2) so the row would bind. On the D8
+            # it does -- slack 3e-10. On the 737 it does NOT: the solution held
+            # cos at 24.1 deg of sweep while claiming tan of 18.3 deg, slack
+            # 7.6e-2, taking the low-tan trim benefits (dx_AC moved 65%)
+            # against the high-sweep drag relief and pocketing 200 lbf of
+            # fuel. Which side binds is configuration-dependent, so the
+            # relaxation is not safe. The D8's convergence problem was solved
+            # elsewhere: duplicate AR equalities (LICQ failure) and the inner
+            # ipopt tolerance -- see solve options in the runners.
             tanL ** 2 * cosL ** 2 + cosL ** 2 == 1.0,        # [SP] SigEq
             # Hard bounds: 0 to 40 degrees of quarter-chord sweep.
             #

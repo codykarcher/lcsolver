@@ -202,6 +202,40 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
     sair_sl = V("s_air_sl", 400.0, "m", "air distance to screen, sea level")
     sTO_sl = V("s_TO_sl", 2000.0, "m", "takeoff field length, sea level")
     rho_sl_c = C("rho_sl_TO", 1.225, "kg/m^3", "sea-level takeoff density")
+
+    # ---- BALANCED FIELD LENGTH (FAR 25.109 accelerate-stop / -go) ----------
+    # The all-engines roll above, factored by 1.15, is only HALF of 25.113:
+    # the field length is the longer of that and the balanced field, and for
+    # a twin the balanced field is what actually sizes the engine -- lose one
+    # of two engines at V1 and the survivor has to drag the aircraft to V2 on
+    # the runway that remains. Without this case the engine came out at 0.70
+    # of TASOPT's on the D8: TASOPT constrains lBF (takeoff.f, LlBFcon in
+    # every deck) and we were letting the all-engines case set thrust.
+    #
+    # Same three-phase structure as takeoff.f, reduced to mean accelerations
+    # (theirs integrates F = F0 - KV*V^2 exactly and Newton-solves the
+    # transcendental balance; a GP cannot hold an exp(), but the constant-a
+    # reduction is the same physics and V_1 lands within a few knots):
+    #   A: all engines, 0 -> V1        s_1 = V1^2 / 2a
+    #   B: engine out, V1 -> V2        s_go = (V2^2 - V1^2) / 2a_OEI
+    #   C: max braking, V1 -> 0        s_stop = V1^2 / 2(mu_brake g)
+    # V_1 is FREE: raising it shortens the go branch and lengthens the stop,
+    # so with both branches under the same runway limit the optimizer places
+    # V_1 exactly where they balance -- which is the definition of V1.
+    # takeoff.f's lBF ends at V2 on the ground (no air segment), and its
+    # braking phase takes no credit for reversers, per FAR 25.109(f).
+    V1 = V("V_1", 65.0, "m/s", "takeoff decision speed")
+    a_oei = V("a_OEI", 1.0, "m/s^2", "mean OEI acceleration, V1 to V2")
+    s_go = V("s_go_OEI", 600.0, "m", "OEI continue distance, V1 to V2")
+    s_stp = V("s_stop", 600.0, "m", "accelerate-stop braking distance from V1")
+    s_bf = V("s_BF", 2000.0, "m", "balanced field length")
+    V1_sl = V("V_1_sl", 65.0, "m/s", "decision speed, sea level")
+    aoei_sl = V("a_OEI_sl", 1.0, "m/s^2", "mean OEI acceleration, sea level")
+    sgo_sl = V("s_go_OEI_sl", 600.0, "m", "OEI continue distance, sea level")
+    sstp_sl = V("s_stop_sl", 600.0, "m", "braking distance, sea level")
+    sbf_sl = V("s_BF_sl", 2000.0, "m", "balanced field length, sea level")
+    mub = C("mu_brake", 0.35, "-",
+            "max braking coefficient (TASOPT mubrake, both decks)")
     kmcg = C("k_MCG", k_mcg, "-",
              "V_MCG as a fraction of V_s_TO (calibrated; see SizeClass)")
 
@@ -211,6 +245,9 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
                V_s_TO_sl=Vs_sl, V_LOF_sl=Vlof_sl, a_TO_sl=a_sl,
                s_ground_sl=sg_sl, s_air_sl_to=sair_sl, s_TO_sl=sTO_sl,
                rho_sl_TO=rho_sl_c,
+               V_1=V1, a_OEI=a_oei, s_go_OEI=s_go, s_stop=s_stp, s_BF=s_bf,
+               V_1_sl=V1_sl, a_OEI_sl=aoei_sl, s_go_OEI_sl=sgo_sl,
+               s_stop_sl=sstp_sl, s_BF_sl=sbf_sl, mu_brake=mub, k_MCG=kmcg,
                s_ground=s_g, s_air=s_air, s_TO=s_TO, s_land=s_land, a_TO=a_TO,
                s_air_land=s_air_ld,
                C_Lmax_TO=CLmaxTO, C_Lmax_land=CLmaxLD, dC_D_flap_TO=dCD_to,
@@ -397,6 +434,30 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
         # Air distance from 50 ft at a 3 degree approach, flared.
         s_air_land * 0.0524 == h_screen_land,                      # [SP] SigEq
     ]
+
+    # ---- BALANCED FIELD LENGTH, main takeoff condition ---------------------
+    # See the declaration block in add_far for the model. Phase A's distance
+    # V1^2/2a is a monomial in existing variables, so only the OEI and braking
+    # phases need rows of their own. The braking row takes no reverser credit
+    # (25.109(f)); the OEI roll reuses mu_eff, which slightly understates the
+    # dead engine's windmill drag (TASOPT adds CDeng ~ 0.5*A_fan/S, worth
+    # ~0.004 of effective mu -- a few percent of the go distance).
+    V1, a_oei = o["V_1"], o["a_OEI"]
+    s_go, s_stp, s_bf = o["s_go_OEI"], o["s_stop"], o["s_BF"]
+    mub = o["mu_brake"]
+    cons += [
+        a_oei * W_TO == g * ((ne - 1) * T_TO / ne - mu_eff * W_TO),  # [SP] SigEq
+        V2 ** 2 <= V1 ** 2 + 2.0 * a_oei * s_go,                     # [SP] SigIneq
+        s_stp * 2.0 * mub * g == V1 ** 2,
+        s_bf >= V1 ** 2 / (2.0 * a) + s_go,
+        s_bf >= V1 ** 2 / (2.0 * a) + s_stp,
+        # 25.107(a): V1 is bracketed by ground control below and lift-off
+        # above. The lower tie is what finally makes V_MCG load-bearing.
+        V1 >= o["V_MCG"],
+        V1 <= Vlof,
+    ]
+    if "s_TO_max" in o:
+        cons += [s_bf <= o["s_TO_max"]]
     # ---- the same takeoff, evaluated at SEA LEVEL --------------------------
     # Identical chain to the one above, at rho = 1.225 and with the engine's
     # UNLAPSED sea-level thrust. Only the takeoff distance is duplicated; the
@@ -407,6 +468,11 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
         a_sl, sg_sl = o["a_TO_sl"], o["s_ground_sl"]
         sair_sl, sTO_sl = o["s_air_sl_to"], o["s_TO_sl"]
         rho_sl = o["rho_sl_TO"]
+        smax_sl = far.Constant("s_TO_max_sl", field_len_sl_ft * 0.3048,
+                               "m", "sea-level runway available")
+        V1_sl, aoei_sl = o["V_1_sl"], o["a_OEI_sl"]
+        sgo_sl, sstp_sl, sbf_sl = o["s_go_OEI_sl"], o["s_stop_sl"], o["s_BF_sl"]
+        mub = o["mu_brake"]
         cons += [
             0.5 * rho_sl * Vs_sl ** 2 * S * CLmaxTO == W_TO,      # [SP] SigEq
             Vlof_sl == 1.10 * Vs_sl,
@@ -414,7 +480,19 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
             sg_sl * 2.0 * a_sl == Vlof_sl ** 2,                   # [SP] SigEq
             sair_sl * rs.second_segment[ne] == h_screen,          # [SP] SigEq
             sTO_sl == rs.takeoff_field_factor * (sg_sl + sair_sl),  # [SP] SigEq
-            sTO_sl <= far.Constant("s_TO_max_sl", field_len_sl_ft * 0.3048,
-                                   "m", "sea-level runway available"),
+            sTO_sl <= smax_sl,
+            # Balanced field at sea level, same three phases as the main case.
+            # V2 and V_MCG at this density are monomial expressions of the
+            # sea-level stall speed, so neither needs a variable of its own.
+            aoei_sl * W_TO
+                == g * ((ne - 1) * T_TO_sl / ne - mu_eff * W_TO),  # [SP] SigEq
+            (rs.v2_factor * Vs_sl) ** 2
+                <= V1_sl ** 2 + 2.0 * aoei_sl * sgo_sl,            # [SP] SigIneq
+            sstp_sl * 2.0 * mub * g == V1_sl ** 2,
+            sbf_sl >= V1_sl ** 2 / (2.0 * a_sl) + sgo_sl,
+            sbf_sl >= V1_sl ** 2 / (2.0 * a_sl) + sstp_sl,
+            V1_sl >= o["k_MCG"] * Vs_sl,
+            V1_sl <= Vlof_sl,
+            sbf_sl <= smax_sl,
         ]
     return cons

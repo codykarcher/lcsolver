@@ -51,14 +51,28 @@ from .wingbox import add_wingbox
 #: floor nowhere near. Raising it to TASOPT's prescribed 0.10 would OVERRIDE a
 #: working physical result with a worse number, so it is left alone.
 V_VT_MIN_CONVENTIONAL = 0.001
-#: OFF for now (0.001, same as conventional). The mechanism is kept because
-#: the fin collapse it targets is real -- S_vt goes to 6.0 m2 with the box's
-#: I_cap resting on the solver's 1e-9 positivity floor -- but a floor does not
-#: cure it. Measured: TASOPT's deck value 0.03 is INFEASIBLE (sub-problem fails
-#: at iteration 16), and 0.024, just above where the fin naturally sits, still
-#: does not converge. Two other structural variables (HT_box_I_cap,
-#: Fuse_A_vbend_b) sit on the same floor, so the degeneracy is broader than the
-#: fin and wants a proper fix rather than a bound.
+#: DOUBLE-BUBBLE stays inactive too, and for a better reason than the
+#: conventional case: the fin does not need it.
+#:
+#: It looked like it did. The D8 used to put S_vt on the floor at 6.0 m2 with
+#: the box's I_cap resting on the solver's 1e-9 positivity bound, which reads
+#: as a fin with no sizing case. It was not: a floor never cured it -- 0.03
+#: went infeasible, 0.024 ran 200 iterations without converging -- because the
+#: collapse was a SYMPTOM of a degenerate solve, not a missing constraint. Two
+#: causes, both now fixed:
+#:
+#:   1. AR_vt was constrained twice over (see the note by A_vt below), so the
+#:      fin's dual was a ray and complementarity could never close.
+#:   2. With sweep left free the wing carries the signomial identity
+#:      tan^2 cos^2 + cos^2 == 1, an EQUALITY with no interior. It sits at the
+#:      top of the solver's blocking list and the elastic phase reports zero
+#:      rows with positive slack (sum -5.7e-09) -- not infeasible, critically
+#:      constrained. Pinning the D8's sweep converges at 15, 20 and 25 deg.
+#:
+#: With both addressed the fin sizes ITSELF: V_vt comes out 0.0285-0.0289
+#: against TASOPT's prescribed 0.03, with this floor inactive by a factor of
+#: ~29. So it is left off, and the number above is a disabled mechanism rather
+#: than a calibration.
 V_VT_MIN_DOUBLE_BUBBLE = 0.001
 
 
@@ -175,20 +189,30 @@ def add_vertical_tail(f, N, state, *, v_vt_min=V_VT_MIN_CONVENTIONAL, sweep_deg,
         LvtEO == 0.5 * rho0 * V1 ** 2 * Svt * CLvtEO,
         CLvtEO * (1 + clvtEO / (pi * e * Avt)) <= clvtEO,
         Avt == bvt ** 2 / Svt,
-        # The STRUCTURAL aspect ratio, tied to the planform one.
+        # AR_vt, the STRUCTURAL aspect ratio, is NOT written here. It used to
+        # be, as `ARvt == 2.0*Avt`, and that row was one equation too many.
         #
-        # AR_vt was declared free and never constrained -- three references in
-        # this file, all of them declaration, export or the wingbox call, and
-        # no relation to A_vt anywhere. That let the optimizer take the
+        # The bug it was added to fix was real: AR_vt was declared free with no
+        # relation to A_vt anywhere, so the optimizer could take the
         # aerodynamic benefit of a high-aspect-ratio fin (CL_vt_EO rises with
         # A_vt, so the fin can be smaller) while handing the box a low aspect
-        # ratio and dodging the structural penalty entirely. A_vt duly sat on
-        # whatever cap it was given.
+        # ratio and dodging the structural penalty entirely.
         #
-        # The box is handed span 2*b_vt and area 2*S_vt by the doubled-span
-        # convention, so its aspect ratio is (2b)^2/(2S) = 2 A_vt. Not a
-        # modelling choice -- arithmetic.
-        ARvt == 2.0 * Avt,
+        # But add_wingbox already closes it. It is handed span 2*b_vt and area
+        # 2*S_vt by the doubled-span convention and imposes AR == b^2/S, i.e.
+        # AR_vt == (2 b_vt)^2/(2 S_vt) == 2 b_vt^2/S_vt -- which is exactly
+        # this row composed with the one above. Three equalities, two
+        # independent facts, and CONSISTENT, so the iterate was always right
+        # and only the dual was sick: the three gradients are linearly
+        # dependent (-r1 + r2 + r3 == 0 identically), LICQ fails, the
+        # multiplier is a ray rather than a point, and SIA drove it along that
+        # ray to the tau ceiling of 1e12. Complementarity is |lambda * log g|,
+        # so 1e12 times a machine-zero residual is O(1) forever -- the test
+        # cannot pass no matter how converged the point is.
+        #
+        # That is what stopped the D8: not the fin, which is why a volume floor
+        # never helped. AR_vt is still fully determined, just derived from
+        # b_vt and S_vt in one place instead of two.
         # EQUALITY: a trapezoid's area IS span x mean chord. The wing and the
         # horizontal tail both write this one as ==; the fin was left <= in
         # the source, which lets the optimizer claim a larger planform than

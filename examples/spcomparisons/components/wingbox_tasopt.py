@@ -217,12 +217,11 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     # not converge even warm-started from a converged aeroplane with the start
     # exactly on the manifold. The caller passes its own Kc and Ko, related by
     # the monomial equality Ko*Kc == 1, when they are variables.
-    _Kc, _Ko, Kp0, gam_s, gam_t = planform(eta_o, eta_s, lam_s, lam_t)
-    if Kc is not None:
-        _Kc = Kc
-    if Ko is not None:
-        _Ko = Ko
-    Kc, Ko = _Kc, _Ko
+    if Kc is None or Ko is None:
+        _Kc, _Ko, _, _, _ = planform(eta_o, eta_s, lam_s, lam_t)
+        Kc = Kc if Kc is not None else _Kc
+        Ko = Ko if Ko is not None else _Ko
+    gam_s, gam_t = lam_s * RCLS, lam_t * RCLT
     # the fLt term in Kp carries 1/AR, which is a variable here
     hrms_f = h_rms(1.0)          # multiplies tau below
     rh, wbox = R_H, W_BOX
@@ -263,14 +262,35 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     hrms = hrms_f * hbox
     havg = h_avg(1.0) * hbox
     cs = co * lam_s
+    # THE PANEL SPAN AS A VARIABLE, NOT A DIFFERENCE. (eta_s - eta_o) with a
+    # variable eta_o is a difference, and this module used to bury it -- and
+    # its SQUARE, in the moment volumes -- inside products inside rows whose
+    # blends also divided by (1 + lam_s^2). Algebraically fine; in practice
+    # the structure translation of exactly that shape was measured WRONG: at
+    # the converged 737 the pyomo weight rows sat 43% (cap) and 15x (web)
+    # slack while the solver's copy of them read exactly tight, i.e. the
+    # aeroplane was carrying a wing 21,600 lbf heavier than its own
+    # constraints require. With deta a variable tied by one linear equality,
+    # every volume below is a clean positive product, the blends get their own
+    # variables, and the pyomo and solver forms of every row agree.
+    deta = V("deta_inn", eta_s - ETA_O, "-",
+             "inner panel span fraction, eta_s - eta_o")
+    deta_cons = [deta + eta_o == eta_s]
     # eta_o is the CALLER's, not this module's default. The wing carries it
     # as a variable (w_fuse/(b/2), about 0.122 on a 737) while ETA_O here is
     # 0.1016 from TASOPT's deck; leaving them unlinked put two different
     # centrebody fractions in one model, with S == c_o*b*K_c integrated over
     # one planform and Vcen == c_o^2*b*eta_o/2 over another.
-    Vcen, Vinn, Vout = volumes(co, b, _cosL, eta_o, eta_s, lam_s, lam_t)
-    # spanwise moment volumes, surfw.f:173-178
-    dyVinn = (co ** 2 * b ** 2 * (eta_s - eta_o) ** 2
+    # box volumes, surfw.f:154-161. Vcen carries NO cosL: the centre section
+    # runs through the fuselage and is not swept.
+    Vcen = co ** 2 * b * eta_o / 2.0
+    Vinn = (co ** 2 * b * deta
+            * (1.0 + lam_s + lam_s ** 2) / 6.0 * _cosL)
+    Vout = (co ** 2 * b * (1.0 - eta_s)
+            * (lam_s ** 2 + lam_s * lam_t + lam_t ** 2) / 6.0 * _cosL)
+    # spanwise moment volumes, surfw.f:173-178; deta**2 is a monomial where
+    # (eta_s - eta_o)**2 was a signomial.
+    dyVinn = (co ** 2 * b ** 2 * deta ** 2
               * (1.0 + 2.0 * lam_s + 3.0 * lam_s ** 2) / 48.0 * _cosL)
     dyVout = (co ** 2 * b ** 2 * (1.0 - eta_s) ** 2
               * (lam_s ** 2 + 2.0 * lam_s * lam_t + 3.0 * lam_t ** 2)
@@ -298,7 +318,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     # approximation.
     Vfuelbox = V("V_fuel", 25.0, "m^3", "fuel volume in the wing box")
 
-    cons = [
+    cons = deta_cons + [
         AR == b ** 2 / S,
         # chord distribution, wingpo.f: S = co*b*Kc
         S == co * b * Kc,
@@ -308,7 +328,12 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
         # tip-rolloff term SUBTRACTS from Kp. All-positive, it therefore
         # belongs on the right with Lmax, not on the left -- writing it left
         # flipped the rolloff. Small (~0.05% of Kp0) but wrong.
-        po * Kp0 * b
+        #
+        # Kp0 written out via deta so every term is positive: F_LO is -0.3,
+        # so its eta_o carryover-loss term folds into (1+F_LO)*eta_o rather
+        # than standing as a negative term.
+        po * b * ((1.0 + F_LO) * eta_o + 0.5 * (1.0 + gam_s) * deta
+                  + 0.5 * (gam_s + gam_t) * (1.0 - eta_s))
             == Lmax + (-2.0 * F_LT) * Ko * gam_t * lam_t / AR * po * b,
                                                               # [SP] SigEq
 
@@ -324,13 +349,13 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
 
         # ---- root station (surfw.f:88-96) ---------------------------------
         So + N_lift * Reng + N_lift * Winn
-            == Ss + 0.25 * po * b * (1.0 + gam_s) * (eta_s - eta_o),
+            == Ss + 0.25 * po * b * (1.0 + gam_s) * deta,
         # surfw.f:96 -- the (Ss - Nload*We) group carries the engine relief
         # through the root moment as well as the shear.
-        Mo + N_lift * Reng * 0.5 * b * (eta_s - eta_o) + N_lift * dyWinn
-            == Ms + Ss * 0.5 * b * (eta_s - eta_o)
+        Mo + N_lift * Reng * 0.5 * b * deta + N_lift * dyWinn
+            == Ms + Ss * 0.5 * b * deta
               + (1.0 / 24.0) * po * b ** 2 * (1.0 + 2.0 * gam_s)
-                * (eta_s - eta_o) ** 2,                           # [SP] SigEq
+                * deta ** 2,                                      # [SP] SigEq
         # surfw.f:102-103 limits So,Mo to at least the break values
         So >= Ss,
         Mo >= Ms,
@@ -346,29 +371,35 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
          + 12.0 * hrms * tcaps ** 2
          == 6.0 * hrms ** 2 * tcaps + 8.0 * tcaps ** 3),          # [SP] SigEq
 
-        # ---- weights, surfw.f:181-209 ------------------------------------
-        # Abcap = 2*tcap*wbox, Abweb = 2*tweb*rh*hbox, and the inner panel is
-        # the lambda^2-weighted blend of root and break (surfw.f:181-182).
-        Wcap >= 2.0 * rhocap * g * (
-            2.0 * tcapo * wwb * Vcen
-            + (2.0 * tcapo * wwb + 2.0 * tcaps * wwb * lam_s ** 2)
-              / (1.0 + lam_s ** 2) * Vinn
-            + 2.0 * tcaps * wwb * Vout),
-        Wweb >= 2.0 * rhoweb * g * (
-            2.0 * twebo * rh * hbox * Vcen
-            + (2.0 * twebo * rh * hbox + 2.0 * twebs * rh * hbox * lam_s ** 2)
-              / (1.0 + lam_s ** 2) * Vinn
-            + 2.0 * twebs * rh * hbox * Vout),
         Wstruct >= Wcap + Wweb,
+    ]
+
+    # ---- inner-panel blend areas as VARIABLES -----------------------------
+    # surfw.f:181-182 blends root and break box areas lambda_s^2-weighted:
+    # Ab_i = (Ab_o + Ab_s*lam_s^2)/(1 + lam_s^2). Written inline that is a
+    # posynomial DENOMINATOR inside the weight rows, which is the expression
+    # shape whose translation was measured wrong (see deta above). As a
+    # variable each blend is one signomial equality and every consumer row
+    # becomes pure posynomial.
+    _Abcapo, _Abcaps = 2.0 * tcapo * wwb, 2.0 * tcaps * wwb
+    _Abwebo, _Abwebs = 2.0 * twebo * rh * hbox, 2.0 * twebs * rh * hbox
+    _Abcapi = V("Ab_cap_i", 0.003, "-", "non-dim cap area, inner panel blend")
+    _Abwebi = V("Ab_web_i", 0.0002, "-", "non-dim web area, inner panel blend")
+    cons += [
+        _Abcapi * (1.0 + lam_s ** 2) == _Abcapo + _Abcaps * lam_s ** 2,
+                                                              # [SP] SigEq
+        _Abwebi * (1.0 + lam_s ** 2) == _Abwebo + _Abwebs * lam_s ** 2,
+                                                              # [SP] SigEq
+        # ---- weights, surfw.f:181-209 --------------------------------
+        Wcap >= 2.0 * rhocap * g * (_Abcapo * Vcen + _Abcapi * Vinn
+                                    + _Abcaps * Vout),
+        Wweb >= 2.0 * rhoweb * g * (_Abwebo * Vcen + _Abwebi * Vinn
+                                    + _Abwebs * Vout),
     ]
 
     # ---- the relief fixed point (wsize.f:1003-1006) -----------------------
     # Equalities, not inequalities: relief REDUCES the load, so a one-sided
     # row would let the optimiser inflate the relief and under-size the box.
-    _Abcapo, _Abcaps = 2.0 * tcapo * wwb, 2.0 * tcaps * wwb
-    _Abwebo, _Abwebs = 2.0 * twebo * rh * hbox, 2.0 * twebs * rh * hbox
-    _Abcapi = (_Abcapo + _Abcaps * lam_s ** 2) / (1.0 + lam_s ** 2)
-    _Abwebi = (_Abwebo + _Abwebs * lam_s ** 2) / (1.0 + lam_s ** 2)
     cons += [
         Wsinn == (rhocap * _Abcapi + rhoweb * _Abwebi) * g * Vinn,
         Wsout == (rhocap * _Abcaps + rhoweb * _Abwebs) * g * Vout,
@@ -379,8 +410,10 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
         rhof = C("rho_fuel_box", rho_fuel, "kg/m^3", "fuel density")
         Abfo = V("Ab_fuel_o", 0.05, "-", "non-dim fuel bay area, root")
         Abfs = V("Ab_fuel_s", 0.05, "-", "non-dim fuel bay area, break")
-        _Abfi = (Abfo + Abfs * lam_s ** 2) / (1.0 + lam_s ** 2)
+        _Abfi = V("Ab_fuel_i", 0.05, "-", "non-dim fuel bay area, inner blend")
         cons += [
+            _Abfi * (1.0 + lam_s ** 2) == Abfo + Abfs * lam_s ** 2,
+                                                              # [SP] SigEq
             # (wbox - 2*tweb)*(havg - 2*tcap), expanded all-positive
             Abfo + 2.0 * wwb * tcapo + 2.0 * twebo * havg
                 == wwb * havg + 4.0 * twebo * tcapo,          # [SP] SigEq

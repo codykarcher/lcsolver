@@ -199,14 +199,27 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # geometry differs, not just the weight estimate: mac, the area integral
     # and the load distribution are all planform-dependent.
     _wing_add = {"hoburg": add_wing, "tasopt": add_wing_tasopt}[wing_model]
+    # Deck taper pins for the cranked wing: 737.tas 0.70/0.25, d82.tas
+    # 0.85/0.15. See the note at the pin rows in wing_tasopt.py.
+    _wing_kw = ({"lam_s_pin": 0.85 if arch.double_bubble else 0.70,
+                 "lam_t_pin": 0.15 if arch.double_bubble else 0.25,
+                 # Same number as Ltow below; the wing needs it at build time
+                 # so its induced drag charges total lift, TASOPT's basis.
+                 "f_L_total": 1.195 if arch.double_bubble else 1.02}
+                if wing_model == "tasopt" else {})
     wing, c = _wing_add(f, N, st, sweep_deg=sweep_deg, material=_mat,
                         sweep_pricing=sweep_pricing, polar=polar,
-                        rho_fuel=70.0 if arch.fuel == "lh2" else 817.0)
+                        rho_fuel=70.0 if arch.fuel == "lh2" else 817.0,
+                        **_wing_kw)
     cons += c
+    # V_VT_FLOOR overrides the per-architecture default, so the floor can be
+    # swept from outside without rewriting the module constant in place.
+    _vvt_env = _os.environ.get("V_VT_FLOOR")
+    _vvt_min = (float(_vvt_env) if _vvt_env else
+                (_vt_mod.V_VT_MIN_DOUBLE_BUBBLE if arch.double_bubble
+                 else _vt_mod.V_VT_MIN_CONVENTIONAL))
     vt, c = add_vertical_tail(f, N, st, sweep_deg=SWEEP_VT, material=_mat,
-                              v_vt_min=(_vt_mod.V_VT_MIN_DOUBLE_BUBBLE
-                                        if arch.double_bubble
-                                        else _vt_mod.V_VT_MIN_CONVENTIONAL),
+                              v_vt_min=_vvt_min,
                               tau_limits=tau_limits,
                               sweep_pricing=sweep_pricing,
                               drag_model=tail_drag); cons += c
@@ -365,19 +378,16 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # below; see `rho_field`.
     rhoTO = C("rho_TO_ac", 1.225, "kg/m^3", "air density at takeoff")
 
-    # ---- HOT-AND-HIGH TAKEOFF FIELD CONDITION ------------------------------
-    # The certification climb and field-length cases are sized HERE, not at sea
-    # level on a standard day, because that is what actually sets a transport's
-    # thrust. Evaluating them at sea level ISA left every one of them slack --
-    # 25.121(b) second segment was the tightest at 1.052 -- and thrust fell out
-    # of an arbitrary `RC[0] >= 2500 ft/min` instead, landing at 0.79 of the
-    # real CFM56-7B26 on the 737 AND 0.79 on the E175. Two classes agreeing to
-    # half a percent is what identified the requirement as the problem rather
-    # than the engine.
-    #
-    # Denver in summer: a mile high and 95 F. TASOPT carries the same pair as
-    # deck inputs (`altTO`, `T0TO` in runs/737/737.tas) but leaves them at
-    # 0 m / 288 K, so it does not exercise the condition either.
+    # ---- TAKEOFF FIELD CONDITION -------------------------------------------
+    # The certification climb and field-length cases are evaluated at this
+    # condition. HISTORY, so the requirement chain stays legible: thrust was
+    # once sized by an arbitrary `RC[0] >= 2500 ft/min` (every certification
+    # case slack, engine at 0.79 of the real CFM56-7B26 on two different
+    # classes); that was replaced by a Denver-hot field condition to give the
+    # engine a real requirement; and that in turn is superseded by the OEI
+    # BALANCED FIELD in far.py, which is the requirement that actually sizes
+    # a twin's engine at any field condition. TASOPT carries the same pair as
+    # deck inputs (`altTO`, `T0TO`) and leaves them at 0 m / 288 K.
 
     # CORRECTED ALTITUDE MODEL, and the correction is the point. Field PRESSURE
     # comes from the ISA at the field ELEVATION -- pressure does not care about
@@ -389,14 +399,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # At Denver on a 95 F day that is ISA+30.5 K, p/p_sl = 0.823 and
     # rho/rho_sl = 0.770. Taking rho straight from the ISA at 5280 ft instead
     # would give 0.86 and miss a third of the penalty.
-    # Overridable, because the condition has to be able to MATCH THE BASIS a
-    # reference was published at. TASOPT's decks quote lBFmax at sea level and
-    # 288 K (altTO/T0TO), and demanding the D8.2's 4960 ft at Denver on a 95 F
-    # day is not merely pessimistic, it is INFEASIBLE -- the solve fails at
-    # iteration 18. Set H_FIELD_FT=0 and T_FIELD_K=288.15 to reproduce a
-    # sea-level basis; the defaults are the hot-and-high sizing case.
-    _h_f = float(_os.environ.get("H_FIELD_FT", 5280.0)) * 0.3048
-    _T_f = float(_os.environ.get("T_FIELD_K", 308.15))
+    # DEFAULT: SEA LEVEL, STANDARD DAY -- the basis every reference in this
+    # study is published at (TASOPT decks quote lBFmax at altTO = 0 m,
+    # T0TO = 288 K, and the real aircraft's field lengths are quoted the same
+    # way). The Denver-hot defaults (5280 ft / 308 K) were a band-aid from
+    # the era when thrust was sized by an arbitrary RC[0] >= 2500 ft/min:
+    # they existed to give the engine a real requirement. With the OEI
+    # balanced field in far.py that job is done properly -- on the 737 the
+    # hot-and-high case was worth only +0.5% MTOW / +1% engine over sizing
+    # on the published sea-level field, so nothing of substance is lost.
+    # The machinery stays: set H_FIELD_FT / T_FIELD_K to run a hot-and-high
+    # study (measured impact at Denver 95 F: +0.5% MTOW, +1% engine, +8.5%
+    # gear on the 737; ~free on the D8, which is field-limited at sea level).
+    _h_f = float(_os.environ.get("H_FIELD_FT", 0.0)) * 0.3048
+    _T_f = float(_os.environ.get("T_FIELD_K", 288.15))
     h_field_ft = C("h_field", _h_f / 0.3048, "ft", "takeoff field elevation")
     T_field_K = C("T_field", _T_f, "K", "takeoff ambient temperature")
     _p_field = 101325.0 * (1.0 - 0.0065 * _h_f / 288.15) ** (9.81 / (0.0065 * 287.0))
@@ -421,6 +437,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     f_wingfuel = C("f_wingfuel", 0.5 if arch.wet_wing else 1e-6, "-",
                    "fraction of fuel in wing tanks")
     FuelFrac = C("FuelFrac", 0.9, "-", "usable fraction of max fuel volume")
+    # d82.tas carries SMmin = 0.05 (ixwmove=2), but TASOPT satisfies it by
+    # MOVING THE WING; imposing 0.05 as a constraint here instead sent the
+    # solve into a 287,000 lbf spiral with the tail arm at 20.7 m -- our SM
+    # chain buys margin with tail rather than wing position. Left at 0.01
+    # for both architectures until the wing-position trade is ported.
     SMmin = C("SM_min", 0.01, "-", "minimum static margin")
     # CG travel, as a FRACTION OF MEAN AERODYNAMIC CHORD -- which is how CG
     # envelopes are actually quoted, and the only form in which one number can
@@ -606,6 +627,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     k_fdrag = C("k_fuse_drag", 0.0077851, "m^-0.0098",
                 "TASOPT fusebl fit coefficient")
     DAfuse = V("DA_fuse", 1.0, "m^2", "fuselage profile drag area")
+    d_eq_fuse = V("d_eq_fuse", 4.0, "m",
+                  "perimeter-equivalent fuselage diameter for the drag fit")
     tankclear = C("tank_clearance", 0.10, "m",
                   "radial gap between tank insulation and fuselage wall")
     # Wing pitching moment, PORTED FROM TASOPT's surfcm.f rather than pinned.
@@ -696,8 +719,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # coefficient. That is the point of writing them.
     CLhauth = V("C_L_h_auth", 0.69, "-",
                 "HT lift coefficient the elevator can actually deliver")
-    CLhctrl = C("C_L_h_ctrl_max", 0.90, "-",
-                "usable HT lift coefficient: trimmable incidence + elevator")
+    # Trim duty PLUS a fixed 0.25 manoeuvre reserve, rather than a flat 0.90.
+    # The 0.90 was calibrated as exactly the 737's 0.65 trim + 0.225
+    # go-around increment, so the conventional number is UNCHANGED; written
+    # this way it survives a deck that trims harder -- the D8's CLhCGfwd is
+    # 0.85, and holding the cap at 0.90 left the go-around case 0.05 of
+    # authority, which it bought back with a 290,000 lbf death spiral.
+    CLhctrl = C("C_L_h_ctrl_max", (0.85 if arch.double_bubble else 0.65) + 0.25,
+                "-", "usable HT lift coefficient: trim + manoeuvre reserve")
     # 1.25 was above what the tail can reach: rotation was being credited with
     # nearly twice the achievable coefficient. It is the same physical limit as
     # every other control case, so it is now capped by the same row.
@@ -711,7 +740,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     CLgnd = C("C_L_ground_TO", 0.9, "-",
               "wing C_L at the ground attitude, takeoff flaps")
     Wrot = V("W_rot", 8.0e4, "lbf", "weight still on the gear at rotation")
-    CLhfwd = C("C_L_h_CGfwd", 0.65, "-",
+    # Deck values: d82.tas CLhCGfwd = -0.85 (iHTsize=2 is the ACTIVE branch
+    # there, so this is exactly the number TASOPT sizes the D8's tail with);
+    # 737.tas carries -0.70. The conventional path keeps 0.65 it was
+    # calibrated at -- the deck's 0.70 would shrink that tail ~7% and is
+    # noted rather than applied, to leave the 737 baseline alone.
+    CLhfwd = C("C_L_h_CGfwd", 0.85 if arch.double_bubble else 0.65, "-",
                "|C_Lh| download available at the forward-CG trim case")
     CLpmax = C("C_L_p_max", 1.25, "-",
                "wing C_L for the forward-CG trim case (TASOPT CLpmax)")
@@ -870,7 +904,24 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         wing.c_root == fu.c_0,
         wing.x_w == fu.x_wing,
         fu.N_lift == wing.box.N_lift,
-        Ltow * wing.L_max >= wing.box.N_lift * W_totalmax + ht.L_ht_max,
+        # Wing sizing load. The Hoburg path keeps its row untouched: N*W plus
+        # the tail's own structural design load, through the fuselage
+        # carryover factor.
+        #
+        # The cranked wing takes TASOPT's basis instead (wsize.f:912):
+        # Lmax = Nlift*WMTO - Lhtail, with Lhtail = CLhNrat*WMTO*Sh/S and
+        # CLhNrat = -0.5 in both decks -- a DOWNLOAD, so it adds. On the 737
+        # that is ~30,000 lbf where L_ht_max is 159,000: sizing the wing
+        # against the tail's own box case put 20% more load on the wing than
+        # TASOPT carries, which was most of the cap-thickness excess
+        # (t_cap_o 0.00389 vs 0.00342 at deck tapers). No Ltow division:
+        # surfw.f takes the load raw, the carryover loss lives inside Kp as
+        # (1+fLo)*eta_o, and dividing here as well would count it twice.
+        *([Ltow * wing.L_max
+           >= wing.box.N_lift * W_totalmax + ht.L_ht_max]
+          if wing_model == "hoburg" else
+          [wing.L_max == wing.box.N_lift * W_totalmax
+           + 0.5 * W_totalmax * ht.S_ht / wing.S]),
         wing.b <= bmax,
 
         # ---- weight build-up -------------------------------------------------
@@ -1329,7 +1380,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
         # ---- horizontal tail --------------------------------------------------
         ht.m_ratio * (1 + 2 / wing.AR) == 1 + 2 / ht.AR_ht,     # [SP] SigEq
-        ht.x_CG_ht <= fu.l_fuse,
+        # Midpoint within the hull for a cantilever tail; the pi-tail's
+        # horizontal rides the fin tips and may overhang by the fins' aft
+        # reach (TASOPT D8: xhtail 33.8 m on a 32.3 m fuselage).
+        *([ht.x_CG_ht <= fu.l_fuse + vt.b_vt * tan(SWEEP_VT * pi / 180)]
+          if arch.double_bubble else [ht.x_CG_ht <= fu.l_fuse]),
         ht.V_ht == ht.S_ht * ht.l_ht / (wing.S * wing.mac),
         ht.L_ht_max >= 0.5 * rhoTO * Vne ** 2 * ht.S_ht * ht.C_L_ht_max,
 
@@ -1653,11 +1708,30 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
         # ---- drag ------------------------------------------------------
         # Drag AREA straight from the BL fit -- no reference-area convention
-        # to get wrong. The Mach factor is SPaircraft's compressibility
-        # correction, retained because the fit was taken at a single M = 0.80.
-        DAfuse >= k_fdrag * fu.l_fuse ** 0.9062 * (2.0 * fu.R_fuse) ** 1.1036,
-        Dfuse == (0.5 * st.rho * st.V ** 2 * DAfuse
+        # to get wrong.
+        #
+        # The fit's `d` is the diameter of the ROUND tube fusebl was swept
+        # over. Feeding it 2*R_fuse under-counts a double bubble, whose
+        # wetted perimeter is (2pi + 4*theta_db)*R + 2*dR (the same
+        # expression the skin weight already integrates, fuselage.py). The
+        # EQUIVALENT diameter -- the round tube with that perimeter -- is
+        # what the friction-dominated fit should see: on the D8 that is
+        # 4.81 m against 2R = 3.36, and the measured fuselage drag was 0.45
+        # of TASOPT's fusebl with 2R and 1.03 of it with d_eq. A round tube
+        # has theta_db = dR = 0, so d_eq == 2R and the 737 is untouched.
+        # The row is one-sided GP (posy <= mono) because DA_fuse charges
+        # d_eq, so the only pressure is downward onto the bound.
+        2.0 * pi * fu.R_fuse + 4.0 * fu.theta_db * fu.R_fuse
+            + 2.0 * fu.dR_fuse <= pi * d_eq_fuse,
+        DAfuse >= k_fdrag * fu.l_fuse ** 0.9062 * d_eq_fuse ** 1.1036,
+        # The Mach term is SPaircraft's compressibility correction, retained
+        # for M above the fit's reference but FLOORED AT 1 below it: profile
+        # drag is friction-dominated and does not fall as M^2, and the D8 at
+        # M 0.70 against a 0.79 reference was buying a 22% fuselage drag
+        # discount from that scaling. Two lower bounds ARE the max().
+        Dfuse >= (0.5 * st.rho * st.V ** 2 * DAfuse
                      * (st.M ** 2 / fu.M_fuseD ** 2)),
+        Dfuse >= 0.5 * st.rho * st.V ** 2 * DAfuse,
         D >= Dreduct * (wing.D_wing + Dfuse + numVT * vt.D_vt
                            + ht.D_ht + numeng * Dnace),
         C_D == D / (.5 * st.rho * st.V ** 2 * wing.S),
@@ -1700,7 +1774,21 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Same shape of defect as the one-sided `mac`, `l_ht` and `l_vt` rows:
         # a quantity the optimizer can inflate because nothing on the other
         # side of the model objects.
-        xCG + ht.dx_trail_ht <= fu.l_fuse,
+        # ... but only a CANTILEVER tail has to fit on the FUSELAGE. The
+        # pi-tail's horizontal mounts on the fin tips and legitimately hangs
+        # aft of the hull: TASOPT's D8 puts xhbox at 110 ft on a 106 ft
+        # fuselage, HT trailing edge 2.8 m past the tailcone apex. Applying
+        # this fuselage bound to it was cutting the D8's tail arm 25% (l_ht
+        # 11.1 m against TASOPT's 14.8), and since the volume rows trade arm
+        # for area one-for-one, the tail DOUBLED to pay for it (S_ht 40.8 m2
+        # against 22.65). The pi-tail bound is relaxed by the fins' aft
+        # reach -- their height times their sweep, plus most of the
+        # horizontal's own root chord behind its box -- rather than removed:
+        # unbounded, phase 1 loses the CG chain and dies at iteration 2.
+        *([xCG + ht.dx_trail_ht <= fu.l_fuse] if not pi_tail else
+          [xCG + ht.dx_trail_ht
+           <= fu.l_fuse + vt.b_vt * tan(SWEEP_VT * pi / 180)
+            + 0.75 * ht.c_root_ht]),
         vt.x_CG_vt >= xCG + 0.5 * (vt.dx_lead_vt + vt.dx_trail_vt),
         ht.x_CG_ht >= xCG + 0.5 * (ht.dx_lead_ht + ht.dx_trail_ht),
         # Horizontal tail lift-curve slope: downwash AND finite span.
