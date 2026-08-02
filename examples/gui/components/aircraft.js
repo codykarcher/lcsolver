@@ -89,6 +89,8 @@ export const B737_TASOPT = {
   // A sizing solve is two-dimensional about these. They are choices.
   wingRootY:      -0.70,     // wing root chord height, in fuselage radii
   engineDrop:      1.42,     // engine axis below the local wing, metres
+  rearSpar:        0.65,     // chord fraction the pylon's aft attachment takes
+  htRaise:         0.38,     // horizontal tail above the local body centre, radii
   wingDihedral:     3.0,     // degrees
   htDihedral:       6.0,
   tcRoot: 0.135, tcTip: 0.105,   // wing thickness
@@ -165,8 +167,10 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   });
   const htQuarterX = d.wingQuarterX + d.htArm;
   const htRootLE = htQuarterX - 0.25 * d.htRootChord;
-  // Vertically: on the tailcone, at the body's own section centre there.
-  const htY = u.shapeAt(-htQuarterX).yc;
+  // Vertically: above the body's own section centre on the tailcone. The deck
+  // has no opinion -- a tail arm is a longitudinal number -- so the raise is a
+  // choice like the wing height, and marked as one.
+  const htY = u.shapeAt(-htQuarterX).yc + d.htRaise * R;
   ht.position.set(0, htY, -htRootLE);
   g.add(ht); parts.horizontalTail = ht;
 
@@ -192,16 +196,33 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   const rFan = (d.nacelleDia / 2) / probe.userData.rMax;
   const wingAtEngine = wingY + d.engineY * Math.tan(d.wingDihedral * DEG);
   const engineY = wingAtEngine - d.engineDrop;
+
+  // The pylon's top chord is the WING's, at the engine's own station: forward
+  // attachment on the leading edge, aft on the rear spar. Taking it from the
+  // wing rather than from a fraction of the fan radius is what keeps the two
+  // agreeing when either moves -- a pylon whose top is a fixed multiple of the
+  // engine slides along the wing every time the engine is resized.
+  const wingLeSweep = leadingEdgeSweep(
+    d.wingSweepC4, d.wingRootChord, d.wingTaper, d.wingSpan);
+  const wingLeAt = wingRootLE + d.engineY * Math.tan(wingLeSweep * DEG);
+  const chordAtEngine = d.wingRootChord
+    * (1 - (1 - d.wingTaper) * (2 * d.engineY / d.wingSpan));
+  const topFwd = d.engineX - wingLeAt;                  // pod frame, +Z forward
+  const topAft = topFwd - d.rearSpar * chordAtEngine;
+
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
     const eng = turbofan({ rFan, bypassRatio: 9 });
     pod.add(eng);
-    // The pylon is built in the pod's frame with the engine at its origin, so
-    // the wing underside is however far above that the two heights differ by.
+    // Built in the pod's frame with the engine at its origin, so the wing is
+    // however far above that the two heights differ by. The pylon takes its
+    // stations in fan radii, hence the division.
     pod.add(underMountPylon(eng, {
       engineZ: 0,
       attachY: (wingAtEngine - engineY) / rFan,
+      topZ0: topFwd / rFan,
+      topZ1: topAft / rFan,
     }));
     pod.position.set(side * d.engineY, engineY, -d.engineX);
     g.add(pod); parts.engines.push(pod);
@@ -264,6 +285,9 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
       wing: wing.userData.sweep, horizontalTail: ht.userData.sweep,
       verticalTail: vt.userData.sweep,
     },
+    /** Where the pylon meets the wing, in the pod's frame -- taken from the
+     *  wing's own leading edge and rear spar, not from the engine's size. */
+    pylonTop: { forward: topFwd, aft: topAft, chordAtEngine },
     noseGearAttachY: noseAttachY,
   });
   return g;

@@ -41,8 +41,6 @@ const P = {
   topZ1:    -2.35,  // ... and aft
   topT:      0.130, // top half-thickness
   attachY:   1.95,  // wing underside, above the engine axis
-  plateT:    0.075, // thickness of the flat attachment plate
-  plateX:    0.34,  // ... and its half-width
   noseA:     0.010, // section nose bluntness
   teFrac:    0.45,  // trailing-edge thickness, fraction of maximum
   kink:      1.02,  // leading-edge kink height, x nacelle max radius
@@ -144,18 +142,15 @@ export function underMountPylon(engine, opts = {}) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  const strut = new THREE.Mesh(geo, M.structure);
+  const strut = new THREE.Mesh(geo, M.skin);
   strut.name = 'pylonStrut';
   g.add(strut);
 
-  const plate = new THREE.Mesh(
-    new THREE.BoxGeometry(P.plateX * 2 * R, P.plateT * R, topZ0 - topZ1),
-    M.structure);
-  plate.position.set(0, attachY + P.plateT * R * 0.5, (topZ0 + topZ1) / 2);
-  plate.name = 'pylonPlate';
-  g.add(plate);
 
-  g.userData.attachY = attachY + P.plateT * R;
+  // No plate: the pylon runs up to the wing and stops there. It had one so the
+  // top had something to end on when there was no wing in the scene, and with a
+  // wing above it that plate is a slab sitting on the skin.
+  g.userData.attachY = attachY;
   g.userData.attachZ = [topZ0, topZ1];
   g.userData.rootZ = [rootZ0, rootZ1];
   g.userData.kinkY = yKink;
@@ -335,19 +330,12 @@ export function overMountPylon(engine, opts = {}) {
   });
   geo.translate(0, 0, -th / 2);
   geo.computeVertexNormals();
-  const body = new THREE.Mesh(geo, M.structure);
+  const body = new THREE.Mesh(geo, M.skin);
   body.rotation.y = -Math.PI / 2;            // shape X -> world Z, extrude -> X
   body.name = 'pylonStrut';
   g.add(body);
 
-  const plate = new THREE.Mesh(
-    new THREE.BoxGeometry(P.plateX * 2 * R, P.plateT * R, topZ0 - topZ1),
-    M.structure);
-  plate.position.set(0, -attachY - P.plateT * R * 0.5, (topZ0 + topZ1) / 2);
-  plate.name = 'pylonPlate';
-  g.add(plate);
-
-  g.userData.attachY = -attachY - P.plateT * R;
+  g.userData.attachY = -attachY;
   g.userData.attachZ = [topZ0, topZ1];
   g.userData.rootZ = [rootZ0, zAt(core, core.length - 1)];
   g.userData.outline = rounded.length;
@@ -445,7 +433,7 @@ export function sideMountPylon(engine, opts = {}) {
   geo.setIndex(idx);
   geo.computeVertexNormals();
   faceOutward(geo);
-  const strut = new THREE.Mesh(geo, M.structure);
+  const strut = new THREE.Mesh(geo, M.skin);
   strut.name = 'pylonStrut';
   g.add(strut);
 

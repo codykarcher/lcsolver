@@ -514,6 +514,7 @@ export function bareTurbofan({
 const NAC = {
   lipZ:      0.78,   // leading edge station, ahead of the fan plane
   cowlAft:  -2.35,   // trailing edge
+  lipFraction: 0.10, // of the cowl length left bare metal at the inlet
   plateH:    0.0425, // half-thickness of the plate, x fan radius
   // Nose bluntness. Halving plateH would quarter the leading-edge radius,
   // since it goes as plateH^2 / (2 . noseA . c); noseA is cut to match so the
@@ -621,13 +622,42 @@ export function turbofan(opts = {}) {
     outer.push([zPos, ro]);
   }
 
-  // Aft along the inside, round the nose, aft along the outside. The two
-  // surfaces share the leading-edge point, so it is traversed once.
-  const cowl = [...[...inner].reverse(), ...outer.slice(1)];
-  cowl.push(cowl[0]);
-  const fanCowl = latheZ(cowl, M.casing, SEG);
-  fanCowl.name = 'fanCowl';
-  g.add(fanCowl);
+  /**
+   * The cowl in two pieces, so the inlet lip can be a different colour.
+   *
+   * A real nacelle is a painted fairing with a bare metal lip -- the lip is
+   * anti-iced and takes the impacts, so it is not painted -- and that band at
+   * the front is most of what makes a nacelle read as one. Two closed solids
+   * meeting at a station, rather than one solid with a stripe on it: a stripe
+   * would be a decal fighting a curved surface for the depth buffer, and this
+   * is a real division of the geometry.
+   *
+   * Each piece runs aft along the outside, in across the section, and forward
+   * along the inside. The shared ring at the split is built twice, once facing
+   * each way, and is interior to the pair so it is never seen.
+   */
+  const segment = (sv0, sv1, material, name) => {
+    const at = (sv) => {
+      const zPos = zLE - sv * c, ro = outerAt(sv);
+      return { z: zPos, ro, ri: ro - 2 * halfT(sv) };
+    };
+    const N = 40, pts = [];
+    for (let i = 0; i <= N; i++) {                    // outside, forward to aft
+      const q = at(sv0 + (sv1 - sv0) * (i / N) ** 1.4);
+      pts.push([q.z, q.ro]);
+    }
+    for (let i = N; i >= 0; i--) {                    // inside, aft to forward
+      const q = at(sv0 + (sv1 - sv0) * (i / N) ** 1.4);
+      pts.push([q.z, Math.max(q.ri, 1e-4)]);
+    }
+    pts.push(pts[0]);
+    const m = latheZ(pts, material, SEG);
+    m.name = name;
+    return m;
+  };
+  const lipEnd = NAC.lipFraction;
+  g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
+  g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
 
   const hi = meanAt(0);
   const zAft = zTE;

@@ -204,8 +204,14 @@ const JET = {
   tailD:      2.90,  // tailcone length, in diameters
   noseA: 2.7, noseB: 0.50,   // locked
   tailLaw: 'power',          // a tube closes on a small round tip, not an edge
-  tailA: 1.6, tailB: 0.75,   // locked
-  tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
+  // Locked, and nearer a straight taper than they were. Going further is
+  // possible and costs the barrel join: a cone meeting a cylinder IS a crease,
+  // so straightening the tailcone sharpens where it starts. At A 1.35 the join
+  // slope reaches -0.0023 and check_fuselage refuses it; 1.50 holds it at
+  // -0.0006 and still takes the quarter points from 0.934/0.793/0.579 to
+  // 0.909/0.740/0.511 against a straight line's 0.80/0.60/0.40.
+  tailA: 1.50, tailB: 0.90,
+  tipR:       0.20,  // tailcone tip radius, in radii -- the APU exhaust
   keelHold:   0.45,  // fraction of the NOSE taper taken off the crown
   crownHold:  1.00,  // fraction of the TAILCONE taper taken off the belly
 };
