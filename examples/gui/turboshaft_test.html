@@ -150,6 +150,7 @@ function build() {
     `L/D <span>${(d.lengthInches / d.diameterInches).toFixed(2)}</span><br>` +
     `gear ratio <span>${d.gearRatio}</span> &middot; ` +
     `output at <span>${(d.gearRatio * 100).toFixed(0)}%</span> of spool<br>` +
+    `shaft overhang <span>${d.shaftOverhang.toFixed(3)}</span> fwd of case<br>` +
     `z extent <span>${bx.min.z.toFixed(2)} &hellip; ${bx.max.z.toFixed(2)}</span>`;
 }
 

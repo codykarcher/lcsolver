@@ -464,10 +464,12 @@ const JET_WALL = 0.035;
  *     z   fraction of body length aft of the lip
  *     r   radius as a multiple of rCase
  *
- * Defaults hold the case parallel and let it converge only at the end, which
- * is what a plain turbojet looks like.
+ * Default is a single contraction at three quarters of the way aft, down to
+ * 0.80 of case radius, from which the wall opens back out to the 0.90 exit.
+ * The case is still held parallel through the compressor regardless -- see
+ * the hold point in the body.
  */
-const JET_SECTIONS = [{ z: 0.35, r: 0.95 }, { z: 0.70, r: 1.0 }];
+const JET_SECTIONS = [{ z: 0.75, r: 0.80 }];
 
 /** Nozzle exit radius, x rCase. */
 const JET_EXIT = 0.90;
@@ -678,9 +680,10 @@ export function turboprop({ rProp = 1.25, blades = 4 } = {}) {
 const TS = {
   gearR:   0.19,    // gearbox drum radius
   gearY:   0.66,    // its axis height above the engine centreline
-  gearZ0:  0.16,    // front of the drum
-  gearZ1:  0.64,    // back of it
+  gearZ0:  0.02,    // front of the drum, just aft of the case leading edge
+  gearZ1:  0.52,    // back of it
   outR:    0.062,   // output shaft radius
+  outFwd:  0.10,    // how far the shaft overhangs ahead of the case, x L
 };
 
 /**
@@ -743,7 +746,7 @@ export function turboshaft({
   g.add(drum);
 
   // Carried on two saddles, so it sits on the engine rather than above it.
-  for (const f of [TS.gearZ0 + 0.07, TS.gearZ1 - 0.09]) {
+  for (const f of [TS.gearZ0 + 0.09, TS.gearZ1 - 0.09]) {
     const saddle = roundedBox(0.30 * D, 0.30 * D, 0.10 * L, 0.05 * D,
                               M.accessory);
     saddle.position.set(0, (TS.gearY - TS.gearR * 0.95) * D, z(f));
@@ -751,23 +754,27 @@ export function turboshaft({
   }
 
   // ---- output shaft -------------------------------------------------------
-  // Runs forward out of the drum to the inlet plane, so the engine still ends
-  // at z = 0 and can be placed by its nose like every other component here.
+  // The rotor group is placed ON THE GEARBOX AXIS and everything inside it is
+  // built in local coordinates. Rotating a group whose origin is the engine
+  // centreline would swing the shaft around the engine instead of spinning it
+  // about itself -- which is exactly what it did.
   const out = new THREE.Group();
+  out.position.set(0, TS.gearY * D, 0);
   out.userData.rotating = true;
   out.userData.spin = -1;
   out.userData.rate = gearRatio;
-  const shLen = TS.gearZ0 * L;
+
+  const zFwd = TS.outFwd * L;                 // overhangs ahead of the case
+  const zAftEnd = z(TS.gearZ0 + 0.06);        // buried in the drum
+  const shLen = zFwd - zAftEnd;
   const sh = new THREE.Mesh(
     new THREE.CylinderGeometry(TS.outR * D, TS.outR * D, shLen, 20),
     M.hardware);
   sh.rotation.x = Math.PI / 2;
-  sh.position.set(0, TS.gearY * D, z(TS.gearZ0 / 2));
+  sh.position.z = (zFwd + zAftEnd) / 2;
   out.add(sh);
-  const coupling = tubeZ(TS.outR * D, TS.outR * 2.6 * D,
-                         z(0.03), z(0.055), M.hardware, 24);
-  coupling.position.y = TS.gearY * D;
-  out.add(coupling);
+  out.add(tubeZ(TS.outR * D, TS.outR * 2.6 * D,
+                zFwd - 0.012 * L, zFwd - 0.030 * L, M.hardware, 24));
   g.add(out);
 
   g.userData.power = power;
@@ -775,6 +782,7 @@ export function turboshaft({
   g.userData.diameterInches = D / 0.0254;
   g.userData.lengthInches = L / 0.0254;
   g.userData.gearRatio = gearRatio;
+  g.userData.shaftOverhang = TS.outFwd * L;
   g.userData.height = (TS.gearY + TS.gearR) * D;
   return finish(g, L, (TS.gearY + TS.gearR) * D, 'turboshaft');
 }
