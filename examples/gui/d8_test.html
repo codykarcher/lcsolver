@@ -47,7 +47,7 @@
 
 <div id="panel">
   <h1>D8 fuselage</h1>
-  <p class="sub">wide ellipse &rarr; flat-topped cabin &rarr; dished aft</p>
+  <p class="sub">wide ellipse &rarr; stadium cabin &rarr; horizontal closing edge</p>
 
   <h2>deck inputs</h2>
   <div class="row"><label for="rad">half-height</label><output id="oRad"></output></div>
@@ -69,8 +69,8 @@
   <div class="row"><label for="cabinWidth">cabin W/H</label><output id="oCabinWidth"></output></div>
   <input type="range" id="cabinWidth" min="1.00" max="2.40" step="0.01" value="1.55">
 
-  <div class="row"><label for="cabinFlat">roof flatness</label><output id="oCabinFlat"></output></div>
-  <input type="range" id="cabinFlat" min="2.00" max="6.00" step="0.05" value="3.60">
+  <div class="row"><label for="cabinCrown">roof crown</label><output id="oCabinCrown"></output></div>
+  <input type="range" id="cabinCrown" min="0.00" max="0.60" step="0.01" value="0.12">
 
   <div class="row"><label for="trough">aft trough depth</label><output id="oTrough"></output></div>
   <input type="range" id="trough" min="0.00" max="0.60" step="0.01" value="0.30">
@@ -78,12 +78,11 @@
   <div class="row"><label for="troughWidth">trough width</label><output id="oTroughWidth"></output></div>
   <input type="range" id="troughWidth" min="0.15" max="1.20" step="0.01" value="0.60">
 
-  <h2>pressure vessel</h2>
-  <div class="check"><input type="checkbox" id="vessel"><label for="vessel">show (structure, not OML)</label></div>
-  <div class="row"><label for="vesselRadius">lobe radius</label><output id="oVesselRadius"></output></div>
-  <input type="range" id="vesselRadius" min="0.40" max="1.00" step="0.01" value="0.90">
-  <div class="row"><label for="vesselOffset">lobe offset</label><output id="oVesselOffset"></output></div>
-  <input type="range" id="vesselOffset" min="0.00" max="1.20" step="0.01" value="0.62">
+  <h2>tail</h2>
+  <div class="row"><label for="tailWidth">closing half-width</label><output id="oTailWidth"></output></div>
+  <input type="range" id="tailWidth" min="0.05" max="1.40" step="0.01" value="0.55">
+  <div class="row"><label for="tipR">closing half-height</label><output id="oTipR"></output></div>
+  <input type="range" id="tipR" min="0.01" max="0.40" step="0.005" value="0.05">
 
   <h2>where it changes</h2>
   <div class="row"><label for="uBubble">bubble by</label><output id="oUBubble"></output></div>
@@ -94,7 +93,6 @@
   <input type="range" id="uTrough" min="0.40" max="1.00" step="0.01" value="0.84">
 
   <h2>view</h2>
-  <div class="check"><input type="checkbox" id="engines" checked><label for="engines">engines on the seats</label></div>
   <div class="check"><input type="checkbox" id="prof" checked><label for="prof">crown, keel &amp; width</label></div>
   <div class="check"><input type="checkbox" id="rings"><label for="rings">section rings</label></div>
   <div class="check"><input type="checkbox" id="area"><label for="area">area distribution</label></div>
@@ -146,7 +144,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { d8Fuselage } from './components/fuselage.js';
-import { turbofan } from './components/engines.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS, setTranslucent } from './components/materials.js';
 
@@ -173,7 +170,7 @@ const bounce = new THREE.DirectionalLight(0xc9d6e4, 0.35);
 bounce.position.set(0, -8, 2);
 scene.add(bounce);
 // From above, because on this body the interesting surface is the upper one --
-// the valley between the lobes and the trough the engines sit in.
+// a wide flat roof shows its shape in the highlight across it or not at all.
 const over = new THREE.DirectionalLight(0xffffff, 0.5);
 over.position.set(0.5, 10, 1);
 scene.add(over);
@@ -199,8 +196,8 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 const DECK = ['rad', 'fineness', 'noseD'];
-const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinFlat',
-               'vesselRadius', 'vesselOffset', 'trough', 'troughWidth',
+const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinCrown',
+               'tailWidth', 'tipR', 'trough', 'troughWidth',
                'uBubble', 'uOpen', 'uTrough'];
 const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
 
@@ -262,7 +259,6 @@ function build() {
     fineness: num('fineness'),
     noseD: num('noseD'),
     shape: Object.fromEntries(SHAPE.map((k) => [k, num(k)])),
-    vessel: el('vessel').checked,
     detail: el('detail').checked,
   });
   scene.add(body);
@@ -270,21 +266,6 @@ function build() {
 
   const u = body.userData, L = u.length;
 
-  // Two engines placed ON the seats the body publishes, rather than at
-  // coordinates that happen to look right. If the trough or the bubble offset
-  // is dragged and the nacelles stop sitting in the valley, the seat is wrong
-  // and that is worth seeing immediately.
-  if (el('engines').checked) {
-    const rFan = radius * 0.40;
-    for (const side of [1, -1]) {
-      const seat = u.nacelleSeat(side);
-      const eng = turbofan({ rFan, bypassRatio: 9 });
-      const len = eng.userData.overallLength ?? rFan * 5;
-      eng.position.copy(seat.point).addScaledVector(seat.normal, rFan * 0.55);
-      eng.position.z = seat.z + len * 0.55;
-      scene.add(eng); extra.push(eng);
-    }
-  }
 
   if (el('prof').checked) {
     const top = [], bot = [], mid = [], wideL = [], wideR = [], valley = [];
@@ -297,8 +278,9 @@ function build() {
       // views can be read off the same overlay.
       wideR.push(new THREE.Vector3(u.halfWidthAt(z), sh.yc, z));
       wideL.push(new THREE.Vector3(-u.halfWidthAt(z), sh.yc, z));
-      // The valley floor: on this body it is NOT the crown, and the gap between
-      // the two is the whole point of the aft end.
+      // Height on the CENTRELINE. On a stadium roof that is the crown, so the
+      // two lines coincide -- and they separate the moment anything dishes the
+      // deck, which makes it worth drawing even when nothing does.
       valley.push(new THREE.Vector3(0, sh.yc + sh.r * u.section(Math.PI / 2, z), z));
     }
     line(top, 0xe6a34a); line(bot, 0xe6a34a); line(mid, 0x5b8ff5, 0.8);
@@ -345,31 +327,21 @@ function build() {
   for (const k of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
     el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
 
-  const zc = -L * 0.45, za = -L * num('uTrough');
-  const valleyAt = (z) => u.shapeAt(z).yc + u.shapeAt(z).r * u.section(Math.PI / 2, z);
   el('readout').innerHTML =
     `L <span>${L.toFixed(2)}</span> &middot; H <span>${(2 * radius).toFixed(2)}</span> ` +
     `&middot; W <span>${(2 * u.maxHalfWidth.halfWidth).toFixed(2)}</span><br>` +
     `cabin W/H <span>${u.cabinWidthOverHeight.toFixed(3)}</span> &middot; ` +
-    `roof drops <span>${(100 * (1 - Math.pow(1 - Math.pow(0.5, num('cabinFlat')),
-      1 / num('cabinFlat')))).toFixed(2)}%</span> by half-width<br>` +
-    `roof dished: cabin ` +
-    `<span>${(u.crownAt(zc) - valleyAt(zc)).toFixed(2)}</span>, aft ` +
-    `<span>${(u.crownAt(za) - valleyAt(za)).toFixed(2)}</span>` +
-    (u.vesselFitFactor != null && u.vesselFitFactor < 0.999
-      ? `<br>vessel shrunk to <span>${(100 * u.vesselFitFactor).toFixed(0)}%</span> to fit`
-      : '') + `<br>` +
+    `flat roof spans <span>${((num('cabinWidth') - 1) * 2 * radius).toFixed(2)}</span> ` +
+    `of it<br>` +
     `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +
     `tail <span>${u.tailLength.toFixed(2)}</span> &middot; ` +
     `widest at z <span>${u.maxHalfWidth.z.toFixed(1)}</span><br>` +
     `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
     `(<span>${u.tipRise.toFixed(2)}</span> half-heights ` +
     `${u.tipRise >= 0 ? 'above' : 'below'} the axis)<br>` +
-    `nose W/H at the join <span>${(u.halfWidthAt(-u.noseLength) * 2
-      / (u.crownAt(-u.noseLength) - u.keelAt(-u.noseLength))).toFixed(3)}</span><br>` +
-    `seat: z <span>${u.nacelleSeat(1).z.toFixed(2)}</span>, ` +
-    `x <span>${u.nacelleSeat(1).point.x.toFixed(2)}</span>, ` +
-    `y <span>${u.nacelleSeat(1).point.y.toFixed(2)}</span>`;
+    `closes on <span>${(2 * u.tailEdge.halfWidth).toFixed(2)}</span> wide by ` +
+    `<span>${(2 * u.tailEdge.halfHeight).toFixed(3)}</span> tall ` +
+    `(W/H <span>${(u.tailEdge.halfWidth / u.tailEdge.halfHeight).toFixed(1)}</span>)`;
 
   el('params').textContent =
     `{ radius: ${num('rad')}, fineness: ${num('fineness')}, noseD: ${num('noseD')}, ` +
@@ -441,7 +413,7 @@ function ortho(axis) {
 for (const id of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
   el(id).addEventListener('input', build);
 for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid',
-                  'detail', 'engines', 'vessel', 'refShow', 'refFlip'])
+                  'detail', 'refShow', 'refFlip'])
   el(id).addEventListener('change', build);
 for (const v of ['front', 'side', 'top', 'nose', 'aft'])
   el(v).addEventListener('click', () => ortho(v));

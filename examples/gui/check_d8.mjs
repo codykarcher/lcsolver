@@ -18,9 +18,10 @@ import { d8Fuselage } from './components/fuselage.js';
 
 const CASES = [
   { name: 'D8 default', radius: 1.90 },
-  { name: 'wider',      radius: 1.90, shape: { cabinWidth: 1.85, trough: 0.40 } },
-  { name: 'rounder',    radius: 1.90, shape: { cabinWidth: 1.15, cabinFlat: 2.3 } },
-  { name: 'boxy',       radius: 1.90, shape: { cabinFlat: 5.5 } },
+  { name: 'wider',      radius: 1.90, shape: { cabinWidth: 1.85 } },
+  { name: 'narrow',     radius: 1.90, shape: { cabinWidth: 1.15 } },
+  { name: 'flat roof',  radius: 1.90, shape: { cabinCrown: 0.00 } },
+  { name: 'round roof', radius: 1.90, shape: { cabinCrown: 0.45 } },
   { name: 'small',      radius: 1.10, fineness: 8.0 },
 ];
 
@@ -32,7 +33,7 @@ for (const c of CASES) {
   const u = body.userData, R = u.radius, L = u.length;
   const p = u.shapeParams;
   console.log(`${c.name}: L ${L.toFixed(2)}, half-height ${R.toFixed(2)}, ` +
-              `cabin W/H ${p.cabinWidth}, flat ${p.cabinFlat}, trough ${p.trough}`);
+              `cabin W/H ${p.cabinWidth}, crown ${p.cabinCrown}`);
 
   /* 1. the skin is a closed, outward solid --------------------------------- */
   // Same two tests as the tube, and they matter more here: a section that
@@ -97,8 +98,14 @@ for (const c of CASES) {
   // Height across the roof, by x rather than by angle -- "flat" is a statement
   // about the shape in space, and a statement about equal angles is not the
   // same statement on a section this wide.
+  //
+  // Probed as a fraction of the FLAT's own extent, w - 1, not of the half-width.
+  // The flat top of a stadium only spans |x| <= w - 1, which at w = 1.55 is a
+  // third of the half-width -- so probing at half the half-width lands out on
+  // the arc and reports a dead flat roof as dropping 2.6%.
+  const flatHalf = Math.max(1e-6, (p.cabinWidth - 1) * R);
   const roofAt = (z, frac) => {
-    const sh = u.shapeAt(z), want = frac * u.halfWidthAt(z);
+    const sh = u.shapeAt(z), want = frac * flatHalf;
     let lo = 0, hi = Math.PI / 2;                 // x falls as theta rises
     for (let i = 0; i < 60; i++) {
       const m = (lo + hi) / 2;
@@ -108,16 +115,35 @@ for (const c of CASES) {
     return sh.yc + sh.r * u.section(th, z) * Math.sin(th);
   };
   const peak = u.crownAt(zc);
-  const midDrop = (peak - roofAt(zc, 0.5)) / (peak - u.shapeAt(zc).yc);
-  // Against the superellipse's own closed form rather than a fixed threshold.
-  // At half the width, |x/w|^n = 2^-n, so the roof is at (1 - 2^-n)^(1/n) --
-  // 2.4% down at n = 3.6, 9.4% at n = 2.3. A fixed bound would just be a
-  // statement about which exponent I happened to pick as the default.
-  const wantDrop = 1 - Math.pow(1 - Math.pow(0.5, p.cabinFlat), 1 / p.cabinFlat);
-  if (Math.abs(midDrop - wantDrop) > 3e-3)
-    bad(`roof drops ${(100 * midDrop).toFixed(2)}% at half-width, ` +
-        `exponent ${p.cabinFlat} gives ${(100 * wantDrop).toFixed(2)}%`);
-  if (midDrop < 1e-4) bad(`roof is dead flat, not slightly convex`);
+  const midDrop = (peak - roofAt(zc, 0.7)) / (peak - u.shapeAt(zc).yc);
+  if (midDrop > 0.02 + 0.12 * p.cabinCrown)
+    bad(`roof drops ${(100 * midDrop).toFixed(2)}% across the flat -- not flat`);
+  if (p.cabinCrown > 0 && midDrop < 1e-5)
+    bad(`crown is ${p.cabinCrown} but the roof is dead flat`);
+  if (p.cabinCrown === 0 && midDrop > 1e-9)
+    bad(`crown is 0 but the roof drops ${(100 * midDrop).toFixed(4)}%`);
+
+  // THE SHOULDERS ARE SEMICIRCLES. This is the claim that failed before -- a
+  // superellipse gets the flat roof right and leaves the shoulders visibly
+  // boxy. A stadium's side is an arc of the pressure lobe itself, so at half
+  // the height the surface must stand at o + sqrt(3)/2 with o = w - 1. The
+  // crown blend pulls it in slightly, which is the only licence allowed.
+  const shoulderAt = (frac) => {
+    const sh = u.shapeAt(zc);
+    let lo = 0, hi = Math.PI / 2;
+    for (let i = 0; i < 60; i++) {
+      const m = (lo + hi) / 2;
+      if (sh.r * u.section(m, zc) * Math.sin(m) / R < frac) lo = m; else hi = m;
+    }
+    const th = (lo + hi) / 2;
+    return sh.r * u.section(th, zc) * Math.cos(th) / R;
+  };
+  const gotShoulder = shoulderAt(0.5);
+  const wantShoulder = (p.cabinWidth - 1) + Math.sqrt(0.75);
+  const slack = 0.02 + 0.25 * p.cabinCrown;
+  if (Math.abs(gotShoulder - wantShoulder) > slack)
+    bad(`shoulder at half height is ${gotShoulder.toFixed(3)}R, ` +
+        `a semicircular side gives ${wantShoulder.toFixed(3)}R`);
 
   // Convex, and highest on the centreline: no valley, which is what the bubble
   // section produced and what a fairing exists to remove.
@@ -158,6 +184,26 @@ for (const c of CASES) {
   if (cabDish > 0.01)
     bad(`cabin roof is already dished by ${(100 * cabDish).toFixed(1)}% -- the trough has leaked forward`);
 
+  /* 4a. the tail closes on a HORIZONTAL LINE ------------------------------- */
+  // Not on a point, and not on a channel. The height goes almost to nothing
+  // while the width does not, which is a wide thin edge -- and it is only
+  // expressible because the section is allowed to ask the size distribution how
+  // tall the body is, rather than being a fixed multiple of it.
+  const tailEdge = u.tailEdge;
+  const edgeRatio = tailEdge.halfWidth / tailEdge.halfHeight;
+  if (edgeRatio < 5)
+    bad(`tail closes at width/height ${edgeRatio.toFixed(1)} -- a point, not a line`);
+  if (Math.abs(tailEdge.halfWidth / R - p.tailWidth) > 2e-3)
+    bad(`tail half-width ${(tailEdge.halfWidth / R).toFixed(3)}R, asked ${p.tailWidth}`);
+  // And nothing on the way there may dish: no channel down the aft deck.
+  let dished = 0;
+  for (let i = 0; i <= 200; i++) {
+    const z = u.cabinZ[1] - (L + u.cabinZ[1]) * (i / 200);
+    if (u.crownAt(z) - valley(z) > 1e-6) dished++;
+  }
+  if (p.trough <= 0 && dished)
+    bad(`aft deck is dished at ${dished} stations with trough 0 -- a channel`);
+
   /* 4b. the point sits above the axis -------------------------------------- */
   // The one thing about this nose that is not simply "wider than a tube's". A
   // tube drops its point for the view over the nose; a D8 lifts it for moment.
@@ -191,69 +237,46 @@ for (const c of CASES) {
     }
     return [wide / tall, u.section(Math.PI / 2, z) / tall];   // aspect, valley
   };
-  let worstStep = 0, worstZ = 0;
-  const N = 600;
+  // Looked for as a SPIKE against its own neighbours, not against a fixed rate.
+  // The aft aspect ratio legitimately runs away -- that is what closing on a
+  // line means -- so any absolute bound is either useless or condemns the tail.
+  // A ring is a step: one interval changing far more than the ones around it.
+  const N = 600, steps = [];
   let prev = shapeOf(0);
   for (let i = 1; i <= N; i++) {
     const z = -L * i / N, now = shapeOf(z);
-    const rate = (Math.abs(now[0] - prev[0]) + Math.abs(now[1] - prev[1])) / (1 / N);
-    if (rate > worstStep) { worstStep = rate; worstZ = z; }
+    steps.push(Math.abs(now[0] - prev[0]) + Math.abs(now[1] - prev[1]));
     prev = now;
   }
-  if (worstStep > 6.0)
-    bad(`section shape changes at ${worstStep.toFixed(2)} per unit length at ` +
+  // Against its immediate NEIGHBOURS, not against the median of the whole body.
+  // Most of a fuselage is parallel, so the median step is essentially zero and
+  // any ratio to it is meaningless -- it reported 2e16 at the tail, where the
+  // section is changing fast but perfectly smoothly. A ring is a step that is
+  // large while the steps either side of it are small; that is a local test.
+  let spike = 0, worstZ = 0;
+  for (let i = 4; i < steps.length - 4; i++) {
+    let local = 0;
+    for (let k = -4; k <= 4; k++) if (k) local += steps[i + k];
+    local /= 8;
+    const ratio = steps[i] / Math.max(local, 1e-12);
+    if (ratio > spike) { spike = ratio; worstZ = -L * (i + 1) / N; }
+  }
+  if (spike > 8)
+    bad(`one station changes ${spike.toFixed(1)}x its neighbours at ` +
         `z ${worstZ.toFixed(1)} -- a ring`);
 
-  /* 5b. the pressure vessel fits inside the skin --------------------------- */
-  // The flat roof is a fairing over two round tubes. If a tube pokes through it
-  // the aeroplane is not describable, and on a body this wide it happens at the
-  // shoulders where nobody is looking.
-  const withVessel = d8Fuselage({
-    radius: c.radius, fineness: c.fineness, shape: c.shape ?? {}, vessel: true });
-  const vs = withVessel.children.find((ch) => ch.userData.isPressureVessel);
-  let clearance = Infinity;
-  if (!vs) bad('vessel: true produced no pressure vessel');
-  else {
-    const vp = vs.geometry.getAttribute('position');
-    for (let i = 0; i < vp.count; i++) {
-      const x = vp.getX(i), y = vp.getY(i), z = vp.getZ(i);
-      const sh = u.shapeAt(z);
-      if (sh.r < 1e-9) continue;
-      const th = Math.atan2(y - sh.yc, x);
-      clearance = Math.min(clearance,
-        sh.r * u.section(th, z) - Math.hypot(x, y - sh.yc));
-    }
-    if (clearance < 0)
-      bad(`pressure vessel pokes ${(-clearance).toFixed(3)} through the skin`);
-  }
-
-  /* 6. the nacelle seat is on the surface --------------------------------- */
-  // It is published so an engine can be placed ON the body. If it is not
-  // actually on the body it is worse than useless.
-  for (const side of [1, -1]) {
-    const seat = u.nacelleSeat(side);
-    const sh = u.shapeAt(seat.z);
-    const th = Math.atan2(seat.point.y - sh.yc, seat.point.x);
-    const surf = sh.r * u.section(th, seat.z);
-    const got = Math.hypot(seat.point.x, seat.point.y - sh.yc);
-    if (Math.abs(got - surf) > 1e-6 * R)
-      bad(`nacelle seat ${side > 0 ? 'right' : 'left'} is ${(got - surf).toFixed(4)} off the skin`);
-    if (seat.point.y < valley(seat.z) - 1e-6)
-      bad(`nacelle seat is below the valley floor`);
-  }
 
   console.log(`  closed, volume ${vol.toFixed(1)}, half-height ${halfHeight.toFixed(3)}`);
   console.log(`  width/height: nose section ${noseW.toFixed(2)}, cabin ${gotWidth.toFixed(2)}`);
   console.log(`  nose-to-cabin section change ${secDiff.toFixed(3)}`);
-  console.log(`  roof drops ${(100 * midDrop).toFixed(2)}% by half-width ` +
-              `(exponent ${p.cabinFlat} gives ${(100 * wantDrop).toFixed(2)}%); ` +
-              `dished ${(100 * cabDish).toFixed(1)}% at the cabin, ` +
-              `${(100 * aftDish).toFixed(1)}% aft`);
-  console.log(`  vessel clearance inside the skin: ${clearance.toFixed(3)}`);
+  console.log(`  roof drops ${(100 * midDrop).toFixed(3)}% across the flat; ` +
+              `shoulder ${gotShoulder.toFixed(3)}R vs semicircle ${wantShoulder.toFixed(3)}R`);
+  console.log(`  tail edge ${tailEdge.halfWidth.toFixed(2)} wide x ` +
+              `${tailEdge.halfHeight.toFixed(3)} tall -- W/H ${edgeRatio.toFixed(1)}, ` +
+              `${dished} dished stations`);
   console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
               `${outside} stations outside the envelope`);
-  console.log(`  fastest SHAPE change ${worstStep.toFixed(2)} per unit length ` +
-              `at z ${worstZ.toFixed(1)}`);
+  console.log(`  worst section spike ${spike.toFixed(2)}x its neighbours`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)`

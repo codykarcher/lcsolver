@@ -25,7 +25,7 @@
  * dropped into the same scene are already in the same frame.
  */
 import * as THREE from 'three';
-import { skin, glass, trim, painted, cavity, structure, decal } from './materials.js';
+import { skin, glass, trim, painted, cavity, decal } from './materials.js';
 import { orientOutward } from './geom.js';
 
 // Register the decal variants at load rather than on first use, so that a page
@@ -62,11 +62,10 @@ export const ellipticalSection = (w) => (th) =>
  *
  *     |x/w|^n + |y|^n = 1     ->     r = (|cos/w|^n + |sin|^n)^(-1/n)
  *
- * This is the D8's OUTER shape: a flat -- but very slightly convex -- top and
- * bottom with rounded sides, which is what a wide body actually presents to the
- * air. n = 2 is an ellipse and n large is a rectangle; around 3.5 the top drops
- * only 2% over the middle half of the width and then turns down into the
- * corners, which is the "slightly convex out" being asked for.
+ * Not currently used by either aircraft -- the D8's fairing is a stadium, whose
+ * sides are exact semicircles where this one's shoulders are noticeably boxy --
+ * but it is the natural family for a flattened section and is kept for the next
+ * body that wants one. n = 2 is an ellipse and n large is a rectangle.
  *
  * Height at the centreline is 1 by construction and it is also the maximum, so
  * `r(z)` keeps meaning half-height here as everywhere else.
@@ -75,6 +74,37 @@ export const superellipseSection = (w, n = 3.6) => (th) => {
   const c = Math.abs(Math.cos(th) / w), s = Math.abs(Math.sin(th));
   return Math.pow(Math.pow(c, n) + Math.pow(s, n), -1 / n);
 };
+
+/**
+ * A stadium: flat top and bottom, SEMICIRCULAR sides, `w` wide per unit tall.
+ *
+ * This is the convex hull of the two pressure lobes, which is what a fairing
+ * over them physically is -- so the sides are semicircles because the lobes are
+ * circles, not because a curve was chosen to look right. A superellipse gets
+ * close and has boxy shoulders; this has none, because the shoulder IS an arc
+ * of the lobe.
+ *
+ * Offset o = w - 1 puts the lobe centres at +/-o with unit radius. A ray meets
+ * the flat top where |cot th| <= o, and an arc otherwise. The two agree in
+ * value and slope at the join by construction: the ray hits the flat exactly at
+ * (o, 1), which is the top of the arc, where its tangent is already horizontal.
+ *
+ * `crown` blends in an ellipse of the same width, for a top that is not dead
+ * flat but slightly convex. A little goes a long way -- 0.12 drops the roof
+ * about 1.5% over the middle half of the width, and leaves the shoulders within
+ * a couple of percent of circular.
+ */
+export function stadiumSection(w, crown = 0) {
+  const o = Math.max(0, w - 1);
+  const ell = ellipticalSection(w);
+  return (th) => {
+    const s = Math.sin(th), c = Math.cos(th);
+    let r;
+    if (Math.abs(s) > 1e-12 && Math.abs(c / s) <= o) r = 1 / Math.abs(s);
+    else r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
+    return crown > 0 ? r * (1 - crown) + ell(th) * crown : r;
+  };
+}
 
 /**
  * Two overlapping circles side by side -- a double bubble.
@@ -556,7 +586,7 @@ export function jetlinerFuselage({
  * nothing else should have to.
  */
 function buildFuselage({
-  radius, length = null, p, section = circularSection,
+  radius, length = null, p, section = circularSection, sectionFor = null,
   detail = false,
   radome = detail,
   flightDeck = detail,
@@ -568,6 +598,11 @@ function buildFuselage({
 }) {
   const L = length ?? p.fineness * 2 * radius;
   const shape = jetShape({ length: L, radius, p });
+  // A section may need to know how big the body is at a station -- the D8's aft
+  // holds its width while its height collapses, which cannot be said as a
+  // multiple of the height. Handing it the shape is the only way to say it
+  // without duplicating the taper law.
+  if (sectionFor) section = sectionFor(shape);
   const g = new THREE.Group();
   const lift = radius * 0.005;
   const parts = [], occ = [];
@@ -726,7 +761,11 @@ const D8 = {
   tailD:      2.30,  // aft body length, in full heights
   noseA: 2.4, noseB: 0.50,
   tailA: 1.5, tailB: 0.70,
-  tipR:       0.20,  // aft body does not close to a point the way a tube does
+  // The aft body closes to a HORIZONTAL LINE, not to a point and not to a
+  // channel: the height goes almost to nothing while the width is still there,
+  // which leaves a wide thin edge. So the two taper separately.
+  tipR:       0.05,  // half-height at the very tail, in half-heights
+  tailWidth:  0.55,  // half-WIDTH there, in half-heights -- much the larger
   crownHold:  1.00,
 
   // The point sits ABOVE the axis, which is the opposite of a tube and is the
@@ -738,102 +777,17 @@ const D8 = {
 
   noseWidth:  1.55,  // ellipse aspect at the point -- WIDE, like the cabin
 
-  // The OML over the cabin: flat-ish top and bottom, rounded sides.
+  // The OML over the cabin: flat-ish top and bottom, SEMICIRCULAR sides.
   cabinWidth: 1.55,  // width over height
-  cabinFlat:  3.60,  // superellipse exponent; 2 is an ellipse, large is a box
+  cabinCrown: 0.12,  // 0 a dead flat roof, 1 a full ellipse
 
-  // The pressure vessel INSIDE it. Two lobes, in half-heights. Drawn only when
-  // asked for -- it is structure, not shape -- but it is what the cabin width
-  // is really for, so it is described here beside it.
-  vesselRadius: 0.90,
-  vesselOffset: 0.62,
-
-  trough:     0.30,  // depth of the aft valley, as a fraction of half-height
-  troughWidth: 0.60, // angular width of that valley, radians
+  trough:     0.00,  // roof dish for engines; off until there are engines
+  troughWidth: 0.60, // angular width of that dish, radians
   // Where along the body each transition happens, as a fraction of length.
   uBubble:    0.24,  // elliptical nose has become the double bubble by here
   uOpen:      0.66,  // aft opening starts
   uTrough:    0.84,  // and is fully open by here
 };
-
-/**
- * The pressure vessel: two lobes running the cabin, closed with domed ends.
- *
- * This is what "double bubble" actually names. It is a structure, not an outer
- * shape, and drawing it is the quickest way to see why the OML is the shape it
- * is -- the flat roof is a fairing over two round tubes, and the tubes are round
- * because that is the only section that carries pressure in pure tension.
- *
- * Lofted with the same section machinery as everything else, at constant size
- * over the cabin and scaled down by a quarter-ellipse at each end for the
- * bulkheads. The bulkheads are domed rather than flat for the same reason the
- * lobes are round.
- */
-function pressureVessel({ radius, p, z0, z1, u }) {
-  const sec = doubleBubbleSection({ offset: p.vesselOffset / p.vesselRadius });
-
-  // Shrink to fit. A vessel that pokes through the roof is not describable, and
-  // whether the asked-for lobes fit depends on the cabin width and the
-  // superellipse exponent in a way nobody is going to work out at the slider.
-  // So: measure the worst point and scale, rather than trust the numbers.
-  //
-  // The vessel sits on the AXIS while the skin section is centred on yc, so the
-  // comparison has to be made in the skin's own frame, at the angle the vessel
-  // point subtends there -- not at the angle it subtends from the axis.
-  let fit = 1;
-  for (let i = 0; i <= 40; i++) {
-    const z = z0 + (z1 - z0) * (i / 40);
-    const sh = u.shapeAt(z);
-    if (sh.r < 1e-9) continue;
-    for (let j = 0; j < 72; j++) {
-      const th = (j / 72) * Math.PI * 2;
-      const vr = radius * p.vesselRadius * sec(th);
-      const x = vr * Math.cos(th), y = vr * Math.sin(th);
-      const thSkin = Math.atan2(y - sh.yc, x);
-      const skinR = sh.r * u.section(thSkin, z);
-      const pointR = Math.hypot(x, y - sh.yc);
-      if (pointR > 1e-9) fit = Math.min(fit, skinR / pointR);
-    }
-  }
-  const scale = radius * p.vesselRadius * Math.min(1, fit * 0.97);
-  const dome = Math.min(scale * 1.1, Math.abs(z0 - z1) * 0.22);
-  const pos = [], idx = [];
-  const nS = 60, nSeg = 72;
-
-  for (let i = 0; i < nS; i++) {
-    const z = z0 + (z1 - z0) * (i / (nS - 1));
-    // Quarter-ellipse taper into each bulkhead, so the ends are domes and the
-    // middle is exactly the section asked for.
-    const dEnd = Math.min(z0 - z, z - z1);
-    const k = dEnd >= dome ? 1 : Math.sqrt(Math.max(0, 1 - ((dome - dEnd) / dome) ** 2));
-    for (let j = 0; j < nSeg; j++) {
-      const th = (j / nSeg) * Math.PI * 2, rr = scale * k * sec(th);
-      pos.push(rr * Math.cos(th), rr * Math.sin(th), z);
-    }
-  }
-  for (let i = 0; i < nS - 1; i++) {
-    for (let j = 0; j < nSeg; j++) {
-      const a = i * nSeg + j, b = i * nSeg + ((j + 1) % nSeg);
-      idx.push(a, b, a + nSeg, b, b + nSeg, a + nSeg);
-    }
-  }
-  for (const [ring, z] of [[0, z0], [nS - 1, z1]]) {
-    const c = pos.length / 3;
-    pos.push(0, 0, z);
-    for (let j = 0; j < nSeg; j++) {
-      idx.push(c, ring * nSeg + j, ring * nSeg + ((j + 1) % nSeg));
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  const m = new THREE.Mesh(orientOutward(geo), structure);
-  m.userData.isPressureVessel = true;
-  m.userData.fitFactor = Math.min(1, fit * 0.97);
-  return m;
-}
 
 /**
  * A D8 double-bubble fuselage.
@@ -846,18 +800,14 @@ function pressureVessel({ radius, p, z0, z1, u }) {
  * section here is a function of station and not a constant.
  *
  * The OML is NOT the double bubble, which is the thing most descriptions of
- * this aeroplane get backwards. What the air sees is a wide superellipse: flat,
- * very slightly convex top and bottom with rounded sides. The two bubbles are
- * the PRESSURE VESSEL inside it -- round because that is the only section that
- * carries pressure in tension -- and the flat roof is a fairing over them. Ask
- * for `vessel: true` to see them.
+ * this aeroplane get backwards. The two bubbles are the PRESSURE VESSEL, and
+ * what the air sees is the fairing over them -- a STADIUM: flat, faintly convex
+ * top and bottom joined by semicircular sides. Semicircular because they are
+ * arcs of the lobes themselves; the fairing is their convex hull.
  *
- * The aft trough is that same section with its upper valley deepened. It is
- * worth being clear about what this does and does not claim: it produces the
- * fuselage-side shape the nacelles nest into. The nacelles themselves are
- * engines and belong to the engine library; what integrates them is that the
- * body offers them a seat, and `nacelleSeat` reports where that seat is so an
- * engine can be placed on it rather than guessed into position.
+ * The aft body closes on a HORIZONTAL LINE rather than on a point: the height
+ * goes almost to nothing while the width is still there, leaving a wide thin
+ * edge. That is why the tail has two tapers and not one.
  */
 export function d8Fuselage({
   radius = 1.90,            // HALF-HEIGHT, not a radius -- see the section note
@@ -865,7 +815,6 @@ export function d8Fuselage({
   noseD = null,
   length = null,
   shape: shapeOverrides = {},
-  vessel = false,
   ...rest
 } = {}) {
   const p = {
@@ -878,78 +827,59 @@ export function d8Fuselage({
   if (shapeOverrides.keelHold === undefined) p.keelHold = -p.tipRise;
   const L = length ?? p.fineness * 2 * radius;
 
-  // The cabin OML, and the same shape with its roof dished for the engines.
-  const cabin = superellipseSection(p.cabinWidth, p.cabinFlat);
-  const open = (() => {
-    const base = superellipseSection(p.cabinWidth, p.cabinFlat);
-    return (th) => {
+  // The section, given the finished size distribution.
+  //
+  // Forward of the tailcone this is a shape and nothing more: a wide ellipse at
+  // the point morphing into the stadium over the cabin. Aft it cannot be, and
+  // that is the whole difficulty of the back end. The body has to close on a
+  // HORIZONTAL LINE -- a wide thin edge -- which means the half-height goes
+  // almost to nothing while the half-width does not. A section expressed as a
+  // multiple of the local height therefore has to get wider and wider as the
+  // height collapses, and it can only know how much by asking the size
+  // distribution what the height IS.
+  const sectionFor = (shape) => {
+    const nose = ellipticalSection(p.noseWidth);
+    const cabin = stadiumSection(p.cabinWidth, p.cabinCrown);
+    const morph = morphSection([
+      [0.00, nose],
+      [p.uBubble, cabin],
+      [1.00, cabin],
+    ], L);
+    const dish = (th) => {
+      if (p.trough <= 0) return 1;
       const d = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
       const g = d / p.troughWidth;
-      return base(th) * (1 - p.trough * Math.exp(-g * g));
+      return 1 - p.trough * Math.exp(-g * g);
     };
-  })();
+    return (th, z) => {
+      if (z > shape.zTail) return morph(th, z) * dish(th);
+      // Aft: half-width follows its own taper to tailWidth, so the aspect the
+      // stadium is built at is whatever holds that width against a height that
+      // is on its way to nothing.
+      const s = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
+      const k = Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+      const halfW = p.tailWidth + (p.cabinWidth - p.tailWidth) * k;
+      const halfH = shape.at(z).r / radius;
+      return stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th) * dish(th);
+    };
+  };
 
-  // Ellipse to flat-topped cabin to dished aft. The first and last stops are
-  // repeated so the morph holds its shape at the ends instead of drifting.
-  const section = morphSection([
-    [0.00, ellipticalSection(p.noseWidth)],
-    [p.uBubble, cabin],
-    [p.uOpen, cabin],
-    [p.uTrough, open],
-    [1.00, open],
-  ], L);
+  const g = buildFuselage({ radius, length: L, p, sectionFor, ...rest });
 
-  const g = buildFuselage({ radius, length: L, p, section, ...rest });
-
-  // The pressure vessel, if asked for. Two lobes running the length of the
-  // cabin, closed with domed bulkheads -- the thing the flat-topped OML is
-  // wrapped around. Off unless wanted, since it is structure and not shape.
   const u = g.userData;
   Object.assign(u, {
     isDoubleBubble: true,
-    vesselRadius: p.vesselRadius, vesselOffset: p.vesselOffset,
     tipRise: p.tipRise,
     tipY: p.tipRise * radius,
     /** Section width over height at the cabin -- what makes it look like a D8. */
     cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
       / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
-    /**
-     * Where an engine can sit: the valley between the lobes, aft.
-     *
-     * Returned as a point and the local surface normal, so a nacelle is placed
-     * ON the body rather than at coordinates that happen to look right and stop
-     * being right the moment the trough or the bubble offset changes.
-     */
-    nacelleSeat: (side = 1, uz = 0.90) => {
-      const z = -L * uz;
-      // Out along the dished roof from dead centre, but not as far as its edge.
-      const th = Math.PI / 2 - side * p.troughWidth * 0.55;
-      return {
-        z,
-        point: u.surfaceAt(z, th),
-        normal: u.normalAt(z, th),
-        valleyY: u.shapeAt(z).yc + u.shapeAt(z).r * section(Math.PI / 2, z),
-      };
+    /** The closing edge: how wide and how thin the very end of the body is. */
+    tailEdge: {
+      halfWidth: u.halfWidthAt(-L),
+      halfHeight: (u.crownAt(-L) - u.keelAt(-L)) / 2,
     },
   });
-
-  // Declared whether or not a vessel was asked for. A field that exists only
-  // sometimes is a field every caller has to guard, and the guard is easy to get
-  // wrong -- `undefined < 1` is false but `null < 1` is TRUE, which would have
-  // reported a body with no vessel as having shrunk its vessel to nothing.
-  u.vesselFitFactor = null;
-
-  // Built last: fitting the vessel inside the skin needs the finished body's own
-  // shapeAt and section, so it cannot be done before they exist.
-  if (vessel) {
-    const vs = pressureVessel({
-      radius, p, u,
-      z0: -L * p.uBubble * 0.9,
-      z1: -L * (p.uOpen + 0.06),
-    });
-    g.add(vs);
-    u.vesselFitFactor = vs.userData.fitFactor;
-  }
 
   return g;
 }
