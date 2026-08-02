@@ -51,18 +51,7 @@ export const D8_CHOICES = {
   tailSpan:       1.00,
   planTaperA:     1.0,    // the plan narrows EARLY -- the depth does not
   planTaperB:     2.0,
-  cradleStart:    0.00,   // the channel opens as the cabin ends
-  /**
-   * And is fully open by here, along the tailcone.
-   *
-   * Late on purpose. The underside has to climb 1.78 m to reach a channel
-   * floored at the engines' height, and how gently it can do that is only a
-   * question of how much length it is given: formed by 0.45 the keel sweeps up
-   * at 48 degrees, by 0.80 at 33. The cost is that the engine's nose sits in a
-   * channel not yet fully open and is more buried for it, which is what a
-   * fan fed off the body looks like anyway.
-   */
-  cradleFull:     0.80,
+  runStart:       1.5,    // where the run begins, in tailcone lengths off the tail
   tailHold:       4.0,    // how squarely the afterbody holds its depth aft
   tailTrough:     0.30,   // valley between the lobes, in local half-heights
   troughWidth:    0.55,   // angular half-width of that valley, radians
@@ -91,6 +80,19 @@ export function d8Aircraft(deck, opts = {}) {
   const halfH = d.fuseHalfHeight, halfW = d.fuseHalfWidth;
   // 55% of the body's height up from its keel.
   const engineAxisY = -halfH + d.engineHeight * 2 * halfH;
+  /**
+   * Where the engine's nose actually falls, worked out before the body is
+   * built, because the body's run has to finish there.
+   *
+   * MEASURED, not `engineX - length/2`: the turbofan is not centred on its own
+   * origin, so half its length forward of the station is 1.28 m ahead of its
+   * real leading edge -- and the run finished that far early, flattening off
+   * before it reached the thing it was climbing to meet.
+   */
+  const probe0 = bareTurbofan({ rFan: 1, bypassRatio: 9 });
+  const rFanFor = (d.nacelleDia / 2) / probe0.userData.rMax;
+  const engineNoseX = d.engineX - new THREE.Box3()
+    .setFromObject(bareTurbofan({ rFan: rFanFor, bypassRatio: 9 })).max.z;
   const fuse = d8Fuselage({
     radius: halfH,
     length: d.fuseLength,
@@ -142,7 +144,16 @@ export function d8Aircraft(deck, opts = {}) {
       // And the afterbody closes into the channel that holds the engines: a
       // flat floor with sides rounding up at their own radius.
       channel: { x: d.engineY, y: engineAxisY, r: d.nacelleDia / 2 },
-      channelStart: d.cradleStart, channelFull: d.cradleFull,
+      /**
+       * The run starts 1.5 tailcone-lengths off the tail -- so it begins well
+       * forward of the cone, where there is length to climb in -- and runs
+       * straight through to the body's TRAILING EDGE. Every metre it is given
+       * is a degree it does not have to climb at: over the cone alone the keel
+       * swept up at 48 degrees, to the engines' nose at 23, and to the trailing
+       * edge at less again.
+       */
+      channelFromX: d.fuseLength - d.runStart * d.coneLength,
+      channelToX: d.fuseLength,
     },
     detail: opts.detail ?? false,
   });

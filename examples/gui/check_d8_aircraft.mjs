@@ -132,18 +132,15 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
    * The afterbody closes into the CHANNEL that holds the engines.
    *
    * Flat floor, sides rounding up at the engines' own radius, open at their
-   * axis so they sit half in it. All three come from the engines, so all three
-   * are checkable against them and none is a number anybody chose.
-   *
-   * Not "how much depth survives" and not "is there a valley" -- those were the
-   * questions while the body closed to a wedge and carried the engines on top
-   * of it, and both report faults against a body that is the cradle itself.
+   * axis. Measured at the TRAILING EDGE, because that is where the run
+   * finishes -- asking at the engine station reports a channel 92 per cent
+   * formed and calls the difference a fault.
    */
-  const z = -d.engineX;
   const rN = d.nacelleDia / 2, gap = 0.02;
-  const floor = fu.keelAt(z), roof = fu.crownAt(z), wall = fu.halfWidthAt(z);
-  console.log(`     channel: floor ${floor.toFixed(3)}, open at ${roof.toFixed(3)}, ` +
-              `walls to ${wall.toFixed(3)}`);
+  const zTE = -d.fuseLength;
+  const floor = fu.keelAt(zTE), roof = fu.crownAt(zTE), wall = fu.halfWidthAt(zTE);
+  console.log(`     at the trailing edge: floor ${floor.toFixed(3)}, open at ` +
+              `${roof.toFixed(3)}, walls to ${wall.toFixed(3)}`);
   console.log(`     engines: bottom ${(u.engineAxisY - rN).toFixed(3)}, axis ` +
               `${u.engineAxisY.toFixed(3)}, outer ${(d.engineY + rN).toFixed(3)}`);
   if (Math.abs(floor - (u.engineAxisY - rN - gap)) > 0.02) {
@@ -156,8 +153,32 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   if (Math.abs(wall - (d.engineY + rN + gap)) > 0.03) {
     bad(`the walls reach ${wall.toFixed(3)}, the engines reach ${(d.engineY + rN).toFixed(3)}`);
   }
-  // Half in it: the engines stand proud above the open top, and their
-  // undersides are held.
+
+  /**
+   * And the underside SWEEPS up to it rather than necking in.
+   *
+   * The rise is fixed -- it is wherever the engines were put -- so the only
+   * question is how much length it is given to do it in, and the answer is
+   * every metre from where the run starts to the body's own trailing edge.
+   * Over the tailcone alone the keel came up at 48 degrees.
+   */
+  const L2 = fu.length;
+  let prev = null, steepest = 0, dropped = 0;
+  for (let i = 650; i <= 1000; i++) {
+    const q = i / 1000, ke = fu.keelAt(-L2 * q);
+    if (prev !== null) {
+      const slope = Math.atan2(ke - prev[1], (q - prev[0]) * L2) * 180 / Math.PI;
+      steepest = Math.max(steepest, Math.abs(slope));
+      if (slope < -0.2) dropped++;              // going back DOWN, going aft
+    }
+    prev = [q, ke];
+  }
+  console.log(`     the underside sweeps up at no more than ${steepest.toFixed(1)} deg, ` +
+              `arriving level`);
+  if (steepest > 30) bad(`the underside necks in at ${steepest.toFixed(1)} deg`);
+  if (dropped) bad(`the underside falls again at ${dropped} stations -- it is not one sweep`);
+
+  // Seated: the engines stand proud of the channel and are not hanging below it.
   const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);
   if (b2.max.y <= roof) bad('the engines do not stand above the channel -- they are buried');
   if (b2.min.y < floor - 1e-6) bad('the engines hang below the channel floor');

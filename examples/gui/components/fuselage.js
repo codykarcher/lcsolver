@@ -985,8 +985,15 @@ const D8 = {
    */
   channel:      null,
   channelGap:   0.02,  // clearance between the skin and what it holds
-  channelStart: 0.00,  // fraction along the tailcone where it starts forming
-  channelFull:  0.45,  // and where it is fully formed
+  /**
+   * Where the run begins and ends, as stations aft of the nose in METRES.
+   *
+   * Absolute, not fractions of the tailcone: the run starts forward of the cone
+   * and ends at whatever station the thing it cradles begins, and neither of
+   * those is the cone's business.
+   */
+  channelFromX: 0,
+  channelToX:   0,
 };
 
 /**
@@ -1058,8 +1065,42 @@ export function d8Fuselage({
     const nose = ellipticalSection(p.noseWidth);
     const cabin = stadiumSection(p.cabinWidth, p.cabinCrown);
     const morph = morphSection([[0.00, nose], [p.uBubble, cabin], [1.00, cabin]], L);
+    /**
+     * How far the section has become the channel, at a station.
+     *
+     * Measured between two ABSOLUTE stations rather than as a fraction of the
+     * tailcone, because neither end of the run belongs to the tailcone. It
+     * starts forward of it -- the underside has 1.78 m to climb and cannot do
+     * that gently in the 2.3 m the cone allows -- and it finishes at the
+     * ENGINES' LEADING EDGE, which is the station the channel actually has to
+     * be ready by. Tied to the cone it finished at the body's own trailing
+     * edge, a good two metres late, and the climb was still arriving while the
+     * engines were already sitting in it.
+     */
+    const openAt = (z) => {
+      if (!p.channel) return 0;
+      const x = -z;
+      const t = (x - p.channelFromX) / Math.max(p.channelToX - p.channelFromX, 1e-6);
+      const f = Math.min(1, Math.max(0, t));
+      return f * f * (3 - 2 * f);
+    };
+    const asChannel = (th, z, base) => {
+      const open = openAt(z);
+      if (open <= 0) return base;
+      const sh = shape.at(z);
+      if (!(sh.r > 1e-6)) return base;
+      const ch = channelSection({
+        halfSpacing: p.channel.x / sh.r,
+        radius: (p.channel.r + p.channelGap) / sh.r,
+        axisY: (p.channel.y - sh.yc) / sh.r,
+      })(th);
+      return base + (ch - base) * open;
+    };
+
     return (th, z) => {
-      if (z > shape.zTail) return morph(th, z);
+      // The channel reaches forward of the tailcone, so it has to be applied to
+      // the cabin's own section too, not only to the closing one.
+      if (z > shape.zTail) return asChannel(th, z, morph(th, z));
       // Aft: the half-width follows its own taper, so the aspect the stadium is
       // built at is whatever holds that width against a height that is on its
       // way down. With tailWidth equal to cabinWidth -- the default -- the
@@ -1071,21 +1112,7 @@ export function d8Fuselage({
       const sh = shape.at(z);
       const halfH = sh.r / radius;
       let base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
-      // The cabin's section gives way to the channel over the afterbody, so the
-      // roof leaves the cabin whole and opens gradually rather than stepping.
-      if (p.channel && sh.r > 1e-6) {
-        const t = (s - p.channelStart) / Math.max(p.channelFull - p.channelStart, 1e-6);
-        const f = Math.min(1, Math.max(0, t));
-        const open = f * f * (3 - 2 * f);
-        if (open > 0) {
-          const ch = channelSection({
-            halfSpacing: p.channel.x / sh.r,
-            radius: (p.channel.r + p.channelGap) / sh.r,
-            axisY: (p.channel.y - sh.yc) / sh.r,
-          })(th);
-          base = base + (ch - base) * open;
-        }
-      }
+      base = asChannel(th, z, base);
       if (!(p.tailTrough > 0)) return base;
       // The dish, eased in over the afterbody so the roof leaves the cabin
       // flat and falls away smoothly rather than stepping.
