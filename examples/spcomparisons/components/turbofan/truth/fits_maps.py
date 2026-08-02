@@ -34,6 +34,121 @@ from openmdao.components.interp_util.interp import InterpND
 
 from .fits import fit_signomial_2d
 
+sys_path_root = "/Users/codykarcher/Dropbox/research/edi"
+import sys as _sys
+if sys_path_root not in _sys.path:
+    _sys.path.insert(0, sys_path_root)
+from edi.fitting import fit_max_affine, evaluate_fit
+
+
+def fit_sma(X, y, K=8, alphas=(1., 2., 4., 8., 16., 32.),
+            force_direct=False):
+    """SMA fit of a positive 2-D surface, trying both y and 1/y.
+
+    An SMA equality enters the model as monomial == posynomial -- ZERO
+    internal cancellation, the property the free-design solves need
+    (free-sign signomial surfaces measured 10-30x cancellation; the SIA
+    verified but could not NAVIGATE them). Pipeline: house max-affine
+    planes seed a Gauss-Newton/LM refinement of the full SMA (softmax
+    responsibilities give the analytic Jacobian) at EACH candidate
+    softness; the winner is chosen on post-refinement residual. alpha=1
+    is a plain posynomial. Returns (fit_dict, inv_flag, max_log_err).
+    """
+    import numpy as _np
+    u_all = _np.log(_np.atleast_2d(X))
+    m, dd = u_all.shape
+
+    def lm(E, B, a, w):
+        """SMA refinement via scipy least_squares (the hand-rolled damped
+        GN collapsed distinct planes even on exact-answer problems; scipy
+        recovers x^2+x^5 to 2e-15 from the same seed)."""
+        from scipy.optimize import least_squares as _lsq
+        Kp = E.shape[0]
+
+        def unpack(th):
+            return th[:Kp * dd].reshape(Kp, dd), th[Kp * dd:]
+
+        def resid(th):
+            E_, B_ = unpack(th)
+            z = a * (u_all @ E_.T + B_)
+            zmax = z.max(axis=1, keepdims=True)
+            f = (zmax.ravel()
+                 + _np.log(_np.exp(z - zmax).sum(axis=1))) / a
+            return f - w
+
+        def jac(th):
+            E_, B_ = unpack(th)
+            z = a * (u_all @ E_.T + B_)
+            zmax = z.max(axis=1, keepdims=True)
+            ez = _np.exp(z - zmax)
+            resp = ez / ez.sum(axis=1)[:, None]
+            J = _np.empty((m, Kp * (dd + 1)))
+            for k in range(Kp):
+                J[:, k * dd:(k + 1) * dd] = resp[:, [k]] * u_all
+                J[:, Kp * dd + k] = resp[:, k]
+            return J
+
+        th0 = _np.concatenate([E.ravel(), B])
+        r = _lsq(resid, th0, jac=jac, method='lm', max_nfev=4000)
+        E_, B_ = unpack(r.x)
+        return E_, B_, float(_np.max(_np.abs(r.fun)))
+
+    def _tangent_seed(w, Kp):
+        """K local-tangent planes at spread points: on nearly-straight
+        log-log data the max-affine seed collapses to identical planes and
+        LM cannot split them (measured: stuck at single-monomial quality).
+        Local weighted least squares at quantiles of the first input gives
+        distinct slopes by construction."""
+        order = _np.argsort(u_all[:, 0])
+        centers = [order[int((j + 0.5) * m / Kp)] for j in range(Kp)]
+        scale = (u_all[:, 0].max() - u_all[:, 0].min()) / max(Kp, 2)
+        E0 = _np.zeros((Kp, dd)); B0 = _np.zeros(Kp)
+        for j, ci in enumerate(centers):
+            r2 = _np.sum((u_all - u_all[ci])**2, axis=1)
+            wt = _np.exp(-r2 / max(2*scale*scale, 1e-8))
+            A = _np.hstack([u_all, _np.ones((m, 1))]) * wt[:, None]
+            z = _np.linalg.lstsq(A, w * wt, rcond=None)[0]
+            E0[j] = z[:-1]; B0[j] = z[-1]
+        return E0, B0
+
+    def sma_of(y_):
+        w = _np.log(y_)
+        E0, B0 = _tangent_seed(w, K)
+        emax0 = float(_np.max(_np.abs(E0)))
+        best = None
+        for a in alphas:
+            if a * max(emax0, 1.0) > 80.0:
+                continue
+            # center the seed: the softened max-affine start sits ln(K)/a
+            # above the data on a rank-deficient responsibility plateau LM
+            # cannot leave (psi fits measured stuck at exactly ln K)
+            B0a = B0 - _np.log(max(len(B0), 1)) / a
+            E, B, err = lm(E0.copy(), B0a.copy(), a, w)
+            if float(_np.max(_np.abs(E))) * a > 80.0:
+                continue      # refined slopes would overflow the rows
+            if best is None or err < best[0]:
+                best = (err, a, E, B)
+        if best is None:
+            a = max(1.0, 80.0 / max(emax0, 1.0))
+            B0a = B0 - _np.log(max(len(B0), 1)) / a
+            E, B, err = lm(E0.copy(), B0a.copy(), a, w)
+            best = (err, a, E, B)
+        err, a, E, B = best
+        fit = {'ftype': 'SMA', 'K': E.shape[0], 'd': dd, 'a1': float(a),
+               'c': [float(_np.exp(b)) for b in B],
+               'e': [[float(v) for v in row] for row in E],
+               'rms_err': err, 'max_err': err, 'conservative': None}
+        return fit, err
+
+    f1, e1 = sma_of(y)
+    if force_direct:
+        return f1, False, e1
+    f2, e2 = sma_of(1.0 / y)
+    if e1 <= e2:
+        return f1, False, e1
+    return f2, True, e2
+
+
 #: (map, kind, window) per cycle component. Windows chosen to cover the
 #: anchors' OD excursions: SLS static pushes corrected speed HIGH on the
 #: fan (cold day would push higher; ISA SLS sits ~1.05) and part-power
@@ -178,6 +293,30 @@ def generate(path=None):
             report.append(f"{name}.{key:3s} signomial({len(terms):2d}) "
                           f"core {res:.2e} full {res_off:.2e} "
                           f"cancel {cr:.1f}")
+            # SMA refit on the same window, core samples replicated 4x for
+            # weight (the MA fitter is unweighted)
+            xs_ = np.linspace(w['Nc'][0], w['Nc'][1], 33)
+            ys_ = np.linspace(w['R'][0], w['R'][1], 33)
+            Xs, Ys, Vs = _sample(itp, xs_, ys_)
+            (cl, ch), (rl, rh) = core
+            inc = (Xs >= cl) & (Xs <= ch) & (Ys >= rl) & (Ys <= rh)
+            Xw = np.concatenate([Xs] + [Xs[inc]] * 3)
+            Yw = np.concatenate([Ys] + [Ys[inc]] * 3)
+            Vw = np.concatenate([Vs] + [Vs[inc]] * 3)
+            XY = np.column_stack([Xw / x0, Yw / y0])
+            fitd, inv, err = fit_sma(XY, Vw, K=8)
+            # core residual of the SMA
+            XYc = np.column_stack([Xs[inc] / x0, Ys[inc] / y0])
+            pred = evaluate_fit(fitd, XYc)
+            if inv:
+                pred = 1.0 / pred
+            resc = float(np.max(np.abs(np.log(pred / Vs[inc]))))
+            d[f'sma_{key}'] = {k_: fitd[k_] for k_ in
+                               ('ftype', 'a1', 'K', 'd', 'c', 'e')}
+            d[f'sma_{key}']['inv'] = bool(inv)
+            report.append(f"{name}.{key:3s} SMA(K={fitd['K']},a={fitd['a1']:.0f}"
+                          f"{',inv' if inv else ''}) core {resc:.2e} "
+                          f"full {err:.2e}")
         dflt = mp.defaults
         d['NcMap_d'] = float(dflt['NcMap'])
         d['RlineMap_d'] = float(dflt['RlineMap'])
@@ -211,6 +350,27 @@ def generate(path=None):
             report.append(f"{name}.{key:3s} signomial({len(terms):2d}) "
                           f"core {res:.2e} full {res_off:.2e} "
                           f"cancel {cr:.1f}")
+            xs_ = np.linspace(w['Np'][0], w['Np'][1], 33)
+            ys_ = np.linspace(w['PR'][0], w['PR'][1], 33)
+            Xs, Ys, Vs = _sample(itp, xs_, ys_)
+            (cl, ch), (rl, rh) = core
+            inc = (Xs >= cl) & (Xs <= ch) & (Ys >= rl) & (Ys <= rh)
+            Xw = np.concatenate([Xs] + [Xs[inc]] * 3)
+            Yw = np.concatenate([Ys] + [Ys[inc]] * 3)
+            Vw = np.concatenate([Vs] + [Vs[inc]] * 3)
+            XY = np.column_stack([Xw / x0t, Yw / y0t])
+            fitd, inv, err = fit_sma(XY, Vw, K=6)
+            XYc = np.column_stack([Xs[inc] / x0t, Ys[inc] / y0t])
+            pred = evaluate_fit(fitd, XYc)
+            if inv:
+                pred = 1.0 / pred
+            resc = float(np.max(np.abs(np.log(pred / Vs[inc]))))
+            d[f'sma_{key}'] = {k_: fitd[k_] for k_ in
+                               ('ftype', 'a1', 'K', 'd', 'c', 'e')}
+            d[f'sma_{key}']['inv'] = bool(inv)
+            report.append(f"{name}.{key:3s} SMA(K={fitd['K']},a={fitd['a1']:.0f}"
+                          f"{',inv' if inv else ''}) core {resc:.2e} "
+                          f"full {err:.2e}")
         d['NpMap_d'] = float(mp.defaults['NpMap'])
         d['PRmap_d'] = float(mp.defaults['PRmap'])
         at = {}

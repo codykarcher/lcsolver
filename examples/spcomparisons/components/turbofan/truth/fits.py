@@ -504,6 +504,83 @@ def generate(path=None):
                       f"max|res| {res:.2e} "
                       f"(mono {res_m:.1e} posy {res_p:.1e} inv {res_i:.1e})")
 
+    # ---- zero-cancellation (SMA/posynomial) thermo forms -----------------
+    # The free-sign signomial fits above are accurate but carry 65-410x
+    # internal cancellation, and the SIA can verify them yet not NAVIGATE
+    # them (the free-design isolation result). These forms enter the model
+    # as monomial==posynomial equalities with no negative terms at all.
+    from .fits_maps import fit_sma
+    H_SHIFT = 1.5e6
+
+    Xc = (Ts_cold / 288.15)[:, None]
+    fpsi, inv_, e_ = fit_sma(Xc, psi, K=6, alphas=(1., 2., 4.))
+    assert not inv_
+    out['AIR_PSI_SMA'] = {'a1': fpsi['a1'], 'c': fpsi['c'], 'e': fpsi['e'],
+                          'T_ref_K': 288.15}
+    report.append(f"psi air SMA(K=6,a={fpsi['a1']:.0f}) max|logres| {e_:.2e}")
+
+    hsh = h_airs + H_SHIFT
+    fh, inv_, e_ = fit_sma((Ts_cold / 600.0)[:, None], hsh, K=6,
+                           alphas=(1., 2., 4.))
+    assert not inv_
+    out['AIR_H_SMA'] = {'a1': fh['a1'], 'c': fh['c'], 'e': fh['e'],
+                        'T_ref_K': 600.0, 'H_SHIFT': H_SHIFT}
+    report.append(f"h air  SMA(K=6,a={fh['a1']:.0f}) max|logres| {e_:.2e}")
+
+    fcp, invcp, e_ = fit_sma((Ts_cold / 600.0)[:, None], cp_airs, K=3,
+                             alphas=(1.,))
+    out['CP_AIR_POSY'] = {'c': fcp['c'], 'e': fcp['e'], 'inv': bool(invcp),
+                          'T_ref_K': 600.0}
+    report.append(f"cp air posy(K=3{',inv' if invcp else ''}) "
+                  f"max|logres| {e_:.2e}")
+
+    fpv, inv_, e_ = fit_sma(np.column_stack([X1 / 1200.0, X2 - 1.0]),
+                            psi_v, K=8, alphas=(2., 4., 8.))
+    assert not inv_
+    out['VIT_PSI_SMA'] = {'a1': fpv['a1'], 'c': fpv['c'], 'e': fpv['e'],
+                          'T_ref_K': 1200.0}
+    report.append(f"psi vit SMA(K=8,a={fpv['a1']:.0f}) max|logres| {e_:.2e}")
+
+    # G_vit(T, far) = (1+far)*(H_SHIFT + h_abs), built cp-first: fit dG/dT
+    # as a pure posynomial (smooth, positive), integrate term-wise (a
+    # posynomial's integral is a posynomial), and posy-fit the T-boundary.
+    T_lo = 645.0
+    fars_g = np.linspace(0.012, 0.042, 7)
+    Tv_g = np.linspace(T_lo, 2060.0, 48)
+    Gg = np.empty((len(fars_g), len(Tv_g)))
+    for i_, fa in enumerate(fars_g):
+        for j_, T in enumerate(Tv_g):
+            Pb = 30.0 * (T / 1900.0) ** 4
+            n_ = equilibrium(T, Pb, fa)
+            Gg[i_, j_] = (1 + fa) * (H_SHIFT + h_mix_per_kg(n_, T))
+    dG = np.gradient(Gg, Tv_g, axis=1)
+    Xg2 = np.array([(T / 1200.0, fa) for fa in fars_g for T in Tv_g])
+    fdg, invdg, e_dg = fit_sma(Xg2, dG.ravel(), K=5, alphas=(1.,))
+    assert not invdg
+    fc0, invc0, e_c0 = fit_sma(fars_g[:, None], Gg[:, 0], K=3,
+                               alphas=(1.,))
+    ec = np.array(fdg['e']); cc = np.array(fdg['c'])
+    # composite check
+    def _Gfit(T, fa):
+        t, tr = T / 1200.0, T_lo / 1200.0
+        core = sum(cc[k] * 1200.0 / (ec[k, 0] + 1)
+                   * (t ** (ec[k, 0] + 1) - tr ** (ec[k, 0] + 1))
+                   * fa ** ec[k, 1] for k in range(len(cc)))
+        c0 = sum(c * fa ** e[0] for c, e in zip(fc0['c'], fc0['e']))
+        if invc0:
+            c0 = 1.0 / c0
+        return core + c0
+    worst_g = max(abs(np.log(_Gfit(T, fa) / Gg[i_, j_]))
+                  for i_, fa in enumerate(fars_g)
+                  for j_, T in enumerate(Tv_g))
+    out['G_VIT'] = {'cp_c': fdg['c'], 'cp_e': fdg['e'],
+                    'c0_c': fc0['c'], 'c0_e': fc0['e'],
+                    'c0_inv': bool(invc0),
+                    'T_ref_K': 1200.0, 'T_lo_K': T_lo,
+                    'H_SHIFT': H_SHIFT}
+    report.append(f"G vit cp-first posy: cp {e_dg:.2e} c0 {e_c0:.2e} "
+                  f"composite {worst_g:.2e}")
+
     out['FUEL'] = fuel_data()
     out['AIR_COMPOSITION_KMOL_KG'] = {k: float(v)
                                       for k, v in air_moles_per_kg().items()}
@@ -521,6 +598,8 @@ def generate(path=None):
               'shapes and why they are SP-compatible.\n"""\n\n')
     for key in ['SPECIES_H', 'SPECIES_WT', 'SPECIES_ELEM', 'AIR_H',
                 'AIR_PSI', 'VIT_PSI', 'VIT_H', 'KP', 'FUEL',
+                'AIR_PSI_SMA', 'AIR_H_SMA', 'CP_AIR_POSY', 'VIT_PSI_SMA',
+                'G_VIT',
                 'AIR_COMPOSITION_KMOL_KG', 'R_UNIV', 'P_REF_BAR']:
         buf.write(f"{key} = ")
         buf.write(pprint.pformat(out[key], width=78))
