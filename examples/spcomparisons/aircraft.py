@@ -454,7 +454,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # solve into a 287,000 lbf spiral with the tail arm at 20.7 m -- our SM
     # chain buys margin with tail rather than wing position. Left at 0.01
     # for both architectures until the wing-position trade is ported.
-    SMmin = C("SM_min", 0.01, "-", "minimum static margin")
+    # SM_MIN overridable: d82.tas enforces 0.05 by MOVING THE WING
+    # (ixwmove=2), and the wing position is load-bearing far beyond
+    # stability -- at SM 0.01 our D8 wing sits 3 m forward of TASOPT's,
+    # which lengthens the fuselage bending span (W_hbend 2.5x) and
+    # shortens the fin arm (0.5x). An earlier 0.05 attempt spiraled, but
+    # that was before the pi-tail placement, trim-authority and engine
+    # fixes; retest before concluding.
+    SMmin = C("SM_min", float(_os.environ.get("SM_MIN", 0.01)), "-",
+              "minimum static margin")
     # CG travel, as a FRACTION OF MEAN AERODYNAMIC CHORD -- which is how CG
     # envelopes are actually quoted, and the only form in which one number can
     # be shared across a business jet and a widebody.
