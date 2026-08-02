@@ -420,6 +420,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Weadd = V("W_eadd", 8e2, "lbf", "additional engine system weight")
     Wengsys = V("W_engsys", 1e4, "lbf", "total engine system weight")
     xeng = V("x_eng", 32.0, "m", "engine x-location")
+    # Absolute tail stations (used by the pi-tail connection rows, and the
+    # anchors a geometry renderer needs -- dx_lead/dx_trail are CG-relative
+    # scalars against a CG that moves over the mission).
+    x_vt_le = V("x_vt_le", 27.0, "m", "fin root leading-edge station")
+    x_ht_le = V("x_ht_le", 27.0, "m", "HT root leading-edge station, centreline")
     y_eng = V("y_eng", 2.0, "m", "engine moment arm")
     # Lateral clearance between the retracted main gear and the inboard edge
     # of the nacelle, as a multiple of the fan radius. 1.2 puts the engine
@@ -1985,8 +1990,42 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # volume rows trade arm for area one-for-one, the fin DOUBLED when
         # the deck's Vv = 0.03 was imposed. Conventional fins keep the strict
         # bound -- a 737 fin is faired into the cone, not perched on its end.
+        # On the conventional branch the absolute stations are DEFINITIONS
+        # ONLY (nothing else consumes them): fin and HT roots end at the
+        # hull end, which is where a faired conventional empennage lives.
+        # They exist so the renderer gets anchors on every architecture and
+        # so the variables never dangle.
+        *([] if pi_tail else
+          [x_vt_le + vt.c_root_vt == fu.l_fuse,
+           x_ht_le + ht.c_root_ht == fu.l_fuse]),
         *([xCG + vt.dx_trail_vt <= fu.l_fuse] if not pi_tail else
-          [xCG + vt.dx_trail_vt <= fu.l_fuse + 0.5 * vt.c_root_vt]),
+          # PI-TAIL: CONNECTED, not merely bounded. The renderer caught the
+          # fins floating 1.57 m ahead of the hull end and the horizontal
+          # 2 m adrift of the fin tips -- the old rows were one-sided aft
+          # LIMITS on CG-relative distances, so nothing required the three
+          # surfaces to touch. The layout is stated in ABSOLUTE stations
+          # (x_vt_le, x_ht_le -- also what a renderer needs, since the
+          # dx_lead/dx_trail pairs are scalars against a CG that travels
+          # 1.6 m over the mission):
+          #   fin root TE at the hull end;
+          #   HT root quarter-chord (spar) meeting the fin-tip quarter-chord
+          #   AT THE FIN STATION y = w_fuse: the HT's own sweep (== wing
+          #   sweep, TASOPT's convention) carries its centreline c/4 aft by
+          #   w_fuse*tanL before it reaches the fin. Local chord taken as
+          #   c_root_ht -- the taper correction over w_fuse is ~0.3 m and
+          #   the model carries no per-station HT chord to state it with.
+          # The CG-relative dx rows become one-sided links to the absolute
+          # stations: dx_lead is then the MINIMUM (aftmost-CG) lead
+          # distance, which keeps every arm it feeds (l_vt, l_ht)
+          # conservative, exactly the worst-case treatment those scalars
+          # already had.
+          [x_vt_le + vt.c_root_vt == fu.l_fuse,             # [SP] SigEq
+           xCG + vt.dx_lead_vt <= x_vt_le,
+           xCG + vt.dx_trail_vt <= x_vt_le + vt.c_root_vt,
+           x_ht_le + fu.w_fuse * wing.tan_Lambda + 0.25 * ht.c_root_ht
+               == x_vt_le + 0.25 * vt.c_root_vt
+                + vt.b_vt * tan(SWEEP_VT * pi / 180),       # [SP] SigEq
+           xCG + ht.dx_lead_ht <= x_ht_le]),
         # THE HORIZONTAL TAIL HAS TO FIT ON THE AEROPLANE TOO.
         #
         # The fin has had this row all along; the horizontal never did. Its
@@ -2017,9 +2056,9 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # horizontal's own root chord behind its box -- rather than removed:
         # unbounded, phase 1 loses the CG chain and dies at iteration 2.
         *([xCG + ht.dx_trail_ht <= fu.l_fuse] if not pi_tail else
-          [xCG + ht.dx_trail_ht
-           <= fu.l_fuse + vt.b_vt * tan(SWEEP_VT * pi / 180)
-            + 0.75 * ht.c_root_ht]),
+          # dx_trail linked to the HT's ABSOLUTE station (the alignment row
+          # above places x_ht_le); supersedes the old aft-reach allowance.
+          [xCG + ht.dx_trail_ht <= x_ht_le + ht.c_root_ht]),
         vt.x_CG_vt >= xCG + 0.5 * (vt.dx_lead_vt + vt.dx_trail_vt),
         ht.x_CG_ht >= xCG + 0.5 * (ht.dx_lead_ht + ht.dx_trail_ht),
         # Horizontal tail lift-curve slope: downwash AND finite span.
