@@ -186,7 +186,8 @@ SUBS = {
                   eta_B=0.9827, r_uc=0.01, alpha_c=0.19036, M_takeoff=0.9556,
                   pi_tn=0.98, pi_d=0.98, pi_fn=0.98),
     "TASOPT_737800": dict(FPRo=1.685, K_epf=-0.077,
-                          BPR_D=5.1, iengwgt=1, Gearf=1.0,pi_f_D=1.685, pi_lc_D=4.744, pi_hc_D=3.75,
+                          BPR_D=5.1, iengwgt=1, Gearf=1.0, Tmetal=1280.0,
+                          pi_f_D=1.685, pi_lc_D=4.744, pi_hc_D=3.75,
                           alpha_OD=None, alpha_max=None, hf=43.003,
                           OPR_max=32.0, eta_B=0.9827, r_uc=0.01,
                           alpha_c=0.19036, M_takeoff=0.9556,
@@ -220,6 +221,7 @@ SUBS = {
     "D82_SPaircraft": dict(Tt4_TO=1750.0, Tt4_CR=1450.0, pi_f_D=1.60474,
                            FPRo=1.50, K_epf=-0.077, pi_lc_D=None, pi_hc_D=None,
                            BPR_D=6.9674, iengwgt=1, Gearf=1.0,
+                           Tmetal=1280.0,
                            alpha_OD=None, alpha_max=None, hf=43.003,
                            OPR_max=35.0, eta_B=0.985, r_uc=0.01,
                            alpha_c=0.16, M_takeoff=0.9556,
@@ -421,8 +423,28 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     Pref  = C("P_ref", 101.325, "kPa", "reference stagnation pressure")
 
     # ---- cooling flow ------------------------------------------------------
-    alpha_c = C("alpha_c", sub["alpha_c"], "-",
-                "total cooling flow bypass ratio")
+    # If the deck carries a metal temperature, the cooling fraction is
+    # COMPUTED from tfcool.f's model rather than taken as a constant: per
+    # blade row, effectiveness theta = (Tg - Tmetal)/(Tg - Tt3), requirement
+    #     eps0 = StA*(theta*(1 - efilm*tfilm) - tfilm*(1 - efilm))
+    #                / (efilm*(1 - theta)),
+    # cooling ratio eps = eps0/(1 + eps0), gas temperature stepping down
+    # Trrat = 1/(1 + (gam4-1)/2 * Mtexit^2) per row, the first row seeing a
+    # dTstreak hot-streak allowance. Every relation rearranges to the
+    # all-positive one-sided signomial forms below, and the one-sidedness IS
+    # tfcool's `if(eps0.lt.0) go to 5`: a row whose requirement goes
+    # negative simply leaves its eps on the floor, uncharged. Evaluated at
+    # the TAKEOFF segment -- the hottest -- exactly as TASOPT sizes cooling
+    # at design and holds epsrow fixed off-design. On the D8 deck this gives
+    # fc ~ 0.11 where the inherited SPaircraft constant said 0.19036: the
+    # engine was pumping 8% of its core flow through cooling passages that
+    # Tmetal = 1280 K does not require.
+    _Tmetal = sub.get("Tmetal")
+    if _Tmetal is not None:
+        alpha_c = V("alpha_c", 0.12, "-", "total cooling flow bypass ratio")
+    else:
+        alpha_c = C("alpha_c", sub["alpha_c"], "-",
+                    "total cooling flow bypass ratio")
     ruc   = C("r_uc", sub["r_uc"], "-", "cooling flow velocity ratio")
     m4a = sub.get("M_4a", M4A)
     m4a_hold = sub.get("M_4a_for_hold", m4a)   # see the SUBS note for D8
@@ -648,6 +670,48 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
     cons += [Tt4[0] <= Tt4TO]
     cons += [Tt4[i] <= Tt4CR for i in range(1, len(Tt4))]
     cons += [alphamax <= BPR_CEILING]
+
+    # ---- turbine cooling requirement (tfcool.f), design = takeoff ---------
+    # See the alpha_c declaration. Three blade rows: enough for any deck in
+    # the study (row 3 is already uncooled at Tt4 = 1750; a 1900 K deck cools
+    # into it). All rows are one-sided with alpha_c charged downstream, so
+    # each binds exactly where tfcool's requirement is positive and floors
+    # where the Fortran breaks out of its loop.
+    if _Tmetal is not None:
+        _ef = sub.get("efilm", 0.7)
+        _tf = sub.get("tfilm", 0.30)
+        _StA = sub.get("StA", 0.09)
+        _dTs = sub.get("dTstrk", 200.0)
+        _Mte = sub.get("Mtexit", 1.0)
+        _Trr = 1.0 / (1.0 + 0.5 * (1.313 - 1.0) * _Mte ** 2)
+        Tmet = C("T_metal", _Tmetal, "K", "design blade metal temperature")
+        dTs = C("dT_streak", _dTs, "K", "hot-streak allowance, first row")
+        _rows = []
+        for _r in (1, 2, 3):
+            th = V(f"theta_cool_{_r}", 0.4, "-",
+                   f"cooling effectiveness, blade row {_r}")
+            e0 = V(f"eps0_cool_{_r}", 0.05, "-",
+                   f"cooling flow requirement, blade row {_r}")
+            ep = V(f"eps_cool_{_r}", 0.04, "-",
+                   f"cooling mass flow ratio, blade row {_r}")
+            # At the RATING, not the operating point: the 737's engine is
+            # cruise-sized and flies takeoff throttled to ~1390 K, but its
+            # blades are designed for the 1833 K the rating permits --
+            # TASOPT's icool=2 design pass runs at the design Tt4.
+            Tg = (Tt4TO + dTs) if _r == 1 else Tt4TO * _Trr ** (_r - 1)
+            cons += [
+                # theta*(Tg - Tt3) >= Tg - Tmetal, all-positive
+                th * Tg + Tmet >= Tg + th * Tt3[0],          # [SP] SigIneq
+                th <= 0.999,
+                # eps0*ef*(1-theta) >= StA*(theta*(1-ef*tf) - tf*(1-ef)),
+                # every term moved to its positive side:
+                e0 * _ef + _StA * _tf * (1.0 - _ef)
+                    >= _StA * th * (1.0 - _ef * _tf) + e0 * _ef * th,
+                                                             # [SP] SigIneq
+                ep + ep * e0 >= e0,                          # [SP] SigIneq
+            ]
+            _rows.append(ep)
+        cons += [alpha_c >= _rows[0] + _rows[1] + _rows[2]]
 
     # ---- scalar (engine geometry) -----------------------------------------
     cons += [
