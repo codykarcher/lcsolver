@@ -48,6 +48,10 @@ const SEG = 48;
  */
 const LENGTH_OVER_DIAMETER = 2.0;
 
+/** Core outlet wall, and the exhaust annulus inside it. Both x rCore. */
+const R_OUTLET = 0.78;
+const EXHAUST_GAP = 0.24;
+
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
   g.name = name;
@@ -294,7 +298,7 @@ export function turbofan({
     new THREE.Vector2(z0 - 0.40 * Lc, 1.02 * rCore),
     new THREE.Vector2(z0 - 0.70 * Lc, 1.28 * rCore),   // turbine
     new THREE.Vector2(z0 - 0.89 * Lc, 1.12 * rCore),
-    new THREE.Vector2(zAft, 0.78 * rCore),             // outlet
+    new THREE.Vector2(zAft, R_OUTLET * rCore),          // outlet
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
 
@@ -302,19 +306,25 @@ export function turbofan({
   g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
                coreMaterial(), SEG));
 
+  // The exhaust annulus: outlet wall to plug. Written as a gap rather than as
+  // two independent radii, so widening it cannot silently leave the dark
+  // mouth showing a rim of plug or a rim of wall.
+  const rOutlet = R_OUTLET * rCore;
+  const rPlug = rOutlet - EXHAUST_GAP * rCore;
+
   // Looking up the exhaust should be looking into a hole. Without this the
-  // core's own aft cap is the first thing you meet, lit and metallic.
+  // core's own aft cap is the first thing you meet, lit and metallic. Run a
+  // little past the annulus at both edges so it is hidden behind wall and
+  // plug rather than ending flush with either.
   const mouth = new THREE.Mesh(
-    new THREE.RingGeometry(0.58 * rCore, 0.795 * rCore, SEG), M.cavity);
+    new THREE.RingGeometry(rPlug * 0.94, rOutlet * 1.02, SEG), M.cavity);
   mouth.rotation.y = Math.PI;                  // face aft
   mouth.position.z = zAft - 0.004 * Lc;
   g.add(mouth);
 
-  // Exhaust plug, sized to leave only a narrow annulus against the outlet
-  // wall -- that gap is the exhaust, and on a real engine it is a slot, not
-  // an open ring.
+  // Exhaust plug.
   g.add(latheZ([
-    [zAft - 0.015 * Lc, 0], [zAft - 0.015 * Lc, 0.66 * rCore],
+    [zAft - 0.015 * Lc, 0], [zAft - 0.015 * Lc, rPlug],
     [zAft - 0.40 * Lc, 0],
   ], M.hot, SEG));
 
