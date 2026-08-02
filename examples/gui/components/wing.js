@@ -27,7 +27,7 @@
  */
 import * as THREE from 'three';
 import { skin } from './materials.js';
-import { asSection, thicknessOf } from './airfoil.js';
+import { asSection, sectionPoints, thicknessOf } from './airfoil.js';
 
 const DEG = Math.PI / 180;
 const smooth = (s) => s * s * (3 - 2 * s);
@@ -54,13 +54,21 @@ const WING = {
   crankRatio:   0.73,  // crank chord / ROOT chord
   tipRatio:     0.27,  // tip chord / CRANK chord (/ root, if there is no crank)
   sweep:        27.0,  // degrees, at the LEADING EDGE
-  dihedral:      6.0,  // degrees
+  dihedral:      3.0,  // degrees
   twistRoot:     0.0,  // degrees, positive leading edge up
   twistKink:    null,  // null interpolates between root and tip
   twistTip:     -3.0,  // negative is washout
   twistAxis:    0.25,  // chord fraction the sections are twisted about
   kink:         0.35,  // fraction of semispan, or null for a plain trapezoid
   root: '2412', kinkFoil: null, tip: '2410',   // kinkFoil null means blended
+  // Thickness at the three stations, as a fraction of the local chord. Null
+  // takes whatever the named aerofoil already is. Held apart from the aerofoil
+  // because it is a structural number as much as an aerodynamic one -- the
+  // spar depth is set here -- and because a wing routinely runs one shape at
+  // several thicknesses.
+  rootThickness: 0.13,
+  crankThickness: 0.11,
+  tipThickness:  0.10,
 
 
   nChord:         80,  // points around each section
@@ -75,6 +83,7 @@ const TAIL = {
   sweep:        32.0, dihedral: 5.0,
   twistTip:      0.0, kink: null,
   root: '0010', tip: '0010',
+  rootThickness: 0.10, crankThickness: null, tipThickness: 0.10,
   nInner:          2, nOuter: 20,
 };
 
@@ -112,6 +121,14 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const rootFoil = asSection(p.root, p.nChord);
   const tipFoil = asSection(p.tip, p.nChord);
   const kinkFoil = p.kinkFoil == null ? null : asSection(p.kinkFoil, p.nChord);
+  // Thickness runs as its own spanwise distribution, independent of which
+  // aerofoil is where. So a t/c at the crank does not require a crank aerofoil,
+  // and changing an aerofoil does not silently change the thickness.
+  const tRoot = p.rootThickness ?? thicknessOf(rootFoil);
+  const tTip = p.tipThickness ?? thicknessOf(tipFoil);
+  const tKink = p.crankThickness
+    ?? (kinkFoil ? thicknessOf(kinkFoil) : null);
+  const thickAt = (t) => alongSpan(t, p.kink, tRoot, tKink, tTip);
 
   const chordAt = (t) => alongSpan(t, p.kink, cRoot, cKink, cTip);
   const twistAt = (t) => alongSpan(t, p.kink, p.twistRoot, p.twistKink, p.twistTip);
@@ -130,8 +147,8 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   // One list for the starboard half, tip outward, then mirrored. A frame is a
   // leading-edge point, a chord and a twist.
   const half = [];
-  const push = (x, y, zLE, chord, twist, foil) =>
-    half.push({ x, y, zLE, chord, twist, foil });
+  const push = (x, y, zLE, chord, twist, foil, thickness) =>
+    half.push({ x, y, zLE, chord, twist, foil, thickness });
 
   const etas = [0];
   if (p.kink != null) {
@@ -142,7 +159,7 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   }
   for (const t of etas) {
     push(t * semi, t * semi * Math.tan(p.dihedral * DEG), leAt(t),
-         chordAt(t), twistAt(t), foilAt(t));
+         chordAt(t), twistAt(t), foilAt(t), thickAt(t));
   }
 
   const frames = mirror
@@ -150,15 +167,25 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     : half;
 
   /* ---- loft ----------------------------------------------------------- */
-  const M = rootFoil.length;
+  const M = 2 * p.nChord - 2;
   const pos = [], idx = [];
   for (const fr of frames) {
+    // Blend camber and half-thickness term for term -- the two sections share a
+    // chordwise distribution, so this is exact -- then take the result to the
+    // wanted t/c and only then build surface points. Blending POINTS instead
+    // would mix camber into thickness and vice versa.
+    const { a, b, f } = fr.foil;
+    const blended = {
+      x: a.x, n: a.n,
+      camber: a.camber.map((c, i) => c + (b.camber[i] - c) * f),
+      half: a.half.map((h, i) => h + (b.half[i] - h) * f),
+    };
+    const own = 2 * Math.max(...blended.half);
+    const pts = sectionPoints(blended, fr.thickness == null ? 1 : fr.thickness / own);
+
     const eps = fr.twist * DEG, ce = Math.cos(eps), se = Math.sin(eps);
     for (let i = 0; i < M; i++) {
-      const { a, b, f } = fr.foil;
-      const q0 = a[i][0] + (b[i][0] - a[i][0]) * f;
-      const v0 = a[i][1] + (b[i][1] - a[i][1]) * f;
-      const dq = q0 - p.twistAxis;
+      const dq = pts[i][0] - p.twistAxis, v0 = pts[i][1];
       const q = p.twistAxis + dq * ce + v0 * se;
       const v = (-dq * se + v0 * ce) * fr.chord;
       pos.push(fr.x, fr.y + v, -(fr.zLE + q * fr.chord));
@@ -229,7 +256,9 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     crankRatio: cKink ? cKink / cRoot : null, tipRatio: cTip / (cKink ?? cRoot),
     sweep: p.sweep, dihedral: p.dihedral,
     mac, yMac: yNum / S, xMacLE: xNum / S, xMacQuarter: xNum / S + 0.25 * mac,
-    rootThickness: thicknessOf(rootFoil), tipThickness: thicknessOf(tipFoil),
+    /** Thickness as built, at the three stations. */
+    rootThickness: tRoot, crankThickness: tKink, tipThickness: tTip,
+    thicknessAt: thickAt,
     sections: { root: rootFoil.name, kink: kinkFoil?.name ?? null, tip: tipFoil.name },
     frames: half, planform: p, skinMesh: mesh,
     /** Chord, leading edge and twist at any fraction of semispan. */

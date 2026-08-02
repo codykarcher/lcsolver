@@ -71,7 +71,7 @@
   <input type="range" id="sweep" min="-15" max="60" step="0.5" value="27">
 
   <div class="row"><label for="dihedral">dihedral &middot; deg</label><output id="oDihedral"></output></div>
-  <input type="range" id="dihedral" min="-10" max="20" step="0.25" value="6">
+  <input type="range" id="dihedral" min="-10" max="20" step="0.25" value="3">
 
   <h2>crank</h2>
   <div class="row"><label for="kink">station &middot; of semispan</label><output id="oKink"></output></div>
@@ -87,6 +87,14 @@
 
   <div class="row"><label for="twistTip">tip &middot; deg</label><output id="oTwistTip"></output></div>
   <input type="range" id="twistTip" min="-10" max="6" step="0.1" value="-3">
+
+  <h2>thickness &middot; t/c</h2>
+  <div class="row"><label for="rootThickness">root</label><output id="oRootThickness"></output></div>
+  <input type="range" id="rootThickness" min="0.04" max="0.24" step="0.002" value="0.13">
+  <div class="row"><label for="crankThickness">crank</label><output id="oCrankThickness"></output></div>
+  <input type="range" id="crankThickness" min="0.04" max="0.24" step="0.002" value="0.11">
+  <div class="row"><label for="tipThickness">tip</label><output id="oTipThickness"></output></div>
+  <input type="range" id="tipThickness" min="0.04" max="0.24" step="0.002" value="0.10">
 
   <h2>sections</h2>
   <div class="row"><label for="root">root NACA</label><output></output></div>
@@ -179,7 +187,8 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 const NUMS = ['span', 'rootChord', 'crankRatio', 'tipRatio', 'sweep', 'dihedral',
-              'kink', 'twistRoot', 'twistTip'];
+              'kink', 'twistRoot', 'twistTip',
+              'rootThickness', 'crankThickness', 'tipThickness'];
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
 
@@ -258,7 +267,7 @@ function build() {
   grid.scale.setScalar(u.semiSpan / 17);
 
   for (const k of NUMS) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
-    num(k).toFixed(2);
+    num(k).toFixed(k.endsWith('Thickness') ? 3 : 2);
 
   el('readout').innerHTML =
     `chords: root <span>${u.rootChord.toFixed(3)}</span>` +
@@ -270,8 +279,9 @@ function build() {
     `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
     `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
     `MAC c/4 <span>${u.xMacQuarter.toFixed(3)}</span> aft of the root LE<br>` +
-    `t/c root <span>${(100 * u.rootThickness).toFixed(1)}%</span> ` +
-    `tip <span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; ` +
+    `t/c <span>${(100 * u.rootThickness).toFixed(1)}</span> / ` +
+    (u.crankThickness ? `<span>${(100 * u.crankThickness).toFixed(1)}</span> / ` : '') +
+    `<span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; ` +
     `${u.sections.root}${u.sections.kink ? ' / ' + u.sections.kink : ''} / ${u.sections.tip}`;
 
   el('params').textContent = `{ ${NUMS.map((k) => `${k}: ${num(k)}`).join(', ')}, ` +

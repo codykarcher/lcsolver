@@ -16,7 +16,7 @@
  */
 import * as THREE from 'three';
 import { wing, horizontalTail, liftingSurface } from './components/wing.js';
-import { naca4, thicknessOf } from './components/airfoil.js';
+import { naca4, sectionPoints, thicknessOf } from './components/airfoil.js';
 
 const DEG = Math.PI / 180;
 let failures = 0;
@@ -27,35 +27,44 @@ const bad = (msg) => { console.log(`  FAIL  ${msg}`); failures++; };
   console.log('aerofoils:');
   for (const code of ['0010', '2412', '4415']) {
     const f = naca4(code);
-    const t = thicknessOf(f);
     const want = parseInt(String(code).slice(2), 10) / 100;
-    if (Math.abs(t - want) > 5e-4)
-      bad(`NACA ${code} is ${t.toFixed(4)} thick, should be ${want}`);
-    // Closed loop: the two surfaces must MEET at the trailing edge, or the wing
-    // has a slot down its back. The published polynomial does not close -- its
-    // last coefficient leaves 0.21% of chord -- so this is checking the
-    // substitution, not the definition.
-    const teUpper = f[0], teLower = f[f.length - 1];
-    if (Math.abs(teUpper[0] - 1) > 1e-9)
-      bad(`NACA ${code} does not start at the trailing edge`);
-    const gap = Math.abs(naca4(code, 400)[0][1] - naca4(code, 400).at(-1)[1]);
-    // Loop order: TE, up over the top, round the nose, back along the bottom.
-    // Near index n-1, not exactly at it. On a cambered section the mean line at
-    // x = 0 is not the furthest-forward point: the upper surface just aft of it
-    // wraps round to slightly NEGATIVE x, which is real geometry and is why the
-    // leading edge of a cambered aerofoil is not on its chord line.
-    const nose = f.reduce((b, q, i) => (q[0] < f[b][0] ? i : b), 0);
-    if (Math.abs(nose - (f.n - 1)) > 2)
-      bad(`NACA ${code} leading edge is at index ${nose}, expected near ${f.n - 1}`);
-    let camberMax = 0;
-    for (let i = 1; i < f.n - 1; i++) {
-      camberMax = Math.max(camberMax, (f[i][1] + f[f.length - i][1]) / 2);
-    }
     const wantCamber = parseInt(String(code)[0], 10) / 100;
-    if (Math.abs(camberMax - wantCamber) > 2e-3)
-      bad(`NACA ${code} camber ${camberMax.toFixed(4)}, should be ${wantCamber}`);
-    console.log(`  NACA ${code}: ${f.length} pts, t/c ${t.toFixed(4)}, ` +
-                `camber ${camberMax.toFixed(4)}, TE closes to ${gap.toExponential(1)}`);
+    // Tolerance rather than equality, because these are the maxima of SAMPLED
+    // arrays: the cosine stations do not land exactly on x = 0.30 where the
+    // thickness peaks, nor on the camber position, so the sampled maximum sits
+    // a little under the analytic one. That is discretisation, not error.
+    if (Math.abs(thicknessOf(f) - want) > 1e-3)
+      bad(`NACA ${code} is ${thicknessOf(f).toFixed(5)} thick, should be ${want}`);
+    if (Math.abs(Math.max(...f.camber) - wantCamber) > 2e-4)
+      bad(`NACA ${code} camber ${Math.max(...f.camber).toFixed(5)}, should be ${wantCamber}`);
+
+    const pts = sectionPoints(f);
+    if (pts.length !== 2 * f.n - 2)
+      bad(`NACA ${code} gave ${pts.length} points, expected ${2 * f.n - 2}`);
+    if (Math.abs(pts[0][0] - 1) > 1e-9)
+      bad(`NACA ${code} does not start at the trailing edge`);
+
+    // Thickness scaling must move the thickness and leave the CAMBER alone.
+    // Scaling the y of a point list instead scales both, and turns a 12%
+    // section into a differently-cambered 10% one -- which is exactly the
+    // failure this representation exists to make impossible.
+    const scaled = sectionPoints(f, 0.10 / Math.max(thicknessOf(f), 1e-9));
+    let gotT = 0, gotCamber = 0, wasCamber = 0;
+    for (let i = 1; i < f.n - 1; i++) {
+      const j = 2 * f.n - 2 - i;
+      gotT = Math.max(gotT, scaled[i][1] - scaled[j][1]);
+      gotCamber = Math.max(gotCamber, (scaled[i][1] + scaled[j][1]) / 2);
+      wasCamber = Math.max(wasCamber, (pts[i][1] + pts[j][1]) / 2);
+    }
+    if (Math.abs(gotT - 0.10) > 2e-3)
+      bad(`NACA ${code} scaled to 0.10 came out ${gotT.toFixed(4)}`);
+    if (Math.abs(gotCamber - wasCamber) > 2e-3)
+      bad(`scaling NACA ${code} moved the camber ${wasCamber.toFixed(4)} -> ` +
+          `${gotCamber.toFixed(4)}`);
+    console.log(`  NACA ${code}: t/c ${thicknessOf(f).toFixed(4)}, ` +
+                `camber ${Math.max(...f.camber).toFixed(4)}, ${pts.length} pts; ` +
+                `scaled to 0.10 -> ${gotT.toFixed(4)} with camber held ` +
+                `${wasCamber.toFixed(4)} -> ${gotCamber.toFixed(4)}`);
   }
 }
 
@@ -66,6 +75,8 @@ const CASES = [
   { name: 'no crank',    build: () => wing({ kink: null }) },
   { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
   { name: 'tight taper', build: () => wing({ crankRatio: 0.55, tipRatio: 0.08 }) },
+  { name: 'thick root',  build: () => wing({ rootThickness: 0.17, crankThickness: 0.13,
+                                             tipThickness: 0.085 }) },
   { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2,
                                              crankRatio: 0.73, tipRatio: 0.27 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
@@ -238,6 +249,35 @@ for (const c of CASES) {
 
   console.log(`  LE sweep ${gotSweep.toFixed(2)} deg (varies ${sweepSpread.toExponential(1)}), ` +
               `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg`);
+  // Thickness measured off the BUILT surface at each named station, not read
+  // back from the parameter it was set from.
+  {
+    const M2 = 2 * p.nChord - 2, nR = pos.count / M2;
+    const tcAt = (ring) => {
+      const va = new THREE.Vector3(), vb = new THREE.Vector3();
+      let t = 0;
+      for (let i = 1; i < p.nChord - 1; i++) {
+        va.fromBufferAttribute(pos, ring * M2 + i);
+        vb.fromBufferAttribute(pos, ring * M2 + (M2 - i));
+        t = Math.max(t, va.distanceTo(vb));
+      }
+      va.fromBufferAttribute(pos, ring * M2 + p.nChord - 1);
+      vb.fromBufferAttribute(pos, ring * M2);
+      return t / va.distanceTo(vb);
+    };
+    const mid = u.mirror ? (nR - 1) / 2 : 0;
+    const named = [['root', mid, u.rootThickness], ['tip', nR - 1, u.tipThickness]];
+    if (p.kink != null && u.crankThickness != null) {
+      named.push(['crank', mid + p.nInner, u.crankThickness]);
+    }
+    for (const [what, ring, want] of named) {
+      const got = tcAt(ring);
+      if (Math.abs(got - want) > 2e-3)
+        bad(`${what} t/c measures ${got.toFixed(4)}, asked ${want}`);
+    }
+    console.log(`  t/c: ${named.map(([w, r]) => `${w} ${tcAt(r).toFixed(3)}`).join(', ')}`);
+  }
+
   console.log(`  ${nRing} stations x ${M} points, volume ${vol.toFixed(3)}, ` +
               `${open} open edges, ${degenerate} degenerate, ` +
               `panel jump ${panelJump.toFixed(2)}x`);
