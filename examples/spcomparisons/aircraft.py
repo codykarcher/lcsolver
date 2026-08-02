@@ -2378,7 +2378,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     #   W_pay_max        -- landing weight and the approach/landing rows
     # A class with missions=None builds none of this and is bit-identical to
     # the single-mission model.
-    for _j, (_pay_lb, _rng_nmi) in enumerate(size_class.missions or ()):
+    # Electric architectures skip secondary corners for now: the Breguet
+    # block below is a FUEL-burn form (z = R*TSFC/(V*L/D)), and an electric
+    # propulsor has no TSFC -- its corner is an energy bound, which the
+    # battery model already expresses for the primary mission. An
+    # energy-based corner block is the v2 item, needed before any electric
+    # class states a payload-range corner.
+    for _j, (_pay_lb, _rng_nmi) in enumerate(
+            () if electric else (size_class.missions or ())):
         _Wp = C(f"W_pay_M{_j}", _pay_lb, "lbf",
                 f"payload, secondary mission {_j}")
         _Rr = C(f"R_M{_j}", _rng_nmi, "nmi",
