@@ -69,6 +69,15 @@ export const marking = new THREE.MeshStandardMaterial({
   color: 0xf0f2f4, roughness: 0.42, metalness: 0.05,
 });
 
+/**
+ * The inside of a duct or an exhaust. Looking up a nozzle should be looking
+ * into a hole, and a hole is black -- a lit metal surface back there reads as
+ * a plug rather than an opening.
+ */
+export const cavity = new THREE.MeshStandardMaterial({
+  color: 0x0b0c0e, roughness: 0.96, metalness: 0.0,
+});
+
 /** Accessories, gearboxes, crankcases: cast and unpolished. */
 export const accessory = new THREE.MeshStandardMaterial({
   color: 0x878d95, roughness: 0.72, metalness: 0.55,
@@ -85,7 +94,7 @@ export const winding = new THREE.MeshStandardMaterial({
 });
 
 export const all = { tire, rim, piston, structure, hardware,
-                     casing, blade, hot, painted, marking, accessory, finned,
+                     casing, blade, hot, painted, marking, cavity, accessory, finned,
                      winding };
 
 /** Free every material. Call when tearing down a scene you built. */

@@ -51,60 +51,79 @@ function finish(g, length, rMax, name) {
 }
 
 /**
- * An ogive spinner/nose cone, tip at +Z.
- *
- * Closed with a disc at the base (the leading `r = 0`) so it is a solid even
- * when nothing sits behind it. An open base is a hole you can see through the
- * moment the hub is smaller than the spinner or the view gets low.
+ * An ogive spinner/nose cone, tip at +Z, closed with a disc at the base.
  */
-/** The ogive radius law, shared by the spinner and the swirl painted on it. */
+/** The ogive radius law used by the spinner. */
 const ogiveR = (t, rBase) => rBase * Math.cos(t * Math.PI / 2) ** 0.72;
+
+/**
+ * The spinner's swirl, as paint rather than as an object.
+ *
+ * On a real engine the mark is there so ground crew can see at a glance that
+ * the fan is turning, and it is exactly that -- paint. Modelling it as a tube
+ * lying on the cone gave it a thickness it should not have and a silhouette
+ * that broke the nose profile.
+ *
+ * It is drawn in the lathe's own UV space, which makes the spiral trivial: a
+ * lathe maps u to angle and v along the profile, so a spiral -- angle
+ * proportional to distance along the cone -- is a straight diagonal line.
+ * Mapped back onto the cone, a constant width in u narrows toward the tip
+ * because the circumference does, which is what a painted swirl actually
+ * does.
+ *
+ * Built once and shared. Returns the plain painted material where there is no
+ * canvas to draw on, so the module still loads outside a browser.
+ */
+let _spinnerMat = null;
+function spinnerMaterial() {
+  if (_spinnerMat) return _spinnerMat;
+  if (typeof document === 'undefined') { _spinnerMat = M.painted; return _spinnerMat; }
+
+  const S = 512;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#23262b';                  // matches M.painted
+  ctx.fillRect(0, 0, S, S);
+
+  // Front half of the cone only, stopping just shy of the tip.
+  const V0 = 0.56, V1 = 0.975, TURNS = 0.85;
+  ctx.strokeStyle = '#f0f2f4';
+  ctx.lineWidth = 0.055 * S;
+  ctx.lineCap = 'round';
+  // Three passes offset by a full turn so the stroke wraps cleanly in u.
+  for (const off of [-1, 0, 1]) {
+    ctx.beginPath();
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64;
+      const v = V0 + (V1 - V0) * t;
+      const u = 0.5 - TURNS * t + off;        // decreasing: winds the other way
+      // CanvasTexture flips Y, so canvas row 0 is v = 1, the tip.
+      const x = u * S, y = (1 - v) * S;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = 8;
+  _spinnerMat = new THREE.MeshStandardMaterial({
+    map: tex, roughness: 0.48, metalness: 0.15,
+  });
+  return _spinnerMat;
+}
 
 function spinner(rBase, len, material, zBase = 0) {
   const prof = [[zBase, 0]];
-  const n = 12;
+  const n = 20;                            // finer: the swirl is mapped on it
   for (let i = 0; i <= n; i++) {
     const t = i / n;                       // 0 at base, 1 at tip
     // Ogive rather than a straight cone: a straight cone reads as a party hat.
     prof.push([zBase + t * len, ogiveR(t, rBase)]);
   }
   return latheZ(prof, material, SEG);
-}
-
-/**
- * The painted spiral on a spinner nose.
- *
- * On a real engine it is there so ground crew can see at a glance that the
- * fan is turning. It follows the cone's own radius law so it lies on the
- * surface, standing proud by rather less than its own thickness, and winds in
- * to nothing at the tip because that is where the radius goes.
- */
-function spinnerSwirl(rBase, len, zBase, turns = 1.15) {
-  const rTube = 0.055 * rBase;
-  const pts = [];
-  const n = 96;
-  for (let i = 0; i <= n; i++) {
-    const t = 0.04 + (0.965 - 0.04) * (i / n);
-    const r = ogiveR(t, rBase) + rTube * 0.45;
-    const th = turns * Math.PI * 2 * t;
-    pts.push(new THREE.Vector3(r * Math.cos(th), r * Math.sin(th),
-                               zBase + t * len));
-  }
-  const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(
-    new THREE.TubeGeometry(curve, n * 2, rTube, 8, false), M.marking));
-  // TubeGeometry leaves its ends open. They are small, but a hole is a hole:
-  // cap each with a bead, which also rounds the ends of the stroke.
-  for (const p of [pts[0], pts[pts.length - 1]]) {
-    // 1.06 rather than 1.0: a sphere of exactly rTube meets the tube's rim
-    // coincidentally and z-fights along the seam.
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(rTube * 1.06, 10, 8), M.marking);
-    cap.position.copy(p);
-    g.add(cap);
-  }
-  return g;
 }
 
 /* ==================================================================== *
@@ -148,8 +167,7 @@ export function turbofan({
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
   const lSpin = 2.05 * rHub;
-  rotor.add(spinner(rHub, lSpin, M.painted, 0.02 * R));
-  rotor.add(spinnerSwirl(rHub, lSpin, 0.02 * R));
+  rotor.add(spinner(rHub, lSpin, spinnerMaterial(), 0.02 * R));
 
   // Blade angle is measured here from the ENGINE AXIS, so a large angle lays
   // the chord into the plane of the fan face and a small one stands it on
@@ -160,7 +178,7 @@ export function turbofan({
   const fan = bladeRow({
     count: blades, material: M.blade, hubMaterial: M.casing,
     hubLength: 1.75 * rHub,
-    rHub, rTip: 0.98 * R,
+    rHub, rTip: 1.00 * R,
     chordRoot: 0.308 * R, chordTip: 0.280 * R,
     twistRoot: 0.50, twistTip: 1.05, thickness: 0.10,
   });
@@ -170,10 +188,11 @@ export function turbofan({
 
   // Fan case: bare unfaired metal, so a thin band rather than a thick ring.
   // Runs 0.18 rFan forward of the fan plane to zCaseAft; the original 0.80
-  // rFan span, carried 20% further aft.
-  const zCaseAft = 0.18 * R - 0.96 * R;   // = -0.78 rFan
-  const rCaseOut = 1.045 * R;
-  g.add(tubeZ(1.02 * R, rCaseOut, 0.18 * R, zCaseAft, M.casing, SEG));
+  // rFan span, carried 10% further aft.
+  const zCaseAft = 0.18 * R - 0.88 * R;   // = -0.70 rFan
+  const rCaseIn = 1.012 * R;              // 0.012 rFan of blade tip clearance
+  const rCaseOut = rCaseIn + 0.025 * R;
+  g.add(tubeZ(rCaseIn, rCaseOut, 0.18 * R, zCaseAft, M.casing, SEG));
 
   // Outlet guide vanes span the bypass annulus. Without them the fan case and
   // the core read as two unrelated parts floating together.
@@ -185,7 +204,7 @@ export function turbofan({
     const cOgv = 0.26 * R;                            // vane chord, root
     const ogv = bladeRow({
       count: vanes, material: M.casing,
-      rHub: rCore * 1.02, rTip: 1.02 * R,
+      rHub: rCore * 1.02, rTip: rCaseIn,
       chordRoot: cOgv, chordTip: 0.24 * R,
       twistRoot: 0.22, twistTip: 0.10, thickness: 0.09,
     });
@@ -205,12 +224,26 @@ export function turbofan({
     new THREE.Vector2(zAft, 0.78 * rCore),             // outlet
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
-  g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
-               M.casing, SEG));
 
-  // Nozzle: a thin hot lip hugging the outlet, not a separate cowl.
-  g.add(tubeZ(0.785 * rCore, 0.845 * rCore,
-              zAft + 0.10 * Lc, zAft - 0.015 * Lc, M.hot, SEG));
+  // Split the SAME spline rather than adding a lip: a separate ring standing
+  // proud of the core put a step where the colour changed. Cut at a shared
+  // sample, the two pieces meet at identical radius and station, so the
+  // surface runs smooth through the outlet and only the paint changes.
+  const kSplit = 34;
+  const fwd = spline.slice(0, kSplit + 1);
+  const aft = spline.slice(kSplit);
+  g.add(latheZ([[z0, 0], ...fwd.map((p) => [p.x, p.y]),
+                [fwd[fwd.length - 1].x, 0]], M.casing, SEG));
+  g.add(latheZ([[aft[0].x, 0], ...aft.map((p) => [p.x, p.y]), [zAft, 0]],
+               M.hot, SEG));
+
+  // Looking up the exhaust should be looking into a hole. Without this the
+  // core's own aft cap is the first thing you meet, lit and metallic.
+  const mouth = new THREE.Mesh(
+    new THREE.RingGeometry(0.58 * rCore, 0.795 * rCore, SEG), M.cavity);
+  mouth.rotation.y = Math.PI;                  // face aft
+  mouth.position.z = zAft - 0.004 * Lc;
+  g.add(mouth);
 
   // Exhaust plug, sized to leave only a narrow annulus against the outlet
   // wall -- that gap is the exhaust, and on a real engine it is a slot, not
