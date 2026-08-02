@@ -217,6 +217,13 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const frames = mirror
     ? [...half.slice(1).map((f) => ({ ...f, x: -f.x })).reverse(), ...half]
     : half;
+  // Which span fraction each frame sits at, carried alongside so that anything
+  // reading the loft grid afterwards can find a station without assuming the
+  // spacing is even. It is not: stations land on the planform breaks, so the
+  // inner panels are sampled differently from the outer one.
+  const frameEtas = mirror
+    ? [...etas.slice(1).map((t) => -t).reverse(), ...etas]
+    : etas.slice();
 
   /* ---- loft ----------------------------------------------------------- */
   const M = 2 * p.nChord - 2;
@@ -328,6 +335,22 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
         })()
       : { root: rootFoil.name, kink: kinkFoil?.name ?? null, tip: tipFoil.name },
     frames: half, planform: p, skinMesh: mesh,
+    /**
+     * The loft as a grid, so that anything wanting a point ON the surface can
+     * read the one that was actually built rather than rebuild it.
+     *
+     * `positions` is `nSpan * m` vertices of three floats, frame-major, in the
+     * loft's OWN frame -- before the quarter turn a fin carries. Within a frame
+     * the points run trailing edge, forward over the first face to the leading
+     * edge at index `nChord - 1`, then back along the second face to the
+     * trailing edge again, which is index 0 rather than a repeat of it.
+     *
+     * Exported rather than recomputed on demand because a decal that rebuilt
+     * the section from `frames` would blend, scale and twist it a second time,
+     * and any drift between the two would show up as artwork floating off the
+     * skin at exactly the stations where the surface is most curved.
+     */
+    loft: { nSpan: frames.length, nChord: p.nChord, m: M, etas: frameEtas, positions: pos },
     /** Chord, leading edge and twist at any fraction of semispan. */
     at: (t) => ({ chord: chordAt(t), xLE: leAt(t),
                   y: t * semi * Math.tan(p.dihedral * DEG), twist: twistAt(t) }),

@@ -57,6 +57,10 @@
   <select id="scheme"></select>
   <p class="hint" id="schemeNote" style="margin-top:5px"></p>
 
+  <h2>tail art</h2>
+  <select id="art"></select>
+  <p class="hint" id="artNote" style="margin-top:5px"></p>
+
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
   <div class="check"><input type="checkbox" id="sit" checked><label for="sit">sit on the gear</label></div>
@@ -96,6 +100,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
+import { surfaceArt, TAIL_ART, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -202,6 +207,34 @@ function applyGear() {
 const SOLVE_FILE = './decks/b737_conventional_solve.json';
 let deck = null;
 
+/**
+ * Textures, loaded once and kept for the life of the page.
+ *
+ * `build()` runs on every toggle, and `disposeTree` throws away geometries
+ * rather than materials, so a loader called from inside the build would fetch
+ * the same image again on each rebuild and leak a texture every time. The cache
+ * is keyed on the file name because the artwork is chosen by name.
+ *
+ * sRGB is not optional. A logo is authored in sRGB, and a texture left in
+ * linear comes out visibly washed -- the crimson reads pink and the gold reads
+ * cream, which looks like a colour mistake in the artwork rather than in the
+ * pipeline.
+ */
+const loader = new THREE.TextureLoader();
+const textures = new Map();
+function textureFor(file) {
+  if (!textures.has(file)) {
+    const t = loader.load(`./textures/${file}`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    // The fin is seen at a grazing angle from most of the orbit, which is
+    // exactly where a logo without anisotropic filtering smears into a band.
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    t.name = file;
+    textures.set(file, t);
+  }
+  return textures.get(file);
+}
+
 function build() {
   if (craft) { disposeTree(craft); scene.remove(craft); }
   if (plane) { plane.geometry.dispose(); scene.remove(plane); plane = null; }
@@ -230,6 +263,26 @@ function build() {
   const scheme = paint(roles, el('scheme').value);
   el('schemeNote').textContent = scheme.note ?? '';
   for (const m of Object.values(painted)) m.wireframe = el('wire').checked;
+
+  // Artwork goes on AFTER the paint, and onto the fin itself rather than the
+  // aircraft, so it inherits the cant and moves with the tail. It carries its
+  // own material, so `paintRoles` never sees it and no scheme can paint over
+  // a logo.
+  const artName = el('art').value;
+  const spec = TAIL_ART[artName];
+  if (spec) {
+    const art = surfaceArt(u.parts.verticalTail, {
+      ...spec, texture: textureFor(spec.file), name: artName,
+    });
+    u.parts.verticalTail.add(art);
+    u.parts.tailArt = art;
+    const a = art.userData;
+    el('artNote').textContent =
+      `${a.widthMetres.toFixed(2)} × ${a.heightMetres.toFixed(2)} m on the fin` +
+      (a.shrunk ? ', scaled down to fit the chord' : '');
+  } else {
+    el('artNote').textContent = '';
+  }
 
   if (el('ground').checked) {
     plane = new THREE.Mesh(
@@ -303,14 +356,16 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art'])
   el(id).addEventListener('change', build);
 
-for (const name of schemeNames) {
-  const o = document.createElement('option');
-  o.value = name;
-  o.textContent = name;
-  el('scheme').appendChild(o);
+for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {
+  for (const name of names) {
+    const o = document.createElement('option');
+    o.value = name;
+    o.textContent = name;
+    el(id).appendChild(o);
+  }
 }
 for (const v of ['side', 'plan', 'front']) el(v).addEventListener('click', () => ortho(v));
 el('three').addEventListener('click', () => ortho('three'));
