@@ -755,17 +755,21 @@ export const WINDSCREEN = {
    * overrides that: the posts are sheared fore and aft so they stand at the
    * angle asked for, anchored at the top of the band.
    *
-   * It is a trade, not a free choice, and on this nose it is a bad one. The
-   * surface ties the two views together: near the centreline the contour moves
-   * 2.9 m of x for every metre of z, so shearing the posts upright in side view
-   * leans them 0.74 m in FRONT view at 36 degrees -- as much as a pane is wide,
-   * which destroys the one thing the head-on view shows plainly. Measured
-   * across the range: 44 deg costs 508 mm, 36 costs 738, 28 costs 887.
+   * It is a trade: the surface ties the two views together. Standing a post up
+   * in side view leans it head on by as much as the nose narrows over the shift
+   * -- and that price is wildly uneven across the glazing. Near the centreline
+   * the constant-height line moves 2.9 m of x per metre of z; out by the third
+   * pane it moves 0.7. So the centre post is expensive to stand up and the
+   * outer ones are cheap, which is why `leanBudget` exists: each post is stood
+   * up as far as it can go without leaning more than that head on.
    *
-   * So the default is null and the knob is kept only for experimenting.
-   * `frontLean` in the userData reports what any setting costs.
+   * The result is what the photographs show together -- a centre post close to
+   * vertical, and the outer posts standing up rather than following the nose's
+   * own 59 degrees.
    */
-  rake: null,
+  rake: 34,
+  /** How far a post may wander off vertical in front view, in metres. */
+  leanBudget: 0.20,
   /**
    * How tall the glass still is where it stops at the front.
    *
@@ -782,154 +786,195 @@ export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
   colour = WINDSCREEN.colour, paneWidths = WINDSCREEN.paneWidths,
-  post = WINDSCREEN.post, edgeHeight = WINDSCREEN.edgeHeight,
-  rake = WINDSCREEN.rake, nx = 14, ny = 10, name = 'windscreen',
+  post = WINDSCREEN.post, nv = 8, nMarch = 220, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-  // The two lines are fractions of the BARREL's height, taken from the body
-  // itself rather than from twice a radius, so a section that is not a circle
-  // still gives its own keel and crown.
   const zRef = fu.cabinZ[0] - 0.05 * (fu.cabinZ[0] - fu.cabinZ[1]);
   const keel = fu.keelAt(zRef), crown = fu.crownAt(zRef);
   const H = crown - keel;
   const yLo = keel + low * H, yHi = keel + high * H;
   const zBack = -backFraction * fu.noseLength;
 
-  /**
-   * The glass is worked in (x, y) -- across the nose and up it -- rather than
-   * in station and angle.
-   *
-   * That is the frame the posts live in. A windscreen post is a VERTICAL member
-   * seen head on: it stands at a fixed distance off the centreline and runs
-   * from the lower frame to the upper one. In (x, y) it is simply x = constant,
-   * and the panes between them are columns. In station and angle it is neither
-   * a station nor an angle but a curve across both, which is why cutting in
-   * that frame gave posts along the glass or across it but never upright.
-   *
-   * The station each point sits at is then a RESULT: for a given height, the
-   * nose narrows going forward, so there is one station where the body is
-   * exactly this far off the centreline.
-   */
-  const xOnContour = (z, y) => {
-    const th = angleAtHeight(fu, z, y);
-    return th == null ? -1 : fu.surfaceAt(z, th).x;
-  };
-  const zAtXY = (X, y) => {
-    if (xOnContour(zBack, y) < X) return null;   // aft cut reaches no further out
-    let a = zBack, b = 0;
-    for (let i = 0; i < 48; i++) {
-      const m = (a + b) / 2;
-      if (xOnContour(m, y) > X) a = m; else b = m;
-    }
-    return a;
-  };
+  /* ---- the two curves that bound the glass ---------------------------- */
+  const thAtHeight = (z, y) => angleAtHeight(fu, z, y);
+  /** The upper edge: the upper line, or the crown where that is lower. */
+  const thHiAt = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
+    ? Math.PI / 2 : thAtHeight(z, yHi));
 
-  /**
-   * How high the glass reaches at a given distance off the centreline.
-   *
-   * The upper line where the body still reaches out that far, and the AFT CUT
-   * where it does not: out near the side the nose is at its widest at the back
-   * of the glazing, so the pane there is bounded by where the windscreen stops,
-   * not by the 80 per cent line. That is what slopes the outermost pane's top
-   * edge down, the way a quarter light's does.
-   */
-  const yTopAt = (X) => {
-    if (xOnContour(zBack, yHi) >= X) return yHi;
-    let a = yLo, b = yHi;
-    for (let i = 0; i < 48; i++) {
-      const m = (a + b) / 2;
-      if (xOnContour(zBack, m) >= X) a = m; else b = m;
-    }
-    return a;
-  };
-
-  /**
-   * How far out the glass goes.
-   *
-   * Not to the widest point of its lower edge -- the band has closed to nothing
-   * by then and the outer pane would end in a point. Out to where it is still
-   * `edgeHeight` tall, which gives the quarter light a real trailing edge.
-   */
-  const xLimit = xOnContour(zBack, yLo);
-  let xa = post / 2, xb = xLimit;
-  for (let i = 0; i < 48; i++) {
-    const m = (xa + xb) / 2;
-    if (yTopAt(m) - yLo > edgeHeight) xa = m; else xb = m;
+  // Inner end of the upper edge: where the crown drops to the upper line, which
+  // is the point on the centreline the two sides' glass reaches up to.
+  let a = zBack, b = 0;
+  for (let i = 0; i < 60; i++) {
+    const m = (a + b) / 2;
+    if (fu.crownAt(m) > yHi) a = m; else b = m;
   }
-  const xMax = xa;
-  const xIn = post / 2;                          // half the centre post
+  const zInner = a;
 
-  /* ---- the posts: all upright, the widest pane against the centre ----- */
-  const panesPerSide = paneWidths.length;
-  const usable = (xMax - xIn) - post * (panesPerSide - 1);
-  const weight = paneWidths.reduce((a, b) => a + b, 0);
-  const columns = [];
+  /**
+   * The upper edge as a polyline, with arc length along it.
+   *
+   * Arc length is the measure the posts are spaced by, because it is the one
+   * that means anything on a curved surface: equal steps in station would bunch
+   * the posts where the edge runs fore and aft and spread them where it runs
+   * across, which is most of its length.
+   */
+  const top = [];
   {
-    let x0 = xIn;
+    let s = 0, prev = null;
+    for (let i = 0; i <= nMarch; i++) {
+      const z = zInner + (zBack - zInner) * (i / nMarch);
+      const th = thHiAt(z);
+      if (th == null) continue;
+      const p = fu.surfaceAt(z, th);
+      if (prev) s += p.distanceTo(prev);
+      top.push({ z, th, p: p.clone(), s });
+      prev = p.clone();
+    }
+  }
+  const topLength = top[top.length - 1].s;
+  /** A station and angle at a given distance along the upper edge. */
+  const atArc = (sWant) => {
+    const t = Math.min(Math.max(sWant, 0), topLength);
+    let i = 0;
+    while (i < top.length - 2 && top[i + 1].s < t) i++;
+    const d = top[i + 1].s - top[i].s;
+    const f = d > 1e-12 ? (t - top[i].s) / d : 0;
+    return { z: top[i].z + (top[i + 1].z - top[i].z) * f,
+             th: top[i].th + (top[i + 1].th - top[i].th) * f };
+  };
+
+  /* ---- a post: marched across the glass, square to the upper edge ------ */
+  /**
+   * Seen down the surface normal at its top end, a post crosses the upper edge
+   * at a right angle -- and, the band being narrow and its two edges nearly
+   * parallel, meets the lower one square as well. So a post is not the trace of
+   * any plane through the body. It is a walk across the surface that sets off
+   * perpendicular to the edge it starts on and keeps going straight.
+   *
+   * Straight ON THE SURFACE, which is what the marching is for: at each step
+   * the direction is carried forward and pushed back into the new tangent
+   * plane, so the post neither curves within the surface nor leaves it. A
+   * chord through space would leave it; a line of constant station or constant
+   * offset from the centreline would curve within it, which is what every
+   * earlier attempt did and why none of them met the edge square.
+   */
+  const marchPost = (sStart) => {
+    const start = atArc(sStart);
+    let z = start.z, th = start.th;
+    // Set off perpendicular to the upper edge: normal cross tangent lies in the
+    // tangent plane and square to the curve, by construction.
+    const eps = 1e-4;
+    const tangent = (() => {
+      const s0 = Math.max(0, sStart - eps), s1 = Math.min(topLength, sStart + eps);
+      const A = atArc(s0), B = atArc(s1);
+      return fu.surfaceAt(B.z, B.th).sub(fu.surfaceAt(A.z, A.th)).normalize();
+    })();
+    let dir = new THREE.Vector3().crossVectors(fu.normalAt(z, th), tangent).normalize();
+    if (dir.y > 0) dir.negate();                 // downward, across the band
+
+    const path = [{ z, th }];
+    const step = 0.012;
+    for (let i = 0; i < 400; i++) {
+      const p = fu.surfaceAt(z, th);
+      if (p.y <= yLo) break;
+      // Move `step` along `dir`, expressed in the surface's own coordinates.
+      const dz = 1e-4, dth = 1e-4;
+      const Pz = fu.surfaceAt(z + dz, th).sub(p).divideScalar(dz);
+      const Pt = fu.surfaceAt(z, th + dth).sub(p).divideScalar(dth);
+      // Least squares for (u, v) in u*Pz + v*Pt = dir*step.
+      const a11 = Pz.dot(Pz), a12 = Pz.dot(Pt), a22 = Pt.dot(Pt);
+      const b1 = Pz.dot(dir) * step, b2 = Pt.dot(dir) * step;
+      const det = a11 * a22 - a12 * a12;
+      if (Math.abs(det) < 1e-18) break;
+      z += (b1 * a22 - b2 * a12) / det;
+      th += (a11 * b2 - a12 * b1) / det;
+      // Carry the direction forward, pushed back into the new tangent plane.
+      const n2 = fu.normalAt(z, th);
+      dir.addScaledVector(n2, -dir.dot(n2)).normalize();
+      path.push({ z, th });
+    }
+    // Deliberately NOT snapped onto the lower edge. Snapping meant holding the
+    // station and moving the angle, and near the nose the lower contour turns
+    // hard towards the crown -- it threw the last point from 83.7 degrees to
+    // 88.8 and dragged the centre post in from 91 mm to 17 mm. The march simply
+    // runs one step past the edge and the rows, taken by height, land on it.
+    return path;
+  };
+
+  /* ---- where the posts stand ------------------------------------------ */
+  // Shares of the upper edge, centre first: the pane against the centre post is
+  // the windscreen proper and much the widest.
+  const weight = paneWidths.reduce((x, y) => x + y, 0);
+  const usable = topLength - post * paneWidths.length;   // a half post at each end
+  const edges = [];
+  {
+    let s = post / 2;                            // half the centre post
     for (const share of paneWidths) {
       const w = (usable * share) / weight;
-      columns.push([x0, x0 + w]);
-      x0 += w + post;
+      edges.push([s, s + w]);
+      s += w + post;
     }
   }
-
-  /**
-   * Where a post stands at height `y`.
-   *
-   * With no rake it is simply the x it was given: a vertical line head on,
-   * raking at whatever the crown profile does. With a rake it is sheared fore
-   * and aft to stand at that angle instead, anchored at the TOP of the band --
-   * the top is where the glazing runs out of nose, so it is the end that
-   * cannot move, and the shear pulls the bottom aft rather than pushing the
-   * top forward into a body that is not there.
-   */
-  const tanRake = rake == null ? null : Math.tan((rake * Math.PI) / 180);
-  const postAt = (X0, y) => {
-    if (tanRake == null) return X0;
-    const zTop = zAtXY(X0, yHi);
-    if (zTop == null) return X0;
-    const z = zTop + tanRake * (yHi - y);
-    const x = xOnContour(z, y);
-    return x > 0 ? x : X0;
-  };
 
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
   const built = [];
-  let frontLean = 0;                       // how far a post wanders in x
 
   for (const side of [1, -1]) {
-    columns.forEach(([X0, X1], k) => {
-      const pos = [], idx = [];
-      const cols = [];
-      for (let i = 0; i < nx; i++) {
-        const X = X0 + (X1 - X0) * (i / (nx - 1));
-        const yT = yTopAt(X);
-        if (yT <= yLo + 1e-6) continue;          // no glass this far out
-        cols.push([X, yT]);
+    edges.forEach(([s0, s1], k) => {
+      /**
+       * A march for EVERY column, not just the two edges.
+       *
+       * Ruling between the edge posts alone would chord across the upper edge
+       * -- it is a curve, and a straight run between two points on it in the
+       * surface's coordinates cuts above it, by 61 mm on the widest pane. The
+       * top of the glass has to BE that curve, so every column starts on it.
+       */
+      const paths = [];
+      for (let j = 0; j < nv; j++) {
+        const sj = s0 + (s1 - s0) * (j / (nv - 1));
+        const path = marchPost(sj);
+        if (path.length < 2) return;
+        paths.push(path);
       }
-      if (cols.length < 2) return;
+      const M = Math.max(...paths.map((q) => q.length));
+      /**
+       * Rows taken by HEIGHT, not by index along the march.
+       *
+       * Every post starts on the upper edge, which is the upper line all along,
+       * and ends on the lower one -- so height is a measure the columns share.
+       * Index is not: the marches are different lengths, and ruling row i of a
+       * short one to row i of a long one twists the quads between them. It left
+       * two folded slivers at the bottom edge, facing into the body.
+       */
+      const yOf = (q) => fu.surfaceAt(q.z, q.th).y;
+      const sample = (path, t) => {
+        const want = yHi + (yLo - yHi) * t;
+        let i = 0;
+        while (i < path.length - 2 && yOf(path[i + 1]) > want) i++;
+        const y0 = yOf(path[i]), y1 = yOf(path[i + 1]);
+        const f = Math.abs(y0 - y1) > 1e-12
+          ? Math.min(1, Math.max(0, (y0 - want) / (y0 - y1))) : 0;
+        return { z: path[i].z + (path[i + 1].z - path[i].z) * f,
+                 th: path[i].th + (path[i + 1].th - path[i].th) * f };
+      };
 
-      for (const [X, yT] of cols) {
-        for (let j = 0; j < ny; j++) {
-          const y = yLo + (yT - yLo) * (j / (ny - 1));
-          const Xy = postAt(X, y);
-          if (side > 0 && (X === X0 || X === X1)) {
-            frontLean = Math.max(frontLean, Math.abs(Xy - X));
-          }
-          const z = zAtXY(Xy, y);
-          if (z == null) { pos.push(0, 0, 0); continue; }
-          const th = angleAtHeight(fu, z, y) ?? Math.PI / 2;
-          const t = side > 0 ? th : Math.PI - th;
-          const p = fu.surfaceAt(z, t), n = fu.normalAt(z, t);
+      const pos = [], idx = [];
+      for (let i = 0; i < M; i++) {
+        const t = i / (M - 1);
+        for (let j = 0; j < nv; j++) {
+          const q = sample(paths[j], t);
+          const tt = side > 0 ? q.th : Math.PI - q.th;
+          const p = fu.surfaceAt(q.z, tt), n = fu.normalAt(q.z, tt);
           pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
         }
       }
-      for (let i = 0; i < cols.length - 1; i++) {
-        for (let j = 0; j < ny - 1; j++) {
-          const p0 = i * ny + j, p1 = p0 + 1, p2 = p0 + ny, p3 = p2 + 1;
+      for (let i = 0; i < M - 1; i++) {
+        for (let j = 0; j < nv - 1; j++) {
+          const p0 = i * nv + j, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
           idx.push(p0, p2, p1, p1, p2, p3);
         }
       }
@@ -938,30 +983,24 @@ export function windscreen(fuselage, {
       g.setIndex(idx);
       g.computeVertexNormals();
       windOutward(g, (q) => {
-        const s = fu.shapeAt(q.z);
-        return fu.normalAt(q.z, Math.atan2(q.y - s.yc, q.x));
+        const sh = fu.shapeAt(q.z);
+        return fu.normalAt(q.z, Math.atan2(q.y - sh.yc, q.x));
       });
       const mesh = new THREE.Mesh(g, material);
-      // Numbered outward from the centre post, as the panes are on an
-      // aeroplane: windscreen, then side window, then quarter light.
       mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}${k + 1}`;
-      mesh.userData = { pane: k + 1, side, ny, xRange: [X0, X1] };
+      mesh.userData = { pane: k + 1, side, nv, rows: M, arc: [s0, s1] };
       group.add(mesh);
-      if (side > 0) built.push({ pane: k + 1, xRange: [X0, X1], topAt: [yTopAt(X0), yTopAt(X1)] });
+      if (side > 0) built.push({ pane: k + 1, arc: [s0, s1], width: s1 - s0, rows: M });
     });
   }
 
   Object.assign(group.userData, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
-    bodyHeight: H, keel, crown,
-    zRange: [zBack, null],
-    /** Where the glass stands off the centreline, and how wide each pane is. */
-    xRange: [xIn, xMax], xLimit, edgeHeight, paneWidths, columns,
-    rake,
-    /** How far a post wanders off vertical in FRONT view, in metres of x. */
-    frontLean, postAt,
-    post, panesPerSide, paneCount: 2 * panesPerSide, panes: built, ny,
-    yTopAt, zAtXY,
+    bodyHeight: H, keel, crown, zRange: [zBack, null],
+    zInner, topLength, paneWidths, post, edges,
+    panesPerSide: paneWidths.length, paneCount: 2 * paneWidths.length,
+    panes: built, nv,
+    marchPost, atArc, thHiAt, thAtHeight,
   });
   return group;
 }

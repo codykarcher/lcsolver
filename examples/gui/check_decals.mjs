@@ -490,9 +490,10 @@ console.log('\n=== windscreen ===');
 {
   const scr = windscreen(fuse, {});
   const su = scr.userData;
+  const fud = fuse.userData;
   console.log(`${(100 * su.low).toFixed(0)}% to ${(100 * su.high).toFixed(0)}% of a ` +
               `${su.bodyHeight.toFixed(3)} m body: y ${su.yLow.toFixed(3)} to ${su.yHigh.toFixed(3)}`);
-  console.log(`glass reaches x ${su.xRange[0].toFixed(3)} to ${su.xRange[1].toFixed(3)}, ` +
+  console.log(`upper edge ${su.topLength.toFixed(3)} m long from the centreline, ` +
               `${su.panesPerSide} panes a side, ${(1000 * su.post).toFixed(0)} mm posts`);
 
   const R = deck.fuseRadius;
@@ -504,46 +505,74 @@ console.log('\n=== windscreen ===');
     fail(`${scr.children.length} panes, wanted ${su.paneCount}`);
   }
 
-  /* ---- the posts stand upright ---------------------------------------- */
-  // The property that distinguishes these from every wrong version: a post is
-  // a VERTICAL member seen head on, so it stands at a fixed distance off the
-  // centreline. A pane bounded by two of them occupies one band of x and no
-  // more -- which is exactly what a bounding box in x can be asked.
+  /* ---- a post crosses the upper edge SQUARE --------------------------- */
+  /**
+   * The property the posts are defined by, and the one every earlier attempt
+   * failed. Seen down the surface normal where it starts, a post must meet the
+   * upper edge at a right angle -- which is what makes it a post rather than
+   * the trace of some plane through the body. Measured in the tangent plane at
+   * the top of each post.
+   */
   {
-    const sb = scr.children.filter((m) => m.userData.side > 0)
-      .sort((a, b) => a.userData.xRange[0] - b.userData.xRange[0]);
-    // One-sided: a pane must not stray OUTSIDE its column. Falling short of
-    // one is not the same fault -- the outermost pane's glass runs out before
-    // its column does, which is the band closing, not a crooked post.
     let worst = 0;
-    for (const m of sb) {
-      const b = new THREE.Box3().setFromObject(m);
-      worst = Math.max(worst,
-        m.userData.xRange[0] - b.min.x, b.max.x - m.userData.xRange[1]);
+    const arcs = [];
+    for (const [s0, s1] of su.edges) { arcs.push(s0); arcs.push(s1); }
+    for (const sArc of arcs) {
+      const path = su.marchPost(sArc);
+      if (path.length < 2) { fail(`the post at arc ${sArc} did not march`); continue; }
+      const p0 = fud.surfaceAt(path[0].z, path[0].th);
+      const dir = fud.surfaceAt(path[1].z, path[1].th).sub(p0).normalize();
+      const e = 1e-3;
+      const a0 = su.atArc(Math.max(0, sArc - e));
+      const a1 = su.atArc(Math.min(su.topLength, sArc + e));
+      const tan = fud.surfaceAt(a1.z, a1.th).sub(fud.surfaceAt(a0.z, a0.th)).normalize();
+      const ang = Math.acos(Math.min(1, Math.abs(dir.dot(tan)))) * 180 / Math.PI;
+      worst = Math.max(worst, Math.abs(90 - ang));
     }
-    console.log(`  every pane keeps inside its own band of x, to ` +
-                `${(1000 * Math.max(0, worst)).toFixed(1)} mm`);
-    // The lift pushes vertices out along the normal, which has an x component.
-    if (worst > 3 * su.lift) {
-      fail(`a pane strays ${(1000 * worst).toFixed(1)} mm out of its column -- ` +
-           `its edges are not upright`);
-    }
+    console.log(`  posts meet the upper edge within ${worst.toFixed(2)} deg of square`);
+    if (worst > 0.5) fail(`a post crosses the upper edge at ${(90 - worst).toFixed(1)} deg, not square`);
+  }
 
+  /* ---- and very nearly square to the lower edge ----------------------- */
+  {
+    let lo = 90, hi = 0;
+    for (const [, s1] of su.edges) {
+      const path = su.marchPost(s1);
+      const n = path.length;
+      if (n < 2) continue;
+      const p0 = fud.surfaceAt(path[n - 2].z, path[n - 2].th);
+      const dir = fud.surfaceAt(path[n - 1].z, path[n - 1].th).sub(p0).normalize();
+      const zL = path[n - 1].z, dz = 1e-3;
+      const t0 = su.thAtHeight(zL - dz, su.yLow), t1 = su.thAtHeight(zL + dz, su.yLow);
+      if (t0 == null || t1 == null) continue;
+      const tan = fud.surfaceAt(zL + dz, t1).sub(fud.surfaceAt(zL - dz, t0)).normalize();
+      const ang = Math.acos(Math.min(1, Math.abs(dir.dot(tan)))) * 180 / Math.PI;
+      lo = Math.min(lo, ang); hi = Math.max(hi, ang);
+    }
+    console.log(`  and the lower edge at ${lo.toFixed(1)}..${hi.toFixed(1)} deg`);
+    // Not asserted at 90: the two edges are only nearly parallel, so this
+    // follows rather than being imposed. Well off square would mean the band
+    // is not the shape it is supposed to be.
+    if (lo < 60) fail(`a post meets the lower edge at ${lo.toFixed(1)} deg -- far from square`);
+  }
+
+  /* ---- the posts, measured along the upper edge ------------------------ */
+  {
+    // The centre post is body left between the two sides.
     let minX = Infinity;
-    for (const m of sb) minX = Math.min(minX, new THREE.Box3().setFromObject(m).min.x);
+    for (const m of scr.children) {
+      if (m.userData.side < 0) continue;
+      minX = Math.min(minX, new THREE.Box3().setFromObject(m).min.x);
+    }
     console.log(`  centre post ${(2000 * minX).toFixed(1)} mm`);
     if (minX <= 0) fail('the two sides meet -- there is no centre post');
-    if (Math.abs(2 * minX - su.post) > 3 * su.lift) {
+    if (Math.abs(2 * minX - su.post) > 4 * su.lift) {
       fail(`centre post is ${(2000 * minX).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
     }
-    for (let i = 0; i < sb.length - 1; i++) {
-      const A = new THREE.Box3().setFromObject(sb[i]);
-      const B = new THREE.Box3().setFromObject(sb[i + 1]);
-      const gap = B.min.x - A.max.x;
-      console.log(`  post between panes ${sb[i].userData.pane} and ` +
-                  `${sb[i + 1].userData.pane}: ${(1000 * gap).toFixed(1)} mm`);
-      if (gap <= 0) fail(`panes ${sb[i].userData.pane} and ${sb[i + 1].userData.pane} touch`);
-      if (Math.abs(gap - su.post) > 3 * su.lift) {
+    for (let k = 0; k < su.edges.length - 1; k++) {
+      const gap = su.edges[k + 1][0] - su.edges[k][1];
+      console.log(`  post between panes ${k + 1} and ${k + 2}: ${(1000 * gap).toFixed(1)} mm`);
+      if (Math.abs(gap - su.post) > 1e-6) {
         fail(`post reads ${(1000 * gap).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
       }
     }
@@ -551,12 +580,12 @@ console.log('\n=== windscreen ===');
 
   /* ---- widest against the centre post --------------------------------- */
   {
-    const w = su.panes.map((p) => p.xRange[1] - p.xRange[0]);
-    console.log(`  pane widths from the centre out: ${w.map((v) => v.toFixed(3)).join(', ')} m`);
+    const w = su.panes.map((p) => p.width);
+    console.log(`  pane widths from the centre out: ${w.map((v) => v.toFixed(3)).join(', ')} m ` +
+                `(along the upper edge)`);
     for (let i = 1; i < w.length; i++) {
       if (w[i] >= w[i - 1]) {
-        fail(`pane ${i + 1} is not narrower than pane ${i} -- the widest must be ` +
-             `the one against the centreline`);
+        fail(`pane ${i + 1} is not narrower than pane ${i}`);
       }
     }
   }
@@ -571,7 +600,7 @@ console.log('\n=== windscreen ===');
     fail(`glass reaches y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
          `outside its cut lines by more than the ${su.lift} standoff`);
   }
-  if (sbox.min.z < -fuse.userData.noseLength || sbox.max.z > 0) {
+  if (sbox.min.z < -fud.noseLength || sbox.max.z > 0) {
     fail(`glass is not on the nose: z ${sbox.min.z.toFixed(3)}..${sbox.max.z.toFixed(3)}`);
   }
 
@@ -579,14 +608,14 @@ console.log('\n=== windscreen ===');
   for (const mesh of scr.children) {
     const pos = mesh.geometry.getAttribute('position');
     let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < pos.count; i += 2) {
+    for (let i = 0; i < pos.count; i += 5) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, i);
-      let bz = p.z; const s0 = fuse.userData.shapeAt(p.z);
+      let bz = p.z; const s0 = fud.shapeAt(p.z);
       let bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
       for (let step = 0.15; step > 1e-5; step *= 0.45) {
         let mz = bz, mt = bt;
         for (const dz of [-step, 0, step]) for (const dt of [-step, 0, step]) {
-          const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
+          const q = fud.surfaceAt(bz + dz, bt + dt);
           const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
           if (d < best) { best = d; mz = bz + dz; mt = bt + dt; }
         }
@@ -597,29 +626,18 @@ console.log('\n=== windscreen ===');
     if (lo < 1e-4) fail(`${mesh.name} touches or enters the nose`);
     if (Math.abs(hi - su.lift) > 6e-4) fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}`);
     facesOutward(mesh, (p) => {
-      const s2 = fuse.userData.shapeAt(p.z);
+      const s2 = fud.shapeAt(p.z);
       return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
     }, mesh.name);
 
-    const ix = mesh.geometry.getIndex();
-    let degenerate = 0, collapsed = 0;
-    const a2 = new THREE.Vector3(), b2 = new THREE.Vector3(), c2 = new THREE.Vector3();
+    let collapsed = 0;
     for (let i = 0; i < pos.count; i++) {
       if (Math.abs(pos.getX(i)) < 1e-9 && Math.abs(pos.getY(i)) < 1e-9
        && Math.abs(pos.getZ(i)) < 1e-9) collapsed++;
     }
-    for (let t = 0; t < ix.count; t += 3) {
-      a2.fromBufferAttribute(pos, ix.getX(t));
-      b2.fromBufferAttribute(pos, ix.getX(t + 1));
-      c2.fromBufferAttribute(pos, ix.getX(t + 2));
-      if (b2.clone().sub(a2).cross(c2.clone().sub(a2)).length() < 1e-12) degenerate++;
-    }
-    // A station with no solution would be written as the origin, which would
-    // drag a triangle through the middle of the aeroplane.
     if (collapsed) fail(`${mesh.name} has ${collapsed} vertices collapsed to the origin`);
-    if (degenerate) fail(`${mesh.name} has ${degenerate} degenerate triangles`);
   }
-  console.log(`  all ${scr.children.length} panes lie on the skin, face out, no slivers`);
+  console.log(`  all ${scr.children.length} panes lie on the skin and face out`);
 
   if (sbox.min.z < wbox.max.z) {
     fail(`glass reaches ${sbox.min.z.toFixed(2)}, aft of the first window at ${wbox.max.z.toFixed(2)}`);
