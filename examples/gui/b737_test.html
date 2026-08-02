@@ -74,6 +74,7 @@
   <h2>moving parts</h2>
   <button id="spin">spin the engines</button>
   <button id="gear">raise the gear</button>
+  <button id="hidegear">hide the gear</button>
   <p class="hint" style="margin-top:6px">or click either engine on its own</p>
 
   <h2>view from</h2>
@@ -197,6 +198,30 @@ let gearT = 0, gearTarget = 0;
 const GEAR_SECONDS = 2.4;
 const ease = (t) => t * t * (3 - 2 * t);
 
+// Kept outside the aircraft, like the engine spin, because every checkbox
+// rebuilds it and the gear would otherwise reappear each time.
+let gearHidden = false;
+
+/**
+ * Hiding is not retracting.
+ *
+ * The legs stay where they are and stop being drawn, so the aeroplane keeps
+ * sitting at the attitude its two strut lengths give it -- which is a RESULT
+ * worth preserving, and the one thing that would be lost by removing the gear
+ * from the assembly instead. It also means nothing has to be rebuilt to bring
+ * them back.
+ *
+ * The retract button is disabled meanwhile rather than left to animate
+ * something invisible.
+ */
+function applyGearVisible() {
+  if (!craft) return;
+  for (const lg of craft.userData.parts.gear) lg.visible = !gearHidden;
+  el('hidegear').textContent = gearHidden ? 'show the gear' : 'hide the gear';
+  el('gear').disabled = gearHidden;
+  el('gear').style.opacity = gearHidden ? 0.45 : 1;
+}
+
 function applyGear() {
   if (!craft) return;
   const k = ease(gearT);
@@ -260,6 +285,7 @@ function build() {
   const u = craft.userData;
   u.parts.engines.forEach((p, i) => { p.userData.spinning = spinning[i]; });
   applyGear();
+  applyGearVisible();
   syncSpinButton();
   // Collected on the FRESH aircraft, before anything is repainted: the lookup
   // works by finding parts that still carry the base skin, so it has to happen
@@ -422,6 +448,10 @@ el('gear').addEventListener('click', () => {
   gearTarget = gearTarget > 0.5 ? 0 : 1;
   el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
 });
+el('hidegear').addEventListener('click', () => {
+  gearHidden = !gearHidden;
+  applyGearVisible();
+});
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
@@ -446,7 +476,9 @@ function tick() {
       const step = dt / GEAR_SECONDS;
       gearT += Math.sign(gearTarget - gearT) * Math.min(step, Math.abs(gearTarget - gearT));
       applyGear();
-      el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+      if (!gearHidden) {
+        el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+      }
     }
   }
   controls.update();
