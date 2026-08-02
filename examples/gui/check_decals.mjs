@@ -13,7 +13,7 @@
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
-import { surfaceArt, fuselageTitles, cabinWindows, cockpitGlazing, windowLayout,
+import { surfaceArt, fuselageTitles, cabinWindows, windscreen, windowLayout,
          TAIL_ART, TAIL_HEIGHT, artNames } from './components/decals.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_conventional_solve.json', import.meta.url), 'utf8'));
@@ -480,73 +480,104 @@ if (Math.abs(glo - wu.pitch) > 1e-9) fail(`gap ${glo} is not the stated pitch ${
   if (clear <= 0) fail(`titles overlap the windows by ${(-clear).toFixed(3)} m`);
 }
 
-/* ---- the cockpit ------------------------------------------------------- */
-console.log('\n=== cockpit glazing ===');
+/* ---- the windscreen ---------------------------------------------------- */
+// A band cut by two horizontal planes and wrapped onto the nose. What is
+// checked is that the planes are where they were asked for and that the glass
+// stops where the BODY stops offering surface between them -- the forward taper
+// and the wrap over the crown are consequences of the shape, not of numbers
+// typed in, so they are the things worth measuring.
+console.log('\n=== windscreen ===');
 {
-  const cock = cockpitGlazing(fuse, {});
-  const cu = cock.userData;
-  const cb = new THREE.Box3().setFromObject(cock);
-  const noseLength = fuse.userData.noseLength;
-  console.log(`${cu.widthMetres.toFixed(2)} x ${cu.heightMetres.toFixed(2)} m at ` +
-              `${cu.angle} deg, z ${cb.max.z.toFixed(2)}..${cb.min.z.toFixed(2)} ` +
-              `(nose 0..${(-noseLength).toFixed(2)})`);
+  const scr = windscreen(fuse, {});
+  const su = scr.userData;
+  console.log(`${(100 * su.low).toFixed(0)}% to ${(100 * su.high).toFixed(0)}% of a ` +
+              `${su.bodyHeight.toFixed(3)} m body: y ${su.yLow.toFixed(3)} to ${su.yHigh.toFixed(3)}`);
+  console.log(`z ${su.zRange[0].toFixed(3)} back to ${su.zRange[1].toFixed(3)} forward, ` +
+              `wrapping the crown at ${su.wrapStations} of ${su.stations} stations`);
 
-  // On the nose, not spilling onto the barrel or off the tip.
-  if (cb.max.z > 0 || cb.min.z < -noseLength) {
-    fail(`cockpit runs off the nose: ${cb.max.z.toFixed(2)}..${cb.min.z.toFixed(2)}`);
+  const R = deck.fuseRadius;
+  if (Math.abs(su.yLow - (-R + su.low * 2 * R)) > 1e-6
+   || Math.abs(su.yHigh - (-R + su.high * 2 * R)) > 1e-6) {
+    fail(`cut lines are not at ${su.low}/${su.high} of the body height`);
   }
-  if (cu.clipped) fail(`cockpit had ${cu.clipped} nodes off the body`);
+  if (Math.abs(su.zRange[0] + 0.5 * fuse.userData.noseLength) > 1e-9) {
+    fail(`aft edge ${su.zRange[0]} is not half the nose length back`);
+  }
+  // The forward end is where the crown meets the LOWER line: forward of it
+  // there is no body between the two planes, so there can be no glass.
+  const cr = fuse.userData.crownAt(su.zRange[1]);
+  console.log(`forward end: crown is ${cr.toFixed(4)}, lower line ${su.yLow.toFixed(4)}`);
+  if (Math.abs(cr - su.yLow) > 1e-3) {
+    fail(`glass stops at a station where the crown is ${cr}, not at the lower line`);
+  }
 
-  /**
-   * Standoff on the NOSE, where the radial shortcut used for the barrel does
-   * not hold: the surface slopes in z there, so its normal has a z component
-   * and a purely radial measurement under-reads. Found by search over (z, th)
-   * instead, which is the honest distance to the surface.
-   */
-  const nearestNose = (p) => {
-    const s0 = fuse.userData.shapeAt(p.z);
-    let bz = p.z, bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
-    for (let step = 0.2; step > 1e-5; step *= 0.45) {
-      for (const dz of [-step, 0, step]) {
-        for (const dt of [-step, 0, step]) {
-          const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
-          const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
-          if (d < best) { best = d; }
-        }
-      }
-      // re-centre on the best of this ring
-      let mz = bz, mt = bt;
-      for (const dz of [-step, 0, step]) for (const dt of [-step, 0, step]) {
-        const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
-        const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
-        if (Math.abs(d - best) < 1e-12) { mz = bz + dz; mt = bt + dt; }
-      }
-      bz = mz; bt = mt;
-    }
-    return best;
-  };
+  // Within its own cut lines, to the standoff. The band is lifted along the
+  // surface NORMAL, and near the crown that normal points nearly straight up,
+  // so a correct band sits the full lift above the upper plane -- and about a
+  // millimetre above the lower one, where the normal is nearly horizontal.
+  // Allowing zero here would be asking the glass to be inside the skin.
+  const sbox = new THREE.Box3().setFromObject(scr);
+  const tol = su.lift + 1e-4;
+  console.log(`  spans y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
+              `cut lines ${su.yLow.toFixed(4)}..${su.yHigh.toFixed(4)} ` +
+              `(+${(1000 * su.lift).toFixed(0)} mm standoff allowed)`);
+  if (sbox.min.y < su.yLow - tol || sbox.max.y > su.yHigh + tol) {
+    fail(`glass reaches y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
+         `outside its cut lines by more than the ${su.lift} standoff`);
+  }
+  if (sbox.min.z < -fuse.userData.noseLength) fail('glass runs off the back of the nose');
 
-  for (const mesh of cock.children) {
+  for (const mesh of scr.children) {
     const pos = mesh.geometry.getAttribute('position');
     let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < pos.count; i += 5) {
-      const d = nearestNose(new THREE.Vector3().fromBufferAttribute(pos, i));
-      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    for (let i = 0; i < pos.count; i += 3) {
+      const p = new THREE.Vector3().fromBufferAttribute(pos, i);
+      // Nose surface: search over (z, th), since the radial shortcut only
+      // holds on the barrel.
+      let bz = p.z, s0 = fuse.userData.shapeAt(p.z);
+      let bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
+      for (let step = 0.15; step > 1e-5; step *= 0.45) {
+        let mz = bz, mt = bt;
+        for (const dz of [-step, 0, step]) for (const dt of [-step, 0, step]) {
+          const q = fuse.userData.surfaceAt(bz + dz, bt + dt);
+          const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
+          if (d < best) { best = d; mz = bz + dz; mt = bt + dt; }
+        }
+        bz = mz; bt = mt;
+      }
+      lo = Math.min(lo, best); hi = Math.max(hi, best);
     }
-    console.log(`  ${mesh.name.padEnd(20)} standoff ${lo.toFixed(5)}..${hi.toFixed(5)} m`);
+    console.log(`  ${mesh.name.padEnd(22)} standoff ${lo.toFixed(5)}..${hi.toFixed(5)} m`);
     if (lo < 1e-4) fail(`${mesh.name} touches or enters the nose`);
-    if (Math.abs(hi - 0.004) > 6e-4) {
-      fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}, wanted 0.004`);
-    }
+    if (Math.abs(hi - 0.004) > 6e-4) fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}`);
     facesOutward(mesh, (p) => {
       const s2 = fuse.userData.shapeAt(p.z);
       return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
     }, mesh.name);
   }
 
-  // Forward of the cabin, so it cannot land among the passenger windows.
-  if (cb.min.z < wbox.max.z) {
-    fail(`cockpit reaches ${cb.min.z.toFixed(2)}, aft of the first cabin window at ${wbox.max.z.toFixed(2)}`);
+  // Where the band wraps, the two halves must MEET on the crown: each ends on
+  // it, so a gap there would be a slot down the top of the nose.
+  {
+    const [sb, pt] = scr.children;
+    const A = sb.geometry.getAttribute('position'), B = pt.geometry.getAttribute('position');
+    let worst = 0;
+    for (let i = 0; i < A.count; i++) {
+      const a2 = new THREE.Vector3().fromBufferAttribute(A, i);
+      if (Math.abs(a2.x) > 0.02) continue;             // only the crown edge
+      let near = Infinity;
+      for (let j = 0; j < B.count; j++) {
+        near = Math.min(near, a2.distanceTo(new THREE.Vector3().fromBufferAttribute(B, j)));
+      }
+      worst = Math.max(worst, near);
+    }
+    console.log(`  the two halves meet on the crown to within ${(1000 * worst).toFixed(3)} mm`);
+    if (worst > 1e-3) fail(`a ${(1000 * worst).toFixed(1)} mm slot runs down the top of the nose`);
+  }
+
+  // Clear of the cabin windows, forward of them.
+  if (sbox.min.z < wbox.max.z) {
+    fail(`glass reaches ${sbox.min.z.toFixed(2)}, aft of the first window at ${wbox.max.z.toFixed(2)}`);
   }
 }
 
@@ -559,5 +590,5 @@ console.log('\n=== cockpit glazing ===');
   if (d > 1e-9) fail(`titles start ${d.toFixed(3)} m off the front of the window line`);
 }
 
-console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork, windows and cockpit lie on the skin, placed as the solve says');
+console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork, windows and glass lie on the skin, placed as the solve says');
 process.exit(bad ? 1 : 0);

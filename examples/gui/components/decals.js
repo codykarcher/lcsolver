@@ -428,43 +428,6 @@ export function fuselageTitles(fuselage, { textureFor, deck, titles = FUSELAGE_T
 }
 
 /**
- * The cockpit glazing.
- *
- * One patch a side carrying all three panes, rather than three patches: the
- * posts between them are part of the artwork, and separate patches would have
- * to be placed relative to each other on a curved, tapering nose to keep those
- * posts even.
- *
- * Placed by ANGLE, not by height. The nose section shrinks going forward, so a
- * level band runs off the top of the body before the patch ends -- and a
- * windscreen wraps the nose rather than sitting at one waterline in any case.
- *
- * Stationed as a fraction of the NOSE length, so it stays on the nose whatever
- * length the solve gives it.
- */
-export const COCKPIT = {
-  file: 'cockpit.png',
-  aspect: 3.0,          // matches textures/cockpit.png
-  startNoseFraction: 0.30,   // forward edge, back from the tip
-  height: 0.85,
-  angle: 52,            // degrees above the section centre
-  lift: 0.004,
-};
-
-export function cockpitGlazing(fuselage, { texture, name = 'cockpit', ...o } = {}) {
-  const p = { ...COCKPIT, ...o };
-  const w = p.height * p.aspect;
-  const zFwd = -p.startNoseFraction * fuselage.userData.noseLength;
-  const g = fuselageArt(fuselage, {
-    texture, z: zFwd - w / 2, angle: p.angle,
-    height: p.height, aspect: p.aspect, offset: p.lift,
-    nu: 30, nv: 14, name,
-  });
-  g.userData.zFwd = zFwd;
-  return g;
-}
-
-/**
  * Turn a patch's triangles to face outward, whichever way its grid happened to
  * wind.
  *
@@ -566,16 +529,6 @@ export function fuselageArt(fuselage, {
   texture,
   z = -12,
   y = 1.15,
-  /**
-   * Degrees above the section centre. When given, the band follows the body's
-   * own curve instead of staying level.
-   *
-   * Level is right for anything referenced to the cabin floor and wrong on the
-   * nose, where the section shrinks forward: a constant height there runs off
-   * the top of the body before the patch ends, and cockpit glazing wraps the
-   * nose rather than sitting at one waterline anyway.
-   */
-  angle = null,
   height = 0.9,
   aspect = 1,
   offset = 0.008,
@@ -601,14 +554,9 @@ export function fuselageArt(fuselage, {
         const zs = zFwd + (zAft - zFwd) * fu2;
         // The band's centre angle is found afresh at every station, which is
         // what keeps it level rather than parallel to the section.
-        let base;
-        if (angle != null) {
-          base = (angle * Math.PI) / 180;
-        } else {
-          const thC = angleAtHeight(fu, zs, y);
-          if (thC == null) clipped++;
-          base = thC ?? Math.PI / 2;
-        }
+        const thC = angleAtHeight(fu, zs, y);
+        if (thC == null) clipped++;
+        const base = thC ?? Math.PI / 2;
         const arc = (fv - 0.5) * height;
         const th = angleAtArc(fu, zs, base, arc);
         const p = fu.surfaceAt(zs, side > 0 ? th : Math.PI - th);
@@ -645,7 +593,7 @@ export function fuselageArt(fuselage, {
   }
 
   Object.assign(group.userData, {
-    isArt: true, z, y, angle, aspect,
+    isArt: true, z, y, aspect,
     widthMetres: w, heightMetres: height,
     zRange: [zAft, zFwd],
     /** Stations where the band ran off the top of the body. Should be zero. */
@@ -739,6 +687,136 @@ export function cabinWindows(fuselage, {
     perRow: 1,
   });
   return group;
+}
+
+/**
+ * The windscreen: a band cut in SIDE VIEW and wrapped onto the nose.
+ *
+ * Two horizontal lines at fractions of the fuselage's height and a station a
+ * fraction of the nose back, and everything on the nose between them is glass.
+ * No artwork, no panes drawn into a texture -- the shape comes from where those
+ * planes actually cut the body, which is why it looks like it belongs on the
+ * nose rather than like a decal applied to one.
+ *
+ * The band changes topology along its length, and handling that is the whole
+ * job. Aft, the crown stands above the upper line and the glass is two separate
+ * strips down the sides. Forward of about a quarter of the nose the section has
+ * shrunk enough that the crown drops BELOW the upper line, and the band closes
+ * over the top into one wrap-around screen. Further forward still the crown
+ * falls below the LOWER line and there is no glass at all, which is what tapers
+ * the screen to a point at the front.
+ *
+ * Built as two mirrored patches whose upper edge is the lower of the upper line
+ * and the crown. Where the crown binds, both patches end exactly on it and abut
+ * with no seam; where the line binds, they are properly separate. That is the
+ * whole topology change, handled by a `min` rather than by two cases -- and it
+ * leaves no degenerate triangles, which clamping a fixed grid to the crown
+ * would have produced all along the wrap.
+ */
+export const WINDSCREEN = {
+  /** Fractions of the body's height, measured up from the keel. */
+  low: 0.60,
+  high: 0.80,
+  /** How far back along the NOSE the glass runs. */
+  backFraction: 0.50,
+  lift: 0.004,
+  colour: 0x12161c,
+};
+
+export function windscreen(fuselage, {
+  low = WINDSCREEN.low, high = WINDSCREEN.high,
+  backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
+  colour = WINDSCREEN.colour, nz = 40, nv = 12, name = 'windscreen',
+} = {}) {
+  const fu = fuselage.userData;
+  const noseLength = fu.noseLength;
+
+  // The two lines are fractions of the BARREL's height, taken from the body
+  // itself rather than from twice a radius, so a section that is not a circle
+  // still gives its own keel and crown.
+  const zRef = fu.cabinZ[0] - 0.05 * (fu.cabinZ[0] - fu.cabinZ[1]);
+  const keel = fu.keelAt(zRef), crown = fu.crownAt(zRef);
+  const H = crown - keel;
+  const yLo = keel + low * H, yHi = keel + high * H;
+
+  const zBack = -backFraction * noseLength;
+  // Forward end: where the crown drops to the lower line, so the glass runs out
+  // on its own rather than at a station picked by hand.
+  let a = zBack, b = 0;
+  for (let i = 0; i < 60; i++) {
+    const m = (a + b) / 2;
+    if (fu.crownAt(m) > yLo) a = m; else b = m;
+  }
+  const zNose = a;
+
+  /** Angle of the upper edge: the upper line, or the crown where that is lower. */
+  const upperAngle = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
+    ? Math.PI / 2
+    : angleAtHeight(fu, z, yHi));
+
+  const group = new THREE.Group();
+  group.name = name;
+  const material = glazingMaterial(colour);
+  let wraps = 0;
+
+  for (const side of [1, -1]) {
+    const pos = [], idx = [];
+    for (let iz = 0; iz < nz; iz++) {
+      // Squared towards the nose, so the stations bunch where the band is
+      // narrowing fast and its edge is most curved.
+      const f = iz / (nz - 1);
+      const z = zBack + (zNose - zBack) * (f * f);
+      const thLo = angleAtHeight(fu, z, yLo) ?? Math.PI / 2;
+      const thHi = upperAngle(z) ?? Math.PI / 2;
+      if (side > 0 && thHi >= Math.PI / 2 - 1e-9) wraps++;
+      for (let iv = 0; iv < nv; iv++) {
+        const th = thLo + (thHi - thLo) * (iv / (nv - 1));
+        const t = side > 0 ? th : Math.PI - th;
+        const p = fu.surfaceAt(z, t), n = fu.normalAt(z, t);
+        pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
+      }
+    }
+    for (let iz = 0; iz < nz - 1; iz++) {
+      for (let iv = 0; iv < nv - 1; iv++) {
+        const p0 = iz * nv + iv, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
+        idx.push(p0, p2, p1, p1, p2, p3);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    windOutward(g, (p) => {
+      const s = fu.shapeAt(p.z);
+      return fu.normalAt(p.z, Math.atan2(p.y - s.yc, p.x));
+    });
+    const mesh = new THREE.Mesh(g, material);
+    mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}`;
+    group.add(mesh);
+  }
+
+  Object.assign(group.userData, {
+    isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
+    bodyHeight: H, keel, crown,
+    zRange: [zBack, zNose],
+    /** Stations at which the band closes over the crown rather than at yHigh. */
+    wrapStations: wraps, stations: nz,
+  });
+  return group;
+}
+
+/** Dark glass. Its own material, because it carries no texture to key on. */
+const glazings = new Map();
+function glazingMaterial(colour) {
+  if (glazings.has(colour)) return glazings.get(colour);
+  const m = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(colour), roughness: 0.14, metalness: 0.10,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+  });
+  m.name = `glazing ${colour.toString(16)}`;
+  glazings.set(colour, m);
+  MATERIALS[`glazing${glazings.size}`] = m;
+  return m;
 }
 
 /**

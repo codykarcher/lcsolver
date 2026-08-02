@@ -104,7 +104,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, cabinWindows, cockpitGlazing,
+import { surfaceArt, fuselageTitles, cabinWindows, windscreen,
          TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -315,11 +315,12 @@ function build() {
     el('windowNote').textContent =
       `${w.rows} per side at ${(w.pitch / 0.0254).toFixed(0)} in seat pitch ` +
       `\u2014 ${w.passengers} pax, ${w.seatsAbreast.toFixed(0)} abreast`;
-    // The cockpit rides with the windows: they are the same decision about
-    // whether the aeroplane is glazed at all.
-    const cock = cockpitGlazing(u.parts.fuselage, { texture: textureFor('cockpit.png') });
-    u.parts.fuselage.add(cock);
-    u.parts.cockpit = cock;
+    // The windscreen rides with the windows: it is the same decision about
+    // whether the aeroplane is glazed at all. No texture -- its shape is where
+    // the two cut planes meet the nose.
+    const scr = windscreen(u.parts.fuselage, {});
+    u.parts.fuselage.add(scr);
+    u.parts.windscreen = scr;
   } else {
     el('windowNote').textContent = '';
   }
