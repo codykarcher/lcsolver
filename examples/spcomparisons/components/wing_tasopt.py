@@ -127,7 +127,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                     polar=YORK_C, W_engine=None, eta_break=ETA_BREAK,
                     tau_max=0.14, lam_s_pin=None, lam_t_pin=None,
                     f_L_total=1.0, f_slat=0.1, e_model="nita",
-                    winglet_h_max=None):
+                    winglet_h_max=None, strut=False):
     """Add the cranked-planform wing. Returns ``(group, constraints)``.
 
     Same signature and same exposed names as ``wing.add_wing``, so
@@ -359,9 +359,22 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         "wing", AR=AR, b=b, S=S, tau=tau, Lmax=Lmax, group=box,
         cosL=cosL if sweep_pricing else None, material=material,
         eta_o=eo, eta_s=eta_break, lam_s=lam_s, lam_t=lam_t, Kc=Kc, Ko=Ko,
-        W_engine=W_engine, rho_fuel=rho_fuel)
+        W_engine=W_engine, rho_fuel=rho_fuel, strut=strut)
     cons += wbcons
     out["box"] = wb
+    # ---- strut brace (surfw.f iwplan=2), selected with strut=True ---------
+    # The box above is built with its root pinned to the break loads; this is
+    # the tension member and profile drag that pay for that relief. The strut
+    # attaches at the planform BREAK -- TASOPT's etas is one deck input
+    # serving both roles -- so an outboard-strut study moves eta_break.
+    if strut:
+        from .strut_brace import add_strut_brace
+        sbgroup, c = add_strut_brace(
+            wing, po=wb["p_o_box"], b=b, deta=wb["deta_inn"], lam_s=lam_s,
+            Ss=wb["S_s"], S=S, cosL=cosL, material=material,
+            prefix=f"{prefix}strut_")
+        cons += c
+        out["strut"] = sbgroup
     # Capacity comes from the box's own bay integration, not a mac^2
     # correlation. Same fuel, one volume.
     cons += [Vfuel == wb["V_fuel"]]
@@ -375,9 +388,16 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
               ("f_lete", 0.1), ("f_ribs", 0.15), ("f_spoiler", 0.02),
               ("f_watt", 0.03)]
     fracs = [C(n, v, "-", f"{n} fractional weight") for n, v in fnames]
-    cons += ([Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)
-                        + W_wl] if _winglets else
-             [Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)])
+    # The strut weight rides in Wwing UNSCALED by the secondary fractions --
+    # TASOPT books Wstrut separately from Wwing (wsize.f:734 sums them side
+    # by side in the dry weight) precisely so flap/slat/rib fractions never
+    # multiply a tension member that carries none of them.
+    _extra = ([W_wl] if _winglets else []) + \
+             ([out["strut"].W_strut] if strut else [])
+    _wsum = Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)
+    for _t in _extra:       # list-level: sum([]) is a zero monomial
+        _wsum = _wsum + _t
+    cons += [Wwing >= _wsum]
 
     # ---- aerodynamics -----------------------------------------------------
     cons += [
@@ -391,7 +411,12 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         CLw == CLaw * alpha,
         alpha <= amax,
         Dwing == 0.5 * rho * Vinf ** 2 * S * CDw,
+        # The strut's profile drag is already normalised on wing area
+        # (cdsum.f charges CDstrut into the aircraft CD directly), so it
+        # rides in the wing's own coefficient and nothing downstream needs
+        # to know the configuration.
         (CDw >= CDp + CDi + c_dp_wl * 2.0 * S_wl / S) if _winglets
+            else (CDw >= CDp + CDi + out["strut"].C_D_strut) if strut
             else (CDw >= CDp + CDi),
         # Induced drag on TOTAL lift, not wing lift. TASOPT's Trefftz-plane
         # CDi charges the aircraft CL -- its printed cruise numbers close

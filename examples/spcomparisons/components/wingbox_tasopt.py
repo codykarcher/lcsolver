@@ -172,7 +172,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
                        eta_o=ETA_O, eta_s=ETA_S,
                        lam_s=None, lam_t=None, taper=None, Kc=None, Ko=None,
                        W_engine=None, rho_fuel=None, f_fuel=1.0,
-                       f_wadd=0.640, relief=True):
+                       f_wadd=0.640, relief=True, strut=False):
     """Add the station-based box. Returns ``(vars, constraints)``.
 
     ``Lmax`` is the maximum net load the box carries (``N*W - L_htail`` in
@@ -256,7 +256,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
 
     out = dict(r_w_c=wwb, W_cap=Wcap, W_web=Wweb, W_struct=Wstruct,
                t_cap=tcapo, t_web=twebo, c_o=co, M_r=Mo, N_lift=Nlift,
-               S_o=So, M_o=Mo, S_s=Ss, M_s=Ms)
+               S_o=So, M_o=Mo, S_s=Ss, M_s=Ms, p_o_box=po)
 
     hbox = tau                      # box height / chord == airfoil t/c
     hrms = hrms_f * hbox
@@ -276,6 +276,7 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
     deta = V("deta_inn", eta_s - ETA_O, "-",
              "inner panel span fraction, eta_s - eta_o")
     deta_cons = [deta + eta_o == eta_s]
+    out["deta_inn"] = deta
     # eta_o is the CALLER's, not this module's default. The wing carries it
     # as a variable (w_fuse/(b/2), about 0.122 on a 737) while ETA_O here is
     # 0.1016 from TASOPT's deck; leaving them unlinked put two different
@@ -347,18 +348,34 @@ def add_wingbox_tasopt(surfacetype, *, AR, b, S, tau, Lmax, group,
             == (po * b ** 2 / 24.0) * (gam_s + 2.0 * gam_t)
                * (1.0 - eta_s) ** 2,                              # [SP] SigEq
 
-        # ---- root station (surfw.f:88-96) ---------------------------------
-        So + N_lift * Reng + N_lift * Winn
-            == Ss + 0.25 * po * b * (1.0 + gam_s) * deta,
-        # surfw.f:96 -- the (Ss - Nload*We) group carries the engine relief
-        # through the root moment as well as the shear.
-        Mo + N_lift * Reng * 0.5 * b * deta + N_lift * dyWinn
-            == Ms + Ss * 0.5 * b * deta
-              + (1.0 / 24.0) * po * b ** 2 * (1.0 + 2.0 * gam_s)
-                * deta ** 2,                                      # [SP] SigEq
-        # surfw.f:102-103 limits So,Mo to at least the break values
-        So >= Ss,
-        Mo >= Ms,
+        # ---- root station -------------------------------------------------
+        # Two exclusive branches of surfw.f, selected at the list level (one
+        # model's rows or the other's, never both -- an accumulation equality
+        # ALONGSIDE So == Ss would be the duplicate-equality LICQ failure):
+        #
+        # CANTILEVER (iwplan 0/1, surfw.f:88-96): the root accumulates the
+        # inner panel's lift on top of the break loads, less the engine and
+        # structure relief, floored at the break values (surfw.f:102-103).
+        #
+        # STRUT (iwplan 2, surfw.f:129-130): So = Ss and Mo = Ms -- the strut
+        # reaction carries the inner panel, so the root is sized at the
+        # STRUT-ATTACH loads. This is the entire structural payoff of the
+        # brace; the tension member that buys it lives in strut_brace.py.
+        # Note the Fortran also drops the engine relief (wsize.f:918-923
+        # zeroes Weng1 for iwplan != 1), which the omitted Reng terms match.
+        *([So == Ss,
+           Mo == Ms]
+          if strut else
+          [So + N_lift * Reng + N_lift * Winn
+               == Ss + 0.25 * po * b * (1.0 + gam_s) * deta,
+           # surfw.f:96 -- the (Ss - Nload*We) group carries the engine
+           # relief through the root moment as well as the shear.
+           Mo + N_lift * Reng * 0.5 * b * deta + N_lift * dyWinn
+               == Ms + Ss * 0.5 * b * deta
+                 + (1.0 / 24.0) * po * b ** 2 * (1.0 + 2.0 * gam_s)
+                   * deta ** 2,                                   # [SP] SigEq
+           So >= Ss,
+           Mo >= Ms]),
 
         # ---- station sizing, surfw.f:54-57 and 106-109 --------------------
         twebo == So * 0.5 / (co ** 2 * tauwebC * rh * hbox * _cosL ** 2),

@@ -46,6 +46,11 @@ class Architecture:
     note: str
     # Cruise Mach pinned to the class's real design Mach instead of optimised.
     lock_mach: bool = False
+    # Strut-braced wing (TASOPT iwplan=2): root moment pinned to the break
+    # loads, tension strut + its profile drag added. An airframe-axis flag
+    # like double_bubble (defaulted because it postdates the original five),
+    # so it composes with any energy carrier the same way.
+    strut: bool = False
 
 
 ARCHS = {
@@ -61,6 +66,14 @@ ARCHS = {
         fuel="jeta", engine="D82_SPaircraft", cryo_tank=False,
         fuel_cell=False, battery=False, wet_wing=True,
         note="Double bubble, BLI, rear engines. Airframe change only."),
+    "strut": Architecture(
+        key="strut", label="Strut-braced wing (Jet-A)",
+        double_bubble=False, BLI=False, rear_engines=False, strut=True,
+        fuel="jeta", engine="D82_SPaircraft", cryo_tank=False,
+        fuel_cell=False, battery=False, wet_wing=True,
+        note="Conventional tube and engines, wing root moment relieved by a "
+             "tension strut at the planform break. Airframe change only, "
+             "like d8 -- rows 1 and 6 isolate the brace."),
     "h2burn": Architecture(
         key="h2burn", label="H2-burning turbofan",
         double_bubble=False, BLI=False, rear_engines=False,
@@ -103,6 +116,6 @@ LOCKED = {f"{k}_M": _replace(v, key=f"{k}_M", lock_mach=True,
           for k, v in ARCHS.items()}
 ARCHS.update(LOCKED)
 
-ORDER = ["conventional", "d8", "h2burn", "h2fc", "battery"]
+ORDER = ["conventional", "d8", "strut", "h2burn", "h2fc", "battery"]
 ORDER_LOCKED = [f"{k}_M" for k in ORDER]
 ORDER_ALL = ORDER + ORDER_LOCKED

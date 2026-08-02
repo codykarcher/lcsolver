@@ -216,7 +216,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                  "f_L_total": 1.195 if arch.double_bubble else 1.02,
                  # d82.tas fslat = 0.000: the D8 has no slats.
                  "f_slat": 0.0 if arch.double_bubble else 0.1,
-                 "e_model": "trefftz"}
+                 "e_model": "trefftz",
+                 # surfw.f iwplan=2. The attach station is the planform
+                 # break; STRUT_ETAS moves both together for outboard-strut
+                 # sweeps (TASOPT overloads one deck input for the pair).
+                 "strut": getattr(arch, "strut", False),
+                 **({"eta_break": float(_os.environ["STRUT_ETAS"])}
+                    if getattr(arch, "strut", False)
+                    and "STRUT_ETAS" in _os.environ else {})}
                 if wing_model == "tasopt" else {})
     wing, c = _wing_add(f, N, st, sweep_deg=sweep_deg, material=_mat,
                         sweep_pricing=sweep_pricing, polar=polar,
