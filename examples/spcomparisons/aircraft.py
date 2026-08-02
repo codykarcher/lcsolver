@@ -107,7 +107,7 @@ NCLIMB, NCRUISE = 3, 2
 
 
 def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
-          pi_tail_supports: str = "fixed", seed: str | None = None,
+          pi_tail_supports: str = "cantilever", seed: str | None = None,
           tau_limits: bool = True, sweep_pricing: bool = True,
           # MSES refits are the default. York's fit was valid only to
           # M_perp ~0.74 and under-predicted drag 3-6x beyond it, so the model
@@ -225,9 +225,21 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                               drag_model=tail_drag); cons += c
     # HT sweep follows the wing, exactly as TASOPT's optimizer does it
     # (fobj.f writes igsweep and igsweeph from the same slot).
+    # STRUCTURAL basis of the pi-tail horizontal, distinct from its GEOMETRY.
+    # The horizontal still rides the fins geometrically (placement rows below
+    # key on arch.double_bubble), but by default its BOX is sized as a
+    # CANTILEVER from the centreline -- because that is what TASOPT does: its
+    # HT surfw call is the same machinery as any tail, no support relief, and
+    # its D8 tail comes out at 69.7 lbf/m2 against its 737's 61.6. Our
+    # fixed-support branch (W*L/12 at the attachments) is real pi-tail
+    # physics and gave 34 lbf/m2 -- half TASOPT's -- which is a CLAIM about
+    # the configuration, not a reproduction of the reference. Keep the claim
+    # available (pi_tail_supports="fixed"/"pinned") but compare on TASOPT's
+    # basis.
+    _pi_struct = arch.double_bubble and pi_tail_supports != "cantilever"
     ht, c = add_horizontal_tail(f, N, st,
                                 cosL=_cosL(wing), tanL=wing.tan_Lambda,
-                                pi_tail=arch.double_bubble,
+                                pi_tail=_pi_struct,
                                 material=_mat,
                                 tau_limits=tau_limits,
                                 drag_model=tail_drag); cons += c
@@ -1616,7 +1628,9 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # model instead (wingbox surfacetype "horizontal_tail_conventional").
     pi_tail = arch.double_bubble
     hb = ht.box
-    if pi_tail:
+    # The support-relief rows exist only when the box was BUILT with the
+    # pi-tail load split; on the default cantilever basis they must not.
+    if _pi_struct:
         # ---- pi-tail horizontal tail ---------------------------------------------
         hb = ht.box
         Mrout = V("M_r_out", 1e5, "N", "HT moment at the VT attachment")
@@ -1755,7 +1769,16 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         (xNP / wing.mac / ht.V_ht * (wing.AR + 2.)
          * (1. + 2. / ht.AR_ht)
          == (1. + 2. / wing.AR) * (wing.AR - 2.)),             # [SP] SigEq
-        xCG + vt.dx_trail_vt <= fu.l_fuse,
+        # The fin's root chord sits at the very end of the cone and its swept
+        # trailing edge legitimately passes the apex: TASOPT's D8 puts the
+        # fin box at 103 ft on a 106 ft hull, root TE at ~109 ft -- a metre
+        # past the apex. Holding the whole fin inside l_fuse was costing the
+        # D8 half its fin arm (l_vt ~7 m against TASOPT's 13), and since the
+        # volume rows trade arm for area one-for-one, the fin DOUBLED when
+        # the deck's Vv = 0.03 was imposed. Conventional fins keep the strict
+        # bound -- a 737 fin is faired into the cone, not perched on its end.
+        *([xCG + vt.dx_trail_vt <= fu.l_fuse] if not pi_tail else
+          [xCG + vt.dx_trail_vt <= fu.l_fuse + 0.5 * vt.c_root_vt]),
         # THE HORIZONTAL TAIL HAS TO FIT ON THE AEROPLANE TOO.
         #
         # The fin has had this row all along; the horizontal never did. Its

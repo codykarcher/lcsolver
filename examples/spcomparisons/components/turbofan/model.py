@@ -930,21 +930,33 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
             cons += [
                 # NO /n_eng. TASOPT's We1 is already PER ENGINE from a
                 # per-engine mdotc (`Webare = We1*neng`), and our m_core is
-                # per-engine too -- 48.4 kg/s against TASOPT's back-solved
-                # 53.3 for the same 737.
+                # per-engine too.
                 #
-                # The model-0 row below DOES divide, and that divisor is not a
-                # per-engine conversion: it is cancelling a unit slip. That row
-                # multiplies the correlation's bracket by 9.81, treating it as
-                # kilograms-force, where tfweight.f divides by LB_N -- i.e.
-                # treats it as POUNDS-force. 9.81/4.44822 = 2.205, and /n_eng =
-                # 2 hides all but 10% of it. Left alone rather than fixed here
-                # so this change moves one thing at a time; model 0 is now off
-                # the default path for both TASOPT decks anyway.
+                # THE MASS FLOW IS THE DESIGN CORRECTED CORE FLOW, NOT A
+                # MISSION SEGMENT'S PHYSICAL FLOW. wsize.f:1306 builds
+                # tfweight's input as
+                #     mdotc = mblcD * sqrt(Tref/TSL) * (pSL/pref)
+                # -- the LPC's design corrected flow re-referenced to
+                # sea-level-static: the SIZE OF THE COMPRESSOR, invariant of
+                # where the aircraft happens to be flying. Feeding the
+                # binding segment's physical core flow instead (27.8 kg/s on
+                # the D8 against TASOPT's 39.0) weighed a machine 29% smaller
+                # than the one the fan was drawn around. Our fan's design
+                # corrected flow mbar_fan_D is fan-STREAM corrected flow at
+                # the same face, so mbar_fan_D / BPR_D IS mdotc: 271.93 /
+                # 6.9674 = 39.03 kg/s on the D8, TASOPT's own value to 0.1%.
+                #
+                # And tfweight's OPR is pilc*pihc -- the CORE compressors,
+                # 35.0 on the D8 deck -- where this row used to include the
+                # fan (pif*pilc*pihc ~ 58), overstating the (OPR/40)^c term
+                # 14% and masking part of the mass-flow undercount. With both
+                # corrected the correlation reproduces TASOPT's Webare from
+                # TASOPT's inputs to 0.1%: 4902.3*(39.03/45.35)^0.983
+                # *(35/40)^0.252 = 4,089 lbf against its printed 4,084.
                 W_engine / units.N >= _a * 4.44822
-                    * ((mtot[i] / alphap1[i])
+                    * ((mFanD / _bprd)
                        / (45.35 * units.kg / units.s)) ** _b
-                    * ((pif[i] * pilc[i] * pihc[i]) / 40.0) ** _c,
+                    * ((pilc[i] * pihc[i]) / 40.0) ** _c,
             ]
         else:
             # UNIT SLIP FIXED, and the compensating divisor removed with it.
