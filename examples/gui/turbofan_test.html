@@ -49,15 +49,6 @@
   <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
 
 
-  <h2>core profile</h2>
-
-  <div id="stations"></div>
-
-  <div class="row"><label for="rOut">outlet radius</label><output id="oOut"></output></div>
-  <input type="range" id="rOut" min="0.30" max="1.40" step="0.01" value="0.78">
-
-  <button id="copy">copy profile</button>
-
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
@@ -84,25 +75,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { turbofan } from './components/engines.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
-
-// Station sliders are generated rather than written out, so adding a fourth
-// control point is a change to this array and nothing else.
-const STATIONS = [{ z: 0.33, r: 1.0 }, { z: 0.67, r: 1.0 }];
-{
-  const host = document.getElementById('stations');
-  STATIONS.forEach((d, i) => {
-    for (const [k, min, max, step] of [['z', 0.02, 0.98, 0.01],
-                                       ['r', 0.30, 2.00, 0.01]]) {
-      const id = `${k}${i}`;
-      host.insertAdjacentHTML('beforeend',
-        `<div class="row"><label for="${id}">station ${i + 1} &mdash; ` +
-        `${k === 'z' ? 'position' : 'radius'}</label>` +
-        `<output id="o_${id}"></output></div>` +
-        `<input type="range" id="${id}" min="${min}" max="${max}" ` +
-        `step="${step}" value="${d[k]}">`);
-    }
-  });
-}
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -163,8 +135,6 @@ function build() {
   engine = turbofan({
     rFan,
     bypassRatio: num('bpr'),
-    sections: STATIONS.map((_, i) => ({ z: num(`z${i}`), r: num(`r${i}`) })),
-    outletRadius: num('rOut'),
   });
   engine.position.set(0, 0, 0);           // at the origin, unshifted
   scene.add(engine);
@@ -177,10 +147,6 @@ function build() {
 
   el('oR').textContent = rFan.toFixed(2);
   el('oBPR').textContent = num('bpr').toFixed(1);
-  STATIONS.forEach((_, i) => {
-    for (const k of ['z', 'r']) el(`o_${k}${i}`).textContent = num(`${k}${i}`).toFixed(2);
-  });
-  el('oOut').textContent = num('rOut').toFixed(2);
 
   const b = new THREE.Box3().setFromObject(engine);
   el('readout').innerHTML =
@@ -189,7 +155,10 @@ function build() {
     `<br>` +
     `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
     `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
-    `core r <span>${engine.userData.rCore.toFixed(3)}</span> &middot; ` +
+    `duct-face r <span>${engine.userData.rCore.toFixed(3)}</span>` +
+    (Math.abs(engine.userData.bypassRatioEffective - num('bpr')) > 1e-6
+      ? ` <span>(capped, BPR ${engine.userData.bypassRatioEffective.toFixed(2)})</span>`
+      : '') + `<br>` +
     `outlet <span>${engine.userData.outletRadius.toFixed(3)}</span> &middot; ` +
     `plug <span>${engine.userData.plugExitRadius.toFixed(3)}</span><br>` +
     `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
@@ -216,22 +185,8 @@ function lookAtOrigin() {
   controls.update();
 }
 
-const TUNABLE = ['rFan', 'bpr', 'rOut',
-                 ...STATIONS.flatMap((_, i) => [`z${i}`, `r${i}`])];
-for (const id of TUNABLE) el(id).addEventListener('input', build);
+for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
 for (const id of ['axes', 'grid', 'wire']) el(id).addEventListener('change', build);
-// Hand the tuned profile back as source, so a shape found by eye can be
-// pasted into CORE_SECTIONS rather than transcribed off four sliders.
-el('copy').addEventListener('click', () => {
-  const body = STATIONS.map((_, i) =>
-    `{ z: ${num(`z${i}`).toFixed(2)}, r: ${num(`r${i}`).toFixed(2)} }`).join(', ');
-  const txt = `const CORE_SECTIONS = [${body}];\n`
-    + `const R_OUTLET = ${num('rOut').toFixed(2)};`;
-  navigator.clipboard?.writeText(txt);
-  const b = el('copy'); const was = b.textContent;
-  b.textContent = 'copied'; setTimeout(() => { b.textContent = was; }, 900);
-  console.log(txt);
-});
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
 

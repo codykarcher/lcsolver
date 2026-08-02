@@ -48,8 +48,25 @@ const SEG = 48;
  */
 const LENGTH_OVER_DIAMETER = 2.0;
 
-/** Core outlet wall, x rCore. Adjustable per engine via `outletRadius`. */
-const R_OUTLET = 0.78;
+/**
+ * RADII BELOW ARE FRACTIONS OF FAN RADIUS -- equivalently, the part's diameter
+ * as a fraction of fan diameter. Not multiples of rCore, which is what they
+ * used to be: tied to the core they moved with bypass ratio, so raising BPR
+ * shrank the whole profile instead of only the station BPR actually governs.
+ */
+
+/** Core outlet wall. */
+const R_OUTLET = 0.3953;
+
+/**
+ * Ceiling on every radius in the core, fan radius included in the reckoning.
+ *
+ * Applies to the BPR-derived duct-face radius as well, so a very low bypass
+ * ratio cannot drive the core out through its own fan case. When it binds the
+ * geometry stops honouring BPR exactly, and `userData.bypassRatioEffective`
+ * reports what was actually built.
+ */
+const MAX_RADIUS = 0.95;
 
 /**
  * Exhaust annulus, as a FRACTION of the outlet radius rather than an absolute
@@ -88,25 +105,20 @@ const PLUG_EMBED = 0.05;
  *         at the exit plane. Measured from the duct rather than from the core
  *         front because the part forward of the duct exit is inside the
  *         bypass annulus and is not shaped by these.
- *     r   radius as a multiple of rCore
+ *     r   radius as a fraction of FAN RADIUS (see the note above)
  *
  * The inlet is not adjustable because bypass ratio sets it, and the outlet is
  * not adjustable because the exhaust annulus does. Everything between is
  * these two points and the spline through them.
  *
- * Defaults give a plain cylinder that boat-tails into the outlet -- a
- * starting point to sculpt from, not a shape anyone chose. The profile tuned
- * by eye earlier was, for reference:
- *
- *     waist  {z: 0.12, r: 0.86}   pinch behind the fan
- *     bulge  {z: 0.70, r: 1.28}   turbine
- *
- * which needed four stations rather than three.
+ * Defaults are the profile settled on by eye, and are no longer exposed as
+ * controls -- fan radius and bypass ratio are the parameters.
  *
  * The list is not fixed at three -- any number of stations works, they are
  * simply spline control points between inlet and outlet.
  */
-const CORE_SECTIONS = [{ z: 0.33, r: 1.0 }, { z: 0.67, r: 1.0 }];
+const CORE_SECTIONS = [{ z: 0.36, r: 0.3953 },
+                       { z: 0.67, r: 0.4838 }];
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
@@ -274,7 +286,8 @@ export function turbofan({
   // so rCore = rFan / sqrt(BPR + 1). A modern high-bypass fan lands near 9,
   // which puts the core at about a third of fan radius; an early low-bypass
   // engine near 1 puts it at 0.7, which is why those engines look like tubes.
-  const rCore = R / Math.sqrt(bypassRatio + 1);
+  const rCoreIdeal = R / Math.sqrt(bypassRatio + 1);
+  const rCore = Math.min(rCoreIdeal, MAX_RADIUS * R);
   const rHub = 0.62 * rCore;              // fan hub sits inside the core line
 
   // `length` is NOSE TO TAIL -- spinner tip to plug tip -- not merely the
@@ -355,12 +368,13 @@ export function turbofan({
   // shape with its inside out.
   const secs = sections
     .map((sec) => ({ z: Math.min(0.98, Math.max(0.02, sec.z)),
-                     r: Math.max(0.05, sec.r) }))
+                     r: Math.min(MAX_RADIUS, Math.max(0.02, sec.r)) }))
     .sort((a, b) => a.z - b.z);
 
   // Outlet wall, and the plug that scales with it. Measured IN THE EXIT
   // PLANE, which is the only place the annulus is visible.
-  const rOutlet = Math.max(0.05, outletRadius) * rCore;
+  const cap = (frac) => Math.min(Math.max(0.02, frac), MAX_RADIUS) * R;
+  const rOutlet = cap(outletRadius);
   const rPlugExit = rOutlet * (1 - EXHAUST_GAP_FRAC);
   // Continuing the same taper forward to the buried base.
   const rPlugBase = rPlugExit * (1 + PLUG_EMBED / PLUG_TIP);
@@ -375,10 +389,18 @@ export function turbofan({
   const ctrl = [
     new THREE.Vector2(z0, rCore),                      // inside the duct
     new THREE.Vector2(zSplit, rCore),                  // duct back face: BPR
-    ...secs.map((sec) => new THREE.Vector2(zSplit - sec.z * Lv, sec.r * rCore)),
+    ...secs.map((sec) => new THREE.Vector2(zSplit - sec.z * Lv, cap(sec.r))),
     new THREE.Vector2(zAft, rOutlet),                  // outlet
   ];
-  const spline = new THREE.SplineCurve(ctrl).getPoints(48);
+  // Clamp the SAMPLED curve, not just the control points. A Catmull-Rom
+  // through points that all obey the cap can still bulge past it between
+  // them -- at BPR 0.05 the surface reached 0.99 rFan from controls held at
+  // 0.95 -- and it is the surface the cap is about. Where it binds the
+  // overshoot flattens into a straight section, which is what a limit looks
+  // like.
+  const rCap = MAX_RADIUS * R;
+  const spline = new THREE.SplineCurve(ctrl).getPoints(48)
+    .map((p) => new THREE.Vector2(p.x, Math.min(p.y, rCap)));
 
   // One mesh, finish painted on. See coreMaterial().
   const core = latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
@@ -405,6 +427,7 @@ export function turbofan({
 
   g.userData.rCore = rCore;
   g.userData.bypassRatio = bypassRatio;
+  g.userData.bypassRatioEffective = (R * R - rCore * rCore) / (rCore * rCore);
   g.userData.coreLength = Lc;
   g.userData.noseZ = zNose;
   g.userData.sections = secs;
