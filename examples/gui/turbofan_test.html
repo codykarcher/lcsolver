@@ -48,12 +48,6 @@
   <div class="row"><label for="bpr">bypass ratio</label><output id="oBPR"></output></div>
   <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
 
-  <div class="row"><label for="blades">fan blades</label><output id="oB"></output></div>
-  <input type="range" id="blades" min="8" max="48" step="1" value="30">
-
-  <div class="row"><label for="vanes">guide vanes</label><output id="oV"></output></div>
-  <input type="range" id="vanes" min="0" max="30" step="1" value="14">
-
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
@@ -140,8 +134,6 @@ function build() {
   engine = turbofan({
     rFan,
     bypassRatio: num('bpr'),
-    blades: parseInt(el('blades').value, 10),
-    vanes: parseInt(el('vanes').value, 10),
   });
   engine.position.set(0, 0, 0);           // at the origin, unshifted
   scene.add(engine);
@@ -154,8 +146,6 @@ function build() {
 
   el('oR').textContent = rFan.toFixed(2);
   el('oBPR').textContent = num('bpr').toFixed(1);
-  el('oB').textContent = el('blades').value;
-  el('oV').textContent = el('vanes').value;
 
   const b = new THREE.Box3().setFromObject(engine);
   el('readout').innerHTML =
@@ -185,7 +175,7 @@ function lookAtOrigin() {
   controls.update();
 }
 
-for (const id of ['rFan', 'bpr', 'blades', 'vanes']) el(id).addEventListener('input', build);
+for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
 for (const id of ['axes', 'grid', 'wire']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);

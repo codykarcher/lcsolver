@@ -52,23 +52,38 @@ function orientOutward(geo) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const n = new THREE.Vector3(), cen = new THREE.Vector3();
   const arr = idx.array;
-  let bestR = -1, bestDot = 0;
 
+  // Signed volume, sum of a . (b x c) / 6 over the triangles. For a closed
+  // mesh this is the enclosed volume, positive exactly when the winding faces
+  // outward, and it does not care where the origin is. Every triangle votes in
+  // proportion to its size, so no single face can decide the answer.
+  //
+  // The earlier version tested one triangle -- the outermost -- which is fine
+  // on a plain tube but fails on a cone with a flat base: the base rim is as
+  // far from the axis as anything, its normal is parallel to the axis, and the
+  // radial component it is judged by is then zero plus rounding. That made the
+  // decision flip with the size of the part.
+  let vol = 0, radial = 0, scale = 0;
   for (let t = 0; t + 2 < arr.length; t += 3) {
     a.fromBufferAttribute(pos, arr[t]);
     b.fromBufferAttribute(pos, arr[t + 1]);
     c.fromBufferAttribute(pos, arr[t + 2]);
+    vol += a.dot(n.crossVectors(b, c)) / 6;
+
+    // Area-weighted radial vote, kept as a fallback for open shells where a
+    // signed volume means nothing. n is twice the face area normal, so this
+    // weights by area without normalising.
     cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-    const r = Math.hypot(cen.x, cen.z);        // axis is still Y at this point
-    if (r <= bestR) continue;
     n.crossVectors(b.clone().sub(a), c.clone().sub(a));
-    if (n.lengthSq() < 1e-20) continue;
-    n.normalize();
-    bestR = r;
-    bestDot = (n.x * cen.x + n.z * cen.z) / (r || 1);
+    const r = Math.hypot(cen.x, cen.z);           // axis is still Y here
+    if (r > 1e-9) radial += (n.x * cen.x + n.z * cen.z) / r;
+    scale = Math.max(scale, Math.abs(cen.x), Math.abs(cen.y), Math.abs(cen.z));
   }
 
-  if (bestDot < 0) {
+  const closed = Math.abs(vol) > 1e-6 * Math.pow(scale || 1, 3);
+  const inward = closed ? vol < 0 : radial < 0;
+
+  if (inward) {
     for (let t = 0; t + 2 < arr.length; t += 3) {
       const tmp = arr[t + 1]; arr[t + 1] = arr[t + 2]; arr[t + 2] = tmp;
     }

@@ -61,6 +61,14 @@ export const painted = new THREE.MeshStandardMaterial({
   color: 0x23262b, roughness: 0.48, metalness: 0.15,
 });
 
+/**
+ * Paint markings -- the spiral on a spinner, stencils, warning stripes.
+ * Off-white rather than pure white so it still shades against a lit case.
+ */
+export const marking = new THREE.MeshStandardMaterial({
+  color: 0xf0f2f4, roughness: 0.42, metalness: 0.05,
+});
+
 /** Accessories, gearboxes, crankcases: cast and unpolished. */
 export const accessory = new THREE.MeshStandardMaterial({
   color: 0x878d95, roughness: 0.72, metalness: 0.55,
@@ -77,7 +85,8 @@ export const winding = new THREE.MeshStandardMaterial({
 });
 
 export const all = { tire, rim, piston, structure, hardware,
-                     casing, blade, hot, painted, accessory, finned, winding };
+                     casing, blade, hot, painted, marking, accessory, finned,
+                     winding };
 
 /** Free every material. Call when tearing down a scene you built. */
 export function dispose() {

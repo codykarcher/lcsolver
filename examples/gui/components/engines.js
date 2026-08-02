@@ -57,16 +57,54 @@ function finish(g, length, rMax, name) {
  * when nothing sits behind it. An open base is a hole you can see through the
  * moment the hub is smaller than the spinner or the view gets low.
  */
+/** The ogive radius law, shared by the spinner and the swirl painted on it. */
+const ogiveR = (t, rBase) => rBase * Math.cos(t * Math.PI / 2) ** 0.72;
+
 function spinner(rBase, len, material, zBase = 0) {
   const prof = [[zBase, 0]];
-  const n = 10;
+  const n = 12;
   for (let i = 0; i <= n; i++) {
     const t = i / n;                       // 0 at base, 1 at tip
     // Ogive rather than a straight cone: a straight cone reads as a party hat.
-    const r = rBase * Math.cos(t * Math.PI / 2) ** 0.72;
-    prof.push([zBase + t * len, r]);
+    prof.push([zBase + t * len, ogiveR(t, rBase)]);
   }
   return latheZ(prof, material, SEG);
+}
+
+/**
+ * The painted spiral on a spinner nose.
+ *
+ * On a real engine it is there so ground crew can see at a glance that the
+ * fan is turning. It follows the cone's own radius law so it lies on the
+ * surface, standing proud by rather less than its own thickness, and winds in
+ * to nothing at the tip because that is where the radius goes.
+ */
+function spinnerSwirl(rBase, len, zBase, turns = 1.15) {
+  const rTube = 0.055 * rBase;
+  const pts = [];
+  const n = 96;
+  for (let i = 0; i <= n; i++) {
+    const t = 0.04 + (0.965 - 0.04) * (i / n);
+    const r = ogiveR(t, rBase) + rTube * 0.45;
+    const th = turns * Math.PI * 2 * t;
+    pts.push(new THREE.Vector3(r * Math.cos(th), r * Math.sin(th),
+                               zBase + t * len));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(
+    new THREE.TubeGeometry(curve, n * 2, rTube, 8, false), M.marking));
+  // TubeGeometry leaves its ends open. They are small, but a hole is a hole:
+  // cap each with a bead, which also rounds the ends of the stroke.
+  for (const p of [pts[0], pts[pts.length - 1]]) {
+    // 1.06 rather than 1.0: a sphere of exactly rTube meets the tube's rim
+    // coincidentally and z-fights along the seam.
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(rTube * 1.06, 10, 8), M.marking);
+    cap.position.copy(p);
+    g.add(cap);
+  }
+  return g;
 }
 
 /* ==================================================================== *
@@ -82,7 +120,7 @@ function spinner(rBase, len, material, zBase = 0) {
  * spanning it the two read as unrelated parts floating together.
  */
 export function turbofan({
-  rFan = 0.90, bypassRatio = 9, blades = 30, vanes = 14,
+  rFan = 0.90, bypassRatio = 9, blades = 40, vanes = 40,
 } = {}) {
   if (!(bypassRatio > 0)) throw new Error('turbofan: bypassRatio must be > 0');
 
@@ -108,23 +146,33 @@ export function turbofan({
 
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
-  rotor.userData.spin = -1;               // see the note on blade pitch below
-  rotor.add(spinner(rHub, 2.05 * rHub, M.painted, 0.02 * R));
+  rotor.userData.spin = -1;
+  const lSpin = 2.05 * rHub;
+  rotor.add(spinner(rHub, lSpin, M.painted, 0.02 * R));
+  rotor.add(spinnerSwirl(rHub, lSpin, 0.02 * R));
 
-  // Twist is modest. A fan blade does turn a long way root to tip, but drawn
-  // at the full angle it reads as a corkscrew rather than as a blade.
+  // Blade angle is measured here from the ENGINE AXIS, so a large angle lays
+  // the chord into the plane of the fan face and a small one stands it on
+  // edge. A fan is coarse at the root and fine at the tip -- the tip is
+  // travelling far faster, so it meets the flow at a shallower angle to the
+  // disc -- which means the angle from the axis GROWS outboard. Having it the
+  // other way round is what made the tips look like knives.
   const fan = bladeRow({
     count: blades, material: M.blade, hubMaterial: M.casing,
     hubLength: 1.75 * rHub,
     rHub, rTip: 0.98 * R,
     chordRoot: 0.308 * R, chordTip: 0.280 * R,
-    twistRoot: 0.62, twistTip: 0.18, thickness: 0.10,
+    twistRoot: 0.50, twistTip: 1.05, thickness: 0.10,
   });
   fan.position.z = -0.14 * R;
   rotor.add(fan);
   g.add(rotor);
 
-  g.add(tubeZ(1.02 * R, 1.13 * R, 0.18 * R, -0.62 * R, M.casing, SEG));
+  // Fan case: bare unfaired metal, so a thin band rather than a thick ring,
+  // carried well down the engine.
+  const zCaseAft = -0.94 * R;
+  const rCaseOut = 1.045 * R;
+  g.add(tubeZ(1.02 * R, rCaseOut, 0.18 * R, zCaseAft, M.casing, SEG));
 
   // Outlet guide vanes span the bypass annulus. Without them the fan case and
   // the core read as two unrelated parts floating together.
@@ -133,34 +181,42 @@ export function turbofan({
       count: vanes, material: M.casing,
       rHub: rCore * 1.02, rTip: 1.02 * R,
       chordRoot: 0.26 * R, chordTip: 0.24 * R,
-      twistRoot: 0.22, twistTip: 0.08, thickness: 0.09,
+      twistRoot: 0.22, twistTip: 0.10, thickness: 0.09,
     });
     ogv.position.z = -0.46 * R;
     g.add(ogv);
   }
 
-  // Core body: a closed solid, disc at each end.
-  g.add(latheZ([
-    [z0, 0], [z0, rCore],
-    [z0 - 0.58 * Lc, rCore],
-    [z0 - 0.84 * Lc, 0.88 * rCore],
-    [zAft, 0.72 * rCore], [zAft, 0],
-  ], M.casing, SEG));
+  // Core body. A spline through five stations rather than straight segments:
+  // it swells through the turbine and then falls away to the outlet with the
+  // curvature staying continuous, where a piecewise profile creases at every
+  // joint and catches the light as a ring.
+  const ctrl = [
+    new THREE.Vector2(z0, rCore),
+    new THREE.Vector2(z0 - 0.28 * Lc, 1.04 * rCore),
+    new THREE.Vector2(z0 - 0.56 * Lc, 1.13 * rCore),   // turbine
+    new THREE.Vector2(z0 - 0.80 * Lc, 1.03 * rCore),
+    new THREE.Vector2(zAft, 0.78 * rCore),             // outlet
+  ];
+  const spline = new THREE.SplineCurve(ctrl).getPoints(48);
+  g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
+               M.casing, SEG));
 
-  // Nozzle: a closed annulus round the boat-tail, in burnt metal so the hot
-  // end reads as the hot end.
-  g.add(tubeZ(0.68 * rCore, 0.80 * rCore,
-              z0 - 0.86 * Lc, zAft - 0.12 * Lc, M.hot, SEG));
+  // Nozzle: a thin hot lip hugging the outlet, not a separate cowl.
+  g.add(tubeZ(0.785 * rCore, 0.845 * rCore,
+              zAft + 0.10 * Lc, zAft - 0.015 * Lc, M.hot, SEG));
 
-  // Exhaust plug: closed cone, disc at its base.
+  // Exhaust plug, sized to leave only a narrow annulus against the outlet
+  // wall -- that gap is the exhaust, and on a real engine it is a slot, not
+  // an open ring.
   g.add(latheZ([
-    [zAft - 0.02 * Lc, 0], [zAft - 0.02 * Lc, 0.44 * rCore],
-    [zAft - 0.42 * Lc, 0],
+    [zAft - 0.015 * Lc, 0], [zAft - 0.015 * Lc, 0.66 * rCore],
+    [zAft - 0.40 * Lc, 0],
   ], M.hot, SEG));
 
   g.userData.rCore = rCore;
   g.userData.bypassRatio = bypassRatio;
-  return finish(g, -(zAft - 0.42 * Lc), 1.13 * R, 'turbofan');
+  return finish(g, -(zAft - 0.40 * Lc), rCaseOut, 'turbofan');
 }
 
 /* ==================================================================== *
