@@ -436,7 +436,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # Nose-gear bay reach: the gear station may sit at most this many
     # leg-lengths aft of the nose tip (retraction bay geometry; further aft
     # interferes with cargo/cabin volume). See the row at its use.
-    k_ng_bay = C("k_ng_bay", 3.0, "-",
+    # 4.0, recalibrated from 3.0 when the level-attitude equality
+    # (landing_gear.py) made the leg length honest: the real 737 carries its
+    # nose gear at 4.27-5.2 m on a ~1.1 m exposed strut, a station-to-leg
+    # ratio of ~4. The 3.0 was chosen against legs the optimiser was
+    # inflating to game this very rule.
+    k_ng_bay = C("k_ng_bay", 4.0, "-",
                  "max nose-gear station, in nose-gear leg lengths")
 
     # ---- aircraft-level constants ------------------------------------------
