@@ -89,10 +89,7 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
               `(${(100 * d.engineX / d.fuseLength).toFixed(0)}% aft), y +/-${d.engineY.toFixed(3)}`);
   console.log(`     nacelle spans y ${b.min.y.toFixed(2)}..${b.max.y.toFixed(2)}, ` +
               `body crown there ${crown.toFixed(2)}`);
-  // NOT "above the crown". That was the test when the engines sat on top of
-  // the body; they are let into a channel now, so being below its crown is the
-  // point. Whether they are seated is asked properly further down, by measuring
-  // how much of the engine's own circle is skin.
+  if (b.max.y < crown) bad('the nacelles are entirely below the crown -- buried in the body');
   if (d.engineX < 0.6 * d.fuseLength) bad('the engines are not on the afterbody');
   // Inboard of the fins, as the arrangement has them.
   const finX = Math.abs(new THREE.Box3().setFromObject(u.parts.verticalTails[0]).min.x);
@@ -111,13 +108,7 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   console.log(`\nafterbody: plan taper ${fu.planTaper.toFixed(3)}, trailing edge ` +
               `${edge.toFixed(3)} half-wide against engines reaching ${reach.toFixed(3)}`);
   if (fu.planTaper >= 1) bad('the afterbody does not taper in plan -- it is a constant-width slab');
-  // The channels themselves set the trailing edge's width now, so the two are
-  // equal by construction rather than merely close -- the flat region the fins'
-  // trailing edges integrate into IS the outside of the channels.
-  // A millimetre, not zero: halfWidthAt scans the section at a finite number of
-  // angles, so it under-reads a maximum falling between two of them -- by 9
-  // microns here, which is a property of the measurement and not of the body.
-  if (edge < reach - 1e-3) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
+  if (edge < reach) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
   if (edge > 1.35 * reach) bad(`the trailing edge runs ${(edge / reach).toFixed(2)} times past the engines`);
 
   /**
@@ -137,47 +128,17 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     bad(`only ${(100 * deep / d.fuseHalfHeight).toFixed(0)}% of the depth survives to the engines`);
   }
 
-  /**
-   * The engine sits at 55 per cent of the body's height, in a channel the
-   * afterbody has already made for it.
-   *
-   * Measured by asking how much of the engine's own circle IS skin: a channel
-   * that wraps its outboard and lower faces is a receptacle, and a body that
-   * merely passes near it is not. Nothing at all means the engine is either
-   * buried in a core that never narrowed or floating clear of one that did.
-   */
-  const want = -d.fuseHalfHeight + d.engineHeight * 2 * d.fuseHalfHeight;
-  console.log(`     engine axis y ${u.engineAxisY.toFixed(4)} = ` +
-              `${(100 * d.engineHeight).toFixed(0)}% of the body's height up from the keel`);
-  if (Math.abs(u.engineAxisY - want) > 1e-9) {
-    bad(`engine axis at ${u.engineAxisY}, wanted ${want}`);
+  // And a valley between the lobes for them to sit in -- the cross-sections'
+  // whole point. Measured as the crown on the centreline against the crown
+  // over the engine's own lateral position.
+  const yMid = fu.surfaceAt(z, Math.PI / 2).y;
+  let yEng = -Infinity;
+  for (let i = 0; i < 600; i++) {
+    const p = fu.surfaceAt(z, (i / 600) * Math.PI);
+    if (Math.abs(p.x - d.engineY) < 0.02) yEng = Math.max(yEng, p.y);
   }
-  const rN = d.nacelleDia / 2;
-  let on = 0, tot = 0;
-  for (let i = 0; i < 720; i++) {
-    const a = (i / 720) * 2 * Math.PI;
-    const px = d.engineY + rN * Math.cos(a), py = u.engineAxisY + rN * Math.sin(a);
-    if (px < 0) continue;
-    tot++;
-    const th = Math.atan2(py - fu.shapeAt(z).yc, px);
-    const sp = fu.surfaceAt(z, th);
-    if (Math.hypot(sp.x - px, sp.y - py) < 0.06) on++;
-  }
-  const pct = (100 * on) / tot;
-  console.log(`     ${pct.toFixed(0)}% of the engine's circle is skin -- the channel wall`);
-  if (pct < 25) bad(`only ${pct.toFixed(0)}% of the engine is in a channel`);
-  if (pct > 90) bad(`${pct.toFixed(0)}% of the engine is skin -- it is buried, not seated`);
-
-  // And the plan must narrow the whole way. The core passes inside where the
-  // channels end up, so channels that form late leave a waist.
-  let prev = null, pinch = 0;
-  for (let i = 800; i <= 1000; i++) {
-    const hw = fu.halfWidthAt(-fu.length * (i / 1000));
-    if (prev !== null && hw > prev + 1e-4) pinch = Math.max(pinch, hw - prev);
-    prev = hw;
-  }
-  console.log(`     plan narrows monotonically to ${(1000 * pinch).toFixed(1)} mm`);
-  if (pinch > 0.01) bad(`the afterbody pinches in and swells back out by ${(1000 * pinch).toFixed(0)} mm`);
+  console.log(`     valley ${(yEng - yMid).toFixed(3)} m deep between the lobes`);
+  if (yEng - yMid < 0.05) bad('there is no valley between the lobes for the engines');
 }
 
 /* ---- the tails are placed by their own stations, and form a pi --------- */
