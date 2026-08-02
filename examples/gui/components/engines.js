@@ -773,8 +773,6 @@ export function turboshaft({
   sh.rotation.x = Math.PI / 2;
   sh.position.z = (zFwd + zAftEnd) / 2;
   out.add(sh);
-  out.add(tubeZ(TS.outR * D, TS.outR * 2.6 * D,
-                zFwd - 0.012 * L, zFwd - 0.030 * L, M.hardware, 24));
   g.add(out);
 
   g.userData.power = power;
@@ -955,9 +953,6 @@ export function pistonEngine({
   shaft.position.z = -(PE.shaftLen * B + 0.30 * B) / 2;
   rotor.add(shaft);
 
-  const zCollar = -0.52 * PE.shaftLen * B;
-  rotor.add(tubeZ(PE.shaft * B, PE.flange * B,
-                  zCollar + 0.07 * B, zCollar - 0.07 * B, M.hardware, 28));
   g.add(rotor);
 
   // ---- crankcase ---------------------------------------------------------
