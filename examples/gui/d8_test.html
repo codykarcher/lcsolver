@@ -356,7 +356,7 @@ function build() {
     `roof dished: cabin ` +
     `<span>${(u.crownAt(zc) - valleyAt(zc)).toFixed(2)}</span>, aft ` +
     `<span>${(u.crownAt(za) - valleyAt(za)).toFixed(2)}</span>` +
-    (u.vesselFitFactor !== undefined && u.vesselFitFactor < 0.999
+    (u.vesselFitFactor != null && u.vesselFitFactor < 0.999
       ? `<br>vessel shrunk to <span>${(100 * u.vesselFitFactor).toFixed(0)}%</span> to fit`
       : '') + `<br>` +
     `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +

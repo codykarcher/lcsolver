@@ -933,6 +933,12 @@ export function d8Fuselage({
     },
   });
 
+  // Declared whether or not a vessel was asked for. A field that exists only
+  // sometimes is a field every caller has to guard, and the guard is easy to get
+  // wrong -- `undefined < 1` is false but `null < 1` is TRUE, which would have
+  // reported a body with no vessel as having shrunk its vessel to nothing.
+  u.vesselFitFactor = null;
+
   // Built last: fitting the vessel inside the skin needs the finished body's own
   // shapeAt and section, so it cannot be done before they exist.
   if (vessel) {
