@@ -470,26 +470,34 @@ export function bareTurbofan({
  * tangent but never curvature-continuous -- the join catches the light as a
  * ring however finely it is sampled.
  *
- * The thickness law is  h ~ sqrt(s) (1-s)^A , peaking near the nose rather
- * than at mid-chord. That is what an inlet cowl actually is: blunt at the lip
- * and thin over most of its length, unlike a wing section. A is set from where
- * the peak is wanted, since sqrt(s)(1-s)^A peaks at s = 1/(1+2A).
+ * The section is a CAMBERED PLATE with a round nose, not an aerofoil. An
+ * aerofoil law carries its thickness through the first third of the chord and
+ * leaves the cowl bulky at quarter length; a cowl is closer to a plate of
+ * roughly even thickness, blunt at the lip and thinning to about half at the
+ * trailing edge.
  *
- * Leading-edge radius follows from the thickness law as h'^2/2 = K^2/(2c),
- * which for these numbers is about 0.057 fan radii -- a blunt lip, as it
- * should be.
+ *     h(s) = plateH . sqrt(s / (s + noseA)) . (1 - (1 - teFrac) s)
+ *
+ * The first factor is the nose: it rises as sqrt(s) from zero, so the leading
+ * edge is round and curvature-continuous, and levels off within a few percent
+ * of chord instead of continuing to grow. The second is the taper to the
+ * trailing edge, which stays blunt rather than closing to a point.
+ *
+ * Leading-edge radius falls out as plateH^2 / (2 . noseA . c) -- about 0.044
+ * fan radii here -- rather than being chosen separately.
  */
 const NAC = {
   lipZ:      0.78,   // leading edge station, ahead of the fan plane
   cowlAft:  -2.35,   // trailing edge
-  peakS:     0.13,   // where the section is thickest, as a fraction of chord
-  peakH:     0.100,  // ... and how thick, x fan radius
+  plateH:    0.085,  // half-thickness of the plate, x fan radius
+  noseA:     0.026,  // nose bluntness: smaller is sharper
+  teFrac:    0.50,   // trailing-edge thickness, as a fraction of plateH
   //  Mean line (the offset axis): [fraction of chord aft of the LE, radius].
   //  Set so the duct wall clears the fan case, which starts only 0.19 chords
   //  aft of the leading edge and so leaves very little length to diffuse in.
   mean: [
-    [0.000, 0.960], [0.080, 1.055], [0.190, 1.145],
-    [0.320, 1.170], [0.550, 1.130], [1.000, 0.995],
+    [0.000, 0.960], [0.060, 1.060], [0.170, 1.150], [0.300, 1.178],
+    [0.450, 1.172], [0.600, 1.130], [0.780, 1.060], [1.000, 0.985],
   ],
 };
 
@@ -530,11 +538,10 @@ export function turbofan(opts = {}) {
     return meanPts[meanPts.length - 1].y;
   };
 
-  // Half-thickness: sqrt(s)(1-s)^A, normalised to peakH at peakS.
-  const A = (1 / NAC.peakS - 1) / 2;
-  const gp = Math.sqrt(NAC.peakS) * Math.pow(1 - NAC.peakS, A);
-  const halfT = (sv) =>
-    (NAC.peakH * R / gp) * Math.sqrt(sv) * Math.pow(Math.max(0, 1 - sv), A);
+  // Half-thickness: round nose, plate through the middle, blunt trailing edge.
+  const halfT = (sv) => NAC.plateH * R
+    * Math.sqrt(sv / (sv + NAC.noseA))
+    * (1 - (1 - NAC.teFrac) * sv);
 
   // Sample with s = (i/n)^2 so points crowd the nose, where the square-root
   // term turns fastest -- evenly spaced stations there give a faceted lip.
