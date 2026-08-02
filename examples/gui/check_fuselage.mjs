@@ -28,17 +28,9 @@ import { jetlinerFuselage } from './components/fuselage.js';
 // they span tip radii from 0.32 to 0.70 of the body radius and nose lengths
 // from 0.9 to 1.7 diameters, which is the range the blunting has to survive.
 const CASES = [
-  { name: '737',      radius: 1.88, fineness: 10.1,
-    shape: { noseD: 1.2, radomeFrac: 0.36, radomeAxis: 0.33, radomeBase: 0.55, radomeTip: 0.18, radomeFull: 0.85, foreR: 2.0,
-             foreK: 2.2, kinkBlend: 0.05, tailD: 2.9, tailA: 1.6, tailB: 0.75, tipR: 0.1, crownHold: 1.0 } },
-  { name: 'A350',     radius: 2.98, fineness: 11.2,
-    shape: { noseD: 1.1, radomeFrac: 0.4, radomeAxis: 0.36, radomeBase: 0.62, radomeTip: 0.3, radomeFull: 0.9, foreR: 2.2,
-             foreK: 2.3, kinkBlend: 0.05, tailD: 3.1, tailA: 1.55, tailB: 0.72, tipR: 0.09, crownHold: 1.0 } },
-  { name: 'Citation', radius: 0.8, fineness: 8.1,
-    shape: { noseD: 0.85, radomeFrac: 0.45, radomeAxis: 0.38, radomeBase: 0.66, radomeTip: 0.38, radomeFull: 0.9, foreR: 2.3,
-             foreK: 2.4, kinkBlend: 0.05, tailD: 2.2, tailA: 1.7, tailB: 0.8, tipR: 0.12, crownHold: 0.9 } },
-  { name: 'stubby',   radius: 1.20, fineness: 7.0 },
-  { name: 'widebody', radius: 3.20, fineness: 13.0 },
+  { name: '737-ish',   radius: 1.88, fineness: 10.1 },
+  { name: 'stubby',    radius: 1.20, fineness: 7.0 },
+  { name: 'widebody',  radius: 3.20, fineness: 13.0 },
 ];
 
 let failures = 0;
@@ -187,59 +179,33 @@ for (const c of CASES) {
   if (keelRise < u.radius * (0.5 + u.crownHold / 2))
     bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
 
-  /* 5b. the nose is a radome, a break and a fairing --------------------- */
-  // Five separate claims, because the nose is now two bodies and the failures
-  // live at their seams rather than anywhere in the middle.
-  const yAx = u.radomeAxisY;
-  if (Math.abs(u.shapeAt(0).yc - yAx) > 1e-9)
-    bad(`nose point is at ${u.shapeAt(0).yc.toFixed(3)}, radome axis is ${yAx.toFixed(3)}`);
-
-  // The radome axis is constant, so the tip cap should be a sphere EXACTLY --
-  // no argument about crown against keel. This is the check that three earlier
-  // constructions could only ever pass approximately.
-  const tipRho = (which) => {
-    const yTip = u.shapeAt(0).yc, d = 0.012 * u.radius;
-    let lo = 0, hi = -u.noseLength;
-    for (let i = 0; i < 60; i++) {
-      const m = (lo + hi) / 2;
-      if (Math.abs(u[which](m) - yTip) < d) lo = m; else hi = m;
-    }
-    return d * d / (2 * Math.abs(lo));
-  };
-  const rhoC = tipRho('crownAt'), rhoK = tipRho('keelAt');
-  if (Math.abs(rhoK / rhoC - 1) > 0.005)
-    bad(`tip not round: keel/crown curvature ${(rhoK / rhoC).toFixed(4)}`);
-  for (const [what, got] of [['crown', rhoC], ['keel', rhoK]]) {
-    if (Math.abs(got / u.noseRadius - 1) > 0.08)
-      bad(`${what} tip radius ${got.toFixed(3)} vs ${u.noseRadius.toFixed(3)} asked`);
-  }
-
-  // Neither profile may leave the barrel envelope or turn back on itself.
-  let hang = 0, bulge = 0, prevC = null, prevK = null;
-  for (let i = 0; i <= 200; i++) {
-    const z = -u.noseLength * (i / 200);            // point -> barrel join
-    if (u.keelAt(z) < -u.radius - 1e-6 || u.crownAt(z) > u.radius + 1e-6) hang++;
+  /* 5b. the nose is the tailcone, mirrored ------------------------------- */
+  // Same three claims as aft, with crown and keel swapped: the keel holds its
+  // line, the crown spends the taper, and neither profile bulges past the
+  // barrel on the way. The last one is what "the nose hangs below the tube"
+  // was, stated as a measurement.
+  let keelDrift = 0, crownFall = 0, hang = 0, bulge = 0;
+  let prevC = null, prevK = null;
+  for (let i = 0; i <= 80; i++) {
+    const z = -u.noseLength * (i / 80);          // TIP (i=0) -> barrel join
+    keelDrift = Math.max(keelDrift, Math.abs(u.keelAt(z) - u.keelAt(u.cabinZ[0])));
+    crownFall = Math.max(crownFall, u.crownAt(u.cabinZ[0]) - u.crownAt(z));
+    if (u.keelAt(z) < -u.radius - 1e-6) hang++;
+    if (u.crownAt(z) > u.radius + 1e-6) hang++;
+    // Both lines must open out monotonically going aft from the point. A bulge
+    // is a profile that turns back on itself on the way, which no amount of
+    // staring at a shaded three-quarter view reliably catches.
     if (prevC !== null && (u.crownAt(z) < prevC - 1e-9 || u.keelAt(z) > prevK + 1e-9)) bulge++;
     prevC = u.crownAt(z); prevK = u.keelAt(z);
   }
-  if (hang) bad(`nose leaves the barrel envelope at ${hang} stations`);
+  const keelBudget = (1 - u.keelHold) * u.radius + 1e-6;
+  if (hang) bad(`nose profile leaves the barrel envelope at ${hang} stations`);
   if (bulge) bad(`nose profile is not monotonic at ${bulge} stations`);
-
-  // The fairing has to arrive PARALLEL, or the parallel part starts creased.
-  const hh = u.radius * 1e-4;
-  const probe = 0.02 * (u.noseLength - u.radomeLength);
-  const dYc = (u.shapeAt(u.cabinZ[0] - probe).yc - u.shapeAt(u.cabinZ[0]).yc) / probe;
-  if (Math.abs(dYc) > 0.06) bad(`centreline meets the barrel at dyc/dz = ${dYc.toFixed(4)}`);
-
-  // And there should be a real break at the windscreen -- present, but bounded.
-  // A nose with no break is the smooth blob this replaced; an unbounded one is
-  // a crease that will catch a highlight.
-  const crownAng = (z) => Math.atan2(
-    u.crownAt(z - hh) - u.crownAt(z + hh), 2 * hh) * 180 / Math.PI;
-  const brk = crownAng(u.noseBreakZ - u.radius * 0.12)
-            - crownAng(u.noseBreakZ + u.radius * 0.12);
-  if (brk < 5) bad(`no break at the windscreen: crown turns only ${brk.toFixed(1)} deg`);
-  if (brk > 75) bad(`break at the windscreen is ${brk.toFixed(1)} deg -- a crease`);
+  if (keelDrift > keelBudget)
+    bad(`keel moves ${keelDrift.toFixed(3)}, budget ${keelBudget.toFixed(3)} at keelHold ${u.keelHold}`);
+  if (crownFall < u.radius) bad(`crown only falls ${crownFall.toFixed(2)} -- taper is not on the crown`);
+  const joinYc = Math.abs(u.shapeAt(u.cabinZ[0]).yc);
+  if (joinYc > 1e-6) bad(`centreline is ${joinYc.toFixed(4)} off axis at the nose join`);
 
   /* 6. no degenerate triangles ------------------------------------------ */
   // Slivers of near-zero area are what a collapsed grid row leaves behind, and
@@ -295,13 +261,9 @@ for (const c of CASES) {
               `${open} open edges, ${inward} inward normals, ` +
               `${slivers} slivers, ${overlaps} overlaps`);
   console.log(`  crown drift ${crownDrift.toExponential(1)}/${crownBudget.toExponential(1)}, ` +
-              `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}`);
-  console.log(`  radome ${(u.radomeLength / u.radius).toFixed(2)}R on an axis at ` +
-              `${(yAx / u.radius).toFixed(2)}R, base ${(u.radomeBaseRadius / u.radius).toFixed(2)}R, ` +
-              `tip sphere ${u.noseRadius.toFixed(3)} -> ${rhoC.toFixed(3)}/${rhoK.toFixed(3)} ` +
-              `(round to ${(100 * Math.abs(rhoK / rhoC - 1)).toFixed(2)}%)`);
-  console.log(`  break turns the crown ${brk.toFixed(1)} deg, ` +
-              `fairing meets the barrel at ${Math.abs(dYc).toExponential(1)}`);
+              `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
+              `nose: keel moves ${keelDrift.toFixed(3)}/${keelBudget.toFixed(3)}, ` +
+              `crown falls ${crownFall.toFixed(2)}, tip y ${u.shapeAt(0).yc.toFixed(2)}`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nPASS: bodies are closed, outward and clean at the joins');
