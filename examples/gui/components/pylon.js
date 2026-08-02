@@ -50,6 +50,7 @@ const P = {
   above:     6,     // ... and above it
   nSide:     22,    // section points per side
   fillet:    0.14,  // corner radius on the over-mount outline
+  bevel:     0.028, // rounding on the extruded edges
 };
 
 /** Half-thickness of the streamwise section at chord fraction `s`. */
@@ -221,6 +222,34 @@ function roundCorners(pts, radius, minTurn = 0.30, seg = 7) {
 }
 
 /**
+ * Move a closed polygon inward by `d`, along the local inward normal.
+ *
+ * Needed because ExtrudeGeometry's bevel grows the profile OUTWARD: bevelling
+ * a shape that already sits on the core would lift it back off by exactly the
+ * bevel size. Offsetting first and bevelling second puts the widest part of
+ * the finished edge back on the original outline.
+ *
+ * The polygon must be counter-clockwise, so the interior is to the left of
+ * each edge and the left normal points inward. Averaging the two adjacent edge
+ * normals is only exact on a straight run, but the outline is filleted and
+ * densely sampled by this point, so there are no sharp vertices left for that
+ * approximation to spoil.
+ */
+function offsetPolygon(pts, d) {
+  const n = pts.length;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n], p = pts[i], next = pts[(i + 1) % n];
+    const e1 = new THREE.Vector2().subVectors(p, prev).normalize();
+    const e2 = new THREE.Vector2().subVectors(next, p).normalize();
+    const nrm = new THREE.Vector2(-(e1.y + e2.y), e1.x + e2.x);
+    if (nrm.lengthSq() < 1e-12) { out.push(p.clone()); continue; }
+    out.push(p.clone().addScaledVector(nrm.normalize(), d));
+  }
+  return out;
+}
+
+/**
  * Over-mount pylon: the engine sits above the wing and the pylon hangs down.
  *
  * ONE closed outline, extruded. Built as a strut plus a separate fairing it
@@ -303,11 +332,16 @@ export function overMountPylon(engine, opts = {}) {
 
   const rounded = roundCorners(pts, P.fillet * R);
 
+  // Rounded edges rather than a slab with square sides. The profile is pulled
+  // in by the bevel size first, so the finished edge sits back on the outline.
   const th = P.rootT * 2 * R;
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(rounded), {
-    depth: th, bevelEnabled: false, curveSegments: 1,
-  });
-  geo.translate(0, 0, -th / 2);
+  const bev = Math.min(P.bevel * R, th * 0.32);
+  const geo = new THREE.ExtrudeGeometry(
+    new THREE.Shape(offsetPolygon(rounded, bev)), {
+      depth: th - 2 * bev, bevelEnabled: true,
+      bevelThickness: bev, bevelSize: bev, bevelSegments: 3, curveSegments: 1,
+    });
+  geo.translate(0, 0, -(th - 2 * bev) / 2);
   geo.computeVertexNormals();
   const body = new THREE.Mesh(geo, M.structure);
   body.rotation.y = -Math.PI / 2;            // shape X -> world Z, extrude -> X

@@ -376,6 +376,10 @@ export function bareTurbofan({
     });
     ogv.position.z = zCaseAft + 0.04 * R + 0.5 * cOgv;   // ~= -0.61 rFan
     g.add(ogv);
+    // Aftmost blade or vane. The fan case runs further back than this, so
+    // "aft of the case" is a stricter rule than "clear of the blading" -- and
+    // it is the blading that anything mounted here actually has to miss.
+    g.userData.vaneAft = zCaseAft + 0.04 * R;
   }
 
   // Core body. A spline through six stations rather than straight segments:
