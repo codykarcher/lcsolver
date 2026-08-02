@@ -127,7 +127,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                     polar=YORK_C, W_engine=None, eta_break=ETA_BREAK,
                     tau_max=0.14, lam_s_pin=None, lam_t_pin=None,
                     f_L_total=1.0, f_slat=0.1, e_model="nita",
-                    winglet_h_max=1e-6):
+                    winglet_h_max=None):
     """Add the cranked-planform wing. Returns ``(group, constraints)``.
 
     Same signature and same exposed names as ``wing.add_wing``, so
@@ -178,22 +178,25 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
     # is what makes an interior optimum exist -- and that curve needs a
     # real source (vertical-surface Trefftz theory or an AVL study), not a
     # remembered constant. Until then the machinery stays, off.
-    h_wl = V("h_winglet", 0.01, "m", "winglet height, per tip")
-    S_wl = V("S_winglet", 0.01, "m^2", "winglet area, per tip")
-    W_wl = V("W_winglet", 10.0, "N", "winglet system weight, both tips")
+    _winglets = winglet_h_max is not None
+    if _winglets:
+        h_wl = V("h_winglet", 0.01, "m", "winglet height, per tip")
+        S_wl = V("S_winglet", 0.01, "m^2", "winglet area, per tip")
+        W_wl = V("W_winglet", 10.0, "N", "winglet system weight, both tips")
     # 0.45: a well-designed winglet is worth ~45% of the same length of
     # span (Whitcomb/Kroo-class result). Constant, so tall winglets are
     # slightly overcredited -- hence the h/b validity fence below, which is
     # the k_wl literature's fitted domain, not a design gate.
-    k_wl = C("k_winglet", 0.45, "-", "effective-span fraction per unit height")
+        k_wl = C("k_winglet", 0.45, "-",
+                 "effective-span fraction per unit height")
     # INSTALLED areal density, from 737 blended-winglet retrofit data
     # (~170 kg per side on ~2.4 m^2 including wing reinforcement): the
     # reinforcement IS the structural echo, carried empirically here rather
     # than through the box -- the one deliberate simplification of v1.
-    rho_wl = C("rho_winglet", 70.0 * 9.81, "N/m^2",
-               "installed winglet areal weight incl. reinforcement")
-    c_dp_wl = C("c_dp_winglet", 0.0060, "-",
-                "winglet profile drag coefficient on its own area")
+        rho_wl = C("rho_winglet", 70.0 * 9.81, "N/m^2",
+                   "installed winglet areal weight incl. reinforcement")
+        c_dp_wl = C("c_dp_winglet", 0.0060, "-",
+                    "winglet profile drag coefficient on its own area")
     e = V("e", 0.85, "-", "Oswald efficiency factor")
     fl = V("f_lambda_w", 0.02, "-", "empirical efficiency function of taper")
     xw = V("x_w", 18.0, "m", "position of wing aerodynamic centre")
@@ -229,7 +232,7 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
                L_max=Lmax, V_fuel_max=Vfuel, W_fuel_wing=WfuelWing,
                W_wing=Wwing, eta_s=etas, tan_Lambda_LE=tanLE,
                tan_Lambda_qc_inn=tanQCi, dc_dy_inn=Dinn, dc_dy_out=Dout,
-               h_winglet=h_wl, W_winglet=W_wl)
+               **(dict(h_winglet=h_wl, W_winglet=W_wl) if _winglets else {}))
 
     # ---- per-segment aero variables ---------------------------------------
     alpha = Vn("alpha_w", 0.08, "-", "wing angle of attack")
@@ -341,15 +344,12 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         tanQCi + 0.25 * Dinn == tanLE,                         # [SP] SigEq
         tau <= taumax,
         WfuelWing <= rhofuel * Vfuel * g,
-        # Winglet geometry and costs. Area ~ 0.65 h c_tip (tapered device on
-        # the tip chord); weight at installed areal density; validity fence
-        # at h/b = 0.15.
-        S_wl >= 0.65 * h_wl * ct,
-        W_wl >= rho_wl * 2.0 * S_wl,
-        h_wl <= 0.15 * b,
-        *([h_wl <= C("h_winglet_max", winglet_h_max, "m",
-                     "winglet enable/cap; ~0 pins the trade off")]
-          if winglet_h_max is not None else []),
+        # Winglet geometry and costs -- built only when the study asks.
+        *([S_wl >= 0.65 * h_wl * ct,
+           W_wl >= rho_wl * 2.0 * S_wl,
+           h_wl <= 0.15 * b,
+           h_wl <= C("h_winglet_max", winglet_h_max, "m",
+                     "winglet study cap")] if _winglets else []),
         dxACwing <= 1. / 24. * (co + 5. * ct) / S * b ** 2 * tanL,
     ]
 
@@ -375,8 +375,9 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
               ("f_lete", 0.1), ("f_ribs", 0.15), ("f_spoiler", 0.02),
               ("f_watt", 0.03)]
     fracs = [C(n, v, "-", f"{n} fractional weight") for n, v in fnames]
-    cons += [Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)
-                       + W_wl]
+    cons += ([Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)
+                        + W_wl] if _winglets else
+             [Wwing >= Cwing * wb["W_struct"] + wb["W_struct"] * sum(fracs)])
 
     # ---- aerodynamics -----------------------------------------------------
     cons += [
@@ -390,7 +391,8 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         CLw == CLaw * alpha,
         alpha <= amax,
         Dwing == 0.5 * rho * Vinf ** 2 * S * CDw,
-        CDw >= CDp + CDi + c_dp_wl * 2.0 * S_wl / S,
+        (CDw >= CDp + CDi + c_dp_wl * 2.0 * S_wl / S) if _winglets
+            else (CDw >= CDp + CDi),
         # Induced drag on TOTAL lift, not wing lift. TASOPT's Trefftz-plane
         # CDi charges the aircraft CL -- its printed cruise numbers close
         # exactly as CL_tot^2/(pi*AR*e) -- because the fuselage carryover
@@ -398,13 +400,14 @@ def add_wing_tasopt(f, N, state, *, sweep_deg=None, prefix="Wing_",
         # D8's Ltow = 1.195 carryover 19.5% of the lift induced-drag-free,
         # a 1.43x discount on CDi. f_L_total is the caller's Ltow; the
         # conventional tube's 1.02 makes this a 4% correction there.
-        # Induced drag on the EFFECTIVE span (b + 2 k h_wl); e stays the
-        # PLANAR Trefftz value at geometric span so nothing double-counts.
-        # Expanded so the row is posynomial-legal; at h_wl on its floor it
-        # reduces exactly to the planar row.
-        CDi * pi * e * (b ** 2 + 4.0 * k_wl * b * h_wl
-                        + 4.0 * k_wl ** 2 * h_wl ** 2)
-            >= TipReduct * (f_L_total * CLw) ** 2 * S,        # [SP] SigIneq
+        # Induced drag: PLANAR by default. The winglet-study variant runs on
+        # effective span (b + 2 k h)^2 with e kept planar so nothing
+        # double-counts; see the winglet block for why it is off.
+        *([CDi * pi * e * (b ** 2 + 4.0 * k_wl * b * h_wl
+                           + 4.0 * k_wl ** 2 * h_wl ** 2)
+              >= TipReduct * (f_L_total * CLw) ** 2 * S]      # [SP] SigIneq
+          if _winglets else
+          [CDi >= TipReduct * (f_L_total * CLw) ** 2 / (pi * e * AR)]),
         Re == rho * Vinf * mac / mu,
     ]
 
