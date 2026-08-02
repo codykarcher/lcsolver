@@ -22,6 +22,33 @@ const fin = craft.userData.parts.verticalTail;
 let bad = 0;
 const fail = (m) => { console.log('  FAIL ' + m); bad++; };
 
+/**
+ * Do the triangles face OUT?
+ *
+ * The failure this catches is total rather than subtle: backface culling
+ * removes an inward-facing patch completely, so the artwork does not look
+ * wrong, it looks absent -- indistinguishable from never having been built.
+ * Every other check here passed on decals that could not be seen at all,
+ * because they all measured where the vertices were and none asked which way
+ * the triangles between them pointed.
+ */
+function facesOutward(mesh, outwardAt, label) {
+  const pos = mesh.geometry.getAttribute('position');
+  const ix = mesh.geometry.getIndex();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  let inward = 0;
+  for (let t = 0; t < ix.count; t += 3) {
+    a.fromBufferAttribute(pos, ix.getX(t));
+    b.fromBufferAttribute(pos, ix.getX(t + 1));
+    c.fromBufferAttribute(pos, ix.getX(t + 2));
+    const n = b.clone().sub(a).cross(c.clone().sub(a));
+    const centre = a.clone().add(b).add(c).multiplyScalar(1 / 3);
+    if (n.dot(outwardAt(centre)) <= 0) inward++;
+  }
+  if (inward) fail(`${label} has ${inward} of ${ix.count / 3} triangles facing inward -- invisible`);
+  return inward === 0;
+}
+
 /* ---- the fin's own triangles, in its local frame ---------------------- */
 const skin = fin.userData.skinMesh.geometry;
 const P = skin.getAttribute('position').array;
@@ -134,6 +161,7 @@ for (const name of artNames) {
       fail(`${mesh.name} standoff ${lo.toFixed(4)}..${hi.toFixed(4)}, wanted ${OFFSET}`);
     }
     if (span > 5e-4) fail(`${mesh.name} standoff varies by ${(1000 * span).toFixed(2)} mm -- not conformal`);
+    facesOutward(mesh, (p) => new THREE.Vector3(0, Math.sign(p.y) || 1, 0), mesh.name);
 
     /* ---- does it read the right way round? ---------------------------- */
     // Stated in WORLD terms and in terms of what a viewer sees, because the
@@ -307,6 +335,10 @@ for (const piece of titles.children) {
       worstIn = Math.min(worstIn, nearestFuse(new THREE.Vector3().fromBufferAttribute(pos, i)));
     }
     if (worstIn < 1e-4) fail(`${mesh.name} touches or enters the skin (${worstIn.toFixed(5)})`);
+    facesOutward(mesh, (p) => {
+      const s2 = fuse.userData.shapeAt(p.z);
+      return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
+    }, mesh.name);
 
     // Reads the right way round, by the same rule as the fin: nose is +z, and
     // a viewer off the starboard side sees +z to their left.

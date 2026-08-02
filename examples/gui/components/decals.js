@@ -230,13 +230,15 @@ export function surfaceArt(surface, {
   const toWorld = (v) => v.clone().transformDirection(surface.matrixWorld);
 
   for (const [side, chain] of [[1, faceA], [-1, faceB]]) {
-    // The outward direction of this face, at the artwork's centre, in world
-    // axes. Read from the geometry rather than assumed, so a canted fin -- or
-    // one canted past the vertical -- still gets it right.
+    // The outward direction of this face at the artwork's centre, kept in BOTH
+    // frames because the two questions it answers live in different ones.
+    // Which side of the aeroplane the face is on is a world question; which way
+    // its triangles wind is a local one, since that is the frame the positions
+    // are in. Using the world vector for both is what culled the port face.
     const midRing = ringAt(loft, hMid);
-    const outward = toWorld(
-      facepoint(midRing, chain, anchor).sub(facepoint(midRing, side > 0 ? faceB : faceA, anchor)));
-    const faceStarboard = outward.x > 0;
+    const outward = facepoint(midRing, chain, anchor)
+      .sub(facepoint(midRing, side > 0 ? faceB : faceA, anchor));
+    const faceStarboard = toWorld(outward).x > 0;
     const pos = [], uv = [], idx = [];
     for (let iv = 0; iv < nv; iv++) {
       const x = x0 + (x1 - x0) * (iv / (nv - 1));
@@ -276,6 +278,10 @@ export function surfaceArt(surface, {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.computeVertexNormals();
+    // A fin patch is nearly flat, so the face's outward at its centre stands
+    // for the whole of it. Derived here too, though this one was already right
+    // -- an assumption that happens to hold is still an assumption.
+    windOutward(g, () => outward);
     const mesh = new THREE.Mesh(g, artMaterial(texture));
     // Named for the side it actually ends up on, which is not the sign of the
     // local face -- that was the whole mistake this now derives its way out of.
@@ -404,6 +410,42 @@ export function fuselageTitles(fuselage, { textureFor, titles = FUSELAGE_TITLES,
 }
 
 /**
+ * Turn a patch's triangles to face outward, whichever way its grid happened to
+ * wind.
+ *
+ * Worked out from the geometry rather than reasoned about, because reasoning
+ * about it is exactly what fails: the winding that faces outward depends on how
+ * the two grid directions are ordered AND on which way each of them runs on the
+ * surface, and the second face of a body reverses one of those. Get it wrong
+ * and the artwork is not subtly off, it is invisible -- backface culling
+ * removes it completely, which looks like the decal never being created at all.
+ *
+ * Voted over every triangle rather than decided on the first, so one sliver at
+ * a corner cannot flip the whole patch.
+ */
+function windOutward(geo, outwardAt) {
+  const pos = geo.getAttribute('position'), idx = geo.getIndex();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3(), n = new THREE.Vector3();
+  let vote = 0;
+  for (let t = 0; t < idx.count; t += 3) {
+    a.fromBufferAttribute(pos, idx.getX(t));
+    b.fromBufferAttribute(pos, idx.getX(t + 1));
+    c.fromBufferAttribute(pos, idx.getX(t + 2));
+    n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a));
+    vote += n.dot(outwardAt(a.add(b).add(c).multiplyScalar(1 / 3))) > 0 ? 1 : -1;
+  }
+  if (vote >= 0) return false;
+  const arr = idx.array;
+  for (let t = 0; t < arr.length; t += 3) {
+    const tmp = arr[t + 1]; arr[t + 1] = arr[t + 2]; arr[t + 2] = tmp;
+  }
+  idx.needsUpdate = true;
+  geo.computeVertexNormals();
+  return true;
+}
+
+/**
  * The angle at which a section passes through a given world height.
  *
  * Bisected on the upper half, where height rises monotonically with angle for
@@ -521,6 +563,12 @@ export function fuselageArt(fuselage, {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.computeVertexNormals();
+    // Turned to face out from the body's own normal, not from an assumed
+    // ordering of the grid -- getting this wrong culled the whole row.
+    windOutward(g, (p) => {
+      const s = fu.shapeAt(p.z);
+      return fu.normalAt(p.z, Math.atan2(p.y - s.yc, p.x));
+    });
     const mesh = new THREE.Mesh(g, artMaterial(texture));
     mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}`;
     group.add(mesh);
