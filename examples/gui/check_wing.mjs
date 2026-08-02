@@ -65,9 +65,9 @@ const CASES = [
   { name: 'htail',       build: () => horizontalTail() },
   { name: 'no crank',    build: () => wing({ kink: null }) },
   { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
-  { name: 'tight taper', build: () => wing({ kinkChord: 3.3, tipChord: 0.26 }) },
+  { name: 'tight taper', build: () => wing({ crankRatio: 0.55, tipRatio: 0.08 }) },
   { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2,
-                                             kinkChord: 3.8, tipChord: 1.02 }) },
+                                             crankRatio: 0.73, tipRatio: 0.27 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
 ];
@@ -84,14 +84,19 @@ for (const c of CASES) {
 
   /* the chords are what was asked for ----------------------------------- */
   if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
-  // The three chords come out exactly as given. Nothing scales them, nothing
-  // solves for them, so anything other than equality is a transcription bug.
-  for (const [what, got, want] of [['root', u.rootChord, p.rootChord],
-                                   ['tip', u.tipChord, p.tipChord],
-                                   ...(p.kink != null
-                                       ? [['crank', u.kinkChord, p.kinkChord]] : [])]) {
-    if (Math.abs(got - want) > 1e-12) bad(`${what} chord ${got}, asked ${want}`);
-  }
+  // The chords follow from the root and the two ratios, each measured off the
+  // chord inboard of it. Checked as a chain, because that is the failure mode:
+  // a tip ratio applied to the root instead of the crank looks plausible and is
+  // 27% wrong.
+  const wantKink = p.kink == null ? null : p.rootChord * p.crankRatio;
+  const wantTip = (wantKink ?? p.rootChord) * p.tipRatio;
+  if (Math.abs(u.rootChord - p.rootChord) > 1e-12)
+    bad(`root chord ${u.rootChord}, asked ${p.rootChord}`);
+  if (wantKink != null && Math.abs(u.kinkChord - wantKink) > 1e-12)
+    bad(`crank chord ${u.kinkChord}, root x crankRatio is ${wantKink}`);
+  if (Math.abs(u.tipChord - wantTip) > 1e-12)
+    bad(`tip chord ${u.tipChord}, ${p.kink == null ? 'root' : 'crank'} x tipRatio ` +
+        `is ${wantTip}`);
 
   /* area and aspect ratio are RESULTS, and must be the right ones --------- */
   // Against the two-trapezoid formula worked straight off the inputs, which the
@@ -99,8 +104,7 @@ for (const c of CASES) {
   // routes to the same number is the only way this is worth checking at all.
   {
     const semi = p.span / 2, cR = p.rootChord;
-    const cK = p.kink == null ? null : p.kinkChord;
-    const cT = p.tipChord;
+    const cK = wantKink, cT = wantTip;
     const full = p.kink == null
       ? semi * (cR + cT)
       : semi * ((cR + cK) * p.kink + (cK + cT) * (1 - p.kink));

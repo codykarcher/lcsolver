@@ -41,17 +41,18 @@ const smooth = (s) => s * s * (3 - 2 * s);
  *     at the leading edge and there is only one of it, so the crank is a break
  *     in the trailing edge alone -- which is what it is on a real airliner,
  *     where the inboard trailing edge is carrying the gear and the wing box;
- *   - the chords are given DIRECTLY, in the same units as the span, rather than
- *     as ratios of one another. A ratio is one more thing to work out before
- *     you can draw the thing, and taper ratio in particular means different
- *     things on a cranked wing depending on which chord it is measured against.
- *     Three lengths cannot be ambiguous.
+ *   - the chords are one length and two ratios, and each ratio is measured off
+ *     the chord INBOARD of it: the crank against the root, the tip against the
+ *     crank. So they read outboard in the order the wing is built, and neither
+ *     is the conventional "taper ratio" of tip over root -- which is reported
+ *     separately, because on a cranked wing it describes a trapezoid that is
+ *     not there.
  */
 const WING = {
   span:         34.1,  // tip to tip
-  rootChord:     6.0,  // at the centreline
-  kinkChord:    4.38,  // at the crank; ignored when there is no crank
-  tipChord:     1.18,  // at the tip
+  rootChord:     6.0,  // at the centreline, in the same units as the span
+  crankRatio:   0.73,  // crank chord / ROOT chord
+  tipRatio:     0.27,  // tip chord / CRANK chord (/ root, if there is no crank)
   sweep:        27.0,  // degrees, at the LEADING EDGE
   dihedral:      6.0,  // degrees
   twistRoot:     0.0,  // degrees, positive leading edge up
@@ -70,16 +71,24 @@ const WING = {
 /** A plain swept trapezoid: no crank, symmetric sections. */
 const TAIL = {
   ...WING,
-  span:         12.8, rootChord: 3.94, tipChord: 1.18,
+  span:         12.8, rootChord: 3.94, tipRatio: 0.30,
   sweep:        32.0, dihedral: 5.0,
   twistTip:      0.0, kink: null,
   root: '0010', tip: '0010',
   nInner:          2, nOuter: 20,
 };
 
-/** The three chords, straight from the inputs. Nothing is solved for. */
-function chords({ rootChord, kinkChord, tipChord, kink }) {
-  return { cRoot: rootChord, cKink: kink == null ? null : kinkChord, cTip: tipChord };
+/**
+ * The three chords, from one length and two ratios. Nothing is solved for.
+ *
+ * Without a crank there is nothing for `crankRatio` to apply to, so `tipRatio`
+ * falls back to being measured off the root -- otherwise a tail would silently
+ * get a tip chord scaled by a ratio it never had.
+ */
+function chords({ rootChord, crankRatio, tipRatio, kink }) {
+  if (kink == null) return { cRoot: rootChord, cKink: null, cTip: rootChord * tipRatio };
+  const cKink = rootChord * crankRatio;
+  return { cRoot: rootChord, cKink, cTip: cKink * tipRatio };
 }
 
 /** Linear interpolation between root, crank and tip values of something. */
@@ -211,8 +220,13 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     /** Derived, both of them: b^2 / S on the full reference area. */
     aspectRatio: span * span / refArea,
     rootChord: cRoot, kinkChord: cKink, tipChord: cTip,
-    /** Ratios, for anyone who wants them -- derived, like the area. */
-    taperRatio: cTip / (cKink ?? cRoot), kinkTaper: cKink ? cKink / cRoot : null,
+    /**
+     * The conventional taper ratio, tip over ROOT -- derived, and not one of the
+     * inputs. On a cranked wing it describes a straight trapezoid that does not
+     * exist, which is why it is not what the wing is built from.
+     */
+    taperRatio: cTip / cRoot,
+    crankRatio: cKink ? cKink / cRoot : null, tipRatio: cTip / (cKink ?? cRoot),
     sweep: p.sweep, dihedral: p.dihedral,
     mac, yMac: yNum / S, xMacLE: xNum / S, xMacQuarter: xNum / S + 0.25 * mac,
     rootThickness: thicknessOf(rootFoil), tipThickness: thicknessOf(tipFoil),
