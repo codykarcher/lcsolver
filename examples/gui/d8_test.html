@@ -74,6 +74,8 @@
 
 
   <h2>tail</h2>
+  <div class="row"><label for="tailD">aft length &middot; H</label><output id="oTailD"></output></div>
+  <input type="range" id="tailD" min="1.50" max="4.50" step="0.01" value="3.00">
   <div class="row"><label for="tailEdgeHeight">edge height from keel</label><output id="oTailEdgeHeight"></output></div>
   <input type="range" id="tailEdgeHeight" min="0.00" max="1.00" step="0.01" value="0.35">
   <div class="row"><label for="tipR">edge thickness</label><output id="oTipR"></output></div>
@@ -188,7 +190,7 @@ const num = (id) => parseFloat(el(id).value);
 
 const DECK = ['rad', 'fineness', 'noseD'];
 const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinCrown',
-               'tailEdgeHeight', 'tipR', 'uBubble'];
+               'tailD', 'tailEdgeHeight', 'tipR', 'uBubble'];
 const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
 
 let body = null, extra = [];

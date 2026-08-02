@@ -203,6 +203,7 @@ const JET = {
   noseD:      1.70,  // DECK: nose length, in diameters
   tailD:      2.90,  // tailcone length, in diameters
   noseA: 2.7, noseB: 0.50,   // locked
+  tailLaw: 'power',          // a tube closes on a small round tip, not an edge
   tailA: 1.6, tailB: 0.75,   // locked
   tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
   keelHold:   0.45,  // fraction of the NOSE taper taken off the crown
@@ -243,6 +244,31 @@ const JET = {
  * to the side of it -- asks the same question of the same object and cannot
  * disagree about where the surface is.
  */
+/**
+ * How much of the tail's taper has been spent by station fraction s.
+ *
+ * Two laws, because two shapes of tail want different things.
+ *
+ * `power` -- 1 - (1 - s^A)^B -- is what a tube wants: B < 1 rounds the end off
+ * around a small tip, A > 1 flattens the approach to the barrel. It cannot,
+ * though, be smooth at both ends at once. A < 2 leaves the curvature unbounded
+ * at the barrel join and B < 1 leaves the SLOPE unbounded at the tip, and the
+ * D8's defaults, inherited from the tube, had both: measured, a curvature jump
+ * of 0.43 sitting right on the join, which on a wide flat roof is a visible
+ * line across the aeroplane.
+ *
+ * `smooth` is the quintic smoothstep, 6s^5 - 15s^4 + 10s^3. Its first AND
+ * second derivatives vanish at both ends, so the taper leaves the barrel with
+ * no crease and no curvature step, and arrives at the trailing edge tangentially
+ * rather than diving into it. The price is that everything happens in the
+ * middle, where the slope peaks at 1.875 times the average instead of 3 times
+ * it at the very end -- which is the better place for it to be.
+ */
+function tailFall(s, p) {
+  if (p.tailLaw === 'smooth') return s * s * s * (s * (s * 6 - 15) + 10);
+  return 1 - Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+}
+
 function jetShape({ length, radius, p = JET }) {
   const lNose = p.noseD * 2 * radius;
   const lTail = p.tailD * 2 * radius;
@@ -261,7 +287,7 @@ function jetShape({ length, radius, p = JET }) {
     }
     if (z > zTail) return { r: radius, yc: 0 };          // barrel
     const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone
-    const r = rTip + (radius - rTip) * Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+    const r = rTip + (radius - rTip) * (1 - tailFall(s, p));
     return { r, yc: p.crownHold * (radius - r) };
   }
 
@@ -806,9 +832,10 @@ function buildFuselage({
 const D8 = {
   fineness:   9.6,   // DECK: length / (2 * half-height)
   noseD:      1.45,  // DECK: nose length, in full heights
-  tailD:      2.30,  // aft body length, in full heights
+  tailD:      3.00,  // aft body length, in full heights
   noseA: 2.4, noseB: 0.50,
-  tailA: 1.5, tailB: 0.70,
+  tailLaw: 'smooth',  // quintic smoothstep -- see tailFall
+  tailA: 1.5, tailB: 0.70,   // unused while tailLaw is 'smooth'
   // The aft body closes on a LINE: the height goes to nothing while the width
   // does not taper at all, so the back of the aeroplane is a horizontal edge
   // the full width of the cabin. Two tapers, and one of them switched off.

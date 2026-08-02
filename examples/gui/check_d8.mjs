@@ -259,6 +259,46 @@ for (const c of CASES) {
   }
   if (slivers) bad(`${slivers} sliver triangles aft of the nose apex`);
 
+  /* 4d. the aft profile is smooth, not merely continuous ------------------- */
+  // C0 and C1 are not enough on a body with a wide flat roof: a step in
+  // CURVATURE draws a line across it in any highlight, and nothing else here
+  // would see it. The D8's tail inherited the tube's power law, whose exponents
+  // leave the curvature unbounded at the barrel join and the slope unbounded at
+  // the trailing edge -- measured, a jump of 0.38 sitting exactly on the join.
+  //
+  // Scanned from mid-body aft only. Forward of that the nose point has a
+  // legitimately enormous curvature -- that is what a small tip radius IS -- and
+  // it swamps any threshold. This test is about the flat roof and the taper
+  // under it, which is the surface that showed the crease.
+  let kink = 0, kinkAt = 0, teSlope = 0;
+  {
+    const hh = L * 2e-4;
+    const d2 = (f, z) => (f(z - hh) - 2 * f(z) + f(z + hh)) / (hh * hh);
+    const d1 = (f, z) => (f(z - hh) - f(z + hh)) / (2 * hh);
+    for (const line of [(z) => u.crownAt(z), (z) => u.keelAt(z)]) {
+      let prev = null;
+      for (let i = 0; i <= 600; i++) {
+        // 0.30 to 0.99 of the length: past the nose, short of the tip. The tip
+        // is excluded because the stencil would sample beyond z = -L, where
+        // shapeAt clamps and goes flat -- infinite curvature that is an artefact
+        // of asking rather than a defect.
+        const z = -L * (0.30 + 0.69 * i / 600);
+        const c = d2(line, z);
+        if (prev !== null && Math.abs(c - prev) > kink) {
+          kink = Math.abs(c - prev); kinkAt = -z / L;
+        }
+        prev = c;
+      }
+      teSlope = Math.max(teSlope, Math.abs(d1(line, -L * 0.99)));
+    }
+  }
+  if (kink > 0.02)
+    bad(`curvature jumps ${kink.toFixed(4)} at u ${kinkAt.toFixed(3)} -- a crease`);
+  // And the surfaces should arrive at the trailing edge tangentially rather
+  // than diving into it, which is what a taper with an unbounded slope does.
+  if (teSlope > 0.10)
+    bad(`profile meets the trailing edge at slope ${teSlope.toFixed(3)} -- it dives in`);
+
   /* 5. the morph leaves no ring ------------------------------------------- */
   // A jump in the SECTION is a crease running all the way round the body, which
   // is the one defect this construction can produce that a tube cannot. Walk
@@ -317,6 +357,8 @@ for (const c of CASES) {
               `half-width drifts ${planDrift.toFixed(5)} aft, ${dished} dished stations`);
   console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
               `${outside} stations outside the envelope`);
+  console.log(`  worst aft curvature jump ${kink.toFixed(5)} at u ${kinkAt.toFixed(3)}, ` +
+              `trailing-edge slope ${teSlope.toFixed(4)}`);
   console.log(`  worst section spike ${spike.toFixed(2)}x its neighbours, ` +
               `thinnest face ${thinnest.toFixed(4)} (equilateral is 0.43)`);
 }
