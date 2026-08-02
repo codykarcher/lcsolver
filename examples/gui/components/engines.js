@@ -48,9 +48,19 @@ const SEG = 48;
  */
 const LENGTH_OVER_DIAMETER = 2.0;
 
-/** Core outlet wall, and the exhaust annulus inside it. Both x rCore. */
+/** Core outlet wall, x rCore. Adjustable per engine via `outletRadius`. */
 const R_OUTLET = 0.78;
-const EXHAUST_GAP = 0.24;
+
+/**
+ * Exhaust annulus, as a FRACTION of the outlet radius rather than an absolute
+ * offset. That is what makes the plug scale with the outlet: widen the outlet
+ * and the cone grows with it, keeping the slot in proportion, where a fixed
+ * offset would have left the same slot around an ever-fatter cone.
+ *
+ * 0.308 is the previous fixed 0.24 rCore taken against the default 0.78
+ * outlet, so the default engine is unchanged.
+ */
+const EXHAUST_GAP_FRAC = 0.308;
 
 /**
  * Exhaust plug, as fractions of core length: how far the tip runs aft of the
@@ -74,8 +84,10 @@ const PLUG_EMBED = 0.05;
  * The two movable stations that shape the core, between the fixed inlet and
  * the fixed outlet.
  *
- *     z   fraction of core length aft of the inlet plane, 0 at the inlet and
- *         1 at the exit
+ *     z   fraction of the EXPOSED core, 0 at the fan duct's back face and 1
+ *         at the exit plane. Measured from the duct rather than from the core
+ *         front because the part forward of the duct exit is inside the
+ *         bypass annulus and is not shaped by these.
  *     r   radius as a multiple of rCore
  *
  * The inlet is not adjustable because bypass ratio sets it, and the outlet is
@@ -89,10 +101,13 @@ const PLUG_EMBED = 0.05;
  *     waist  {z: 0.12, r: 0.86}   pinch behind the fan
  *     bulge  {z: 0.70, r: 1.28}   turbine
  *
- * which needed four stations rather than two; with two, expect to trade the
- * waist against the bulge.
+ * which needed four stations rather than three.
+ *
+ * The list is not fixed at three -- any number of stations works, they are
+ * simply spline control points between inlet and outlet.
  */
-const CORE_SECTIONS = [{ z: 0.33, r: 1.0 }, { z: 0.67, r: 1.0 }];
+const CORE_SECTIONS = [{ z: 0.25, r: 1.0 }, { z: 0.50, r: 1.0 },
+                       { z: 0.75, r: 1.0 }];
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
@@ -245,7 +260,7 @@ function spinner(rBase, len, material, zBase = 0) {
  */
 export function turbofan({
   rFan = 0.90, bypassRatio = 9, length = null, blades = 40, vanes = 40,
-  sections = CORE_SECTIONS,
+  sections = CORE_SECTIONS, outletRadius = R_OUTLET,
 } = {}) {
   if (!(bypassRatio > 0)) throw new Error('turbofan: bypassRatio must be > 0');
 
@@ -344,25 +359,33 @@ export function turbofan({
                      r: Math.max(0.05, sec.r) }))
     .sort((a, b) => a.z - b.z);
 
+  // Outlet wall, and the plug that scales with it. Measured IN THE EXIT
+  // PLANE, which is the only place the annulus is visible.
+  const rOutlet = Math.max(0.05, outletRadius) * rCore;
+  const rPlugExit = rOutlet * (1 - EXHAUST_GAP_FRAC);
+  // Continuing the same taper forward to the buried base.
+  const rPlugBase = rPlugExit * (1 + PLUG_EMBED / PLUG_TIP);
+
+  // Bypass ratio fixes the core radius AT THE FAN DUCT'S BACK FACE -- that is
+  // the station where the flow splits, so it is the one the area ratio is
+  // about. The core runs at that radius from its front to the duct exit and
+  // is only shaped aft of it, which is also where it is visible.
+  const zSplit = zCaseAft;
+  const Lv = Math.max(0.05 * Lc, zSplit - zAft);       // exposed core length
+
   const ctrl = [
-    new THREE.Vector2(z0, rCore),                      // inlet, sets the BPR
-    ...secs.map((sec) => new THREE.Vector2(z0 - sec.z * Lc, sec.r * rCore)),
-    new THREE.Vector2(zAft, R_OUTLET * rCore),         // outlet, sets the gap
+    new THREE.Vector2(z0, rCore),                      // inside the duct
+    new THREE.Vector2(zSplit, rCore),                  // duct back face: BPR
+    ...secs.map((sec) => new THREE.Vector2(zSplit - sec.z * Lv, sec.r * rCore)),
+    new THREE.Vector2(zAft, rOutlet),                  // outlet
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
 
   // One mesh, finish painted on. See coreMaterial().
-  g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
-               coreMaterial(), SEG));
-
-  // The exhaust annulus: outlet wall to plug, measured IN THE EXIT PLANE,
-  // which is the only place the gap is visible. Written as a gap rather than
-  // as two independent radii, so widening it cannot silently leave the dark
-  // mouth showing a rim of plug or a rim of wall.
-  const rOutlet = R_OUTLET * rCore;
-  const rPlugExit = rOutlet - EXHAUST_GAP * rCore;
-  // Continuing the same taper forward to the buried base.
-  const rPlugBase = rPlugExit * (1 + PLUG_EMBED / PLUG_TIP);
+  const core = latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
+                      coreMaterial(), SEG);
+  core.name = 'core';
+  g.add(core);
 
   // Looking up the exhaust should be looking into a hole. Without this the
   // core's own aft cap is the first thing you meet, lit and metallic. Run a
@@ -386,6 +409,10 @@ export function turbofan({
   g.userData.coreLength = Lc;
   g.userData.noseZ = zNose;
   g.userData.sections = secs;
+  g.userData.splitZ = zSplit;
+  g.userData.exposedCoreLength = Lv;
+  g.userData.outletRadius = rOutlet;
+  g.userData.plugExitRadius = rPlugExit;
   g.userData.overallLength = zNose + NOSE + TAIL * Lc;
   g.userData.lengthOverDiameter = g.userData.overallLength / (2 * R);
   return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');
