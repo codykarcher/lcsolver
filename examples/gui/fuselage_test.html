@@ -54,17 +54,27 @@
   <div class="row"><label for="fineness">fineness L/D</label><output id="oFineness"></output></div>
   <input type="range" id="fineness" min="5.0" max="16.0" step="0.05" value="10.1">
 
-  <h2>nose</h2>
-  <div class="row"><label for="noseD">length &middot; diameters</label><output id="oNoseD"></output></div>
-  <input type="range" id="noseD" min="0.60" max="3.50" step="0.01" value="1.70">
-  <div class="row"><label for="noseRadius">tip radius &middot; radii</label><output id="oNoseRadius"></output></div>
-  <input type="range" id="noseRadius" min="0.04" max="0.92" step="0.01" value="0.32">
-  <div class="row"><label for="noseB">fullness</label><output id="oNoseB"></output></div>
-  <input type="range" id="noseB" min="0.55" max="1.40" step="0.01" value="0.95">
-  <div class="row"><label for="noseA">shoulder</label><output id="oNoseA"></output></div>
-  <input type="range" id="noseA" min="1.05" max="3.50" step="0.01" value="1.90">
-  <div class="row"><label for="keelHold">keel hold</label><output id="oKeelHold"></output></div>
-  <input type="range" id="keelHold" min="0.00" max="0.90" step="0.01" value="0.85">
+  <h2>radome</h2>
+  <div class="row"><label for="noseD">nose length &middot; dia</label><output id="oNoseD"></output></div>
+  <input type="range" id="noseD" min="0.40" max="3.00" step="0.01" value="1.25">
+  <div class="row"><label for="radomeFrac">radome share</label><output id="oRadomeFrac"></output></div>
+  <input type="range" id="radomeFrac" min="0.10" max="0.80" step="0.01" value="0.36">
+  <div class="row"><label for="radomeAxis">axis up from keel</label><output id="oRadomeAxis"></output></div>
+  <input type="range" id="radomeAxis" min="0.05" max="0.60" step="0.01" value="0.33">
+  <div class="row"><label for="radomeBase">base radius &middot; radii</label><output id="oRadomeBase"></output></div>
+  <input type="range" id="radomeBase" min="0.20" max="0.90" step="0.01" value="0.58">
+  <div class="row"><label for="radomeTip">tip sphere &middot; radii</label><output id="oRadomeTip"></output></div>
+  <input type="range" id="radomeTip" min="0.03" max="0.70" step="0.01" value="0.20">
+  <div class="row"><label for="radomeFull">cone &rarr; ogive</label><output id="oRadomeFull"></output></div>
+  <input type="range" id="radomeFull" min="0.00" max="1.00" step="0.01" value="0.85">
+
+  <h2>windscreen &amp; fairing</h2>
+  <div class="row"><label for="kinkBlend">break smoothing</label><output id="oKinkBlend"></output></div>
+  <input type="range" id="kinkBlend" min="0.00" max="0.30" step="0.005" value="0.05">
+  <div class="row"><label for="foreR">section opens</label><output id="oForeR"></output></div>
+  <input type="range" id="foreR" min="1.05" max="4.00" step="0.01" value="2.00">
+  <div class="row"><label for="foreK">keel settles</label><output id="oForeK"></output></div>
+  <input type="range" id="foreK" min="1.30" max="4.00" step="0.01" value="2.20">
 
   <h2>tailcone</h2>
   <div class="row"><label for="tailD">length &middot; diameters</label><output id="oTailD"></output></div>
@@ -186,8 +196,7 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 /** Every slider that feeds the shape law, by the name the law knows it by. */
-const SHAPE = ['fineness', 'noseD', 'noseRadius', 'noseB', 'noseA', 'keelHold',
-               'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
+const SHAPE = ['fineness', 'noseD', 'radomeFrac', 'radomeAxis', 'radomeBase', 'radomeTip', 'radomeFull', 'foreR', 'foreK', 'kinkBlend', 'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
 
 /**
  * Three real aeroplanes, as far apart as noses get: a 737 drawn out and
@@ -197,15 +206,9 @@ const SHAPE = ['fineness', 'noseD', 'noseRadius', 'noseB', 'noseA', 'keelHold',
  * and that is much easier to see by flipping between them than by reasoning.
  */
 const PRESETS = {
-  '737': { rad: 1.88, fineness: 10.1,
-           noseD: 1.15, noseRadius: 0.22, noseB: 1.00, noseA: 1.70, keelHold: 0.86,
-           tailD: 2.90, tailA: 1.60, tailB: 0.75, tipR: 0.10, crownHold: 1.00 },
-  'A350': { rad: 2.98, fineness: 11.2,
-            noseD: 1.10, noseRadius: 0.34, noseB: 0.78, noseA: 2.10, keelHold: 0.72,
-            tailD: 3.10, tailA: 1.55, tailB: 0.72, tipR: 0.09, crownHold: 1.00 },
-  'Citation': { rad: 0.80, fineness: 8.1,
-                noseD: 0.78, noseRadius: 0.46, noseB: 0.70, noseA: 2.30, keelHold: 0.60,
-                tailD: 2.20, tailA: 1.70, tailB: 0.80, tipR: 0.12, crownHold: 0.90 },
+  '737': { rad: 1.88, fineness: 10.1, noseD: 1.2, radomeFrac: 0.36, radomeAxis: 0.33, radomeBase: 0.55, radomeTip: 0.18, radomeFull: 0.85, foreR: 2.0, foreK: 2.2, tailD: 2.9, tailA: 1.6, tailB: 0.75, tipR: 0.1, crownHold: 1.0, kinkBlend: 0.05 },
+  'A350': { rad: 2.98, fineness: 11.2, noseD: 1.1, radomeFrac: 0.4, radomeAxis: 0.36, radomeBase: 0.62, radomeTip: 0.3, radomeFull: 0.9, foreR: 2.2, foreK: 2.3, tailD: 3.1, tailA: 1.55, tailB: 0.72, tipR: 0.09, crownHold: 1.0, kinkBlend: 0.05 },
+  'Citation': { rad: 0.8, fineness: 8.1, noseD: 0.85, radomeFrac: 0.45, radomeAxis: 0.38, radomeBase: 0.66, radomeTip: 0.38, radomeFull: 0.9, foreR: 2.3, foreK: 2.4, tailD: 2.2, tailA: 1.7, tailB: 0.8, tipR: 0.12, crownHold: 0.9, kinkBlend: 0.05 },
 };
 const DEFAULTS = Object.fromEntries(
   [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
@@ -338,11 +341,7 @@ function build() {
   el('oRad').textContent = radius.toFixed(2);
   for (const k of SHAPE) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
     num(k).toFixed(k === 'tipR' ? 3 : 2);
-  // The tip radius is asked for in radii and delivered in metres, and the blend
-  // exponent is solved for rather than set -- show both, or the one knob that
-  // now drives the nose is the one thing you cannot read back.
-  el('oNoseRadius').textContent =
-    `${num('noseRadius').toFixed(2)} = ${body.userData.noseRadius.toFixed(2)}m`;
+
 
   el('readout').innerHTML =
     `L <span>${L.toFixed(2)}</span> &middot; D <span>${(2 * radius).toFixed(2)}</span> ` +
@@ -354,12 +353,11 @@ function build() {
     `<span>${u.crownAt(-L).toFixed(2)}</span> ` +
     `&middot; keel <span>${u.keelAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
     `<span>${u.keelAt(-L).toFixed(2)}</span><br>` +
-    `tip sphere <span>${u.noseRadius.toFixed(2)}</span>, runs out to ` +
-    `<span>${u.noseCapRadius.toFixed(2)}</span> ` +
-    `(<span>${(100 * u.noseCapFraction).toFixed(0)}%</span> of R)<br>` +
-    `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
-    `(keel <span>${u.keelAt(u.cabinZ[0]).toFixed(2)}</span> &rarr; ` +
-    `<span>${u.keelAt(0).toFixed(2)}</span>) &middot; ` +
+    `radome <span>${u.radomeLength.toFixed(2)}</span> long, base ` +
+    `<span>${u.radomeBaseRadius.toFixed(2)}</span>, tip sphere ` +
+    `<span>${u.noseRadius.toFixed(2)}</span><br>` +
+    `axis &amp; point at y <span>${u.radomeAxisY.toFixed(2)}</span>, break at z ` +
+    `<span>${u.noseBreakZ.toFixed(2)}</span> &middot; ` +
     `tip r <span>${u.shapeAt(-L).r.toFixed(3)}</span><br>` +
     `upsweep <span>${(Math.atan2(u.keelAt(-L) - u.keelAt(u.cabinZ[1]),
                                  u.tailLength) * 180 / Math.PI).toFixed(1)}&deg;</span> ` +

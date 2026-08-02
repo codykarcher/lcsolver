@@ -47,180 +47,208 @@ export const circularSection = () => 1;
  * so they hold at any size. Numbers are off a 737-800 / A320: 37-38 m long,
  * 3.8-4.0 m across, so a fineness ratio right around 10.
  *
- * Both ends come from `(1 - x^A)^B`. B < 1 makes the end round rather than
- * pointed, A > 1 makes the slope vanish where the taper meets the barrel, so
- * neither end blends in with a crease. The tailcone uses that curve as it
- * stands; the nose uses it only as a BASE, and has its point cut off by a
- * sphere of a radius you choose -- see bluntNose below.
+ * The tailcone is one curve, `(1 - x^A)^B`: B < 1 rounds the end rather than
+ * pointing it, A > 1 makes the slope vanish where it meets the barrel so it
+ * blends in without a crease. The nose is not one curve at all -- it is a
+ * radome, a break and a fairing. See noseProfile below.
  */
 const JET = {
   fineness:   10.1,  // overall length / diameter
-  noseD:       1.70, // nose length, in diameters
+  noseD:       1.25, // nose length, in diameters: radome plus fairing
   tailD:       2.90, // tailcone length, in diameters
-  noseRadius:  0.32, // RADIUS OF CURVATURE at the nose point, in radii
-  noseA: 1.90,       // nose: how softly the taper meets the barrel
-  noseB: 0.95,       // nose: fullness of the taper, tip radius aside
-  tipFlat:     0.18, // see noseCentre(): how the tip cap is kept spherical
+  // The nose is two bodies -- see noseProfile below.
+  radomeFrac:  0.36, // radome's share of the nose length
+  radomeAxis:  0.33, // radome axis height, 0 at the keel, 1 at the crown
+  radomeBase:  0.58, // radome radius where it ends, in radii
+  radomeTip:   0.20, // spherical tip radius, in radii
+  radomeFull:  0.85, // 0 a cone, 1 a tangent ogive
+  foreR:       2.00, // fairing: how fast the section opens to full
+  foreK:       2.20, // fairing: how fast the keel settles onto the barrel line
+  kinkBlend:   0.05, // window the break is smoothed over, of nose length
   tailA: 1.6, tailB: 0.75,
   tipR:        0.10, // tailcone tip radius, in radii -- the APU exhaust
-  keelHold:    0.85, // fraction of the NOSE taper taken off the crown
   crownHold:   1.00, // fraction of the TAILCONE taper taken off the belly
 };
 
 /**
- * A **spherically blunted** nose: a base curve run out to a virtual sharp
- * point, with the point cut off by a sphere of radius `rho` tangent to it.
+ * A spherically blunted ogive -- the radome.
  *
- * The tip radius cannot come from the exponent, and it is worth being precise
- * about why. For a base curve going as r ~ x^B, the radius of curvature at the
- * point is zero for every B > 1/2, infinite for every B < 1/2, and finite only
- * at B = 1/2 exactly. So an exponent gives you a knife edge, a flat, or one
- * single radius tied to the nose length -- never a radius you can choose. Pin
- * B = 1/2 to get it and the whole nose is dragged along: the section reaches
- * 95% of full radius only 30% of the way aft, which is far blunter than any of
- * these aeroplanes and was the shape that kept coming out wrong.
+ * `fullness` runs from a plain cone at 0 to a TANGENT ogive at 1. It is worth
+ * having as a knob because it does double duty: it sets how full the radome is
+ * along its length, and it sets the slope the radome arrives at its own base
+ * with, (1 - fullness) * rBase / L, which is one half of the break at the
+ * windscreen. A tangent ogive arrives parallel to its base circle and gives the
+ * sharpest break; a cone arrives at an angle and gives the softest.
  *
- * So the sphere is grafted on, which is how a real radome is drawn anyway:
- * length, tip radius and body shape are three separate decisions, and this is
- * the construction that keeps them separate.
+ * The point is then cut off by a sphere of radius `rho` tangent to that curve.
+ * Tangency fixes both unknowns at once, from the sphere's centre lying rho
+ * along the inward normal with its radial coordinate vanishing:
  *
- * Tangency, with x aft from the virtual point and the sphere centred on the
- * axis at x_c: the centre lies a distance rho along the inward normal, and its
- * radial coordinate has to vanish, which gives both unknowns at once --
+ *     r(xt) * sqrt(1 + r'(xt)^2) = rho          where to cut
+ *     xc = xt + r(xt) * r'(xt)                  where the centre goes
  *
- *     r(x_t) * sqrt(1 + r'(x_t)^2) = rho          (where to cut)
- *     x_c = x_t + r(x_t) * r'(x_t)                (where the centre goes)
- *
- * -- and the finished point sits at x_c - rho. One bisection, no fitting.
- * Slope continuity at the join is not something to check afterwards; it is the
- * condition that was solved.
- *
- * Blunting shortens the nose, so the virtual length is solved for as well, to
- * make the finished nose exactly the length asked for.
- *
- * The base curve is the same (1 - (1-t)^A)^B as the tailcone. A > 1 keeps the
- * barrel join free of a crease; B is now free to shape the body of the nose,
- * because it is no longer carrying the tip.
+ * so slope continuity across the graft is not checked afterwards, it is the
+ * condition that was solved. Blunting shortens the ogive, so the virtual length
+ * is solved for too and the finished radome is exactly the length asked for.
  */
-function bluntNose({ radius, lNose, rho, A, B }) {
-  const rBase = (x, L) => {
+function bluntedOgive({ rBase, length, rho, fullness }) {
+  const raw = (x, L) => {
     const t = Math.min(1, Math.max(0, x / L));
-    return radius * Math.pow(1 - Math.pow(1 - t, A), B);
+    const Ro = (rBase * rBase + L * L) / (2 * rBase);   // tangent-ogive radius
+    const og = Math.sqrt(Math.max(0, Ro * Ro - (L - x) * (L - x))) - (Ro - rBase);
+    return (1 - fullness) * rBase * t + fullness * og;
   };
-  const dBase = (x, L) => {
-    const t = Math.min(1 - 1e-12, Math.max(1e-12, x / L));
-    const w = Math.pow(1 - t, A);
-    return radius * B * Math.pow(1 - w, B - 1) * A * Math.pow(1 - t, A - 1) / L;
+  const slope = (x, L) => {
+    const h = L * 1e-6;
+    const a = Math.max(0, x - h), b = Math.min(L, x + h);
+    return (raw(b, L) - raw(a, L)) / (b - a);
   };
 
   const solve = (L) => {
-    const g = (x) => rBase(x, L) * Math.hypot(1, dBase(x, L)) - rho;
-    let lo = 1e-7 * L, hi = L;
-    // g(hi) = radius - rho > 0 as long as rho < radius, which the caller
-    // guarantees. g(lo) < 0 unless the base curve is already blunter than the
-    // sphere asked for, in which case there is nothing to cut off.
-    if (g(lo) >= 0) return { xt: 0, rt: 0, xc: rho, x0: 0, blunt: false };
-    for (let i = 0; i < 90; i++) {
-      const mid = (lo + hi) / 2;
-      if (g(mid) < 0) lo = mid; else hi = mid;
+    const g = (x) => raw(x, L) * Math.hypot(1, slope(x, L)) - rho;
+    let lo = 0, hi = L;
+    if (g(hi) <= 0) return { xt: L, rt: rBase, xc: L, x0: 0, blunt: false };
+    for (let i = 0; i < 80; i++) {
+      const m = (lo + hi) / 2;
+      if (g(m) < 0) lo = m; else hi = m;
     }
-    const xt = (lo + hi) / 2, rt = rBase(xt, L), m = dBase(xt, L);
+    const xt = (lo + hi) / 2, rt = raw(xt, L), m = slope(xt, L);
     const xc = xt + rt * m;
     return { xt, rt, xc, x0: xc - rho, blunt: true };
   };
 
-  let L = lNose, s = solve(L);
-  for (let i = 0; i < 80; i++) {
-    const err = (L - s.x0) - lNose;
-    if (Math.abs(err) < 1e-12 * lNose) break;
-    L -= err * 0.9;                       // d(L - x0)/dL is near 1; damp a little
+  let L = length, s = solve(L);
+  for (let i = 0; i < 60; i++) {
+    const err = (L - s.x0) - length;
+    if (Math.abs(err) < 1e-12 * length) break;
+    L -= err * 0.9;
     s = solve(L);
   }
 
   return {
     ...s, L,
-    capFraction: s.rt / radius,
-    /** Radius at station z, with z = 0 at the finished point. */
-    at: (z) => {
-      const x = -z + s.x0;
+    /** Radius a distance `d` aft of the finished point. */
+    at: (d) => {
+      const x = d + s.x0;
       if (s.blunt && x <= s.xt) {
         return Math.sqrt(Math.max(0, rho * rho - (x - s.xc) * (x - s.xc)));
       }
-      return rBase(x, L);
+      return raw(Math.min(x, L), L);
     },
+    /** dr/d(aft) where the radome meets its base ring. */
+    baseSlope: (1 - fullness) * rBase / L,
   };
 }
 
 /**
- * How far the section centre has climbed by the time the body has grown to a
- * fraction `u` of full radius, as a fraction of the total climb.
+ * The nose, as **two bodies with a break between them**.
  *
- * This exists because a spherical tip and a dead-straight keel are not quite
- * compatible, and the obvious ways of reconciling them both fail.
+ * Every previous attempt here fitted one continuous curve from the point to the
+ * barrel, and none of them looked like an aeroplane. They could not: a nose in
+ * this class is not one shape. It is
  *
- * Tie the centre to the radius -- yc proportional to (R - r), the tailcone's
- * own rule -- and the keel is straight and monotonic, but dyc/dz inherits the
- * sphere's vertical tangent at the point. The tip then comes out as a beak:
- * radius of curvature 3.4 rho along the crown and 0.02 rho along the keel,
- * which is a crease under the nose rather than a nose.
+ *   1. a **radome** -- a blunted ogive of revolution about its OWN axis, which
+ *      sits low, about a third of the way up the section from the keel. That is
+ *      why the point of a jetliner is down near the belly line while the body
+ *      behind it is centred;
+ *   2. a **distinct break at the windscreen**, where the radome ends and the
+ *      pressurised structure begins. It is a real joint on a real aeroplane and
+ *      it reads as one;
+ *   3. a **fairing** from there back into the barrel, which lifts the section
+ *      centre from the radome axis up to zero and opens the radius out to full,
+ *      arriving parallel so the parallel part starts without a crease.
  *
- * Tie it to the station instead -- a smoothstep in z -- and the tip is properly
- * spherical, but the centre keeps climbing after the section has stopped
- * growing, and the keel develops a wobble: it dips, rises and falls again.
+ * Splitting it in two is what makes the tip trivially right, incidentally. The
+ * radome's axis is constant, so the blunting sphere is a genuine sphere on both
+ * meridians rather than something that has to be argued about -- which is the
+ * problem that ate the last three attempts.
  *
- * So: tie it to the radius, but ramp the rate in from zero over the first
- * `flat` of the growth. Near the point the centre is stationary, so the cap is
- * a true sphere; past the ramp the rate is constant, so the keel is straight.
- * The ramp integrates a smoothstep, making the result C2 at the junction.
- *
- * The rate outside the ramp is hold/(1 - flat/2), which must stay below 1 or
- * the keel turns back on itself -- that, and not taste, is what caps `hold`.
+ * The break is smoothed over a short window rather than left as a corner. Real
+ * ones are a joint, not a knife edge, and a slope discontinuity in a lofted
+ * surface catches highlights in a way nothing else does.
  */
-function noseCentre(u, hold, flat) {
-  const m = hold / (1 - flat / 2);
-  return u >= flat
-    ? m * (u - flat / 2)
-    : m * (u ** 3 / flat ** 2 - u ** 4 / (2 * flat ** 3));
+function noseProfile({ radius, lNose, p }) {
+  // "A third of the way up from the bottom": measured across the full section,
+  // so 0 is the keel, 0.5 the axis, 1 the crown.
+  const yAxis = -radius + 2 * radius * p.radomeAxis;
+  const lRadome = lNose * p.radomeFrac;
+  const lFore = lNose - lRadome;
+  // The radome cannot be so fat that its base circle already reaches below the
+  // barrel's keel -- there would be nothing for the fairing to settle onto, and
+  // the nose would hang under the tube however the blends were set. Clamp it.
+  const rBase = Math.min(p.radomeBase * radius, 0.94 * (radius + yAxis));
+  const rho = Math.min(p.radomeTip * radius, 0.98 * rBase);
+
+  const dome = bluntedOgive({
+    rBase, length: lRadome, rho, fullness: Math.min(1, Math.max(0, p.radomeFull)),
+  });
+
+  // The fairing, defined by its RADIUS and its KEEL, with the section centre
+  // derived as the sum. Blending the centre directly instead is the obvious
+  // thing and it does not work: the centre then lifts faster than the section
+  // opens over the middle of the fairing, and the keel dips below the barrel's
+  // own keel line -- the nose bulges under the tube. Measured, 50 stations of
+  // it. Driving the keel makes that unrepresentable rather than merely
+  // discouraged, which is the same reason the tailcone drives its crown.
+  //
+  // Both terms are flat at the barrel -- exponents above 1 -- so the join there
+  // is free of a crease whatever the knobs say, and both hit the radome's base
+  // values exactly at the break, so the two bodies meet.
+  const keelRise = radius + yAxis - rBase;    // how high the keel sits at the break
+  const fore = (d) => {
+    const s = (d - lRadome) / lFore;
+    const r = radius - (radius - rBase) * Math.pow(1 - s, p.foreR);
+    const keel = -radius + keelRise * Math.pow(1 - s, p.foreK);
+    return { r, yc: keel + r };
+  };
+  // Smoothing the break. The window sits ENTIRELY AFT of it, blending the
+  // radome carried on along its own tangent into the fairing.
+  //
+  // Straddling the break instead means extrapolating the fairing forward, and
+  // the two extrapolations then disagree about where the surface is at the
+  // start of the window: the smoothstep's own derivative term, k' * (b - a),
+  // picks that disagreement up and can turn the keel back on itself. Measured,
+  // a handful of stations of it. Anchored at the break the two agree exactly --
+  // both are (rBase, yAxis) there -- so b - a starts at zero, and the result is
+  // C1 at both ends of the window with the turn spread smoothly across it.
+  const w = Math.max(1e-9, Math.max(0, p.kinkBlend) * lNose);
+
+  function at(d) {
+    if (d <= lRadome) return { r: dome.at(d), yc: yAxis };
+    if (d >= lRadome + w) return fore(d);
+    const t = (d - lRadome) / w;
+    const k = t * t * (3 - 2 * t);                       // smoothstep
+    const a = { r: rBase + dome.baseSlope * (d - lRadome), yc: yAxis };
+    const b = fore(d);
+    return { r: a.r + (b.r - a.r) * k, yc: a.yc + (b.yc - a.yc) * k };
+  }
+
+  return { at, yAxis, lRadome, lFore, rBase, rho, dome,
+           breakZ: -lRadome, blendWidth: w };
 }
 
 /**
- * Build the r(z) and yc(z) pair for a three-part body: taper, barrel, taper.
+ * Build the r(z) and yc(z) pair for the whole body: nose, barrel, tailcone.
  *
- * Both ends obey the same law, mirrored. A taper has to be spent somewhere --
- * as the section shrinks, one of the two profile lines has to come to meet the
- * other -- and the only question is which line moves:
+ * The two ends are not the same shape and should not be forced to share a law.
  *
- *     tailcone   yc = +crownHold * (radius - r)     crown level, belly rises
- *     nose       yc = -keelHold  * (radius - r)     keel level, crown falls
+ * **Aft** is one body. A taper has to be spent somewhere -- as the section
+ * shrinks, one of the two profile lines has to come and meet the other -- and
+ * yc = crownHold * (radius - r) decides which. At 1 the crown is held exactly
+ * straight and the whole taper goes into the belly; at 0 the section stays
+ * centred and both lines close in symmetrically. Holding the crown is
+ * structural: the cabin ceiling and the fin root both run along the top of the
+ * tube, so nothing up there is free to move, while the space under the aft
+ * floor is exactly what gets given up for rotation clearance.
  *
- * At hold = 1 the named line is held exactly straight and the whole taper goes
- * into the other one; at 0 the section stays centred and both lines close in
- * symmetrically. Nothing else changes between the two ends.
+ * **Forward** is two bodies with a joint between them -- a radome on its own
+ * low axis, a break at the windscreen, then a fairing into the barrel. See
+ * noseProfile. Trying to make one continuous curve do that was the mistake
+ * behind several attempts at this file.
  *
- * The nose runs that rate through noseCentre() rather than applying it flat,
- * which holds the centre still over the first sliver of the growth so the point
- * can be a true sphere. Everywhere past the tip it is the plain rule above.
- *
- * Aft that is structural. The cabin ceiling and the fin root both run along the
- * top of the tube, so nothing up there is free to move, while the space under
- * the aft floor is exactly what gets given up for rotation clearance.
- *
- * Forward it is what a nose actually looks like. The keel runs on essentially
- * straight from under the wing and the crown comes down over the flight deck to
- * meet it, putting the point of the nose low -- which is also what gives the
- * crew their over-the-nose sight line. It is emphatically NOT the whole
- * forebody bending downward, which is what a centreline offset applied
- * independently of the taper produces.
- *
- * Keeping the rate at or below 1 makes it impossible for either end to bulge
- * past the barrel: yc -/+ r is monotonic in r over [0, radius], running from
- * -/+ hold*radius at the point to -/+ radius at the join, so the nose cannot
- * hang below the belly nor the tailcone rise above the roof. Forward the rate
- * is hold/(1 - tipFlat/2), which is why keelHold is clamped a little under 1.
- *
- * Both are C1 at their join for free, whatever the blend exponents are set to,
- * because dr/dz already vanishes there -- so no setting of the sliders can put
- * a kink into the parallel part of the body.
+ * Both ends still meet the barrel without a crease, but for different reasons:
+ * aft because dr/dz vanishes there, forward because the fairing's exponents are
+ * above 1 so both its terms arrive flat.
  *
  * Returned as one object carrying `at(z)` and the stations it was cut at, so
  * that everything downstream -- skin, windows, doors, and later whatever mounts
@@ -234,32 +262,17 @@ function jetShape({ length, radius, p = JET }) {
   const zTail = -(length - lTail);         // tailcone begins here
   const rTip  = p.tipR * radius;
 
-  // A sphere bigger than the body cannot be tangent to the taper, and one much
-  // blunter than the base curve has nothing to cut off. Clamp both ends.
-  const rho = Math.min(p.noseRadius, 0.92) * radius;
-  const nose = bluntNose({ radius, lNose, rho,
-                           A: Math.max(1.02, p.noseA), B: Math.max(0.52, p.noseB) });
-  // Above hold = 1 - tipFlat/2 the keel turns back on itself. Clamp rather than
-  // let a slider produce a shape the geometry cannot support, and publish what
-  // was actually used so the read-out cannot claim otherwise.
-  const keelHold = Math.min(p.keelHold, 0.995 * (1 - p.tipFlat / 2));
+  const nose = noseProfile({ radius, lNose, p });
 
   function at(z) {
-    if (z > zNose) {                                     // nose
-      const r = nose.at(z);
-      return {
-        r,
-        yc: radius * (noseCentre(r / radius, keelHold, p.tipFlat) - keelHold),
-      };
-    }
+    if (z > zNose) return nose.at(-z);                   // nose
     if (z > zTail) return { r: radius, yc: 0 };          // barrel
     const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone
     const r = rTip + (radius - rTip) * Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
     return { r, yc: p.crownHold * (radius - r) };
   }
 
-  return { at, length, radius, lNose, lTail, zNose, zTail, rTip,
-           rho, nose, keelHold };
+  return { at, length, radius, lNose, lTail, zNose, zTail, rTip, nose };
 }
 
 /* ---- lofting ----------------------------------------------------------- */
@@ -632,12 +645,15 @@ export function jetlinerFuselage({
 
   Object.assign(g.userData, {
     length: L, radius, section, shapeParams: p,
-    keelHold: shape.keelHold, crownHold: p.crownHold,
-    /** What the blunting actually produced -- tip sphere and how far it runs. */
-    noseRadius: shape.rho,
-    noseCapRadius: shape.nose.rt,
-    noseCapFraction: shape.nose.capFraction,
-    noseVirtualLength: shape.nose.L,
+    crownHold: p.crownHold,
+    /** The radome, as built: where its axis sits and where it ends. */
+    radomeLength: shape.nose.lRadome,
+    radomeAxisY: shape.nose.yAxis,
+    radomeBaseRadius: shape.nose.rBase,
+    noseRadius: shape.nose.rho,
+    noseCapRadius: shape.nose.dome.rt,
+    noseBreakZ: shape.nose.breakZ,
+    noseBlendWidth: shape.nose.blendWidth,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),
