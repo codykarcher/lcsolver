@@ -38,6 +38,11 @@ const PAGES = {
   'turboshaft_test.html': { build: [() => E.turboshaft({})], vars: ['engine.userData', 'd'] },
   'piston_test.html':   { build: [() => E.pistonEngine({})], vars: ['engine.userData', 'd'] },
   'motor_test.html':    { build: [() => E.electricMotor({})], vars: ['engine.userData', 'd'] },
+  'd8_test.html':       { build: [() => F.d8Fuselage({}),
+                                  () => F.d8Fuselage({ detail: true }),
+                                  () => F.d8Fuselage({ radius: 1.1, fineness: 8,
+                                                       shape: { bubble: 0.1, trough: 0 } })],
+                          vars: ['body.userData', 'u'] },
   'fuselage_test.html': { build: [() => F.jetlinerFuselage({}),
                                   () => F.jetlinerFuselage({ detail: true }),
                                   () => F.jetlinerFuselage({

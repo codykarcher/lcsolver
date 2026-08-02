@@ -7,7 +7,8 @@
  *   r(z)     the size of the section at station z
  *   yc(z)    where the section's centre sits, so that a chosen profile line
  *            -- keel forward, crown aft -- stays straight through the taper
- *   sec(th)  the SHAPE of the section, as a radius multiplier by angle
+ *   sec(th, z)  the SHAPE of the section, as a radius multiplier by angle --
+ *            and, for a body whose section changes along it, by station too
  *
  * -- and everything else in this file is either one of those three for a
  * particular aeroplane, or machinery for turning them into triangles.
@@ -35,10 +36,85 @@ import { orientOutward } from './geom.js';
 /* ---- section shapes ---------------------------------------------------- */
 
 /**
+ * A section is `sec(theta, z) -> radius multiplier`, normalised so that the
+ * multiplier is 1 straight up. That normalisation is what lets `r(z)` mean
+ * HALF-HEIGHT for every section, circular or not, so one size distribution and
+ * one centreline law serve all of them.
+ *
+ * The station argument is what makes a D8 possible. A tube has one section from
+ * end to end; a double bubble does not -- it starts as an ellipse, becomes two
+ * lobes over the cabin, and opens into a trough at the back to take the
+ * engines. So the section is a function of where you are, not a constant.
+ */
+
+/**
  * A circle. What almost every pressurised metal tube actually is -- a cylinder
  * is the only shape that carries pressure in pure tension.
  */
 export const circularSection = () => 1;
+
+/** An ellipse `w` times as wide as it is tall. */
+export const ellipticalSection = (w) => (th) =>
+  1 / Math.hypot(Math.sin(th), Math.cos(th) / w);
+
+/**
+ * Two overlapping circles side by side -- a double bubble.
+ *
+ * Unit lobes with their centres at +/- `offset` from the axis. The union is
+ * star-shaped about the centre while offset < 1, so it has a closed polar form:
+ * the radius to the boundary is |offset * cos| + sqrt(1 - offset^2 sin^2), the
+ * larger root of the nearer lobe. That is worth having exactly rather than by
+ * clipping two meshes together -- the crease down the top and bottom centreline
+ * is a real feature of the shape, not an artefact, and it comes out on its own.
+ *
+ * No normalising constant is needed, which is a small piece of luck worth
+ * pointing out: the highest point of the union is a LOBE APEX, at (+/-offset, 1),
+ * so the half-height is exactly 1 already and `r(z)` keeps meaning half-height
+ * for this section as it does for every other. Dividing by the height at the
+ * centreline instead -- sqrt(1 - offset^2), which is the valley, not the top --
+ * makes the body 12% taller than the half-height asked for.
+ *
+ * The top is not flat: a hump over each lobe and a valley between them, which
+ * is the thing that makes a double bubble recognisable. Half-width is
+ * 1 + offset, so that is the one number that grows with the bubble.
+ *
+ * `trough` deepens that valley -- a Gaussian notch about straight up -- which is
+ * how the aft body opens to seat the nacelles.
+ */
+export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0.55 } = {}) {
+  const o = Math.min(0.95, Math.max(0, offset));
+  return (th) => {
+    const s = Math.sin(th), c = Math.cos(th);
+    const r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
+    if (trough <= 0) return r;
+    // Angular distance from straight up, wrapped, so the notch does not
+    // reappear at the keel when theta runs past pi.
+    const d = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+    const g = d / troughWidth;
+    return r * (1 - trough * Math.exp(-g * g));
+  };
+}
+
+/**
+ * A section that changes along the body.
+ *
+ * `stops` are [fraction aft, section] in order. Between two stops the two
+ * sections are blended with a smoothstep, so the morph has no corner at either
+ * end of a transition -- which matters, because a discontinuity in the SECTION
+ * is a ring-shaped crease around the whole body and is impossible to miss.
+ */
+export function morphSection(stops, length) {
+  return (th, z) => {
+    const u = Math.min(1, Math.max(0, -z / length));
+    let i = 0;
+    while (i < stops.length - 2 && u > stops[i + 1][0]) i++;
+    const [u0, a] = stops[i], [u1, b] = stops[i + 1];
+    if (u <= u0) return a(th, z);
+    if (u >= u1) return b(th, z);
+    const t = (u - u0) / (u1 - u0), k = t * t * (3 - 2 * t);
+    return a(th, z) * (1 - k) + b(th, z) * k;
+  };
+}
 
 /* ---- shape law --------------------------------------------------------- */
 
@@ -131,7 +207,7 @@ function jetShape({ length, radius, p = JET }) {
 /** The surface point at station z, angle th. th = 0 is +X, th = pi/2 is up. */
 function surfacePoint(shape, sec, z, th, out = new THREE.Vector3()) {
   const { r, yc } = shape.at(z);
-  const rr = r * sec(th);
+  const rr = r * sec(th, z);
   return out.set(rr * Math.cos(th), yc + rr * Math.sin(th), z);
 }
 
@@ -351,9 +427,20 @@ function decalRow(shape, sec, out, occ, {
   z, halfZ, y, halfArc, lift, material, nz = 2, nt = 3,
 }) {
   const { r, yc } = shape.at(z);
-  const sinT = (y - yc) / r;
-  if (Math.abs(sinT) > 0.92) return false;
-  const th = Math.asin(sinT), dth = halfArc / r;
+  // Find the angle at which the surface passes through the wanted height. On a
+  // circle that is one asin; on any other section the height is r*sec(th)*sin,
+  // so it takes a solve. Bisect on the upper right quadrant, where the height
+  // rises monotonically with angle for every section here.
+  let lo = -Math.PI / 2, hi = Math.PI / 2;
+  const yAt = (t) => yc + r * sec(t, z) * Math.sin(t);
+  if (y <= yAt(lo) || y >= yAt(hi)) return false;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    if (yAt(m) < y) lo = m; else hi = m;
+  }
+  const th = (lo + hi) / 2;
+  if (Math.abs(Math.sin(th)) > 0.92) return false;
+  const dth = halfArc / (r * sec(th, z));
   const box = { z0: z + halfZ, z1: z - halfZ, t0: th - dth, t1: th + dth };
   if (occupied(occ, box)) return false;
   occ.push(box);
@@ -366,6 +453,28 @@ function decalRow(shape, sec, out, occ, {
     }));
   }
   return true;
+}
+
+/** Highest (dir 1) or lowest (dir -1) point of the section at a station. */
+function extremeY(shape, sec, z, dir, n = 240) {
+  const { r, yc } = shape.at(z);
+  let best = -Infinity;
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * Math.PI * 2;
+    best = Math.max(best, dir * (r * sec(th, z) * Math.sin(th)));
+  }
+  return yc + dir * best;
+}
+
+/** Half-width of the section at a station -- the plan-view silhouette. */
+function halfWidth(shape, sec, z, n = 240) {
+  const { r } = shape.at(z);
+  let best = 0;
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * Math.PI * 2;
+    best = Math.max(best, Math.abs(r * sec(th, z) * Math.cos(th)));
+  }
+  return best;
 }
 
 /* ---- the aeroplane ----------------------------------------------------- */
@@ -393,20 +502,8 @@ const DEG = Math.PI / 180;
  * @param {boolean} detail    shorthand for every feature flag at once.
  */
 export function jetlinerFuselage({
-  radius = 1.88,
-  fineness = null,
-  noseD = null,
-  length = null,
-  shape: shapeOverrides = {},
-  section = circularSection,
-  detail = false,
-  radome = detail,
-  flightDeck = detail,
-  cabinWindows = detail,
-  doors = detail,
-  exits = detail,
-  apu = detail,
-  nSeg = 64,
+  radius = 1.88, fineness = null, noseD = null, length = null,
+  shape: shapeOverrides = {}, section = circularSection, ...rest
 } = {}) {
   // The three deck inputs are named parameters rather than buried in `shape`,
   // because that is how they arrive and how they should read at a call site.
@@ -415,6 +512,28 @@ export function jetlinerFuselage({
     ...(fineness != null ? { fineness } : {}),
     ...(noseD != null ? { noseD } : {}),
   };
+  return buildFuselage({ radius, length, p, section, ...rest });
+}
+
+/**
+ * Loft a body from a size distribution and a section, and hang the detail on it.
+ *
+ * Everything below the shape law is shared: a D8 and a tube are skinned by the
+ * same code, get their windows placed by the same code, and are checked by the
+ * same code. What differs between two aeroplanes is `p` and `section`, and
+ * nothing else should have to.
+ */
+function buildFuselage({
+  radius, length = null, p, section = circularSection,
+  detail = false,
+  radome = detail,
+  flightDeck = detail,
+  cabinWindows = detail,
+  doors = detail,
+  exits = detail,
+  apu = detail,
+  nSeg = 64,
+}) {
   const L = length ?? p.fineness * 2 * radius;
   const shape = jetShape({ length: L, radius, p });
   const g = new THREE.Group();
@@ -504,6 +623,15 @@ export function jetlinerFuselage({
 
   Object.assign(g.userData, {
     length: L, radius, section, shapeParams: p,
+    /** Where the section is widest, and how wide. Plan view in two numbers. */
+    maxHalfWidth: (() => {
+      let w = 0, at = 0;
+      for (let i = 0; i <= 200; i++) {
+        const z = -L * i / 200, h = halfWidth(shape, section, z);
+        if (h > w) { w = h; at = z; }
+      }
+      return { halfWidth: w, z: at };
+    })(),
     keelHold: p.keelHold, crownHold: p.crownHold,
     /**
      * Curvature at the point, three ways. Meaningful ONLY because noseB is 1/2
@@ -532,11 +660,135 @@ export function jetlinerFuselage({
     shapeAt: (z) => shape.at(z),
     surfaceAt: (z, th) => surfacePoint(shape, section, z, th),
     normalAt: (z, th) => surfaceNormal(shape, section, z, th),
-    /** Crown and keel lines, which is what a side view is really about. */
-    crownAt: (z) => { const { r, yc } = shape.at(z); return yc + r; },
-    keelAt: (z) => { const { r, yc } = shape.at(z); return yc - r; },
+    /**
+     * Crown, keel and half-width: the silhouettes, which is what side and plan
+     * views are really about.
+     *
+     * Scanned over the section rather than taken as yc +/- r. For a circle the
+     * two agree exactly, so nothing changes for a tube; for a double bubble
+     * they do not, because the highest point of the section is over a LOBE and
+     * not on the centreline. Assuming the crown is straight up would report the
+     * valley between the lobes as the top of the aeroplane.
+     */
+    crownAt: (z) => extremeY(shape, section, z, 1),
+    keelAt: (z) => extremeY(shape, section, z, -1),
+    halfWidthAt: (z) => halfWidth(shape, section, z),
   });
   return g;
 }
 
-export const fuselages = { jetliner: jetlinerFuselage };
+/* ---- D8 ---------------------------------------------------------------- */
+
+/**
+ * Proportions of a D8 double-bubble body, in half-heights so they hold at any
+ * size. Three deck inputs as before -- half-height, fineness, nose length --
+ * and four more that are what make it a D8 rather than a tube.
+ *
+ * The numbers are a first cut and should be treated as such: unlike the
+ * jetliner, which was settled against photographs, there are very few D8s to
+ * look at.
+ */
+const D8 = {
+  fineness:   9.6,   // DECK: length / (2 * half-height)
+  noseD:      1.45,  // DECK: nose length, in full heights
+  tailD:      2.30,  // aft body length, in full heights
+  noseA: 2.4, noseB: 0.50,
+  tailA: 1.5, tailB: 0.70,
+  tipR:       0.20,  // aft body does not close to a point the way a tube does
+  keelHold:   0.80,  // a D8 is flat-bottomed: the keel holds almost all the way
+  crownHold:  1.00,
+
+  noseWidth:  1.20,  // ellipse aspect at the point
+  bubble:     0.45,  // lobe offset, in lobe radii -- how far apart the bubbles
+  trough:     0.30,  // depth of the aft valley, as a fraction of half-height
+  troughWidth: 0.60, // angular width of that valley, radians
+  // Where along the body each transition happens, as a fraction of length.
+  uBubble:    0.24,  // elliptical nose has become the double bubble by here
+  uOpen:      0.66,  // aft opening starts
+  uTrough:    0.84,  // and is fully open by here
+};
+
+/**
+ * A D8 double-bubble fuselage.
+ *
+ * Three shapes in one body, which is the whole difficulty. It starts as a wide
+ * ELLIPSE at the point, becomes a DOUBLE BUBBLE over the cabin, and opens at the
+ * back into a TROUGH between the two lobes for the engines to sit in. None of
+ * that is a size distribution -- the half-height and centreline behave much like
+ * a tube's -- it is the SECTION changing along the length, which is why the
+ * section here is a function of station and not a constant.
+ *
+ * The double bubble is two overlapping circles, taken exactly rather than by
+ * clipping meshes together, so the crease down the top and bottom centreline
+ * comes out on its own. See doubleBubbleSection.
+ *
+ * The aft trough is that same section with its upper valley deepened. It is
+ * worth being clear about what this does and does not claim: it produces the
+ * fuselage-side shape the nacelles nest into. The nacelles themselves are
+ * engines and belong to the engine library; what integrates them is that the
+ * body offers them a seat, and `nacelleSeat` reports where that seat is so an
+ * engine can be placed on it rather than guessed into position.
+ */
+export function d8Fuselage({
+  radius = 1.90,            // HALF-HEIGHT, not a radius -- see the section note
+  fineness = null,
+  noseD = null,
+  length = null,
+  shape: shapeOverrides = {},
+  ...rest
+} = {}) {
+  const p = {
+    ...D8, ...shapeOverrides,
+    ...(fineness != null ? { fineness } : {}),
+    ...(noseD != null ? { noseD } : {}),
+  };
+  const L = length ?? p.fineness * 2 * radius;
+
+  const bubble = doubleBubbleSection({ offset: p.bubble });
+  const open = doubleBubbleSection({
+    offset: p.bubble, trough: p.trough, troughWidth: p.troughWidth });
+
+  // Ellipse to bubble to trough. The first and last stops are repeated at the
+  // ends so the morph holds its shape there instead of drifting.
+  const section = morphSection([
+    [0.00, ellipticalSection(p.noseWidth)],
+    [p.uBubble, bubble],
+    [p.uOpen, bubble],
+    [p.uTrough, open],
+    [1.00, open],
+  ], L);
+
+  const g = buildFuselage({ radius, length: L, p, section, ...rest });
+
+  const u = g.userData;
+  const lobe = Math.atan2(Math.sqrt(1 - p.bubble * p.bubble), p.bubble);
+  Object.assign(u, {
+    isDoubleBubble: true,
+    bubbleOffset: p.bubble,
+    /** Section width over height at the cabin -- what makes it look like a D8. */
+    cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
+      / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
+    /**
+     * Where an engine can sit: the valley between the lobes, aft.
+     *
+     * Returned as a point and the local surface normal, so a nacelle is placed
+     * ON the body rather than at coordinates that happen to look right and stop
+     * being right the moment the trough or the bubble offset changes.
+     */
+    nacelleSeat: (side = 1, uz = 0.90) => {
+      const z = -L * uz;
+      // Out along the valley from dead centre, but not as far as the lobe crest.
+      const th = Math.PI / 2 - side * p.troughWidth * 0.55;
+      return {
+        z,
+        point: u.surfaceAt(z, th),
+        normal: u.normalAt(z, th),
+        valleyY: u.shapeAt(z).yc + u.shapeAt(z).r * section(Math.PI / 2, z),
+        lobeAngle: lobe,
+      };
+    },
+  });
+  return g;
+}
+
+export const fuselages = { jetliner: jetlinerFuselage, d8: d8Fuselage };
