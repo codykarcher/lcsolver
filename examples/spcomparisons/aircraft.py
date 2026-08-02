@@ -99,6 +99,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from components.cryo_tank import add_cryo_tank  # noqa: E402
 from components.powertrain import add_powertrain  # noqa: E402
 from components.fuel_cell import add_fuel_cell  # noqa: E402
+from components.radiator import add_radiator  # noqa: E402
 from components.battery import add_battery  # noqa: E402
 from components.electric import ElectricPropulsor  # noqa: E402
 
@@ -296,7 +297,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                          l_tank=(tank.l_tank if tank else None),
                          SPR=SPR_val); cons += c
     electric = arch.fuel == "electric"
-    fc = batt = pt = None
+    fc = batt = pt = rad = None
     if electric:
         # The propulsor is sized against the ACTUAL per-segment flight state,
         # not a fixed cruise point -- with altitude and Mach free, a disc
@@ -309,6 +310,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         cons += eng.cons
         if arch.fuel_cell:
             fc, c = add_fuel_cell(f, N, prefix="FC_"); cons += c
+            # The stack's waste heat, PRICED: ram-air radiator mass and
+            # cooling drag (components/radiator.py). Until this call, Q_fc
+            # was computed and consumed by nothing -- megawatts of free
+            # heat rejection.
+            rad, c = add_radiator(f, N, st, fc); cons += c
         if arch.battery:
             batt, c = add_battery(f, prefix="Batt_"); cons += c
     else:
@@ -925,7 +931,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         structure detection with "neither a GP nor an SP". Terms that do not
         apply are omitted, not zeroed."""
         if fc is not None:
-            base = base + fc.W_stack
+            base = base + fc.W_stack + rad.W_hx
         if batt is not None:
             base = base + batt.W_batt
         return base
@@ -1823,8 +1829,13 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
            >= wing.D_wing + Dfuse + numVT * vt.D_vt
             + ht.D_ht + numeng * Dnace]
           if arch.BLI else
-          [D >= wing.D_wing + Dfuse + numVT * vt.D_vt
-              + ht.D_ht + numeng * Dnace]),
+          # The fuel-cell aircraft pays its cooling drag here -- the
+          # radiator's per-segment ram-momentum cost.
+          ([D >= wing.D_wing + Dfuse + numVT * vt.D_vt
+               + ht.D_ht + numeng * Dnace + rad.D_cool]
+           if rad is not None else
+           [D >= wing.D_wing + Dfuse + numVT * vt.D_vt
+               + ht.D_ht + numeng * Dnace])),
         C_D == D / (.5 * st.rho * st.V ** 2 * wing.S),
         LoD == W_avg / D,
 
