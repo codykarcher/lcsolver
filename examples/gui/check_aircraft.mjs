@@ -13,21 +13,31 @@
  * consistent rather than for matching a number the solve never produced.
  */
 import * as THREE from 'three';
-import { conventionalAircraft, B737_TASOPT } from './components/aircraft.js';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
 const bad = (m) => { console.log(`  FAIL  ${m}`); failures++; };
 
-const g = conventionalAircraft(B737_TASOPT, { sitOnGround: false });
+// The same file the page reads, and the same conversion. A check that used its
+// own copy of the numbers would only be checking my typing.
+const sol = JSON.parse(readFileSync(
+  join(HERE, 'decks/b737_conventional_solve.json'), 'utf8'));
+const g = conventionalAircraft(deckFromSolve(sol), { sitOnGround: false });
 const u = g.userData, d = u.deck;
+console.log(`deck: ${d.name} -- ${sol._status}`);
 
 /* areas, against the solve -------------------------------------------- */
-const SOLVE = { wing: 116.649, horizontalTail: 19.095, verticalTail: 15.859 };
 console.log('area              assembled       solve       rel');
-for (const [k, want] of Object.entries(SOLVE)) {
-  const got = u.areas[k], rel = Math.abs(got - want) / want;
-  if (rel > 1e-4) bad(`${k} area ${got.toFixed(4)} against the solve's ${want}`);
-  console.log(`  ${k.padEnd(16)} ${got.toFixed(4).padStart(9)} ${String(want).padStart(11)}  ` +
+for (const [k, want] of Object.entries(d.solvedAreas)) {
+  const got = u.areas[k], rel = Math.abs(got - want) / Math.abs(want);
+  // Tight, because nothing is transcribed: the chords come out of the same file
+  // the areas do, so anything but agreement to rounding is a real defect.
+  if (rel > 1e-9) bad(`${k} area ${got.toFixed(6)} against the solve's ${want}`);
+  console.log(`  ${k.padEnd(16)} ${got.toFixed(4).padStart(9)} ${want.toFixed(4).padStart(11)}  ` +
               `${rel.toExponential(1)}`);
 }
 
@@ -38,11 +48,14 @@ for (const [k, want] of Object.entries(SOLVE)) {
 const backOut = (leSweep, cRoot, taper, span, k) =>
   Math.atan(Math.tan(leSweep * Math.PI / 180) - k * cRoot * (1 - taper) / span)
     * 180 / Math.PI;
+// The wing's leading-edge sweep is in the solve outright, so only the tails go
+// through the conversion -- their sweeps are deck constants, not solved.
 const cases = [
-  ['wing', u.leadingEdgeSweeps.wing, d.wingRootChord, d.wingTaper, d.wingSpan, 0.5, d.wingSweepC4],
   ['h tail', u.leadingEdgeSweeps.horizontalTail, d.htRootChord, d.htTaper, d.htSpan, 0.5, d.htSweepC4],
   ['v tail', u.leadingEdgeSweeps.verticalTail, d.vtRootChord, d.vtTaper, d.vtHeight, 0.25, d.vtSweepC4],
 ];
+if (Math.abs(u.leadingEdgeSweeps.wing - d.wingSweepLE) > 1e-9)
+  bad(`wing LE sweep ${u.leadingEdgeSweeps.wing} against the solve's ${d.wingSweepLE}`);
 console.log('\nsweep         LE built    c/4 back out    deck c/4');
 for (const [name, le, c, t, b, k, want] of cases) {
   const got = backOut(le, c, t, b, k);
@@ -70,7 +83,7 @@ if (Math.abs(span - d.wingSpan) > eps)
 
 // Every wheel on one plane once it is sat down, and the attitude reported is
 // the one that does it.
-const sat = conventionalAircraft(B737_TASOPT, { sitOnGround: true });
+const sat = conventionalAircraft(deckFromSolve(sol), { sitOnGround: true });
 sat.updateMatrixWorld(true);
 let lo = Infinity, hi = -Infinity;
 for (const lg of sat.userData.parts.gear) {

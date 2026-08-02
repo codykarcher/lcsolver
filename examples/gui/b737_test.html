@@ -86,7 +86,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { conventionalAircraft, B737_TASOPT } from './components/aircraft.js';
+import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -187,12 +187,11 @@ function applyGear() {
   }
 }
 
-/** The numbers the solve produced, to compare the assembly against. */
-const SOLVE = [
-  ['wing area', 'wing', 116.649],
-  ['h tail area', 'horizontalTail', 19.095],
-  ['v tail area', 'verticalTail', 15.859],
-];
+// The deck is READ, not written here. Nothing between the solve and the drawing
+// is retyped, which is why the areas below agree to machine precision rather
+// than to however carefully I copied them.
+const SOLVE_FILE = './decks/b737_conventional_solve.json';
+let deck = null;
 
 function build() {
   if (craft) { disposeTree(craft); scene.remove(craft); }
@@ -202,7 +201,7 @@ function build() {
 
   // No fuselage detail: windows, doors and the rest come later, and a bare
   // skin is the right thing to judge the shape against meanwhile.
-  craft = conventionalAircraft(B737_TASOPT, {
+  craft = conventionalAircraft(deck, {
     detail: false,
     sitOnGround: el('sit').checked,
   });
@@ -225,9 +224,11 @@ function build() {
   // Areas are the check that the whole conversion is right: they are not
   // inputs anywhere, they fall out of the chords and spans, and the solve
   // computed them independently.
-  el('compare').innerHTML = SOLVE.map(([label, key, want]) => {
+  el('compare').innerHTML = Object.entries(deck.solvedAreas).map(([key, want]) => {
     const got = u.areas[key];
-    const rel = Math.abs(got - want) / want;
+    const rel = Math.abs(got - want) / Math.abs(want);
+    const label = { wing: 'wing area', horizontalTail: 'h tail area',
+                    verticalTail: 'v tail area' }[key];
     return `<tr><td>${label}</td><td class="n">${got.toFixed(3)}</td>` +
            `<td class="n">${want.toFixed(3)}</td>` +
            `<td class="${rel < 1e-3 ? 'ok' : 'n'}">${rel.toExponential(0)}</td></tr>`;
@@ -238,8 +239,11 @@ function build() {
     `fuselage <span>${d.fuseLength.toFixed(2)}</span> long, ` +
     `<span>${(2 * d.fuseRadius).toFixed(2)}</span> across<br>` +
     `wing <span>${d.wingSpan.toFixed(2)}</span> span, LE sweep ` +
-    `<span>${u.leadingEdgeSweeps.wing.toFixed(1)}&deg;</span> ` +
-    `(deck quotes <span>${d.wingSweepC4}&deg;</span> at c/4)<br>` +
+    `<span>${u.leadingEdgeSweeps.wing.toFixed(2)}&deg;</span>` +
+    (d.wingKink != null
+      ? `, crank at <span>${(100 * d.wingKink).toFixed(1)}%</span>, ` +
+        `carry-through to <span>${(100 * d.wingEtaRoot).toFixed(1)}%</span>`
+      : '') + `<br>` +
     `tails: LE <span>${u.leadingEdgeSweeps.horizontalTail.toFixed(1)}&deg;</span> / ` +
     `<span>${u.leadingEdgeSweeps.verticalTail.toFixed(1)}&deg;</span><br>` +
     `arms from the wing: HT <span>${d.htArm.toFixed(2)}</span>, ` +
@@ -328,9 +332,23 @@ function tick() {
 }
 
 resize();
-build();
-ortho('three');
 tick();
+
+// The deck arrives before anything is drawn: there is no aeroplane to show
+// until the solve has been read, and inventing one to fill the gap would put a
+// second set of numbers in the page.
+fetch(SOLVE_FILE)
+  .then((r) => { if (!r.ok) throw new Error(`${SOLVE_FILE}: ${r.status}`); return r.json(); })
+  .then((sol) => {
+    deck = deckFromSolve(sol);
+    el('panel').querySelector('.sub').textContent =
+      `${SOLVE_FILE.split('/').pop()} \u2014 ${sol._status ?? 'no status'}`;
+    build();
+    ortho('three');
+  })
+  .catch((e) => {
+    el('readout').innerHTML = `<span style="color:#d8544f">could not load the deck</span><br>${e.message}`;
+  });
 </script>
 </body>
 </html>

@@ -26,6 +26,73 @@ const DEG = Math.PI / 180;
 const IN = 0.0254;
 
 /**
+ * Turn a solved SPaircraft solution into a deck.
+ *
+ * Written because typing the numbers out is the failure mode this whole file
+ * exists to avoid, and doing it once by hand was already once too many. Hand a
+ * solution dictionary in and the geometry comes from it; nothing between the
+ * solve and the drawing is retyped.
+ *
+ * Two things are worked out rather than read, because the solution stores them
+ * implicitly:
+ *
+ * **The wing's planform breaks.** TASOPT's wing is three panels -- a constant
+ * carry-through to the side of body at eta_o, a taper to the crank at eta_s,
+ * then a taper to the tip -- and the solution gives the chords and the two
+ * chord SLOPES rather than the stations. Inverting them recovers the stations:
+ * eta_s from the outboard slope and the crank-to-tip chord fall, then eta_o by
+ * subtracting the inboard panel's width. Ignoring the carry-through and
+ * tapering from the centreline instead loses 2.6% of the reference area.
+ *
+ * **Nothing else.** Sweeps for the tails are not in the solution -- they are
+ * deck constants -- so they stay parameters here and are marked as such.
+ */
+export function deckFromSolve(sol, overrides = {}) {
+  const g = (k) => {
+    const v = sol[k];
+    if (typeof v !== 'number') throw new Error(`solve has no numeric ${k}`);
+    return v;
+  };
+  const b = g('Wing_b'), cRoot = g('Wing_c_root');
+  const cBreak = g('Wing_c_break'), cTip = g('Wing_c_tip');
+  const etaBreak = 1 - (cBreak - cTip) / (g('Wing_dc_dy_out') * b / 2);
+  const etaRoot = etaBreak - g('Wing_box_deta_inn');
+
+  return {
+    ...B737_TASOPT,
+    name: 'Boeing 737 (from a solve)',
+    fuseLength: g('Fuse_l_fuse'), fuseRadius: g('Fuse_R_fuse'),
+    noseLength: g('Fuse_l_nose'), coneLength: g('Fuse_l_cone'),
+
+    wingSpan: b, wingRootChord: cRoot,
+    wingEtaRoot: etaRoot, wingKink: etaBreak,
+    wingCrankRatio: cBreak / cRoot, wingTipRatio: cTip / cBreak,
+    // Given outright here, so no quarter-chord conversion is needed for the
+    // wing -- only for the tails, whose sweeps the solution does not carry.
+    wingSweepLE: Math.atan(g('Wing_tan_Lambda_LE')) / DEG,
+    wingQuarterX: g('Wing_x_w'),
+
+    htSpan: g('HT_b_ht'), htRootChord: g('HT_c_root_ht'),
+    htTaper: g('HT_lambda_ht'), htArm: g('HT_l_ht'),
+
+    vtHeight: g('VT_b_vt'), vtRootChord: g('VT_c_root_vt'),
+    vtTaper: g('VT_lambda_vt'), vtArm: g('VT_l_vt'),
+
+    engineX: g('x_eng'), engineY: g('y_eng'),
+    nacelleDia: g('LG_d_nacelle'), nacelleLength: g('l_nacelle'),
+
+    mainX: g('LG_x_m'), mainY: g('LG_y_m'), mainStrut: g('LG_l_m'),
+    mainTyreIn: g('LG_d_t_m'),
+    noseX: g('LG_x_n'), noseStrut: g('LG_l_n'), noseTyreIn: g('LG_d_t_n'),
+
+    /** What the solve said its own areas were, to check the assembly against. */
+    solvedAreas: { wing: g('Wing_S'), horizontalTail: g('HT_S_ht'),
+                   verticalTail: g('VT_S_vt') },
+    ...overrides,
+  };
+}
+
+/**
  * A Boeing 737-800, from the SPaircraft `optimal737` deck.
  *
  * Solved with `spaircraft/conventional.py` -- an optimised airframe on the
@@ -50,8 +117,11 @@ export const B737_TASOPT = {
   // Wing. A plain trapezoid: the deck has no crank.
   wingSpan:       35.8140,   // Wing_b
   wingRootChord:   5.6645,   // Wing_c_root
-  wingTaper:       0.1500,   // Wing_lambda, tip over root
-  wingSweepC4:      26.0,    // SWEEP_W, degrees
+  wingEtaRoot:     0.0000,   // carry-through end; 0 means none
+  wingKink:         null,    // crank station; null means a plain trapezoid
+  wingCrankRatio:  1.0000,   // crank chord / root
+  wingTipRatio:    0.1500,   // tip chord / crank (/ root without a crank)
+  wingSweepLE:      29.03,   // degrees, at the LEADING edge
   wingQuarterX:   16.5458,   // Wing_x_w -- root quarter chord, aft of the nose
 
   // Horizontal tail.
@@ -93,7 +163,7 @@ export const B737_TASOPT = {
   htRaise:         0.38,     // horizontal tail above the local body centre, radii
   wingDihedral:     3.0,     // degrees
   htDihedral:       6.0,
-  tcRoot: 0.135, tcTip: 0.105,   // wing thickness
+  tcRoot: 0.135, tcCrank: 0.120, tcTip: 0.105,   // wing thickness
   tcTail: 0.10,                  // both tails
 };
 
@@ -137,15 +207,18 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   // ordinary tip-over-root. A real 737's cranked trailing edge is not in the
   // solve and is not invented here.
   const wing = liftingSurface({
-    kink: null,
     span: d.wingSpan,
     rootChord: d.wingRootChord,
-    taperRatio: d.wingTaper,
-    sweep: leadingEdgeSweep(d.wingSweepC4, d.wingRootChord, d.wingTaper, d.wingSpan),
+    etaRoot: d.wingEtaRoot,
+    kink: d.wingKink,
+    crankRatio: d.wingCrankRatio,
+    tipRatio: d.wingTipRatio,
+    taperRatio: d.wingKink == null ? d.wingTipRatio : null,
+    sweep: d.wingSweepLE,
     dihedral: d.wingDihedral,
     twistRoot: 0, twistTip: -3,
-    rootThickness: d.tcRoot, tipThickness: d.tcTip,
-    root: '2412', tip: '2410',
+    rootThickness: d.tcRoot, crankThickness: d.tcCrank, tipThickness: d.tcTip,
+    root: '2412', kinkFoil: null, tip: '2410',
   });
   const wingRootLE = d.wingQuarterX - 0.25 * d.wingRootChord;
   const wingY = d.wingRootY * R;
@@ -202,11 +275,11 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   // wing rather than from a fraction of the fan radius is what keeps the two
   // agreeing when either moves -- a pylon whose top is a fixed multiple of the
   // engine slides along the wing every time the engine is resized.
-  const wingLeSweep = leadingEdgeSweep(
-    d.wingSweepC4, d.wingRootChord, d.wingTaper, d.wingSpan);
-  const wingLeAt = wingRootLE + d.engineY * Math.tan(wingLeSweep * DEG);
-  const chordAtEngine = d.wingRootChord
-    * (1 - (1 - d.wingTaper) * (2 * d.engineY / d.wingSpan));
+  // Both taken from the WING rather than recomputed, so a cranked planform and
+  // a carry-through are handled without this knowing about either.
+  const etaEngine = 2 * d.engineY / d.wingSpan;
+  const wingLeAt = wingRootLE + wing.userData.at(etaEngine).xLE;
+  const chordAtEngine = wing.userData.at(etaEngine).chord;
   const topFwd = d.engineX - wingLeAt;                  // pod frame, +Z forward
   const topAft = topFwd - d.rearSpar * chordAtEngine;
 

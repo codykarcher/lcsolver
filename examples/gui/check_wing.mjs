@@ -337,10 +337,23 @@ for (const c of CASES) {
       vb.fromBufferAttribute(pos, ring * M2);
       return t / va.distanceTo(vb);
     };
-    const mid = u.mirror ? (nR - 1) / 2 : 0;
-    const named = [['root', mid, u.rootThickness], ['tip', nR - 1, u.tipThickness]];
+    // Rings are FOUND by where they are, not by counting stations. The spacing
+    // changed when planform breaks got their own stations, and an index that
+    // assumed the old layout landed one panel inboard of the crank -- reporting
+    // 0.1075 against the 0.11 asked for, which looks like a thickness bug and
+    // is a counting one.
+    const ringAt = (eta) => {
+      let best = 0, bd = Infinity;
+      for (let r = 0; r < nR; r++) {
+        const dd = Math.abs(pos.getX(r * M2) - eta * u.semiSpan);
+        if (dd < bd) { bd = dd; best = r; }
+      }
+      return best;
+    };
+    const named = [['root', ringAt(0), u.rootThickness],
+                   ['tip', ringAt(1), u.tipThickness]];
     if (p.kink != null && u.crankThickness != null) {
-      named.push(['crank', mid + p.nInner, u.crankThickness]);
+      named.push(['crank', ringAt(p.kink), u.crankThickness]);
     }
     for (const [what, ring, want] of named) {
       const got = tcAt(ring);

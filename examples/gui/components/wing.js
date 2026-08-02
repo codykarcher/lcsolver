@@ -46,7 +46,13 @@ const smooth = (s) => s * s * (3 - 2 * s);
  *     crank. So they read outboard in the order the wing is built, and neither
  *     is the conventional "taper ratio" of tip over root -- which is reported
  *     separately, because on a cranked wing it describes a trapezoid that is
- *     not there.
+ *     not there;
+ *   - `etaRoot` holds the chord CONSTANT from the centreline out to the side of
+ *     the body, which is the wing box carrying through the fuselage. With a
+ *     straight leading edge that puts the whole of it into the trailing edge,
+ *     which is what a 737's inboard trailing edge is. It is worth having rather
+ *     than tapering from the centreline: on the sizing decks this file is fed,
+ *     ignoring it costs 2.6% of the reference area.
  */
 const WING = {
   span:         34.1,  // tip to tip
@@ -62,6 +68,7 @@ const WING = {
   twistKink:    null,  // null interpolates between root and tip
   twistTip:     -3.0,  // negative is washout
   twistAxis:    0.25,  // chord fraction the sections are twisted about
+  etaRoot:      0.00,  // constant-chord carry-through out to here, of semispan
   kink:         0.35,  // fraction of semispan, or null for a plain trapezoid
   root: '2412', kinkFoil: null, tip: '2410',   // kinkFoil null means blended
   symmetric:   false,  // force zero camber, whatever section was named
@@ -126,6 +133,15 @@ function alongSpan(t, kink, root, mid, tip) {
     : mid + (tip - mid) * ((t - kink) / (1 - kink));
 }
 
+/** Piecewise-linear through a list of [station, value], stations ascending. */
+function through(stops, t) {
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [a, va] = stops[i], [b, vb] = stops[i + 1];
+    if (t <= b) return b - a < 1e-12 ? vb : va + (vb - va) * (t - a) / (b - a);
+  }
+  return stops[stops.length - 1][1];
+}
+
 /**
  * A lifting surface: aerofoils lofted along a span.
  *
@@ -157,7 +173,12 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     ?? (kinkFoil ? thicknessOf(kinkFoil) : null);
   const thickAt = (t) => alongSpan(t, p.kink, tRoot, tKink, tTip);
 
-  const chordAt = (t) => alongSpan(t, p.kink, cRoot, cKink, cTip);
+  // Chord by station rather than by the root/crank/tip rule, because the carry-
+  // through adds a fourth: constant to etaRoot, then the panels.
+  const chordStops = [[0, cRoot], [Math.max(0, p.etaRoot ?? 0), cRoot]];
+  if (p.kink != null) chordStops.push([p.kink, cKink]);
+  chordStops.push([1, cTip]);
+  const chordAt = (t) => through(chordStops, t);
   const twistAt = (t) => alongSpan(t, p.kink, p.twistRoot, p.twistKink, p.twistTip);
   // One straight leading edge, so this is one line and not a walk panel by
   // panel. The crank lives entirely in the trailing edge.
@@ -177,12 +198,16 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const push = (x, y, zLE, chord, twist, foil, thickness) =>
     half.push({ x, y, zLE, chord, twist, foil, thickness });
 
+  // A station lands exactly on every planform break -- the side of body and the
+  // crank -- so each stays a sharp corner instead of being rounded off over one
+  // panel and put in the wrong place as well.
+  const breaks = [0, ...(p.etaRoot > 0 ? [p.etaRoot] : []),
+                  ...(p.kink != null ? [p.kink] : []), 1];
   const etas = [0];
-  if (p.kink != null) {
-    for (let i = 1; i <= p.nInner; i++) etas.push(p.kink * i / p.nInner);
-    for (let i = 1; i <= p.nOuter; i++) etas.push(p.kink + (1 - p.kink) * i / p.nOuter);
-  } else {
-    for (let i = 1; i <= p.nInner + p.nOuter; i++) etas.push(i / (p.nInner + p.nOuter));
+  for (let b = 1; b < breaks.length; b++) {
+    const from = breaks[b - 1], to = breaks[b];
+    const n = b === breaks.length - 1 ? p.nOuter : Math.max(2, Math.round(p.nInner / 2));
+    for (let i = 1; i <= n; i++) etas.push(from + (to - from) * i / n);
   }
   for (const t of etas) {
     push(t * semi, t * semi * Math.tan(p.dihedral * DEG), leAt(t),
@@ -285,7 +310,7 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
      * inputs. On a cranked wing it describes a straight trapezoid that does not
      * exist, which is why it is not what the wing is built from.
      */
-    taperRatio: cTip / cRoot,
+    taperRatio: cTip / cRoot, etaRoot: p.etaRoot ?? 0,
     crankRatio: cKink ? cKink / cRoot : null, tipRatio: cTip / (cKink ?? cRoot),
     constantThickness: p.thickness ?? null,
     sweep: p.sweep, dihedral: p.dihedral,
