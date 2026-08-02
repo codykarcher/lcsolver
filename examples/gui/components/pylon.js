@@ -9,7 +9,10 @@
  *
  * Three parts, bottom to top:
  *
- *   root      sits on the core, aft of the fan, where the load actually goes
+ *   root      carried down to the core CENTRELINE, its chord spanning the core
+ *             case end to end, so the strut breaks the core surface just
+ *             behind the fan and again at the back of the case -- those two
+ *             places being the mounts
  *   strut     a streamwise section lofted upward, PIERCING the nacelle
  *   flat top  the face that meets the wing underside
  *
@@ -27,8 +30,10 @@ import * as M from './materials.js';
 
 /** Proportions, x fan radius unless noted. Visual, not structural. */
 const P = {
-  rootZ0:   -0.55,  // root chord on the core, forward end
-  rootZ1:   -2.15,  // ... and aft
+  // Root chord is read from the engine, not set here -- see below. These are
+  // only the fallback for an engine that publishes no core line.
+  rootZ0:   -0.30,
+  rootZ1:   -2.90,
   rootT:     0.085, // root half-thickness
   topZ0:     0.45,  // top chord at the wing, forward end
   topZ1:    -2.35,  // ... and aft
@@ -47,19 +52,6 @@ function halfT(s, tMax) {
   return tMax * Math.sqrt(s / (s + P.noseA)) * (1 - (1 - P.teFrac) * s * s);
 }
 
-/** Read the engine's core radius at an axial station. */
-function coreRadiusAt(engine, z) {
-  const w = engine.userData.coreWall;
-  if (!w) return 0;
-  for (let i = 0; i < w.length - 1; i++) {
-    const [z0, r0] = w[i], [z1, r1] = w[i + 1];
-    if (z <= z0 && z >= z1) {
-      return r0 + (r1 - r0) * ((z0 - z) / ((z0 - z1) || 1));
-    }
-  }
-  return z > w[0][0] ? w[0][1] : w[w.length - 1][1];
-}
-
 /**
  * @param {THREE.Object3D} engine  a podded or bare turbofan
  * @param {object} [opts]
@@ -76,10 +68,20 @@ export function pylon(engine, opts = {}) {
   const topZ0 = (opts.topZ0 ?? P.topZ0) * R;
   const topZ1 = (opts.topZ1 ?? P.topZ1) * R;
 
-  // Root sits ON the core: take the core radius under the middle of the root
-  // chord so the strut starts at the skin rather than in mid air.
-  const rootZ0 = P.rootZ0 * R, rootZ1 = P.rootZ1 * R;
-  const rootY = coreRadiusAt(engine, (rootZ0 + rootZ1) / 2) * 0.92;
+  // The root chord spans the CORE CASE end to end, taken from the engine's own
+  // published core line: forward at the core front, just behind the fan, and
+  // aft at the outlet. So the two places the strut breaks the core surface are
+  // the two places the engine is actually picked up.
+  const w = engine.userData.coreWall;
+  const rootZ0 = w ? w[0][0] : P.rootZ0 * R;
+  const rootZ1 = w ? w[w.length - 1][0] : P.rootZ1 * R;
+
+  // Carried down to the CENTRELINE rather than stopped on the skin. A pylon
+  // does not hang off a cowl; the load goes into the core's structure, and a
+  // strut that stops at the surface reads as bolted to the fairing. The part
+  // inside the core is hidden by it, so the only thing on show is where it
+  // emerges -- which is the mount.
+  const rootY = 0;
 
   // ---- loft ---------------------------------------------------------------
   const nS = P.stations, nP = P.nSide;
