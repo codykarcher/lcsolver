@@ -456,19 +456,41 @@ export function bareTurbofan({
  * Podded turbofan
  * ==================================================================== */
 
-/** Nacelle proportions, all x fan radius unless noted. */
+/**
+ * Nacelle geometry, as a REVOLVED AEROFOIL about an offset axis.
+ *
+ * The cowl is a mean line -- the offset axis, itself curved -- carrying a
+ * half-thickness distribution, revolved about the engine centreline. Outer
+ * surface is mean + h, inner is mean - h, and because h goes to zero as the
+ * square root of distance at the nose, the two meet in a continuously curved
+ * leading edge BY CONSTRUCTION.
+ *
+ * That is the whole reason for doing it this way. The previous version spliced
+ * a circular arc between two independent splines, and a splice can be made
+ * tangent but never curvature-continuous -- the join catches the light as a
+ * ring however finely it is sampled.
+ *
+ * The thickness law is  h ~ sqrt(s) (1-s)^A , peaking near the nose rather
+ * than at mid-chord. That is what an inlet cowl actually is: blunt at the lip
+ * and thin over most of its length, unlike a wing section. A is set from where
+ * the peak is wanted, since sqrt(s)(1-s)^A peaks at s = 1/(1+2A).
+ *
+ * Leading-edge radius follows from the thickness law as h'^2/2 = K^2/(2c),
+ * which for these numbers is about 0.057 fan radii -- a blunt lip, as it
+ * should be.
+ */
 const NAC = {
-  maxR:      1.22,   // nacelle maximum radius
-  maxZ:     -0.15,   // ... and where it occurs
-  highlight: 0.94,   // inlet highlight radius
-  lipZ:      0.78,   // highlight station, ahead of the fan plane
-  lipR:      0.075,  // lip radius
-  throatR:   0.862,  // throat, aft of the highlight
-  duct:      1.055,  // bypass duct outer wall over the fan
-  cowlAft:  -2.05,   // fan cowl trailing edge
-  exitOuter: 1.02,
-  exitInner: 0.95,
-  coreAft:  -0.14,   // core cowl ends this far forward of the core outlet
+  lipZ:      0.78,   // leading edge station, ahead of the fan plane
+  cowlAft:  -2.35,   // trailing edge
+  peakS:     0.13,   // where the section is thickest, as a fraction of chord
+  peakH:     0.100,  // ... and how thick, x fan radius
+  //  Mean line (the offset axis): [fraction of chord aft of the LE, radius].
+  //  Set so the duct wall clears the fan case, which starts only 0.19 chords
+  //  aft of the leading edge and so leaves very little length to diffuse in.
+  mean: [
+    [0.000, 0.960], [0.080, 1.055], [0.190, 1.145],
+    [0.320, 1.170], [0.550, 1.130], [1.000, 0.995],
+  ],
 };
 
 /**
@@ -490,55 +512,52 @@ export function turbofan(opts = {}) {
   const g = new THREE.Group();
   g.add(core);
 
-  const zLip = NAC.lipZ * R;
-  const zAft = NAC.cowlAft * R;
-  const lipR = NAC.lipR * R;
-  const hi = NAC.highlight * R;
+  const zLE = NAC.lipZ * R;
+  const zTE = NAC.cowlAft * R;
+  const c = zLE - zTE;
 
-  // ---- fan cowl -----------------------------------------------------------
-  // The lip is a half-circle about a centre one lip-radius aft of the
-  // highlight, so the forward-most point is the highlight and BOTH tangent
-  // points are axial. The inner and outer surfaces then have to arrive flat
-  // to match, which is what the doubled control points at each end do -- the
-  // previous version ran a spline straight into the arc at a slope, and the
-  // join showed as a crease all the way round.
-  const zc = zLip - lipR;
-  const rIn0 = hi - lipR, rOut0 = hi + lipR;
+  // Mean line, sampled so it can be read at any chord fraction.
+  const meanCurve = new THREE.SplineCurve(
+    NAC.mean.map(([sf, rf]) => new THREE.Vector2(sf, rf * R)));
+  const meanPts = meanCurve.getPoints(200);
+  const meanAt = (sv) => {
+    for (let i = 0; i < meanPts.length - 1; i++) {
+      const a = meanPts[i], b = meanPts[i + 1];
+      if (sv >= a.x && sv <= b.x) {
+        return a.y + (b.y - a.y) * ((sv - a.x) / ((b.x - a.x) || 1));
+      }
+    }
+    return meanPts[meanPts.length - 1].y;
+  };
 
-  const inner = new THREE.SplineCurve([
-    new THREE.Vector2(zAft, NAC.exitInner * R),
-    new THREE.Vector2(-1.45 * R, 1.020 * R),
-    new THREE.Vector2(-0.70 * R, NAC.duct * R),
-    new THREE.Vector2(0.00 * R, 1.048 * R),
-    new THREE.Vector2(zLip - 0.34 * R, NAC.throatR * R),
-    new THREE.Vector2(zc - 0.055 * R, rIn0 * 0.999),
-    new THREE.Vector2(zc, rIn0),
-  ]).getPoints(44);
+  // Half-thickness: sqrt(s)(1-s)^A, normalised to peakH at peakS.
+  const A = (1 / NAC.peakS - 1) / 2;
+  const gp = Math.sqrt(NAC.peakS) * Math.pow(1 - NAC.peakS, A);
+  const halfT = (sv) =>
+    (NAC.peakH * R / gp) * Math.sqrt(sv) * Math.pow(Math.max(0, 1 - sv), A);
 
-  const lip = [];
-  for (let i = 1; i < 24; i++) {
-    const a = -Math.PI / 2 + (i / 24) * Math.PI;
-    lip.push(new THREE.Vector2(zc + lipR * Math.cos(a), hi + lipR * Math.sin(a)));
+  // Sample with s = (i/n)^2 so points crowd the nose, where the square-root
+  // term turns fastest -- evenly spaced stations there give a faceted lip.
+  const n = 96;
+  const inner = [], outer = [];
+  for (let i = 0; i <= n; i++) {
+    const sv = Math.pow(i / n, 2);
+    const zPos = zLE - sv * c;
+    const rm = meanAt(sv), h = halfT(sv);
+    inner.push([zPos, rm - h]);
+    outer.push([zPos, rm + h]);
   }
 
-  const outer = new THREE.SplineCurve([
-    new THREE.Vector2(zc, rOut0),
-    new THREE.Vector2(zc - 0.055 * R, rOut0 * 1.001),
-    new THREE.Vector2(zLip - 0.30 * R, 1.105 * R),
-    new THREE.Vector2(NAC.maxZ * R, NAC.maxR * R),
-    new THREE.Vector2(-1.20 * R, 1.155 * R),
-    new THREE.Vector2(zAft, NAC.exitOuter * R),
-  ]).getPoints(44);
-
-  const cowl = [
-    ...inner.map((q) => [q.x, q.y]),
-    ...lip.map((q) => [q.x, q.y]),
-    ...outer.map((q) => [q.x, q.y]),
-  ];
-  cowl.push(cowl[0]);                          // close across the exit
+  // Aft along the inside, round the nose, aft along the outside. The two
+  // surfaces share the leading-edge point, so it is traversed once.
+  const cowl = [...[...inner].reverse(), ...outer.slice(1)];
+  cowl.push(cowl[0]);
   const fanCowl = latheZ(cowl, M.casing, SEG);
   fanCowl.name = 'fanCowl';
   g.add(fanCowl);
+
+  const hi = meanAt(0);
+  const zAft = zTE;
 
   // Carry the bare engine's own properties forward. A podded engine HAS a
   // core radius, an outlet, a bypass ratio -- it just has a nacelle round
@@ -548,12 +567,13 @@ export function turbofan(opts = {}) {
   Object.assign(g.userData, core.userData);
 
   g.userData.rFan = R;
-  g.userData.nacelleMaxRadius = NAC.maxR * R;
+  g.userData.nacelleMaxRadius = Math.max(...outer.map((q) => q[1]));
   g.userData.highlightRadius = hi;
-  g.userData.nacelleNoseZ = zLip + lipR;
+  g.userData.nacelleNoseZ = zLE;
   g.userData.bypassExitZ = zAft;
   g.userData.bare = core.userData;
-  return finish(g, core.userData.length, NAC.maxR * R, 'turbofan');
+  return finish(g, core.userData.length,
+                Math.max(...outer.map((q) => q[1])), 'turbofan');
 }
 
 /* ==================================================================== *
