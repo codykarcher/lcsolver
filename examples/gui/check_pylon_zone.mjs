@@ -9,10 +9,7 @@ import * as THREE from 'three';
  */
 export function intrusions(engine, pylonObj, engineZ = 0) {
   const u = engine.userData;
-  // Aft limit is the aftmost VANE, not the case: the case trails the blading
-  // by 0.04 fan radii, and it is the blading that must be missed.
-  const caseAft = u.vaneAft ?? u.caseAft;
-  const caseFwd = 0.18 * (u.rFan ?? 1), DUCT = 1.012 * (u.rFan ?? 1);
+  const caseAft = u.caseAft, caseFwd = 0.18 * (u.rFan ?? 1), DUCT = 1.012 * (u.rFan ?? 1);
   const w = u.coreWall;
   const coreAt = (z) => {
     for (let i = 0; i < w.length - 1; i++) {
