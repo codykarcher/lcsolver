@@ -89,8 +89,11 @@ function spinnerMaterial() {
   ctx.fillStyle = '#23262b';                  // matches M.painted
   ctx.fillRect(0, 0, S, S);
 
-  // Front half of the cone only, stopping just shy of the tip.
-  const V0 = 0.56, V1 = 0.975, TURNS = 0.85;
+  // Front of the cone only, stopping just shy of the tip. Extended 20% down
+  // the cone from where it started; TURNS scales with the span so the spiral
+  // simply carries on at the same pitch rather than winding tighter.
+  const V1 = 0.975, SPAN = 0.415 * 1.20, V0 = V1 - SPAN;
+  const TURNS = 0.85 * 1.20;
   ctx.strokeStyle = '#f0f2f4';
   ctx.lineWidth = 0.055 * S;
   ctx.lineCap = 'round';
@@ -116,6 +119,56 @@ function spinnerMaterial() {
     map: tex, roughness: 0.48, metalness: 0.15,
   });
   return _spinnerMat;
+}
+
+/**
+ * The core's finish, as paint on one continuous surface.
+ *
+ * Splitting the core into a silver lathe and a burnt lathe meeting at a shared
+ * sample kept the SHAPE continuous but not the shading: each mesh averages its
+ * own vertex normals, so the two end rows disagree and the junction reads as a
+ * crease. Nothing short of one mesh removes that.
+ *
+ * So the core is a single lathe and the transition is textured. Colour comes
+ * from `map`; roughness and metalness are carried in the green and blue of a
+ * second texture, so the burnt end is genuinely duller and less reflective
+ * rather than merely darker. A lathe's v runs along the profile, front to
+ * back, which is exactly the axis the finish changes along.
+ */
+let _coreMat = null;
+function coreMaterial() {
+  if (_coreMat) return _coreMat;
+  if (typeof document === 'undefined') { _coreMat = M.casing; return _coreMat; }
+
+  const H = 512;
+  const strip = (stops) => {
+    const cv = document.createElement('canvas');
+    cv.width = 4; cv.height = H;
+    const ctx = cv.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    // CanvasTexture flips Y, so row 0 is v = 1 -- the aft end.
+    for (const [at, colour] of stops) grad.addColorStop(at, colour);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 4, H);
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    return t;
+  };
+
+  // v 1.00 .. 0.80 burnt, 0.80 .. 0.60 blending, 0.60 .. 0 bare metal.
+  const colour = strip([[0, '#4a4038'], [0.20, '#4a4038'],
+                        [0.40, '#c3c8ce'], [1, '#c3c8ce']]);
+  colour.colorSpace = THREE.SRGBColorSpace;
+  // green = roughness, blue = metalness; 0.74/0.75 burnt, 0.34/0.92 bare.
+  const finish = strip([[0, 'rgb(0,189,191)'], [0.20, 'rgb(0,189,191)'],
+                        [0.40, 'rgb(0,87,235)'], [1, 'rgb(0,87,235)']]);
+
+  _coreMat = new THREE.MeshStandardMaterial({
+    map: colour, roughnessMap: finish, metalnessMap: finish,
+    roughness: 1, metalness: 1,
+  });
+  return _coreMat;
 }
 
 function spinner(rBase, len, material, zBase = 0) {
@@ -160,27 +213,27 @@ export function turbofan({
   const rCore = R / Math.sqrt(bypassRatio + 1);
   const rHub = 0.62 * rCore;              // fan hub sits inside the core line
 
-  // `length` is the whole extent aft of the origin, plug tip included -- the
-  // same number reported as userData.length, so what you ask for is what you
-  // can measure. Left null it comes from LENGTH_OVER_DIAMETER against the fan
-  // diameter, which is how engines are usually proportioned by eye.
+  // `length` is NOSE TO TAIL -- spinner tip to plug tip -- not merely the
+  // extent aft of the origin, which would leave the spinner uncounted. Left
+  // null it is LENGTH_OVER_DIAMETER against the fan diameter.
   //
-  // Note the fan case is NOT stretched by this. Its length follows from fan
-  // chord and vane row, which are the fan's business; a longer engine is a
-  // longer core.
+  // The fan case is NOT stretched by it. Case length follows from fan chord
+  // and vane row, which are the fan's business; a longer engine is a longer
+  // core.
+  const lSpin = 2.05 * rHub;
+  const zNose = 0.02 * R + lSpin;         // spinner tip, ahead of the origin
   const z0 = -0.30 * R;                   // core front, just behind the fan
-  const NOSE = -z0, TAIL = 1.40;          // length = NOSE + TAIL * Lc
+  const NOSE = -z0, TAIL = 1.40;          // aft extent = NOSE + TAIL * Lc
   const L = length ?? LENGTH_OVER_DIAMETER * 2 * R;
   // A core shorter than about a diameter stops looking like a core, so a very
-  // short request is clamped and userData.length then reports what was
+  // short request is clamped and the reported lengths then describe what was
   // actually built rather than what was asked for.
-  const Lc = Math.max(1.2 * rCore, (L - NOSE) / TAIL);
+  const Lc = Math.max(1.2 * rCore, (L - zNose - NOSE) / TAIL);
   const zAft = z0 - Lc;
 
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
-  const lSpin = 2.05 * rHub;
   rotor.add(spinner(rHub, lSpin, spinnerMaterial(), 0.02 * R));
 
   // Blade angle is measured here from the ENGINE AXIS, so a large angle lays
@@ -239,17 +292,9 @@ export function turbofan({
   ];
   const spline = new THREE.SplineCurve(ctrl).getPoints(48);
 
-  // Split the SAME spline rather than adding a lip: a separate ring standing
-  // proud of the core put a step where the colour changed. Cut at a shared
-  // sample, the two pieces meet at identical radius and station, so the
-  // surface runs smooth through the outlet and only the paint changes.
-  const kSplit = 34;
-  const fwd = spline.slice(0, kSplit + 1);
-  const aft = spline.slice(kSplit);
-  g.add(latheZ([[z0, 0], ...fwd.map((p) => [p.x, p.y]),
-                [fwd[fwd.length - 1].x, 0]], M.casing, SEG));
-  g.add(latheZ([[aft[0].x, 0], ...aft.map((p) => [p.x, p.y]), [zAft, 0]],
-               M.hot, SEG));
+  // One mesh, finish painted on. See coreMaterial().
+  g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
+               coreMaterial(), SEG));
 
   // Looking up the exhaust should be looking into a hole. Without this the
   // core's own aft cap is the first thing you meet, lit and metallic.
@@ -270,7 +315,9 @@ export function turbofan({
   g.userData.rCore = rCore;
   g.userData.bypassRatio = bypassRatio;
   g.userData.coreLength = Lc;
-  g.userData.lengthOverDiameter = (NOSE + TAIL * Lc) / (2 * R);
+  g.userData.noseZ = zNose;
+  g.userData.overallLength = zNose + NOSE + TAIL * Lc;
+  g.userData.lengthOverDiameter = g.userData.overallLength / (2 * R);
   return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');
 }
 

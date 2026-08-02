@@ -48,8 +48,6 @@
   <div class="row"><label for="bpr">bypass ratio</label><output id="oBPR"></output></div>
   <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
 
-  <div class="row"><label for="lenR">length / diameter</label><output id="oL"></output></div>
-  <input type="range" id="lenR" min="0.60" max="5.00" step="0.01" value="2.50">
 
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
@@ -137,9 +135,6 @@ function build() {
   engine = turbofan({
     rFan,
     bypassRatio: num('bpr'),
-    // Slider is length over fan diameter, so proportions hold as fan radius
-    // moves; the component itself takes an absolute length.
-    length: num('lenR') * 2 * rFan,
   });
   engine.position.set(0, 0, 0);           // at the origin, unshifted
   scene.add(engine);
@@ -152,16 +147,14 @@ function build() {
 
   el('oR').textContent = rFan.toFixed(2);
   el('oBPR').textContent = num('bpr').toFixed(1);
-  el('oL').textContent = num('lenR').toFixed(2);
 
   const b = new THREE.Box3().setFromObject(engine);
   el('readout').innerHTML =
     `origin <span>0, 0, 0</span> &middot; fan plane<br>` +
     `length <span>${engine.userData.length.toFixed(3)}</span> aft` +
-    (Math.abs(engine.userData.length - num('lenR') * 2 * num('rFan')) > 1e-4
-      ? ' <span>(clamped)</span>' : '') + `<br>` +
-    `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span> &middot; ` +
-    `core len <span>${engine.userData.coreLength.toFixed(3)}</span><br>` +
+    `<br>` +
+    `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
+    `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
     `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
     `r core <span>${engine.userData.rCore.toFixed(3)}</span><br>` +
     `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span>`;
@@ -186,7 +179,7 @@ function lookAtOrigin() {
   controls.update();
 }
 
-for (const id of ['rFan', 'bpr', 'lenR']) el(id).addEventListener('input', build);
+for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
 for (const id of ['axes', 'grid', 'wire']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
