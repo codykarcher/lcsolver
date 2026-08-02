@@ -465,32 +465,24 @@ const NAC = {
   lipR:      0.075,  // lip radius
   throatR:   0.862,  // throat, aft of the highlight
   duct:      1.055,  // bypass duct outer wall over the fan
-  cowlAft:  -1.70,   // fan cowl trailing edge
+  cowlAft:  -2.05,   // fan cowl trailing edge
   exitOuter: 1.02,
   exitInner: 0.95,
-  skinFwd:   0.060,  // core cowl standoff at its forward end
-  skinAft:   0.010,  // ... and at the outlet, where it fairs in flush
-  skinIn:    0.004,  // inner face, effectively on the core
   coreAft:  -0.14,   // core cowl ends this far forward of the core outlet
 };
 
 /**
  * Podded turbofan: the bare engine inside a nacelle.
  *
- * The nacelle is two closed annular shells. The FAN COWL runs from the inlet
- * highlight, round a rounded lip, aft over the fan to the bypass nozzle; the
- * CORE COWL picks up inside it and covers the core back to the exhaust. The
- * gap between the two is the bypass exit, which is the thing you actually see
- * on a high-bypass installation.
+ * One closed annular shell: from the inlet highlight, round a rounded lip, aft
+ * over the fan and past the core to the bypass nozzle. Closed as a loop --
+ * down the outside, back along the inside -- rather than a single-sided
+ * surface, so the duct is genuinely open and the part is still a solid.
  *
- * Both are closed loops -- down the outside, back along the inside, shut at
- * the ends -- rather than single-sided surfaces, so the duct is genuinely open
- * and the parts are still solids.
- *
- * The core cowl is cut from the bare engine's own published core profile with
- * a fixed clearance, not from an assumed shape. Bypass ratio moves the core
- * radius by more than two to one across the useful range, and anything
- * hand-fitted at one ratio bursts through the cowl at another.
+ * There is no separate core cowl. A second shell around the core showed as an
+ * extra layer with a cavity behind it; running the one cowl further aft covers
+ * the same ground and leaves the primary nozzle and plug in the open, which is
+ * what you see on an installation anyway.
  */
 export function turbofan(opts = {}) {
   const core = bareTurbofan(opts);
@@ -515,7 +507,7 @@ export function turbofan(opts = {}) {
 
   const inner = new THREE.SplineCurve([
     new THREE.Vector2(zAft, NAC.exitInner * R),
-    new THREE.Vector2(-1.15 * R, 1.030 * R),
+    new THREE.Vector2(-1.45 * R, 1.020 * R),
     new THREE.Vector2(-0.70 * R, NAC.duct * R),
     new THREE.Vector2(0.00 * R, 1.048 * R),
     new THREE.Vector2(zLip - 0.34 * R, NAC.throatR * R),
@@ -534,7 +526,7 @@ export function turbofan(opts = {}) {
     new THREE.Vector2(zc - 0.055 * R, rOut0 * 1.001),
     new THREE.Vector2(zLip - 0.30 * R, 1.105 * R),
     new THREE.Vector2(NAC.maxZ * R, NAC.maxR * R),
-    new THREE.Vector2(-0.95 * R, 1.170 * R),
+    new THREE.Vector2(-1.20 * R, 1.155 * R),
     new THREE.Vector2(zAft, NAC.exitOuter * R),
   ]).getPoints(44);
 
@@ -547,41 +539,6 @@ export function turbofan(opts = {}) {
   const fanCowl = latheZ(cowl, M.casing, SEG);
   fanCowl.name = 'fanCowl';
   g.add(fanCowl);
-
-  // ---- core cowl ----------------------------------------------------------
-  // A SKIN ON THE CORE, not a shell standing off it. Offsetting the engine's
-  // own profile keeps the cowl smooth -- the core is a spline, and a constant
-  // offset from a smooth curve is smooth -- while leaving no cavity between
-  // the two. The standoff tapers away aft so the cowl fairs flush into the
-  // outlet instead of stopping above it and showing an annular step.
-  const wall = core.userData.coreWall;
-  const coreRadiusAt = (zPos) => {
-    for (let i = 0; i < wall.length - 1; i++) {
-      const [z0, r0] = wall[i], [z1, r1] = wall[i + 1];
-      if (zPos <= z0 && zPos >= z1) {
-        return r0 + (r1 - r0) * ((z0 - zPos) / ((z0 - z1) || 1));
-      }
-    }
-    return wall[wall.length - 1][1];
-  };
-
-  const zCC0 = zAft + 0.24 * R;                 // starts inside the fan cowl
-  const zCC1 = wall[wall.length - 1][0];        // ... and ends at the outlet
-  const nCC = 34;
-  const ccOut = [], ccIn = [];
-  for (let i = 0; i <= nCC; i++) {
-    const t = i / nCC;
-    const zPos = zCC0 + (zCC1 - zCC0) * t;
-    const rc = coreRadiusAt(zPos);
-    const e = t * t * (3 - 2 * t);              // smoothstep, so the taper
-    const skin = (NAC.skinFwd + (NAC.skinAft - NAC.skinFwd) * e) * R;
-    ccOut.push([zPos, rc + skin]);
-    ccIn.push([zPos, rc + NAC.skinIn * R]);
-  }
-  const coreCowl = latheZ([...ccOut, ...[...ccIn].reverse(), ccOut[0]],
-                          M.casing, SEG);
-  coreCowl.name = 'coreCowl';
-  g.add(coreCowl);
 
   // Carry the bare engine's own properties forward. A podded engine HAS a
   // core radius, an outlet, a bypass ratio -- it just has a nacelle round
