@@ -42,6 +42,9 @@ import { latheZ, tubeZ, bladeRow, epitrochoid, rod } from './geom.js';
 
 const SEG = 48;
 
+/** Default turbofan slenderness: overall length over fan diameter. */
+const LENGTH_OVER_DIAMETER = 2.5;
+
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
   g.name = name;
@@ -159,21 +162,19 @@ export function turbofan({
 
   // `length` is the whole extent aft of the origin, plug tip included -- the
   // same number reported as userData.length, so what you ask for is what you
-  // can measure. Left null it is derived, the core running 5.2 core radii:
-  // scaled off the core rather than the fan, because tied to fan radius a
-  // high-bypass engine would grow into a needle.
+  // can measure. Left null it comes from LENGTH_OVER_DIAMETER against the fan
+  // diameter, which is how engines are usually proportioned by eye.
   //
   // Note the fan case is NOT stretched by this. Its length follows from fan
   // chord and vane row, which are the fan's business; a longer engine is a
   // longer core.
   const z0 = -0.30 * R;                   // core front, just behind the fan
   const NOSE = -z0, TAIL = 1.40;          // length = NOSE + TAIL * Lc
-  const Lc = length == null
-    ? 5.2 * rCore
-    // A core shorter than about a diameter stops looking like a core, so a
-    // very short request is clamped and userData.length reports what was
-    // actually built rather than what was asked for.
-    : Math.max(1.2 * rCore, (length - NOSE) / TAIL);
+  const L = length ?? LENGTH_OVER_DIAMETER * 2 * R;
+  // A core shorter than about a diameter stops looking like a core, so a very
+  // short request is clamped and userData.length then reports what was
+  // actually built rather than what was asked for.
+  const Lc = Math.max(1.2 * rCore, (L - NOSE) / TAIL);
   const zAft = z0 - Lc;
 
   const rotor = new THREE.Group();
@@ -269,6 +270,7 @@ export function turbofan({
   g.userData.rCore = rCore;
   g.userData.bypassRatio = bypassRatio;
   g.userData.coreLength = Lc;
+  g.userData.lengthOverDiameter = (NOSE + TAIL * Lc) / (2 * R);
   return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');
 }
 
