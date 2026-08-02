@@ -909,6 +909,22 @@ const D8 = {
 
   // Where along the body each transition happens, as a fraction of length.
   uBubble:    0.24,  // elliptical nose has become the double bubble by here
+
+  /**
+   * The valley the engines sit in.
+   *
+   * Over the cabin the OML is the convex hull of the two lobes -- a stadium,
+   * flat on top -- because the bubbles are pressure vessel and the fairing is
+   * what the air sees. Aft of the cabin that stops being true: the fairing
+   * falls away between the lobes and the two propulsors nestle in the dish it
+   * leaves, which is the whole reason the engines are where they are.
+   *
+   * Zero by default, so a body with nothing on the back of it stays the plain
+   * closing wedge it was. Depth is a fraction of the local half-height taken
+   * out of the crown, blended in over the afterbody.
+   */
+  tailTrough:  0.00,
+  troughWidth: 0.50,  // angular half-width of the dish, radians
 };
 
 /**
@@ -990,7 +1006,16 @@ export function d8Fuselage({
       const k = Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
       const halfW = tailW + (p.cabinWidth - tailW) * k;
       const halfH = shape.at(z).r / radius;
-      return stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      const base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      if (!(p.tailTrough > 0)) return base;
+      // The dish, eased in over the afterbody so the roof leaves the cabin
+      // flat and falls away smoothly rather than stepping.
+      const depth = p.tailTrough * s * s * (3 - 2 * s);
+      // Angular distance from straight up, WRAPPED -- otherwise the notch
+      // reappears at the keel when theta runs past pi.
+      const dth = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+      const gg = dth / p.troughWidth;
+      return base * (1 - depth * Math.exp(-gg * gg));
     };
   };
 

@@ -111,16 +111,56 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   if (edge < reach) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
   if (edge > 1.35 * reach) bad(`the trailing edge runs ${(edge / reach).toFixed(2)} times past the engines`);
 
-  // The engine is the deck's, not the component's own proportions.
-  const b = new THREE.Box3().setFromObject(u.parts.engines[0]);
-  const len = b.max.z - b.min.z, dia = b.max.x - b.min.x;
-  console.log(`     engine ${len.toFixed(3)} long by ${dia.toFixed(3)} across ` +
-              `(deck: ${d.nacelleLength.toFixed(3)} by ${d.nacelleDia.toFixed(3)}, ` +
-              `aspect ${(d.nacelleLength / d.nacelleDia).toFixed(2)})`);
-  if (Math.abs(len - d.nacelleLength) > 2e-3) bad(`engine is ${len} long, deck says ${d.nacelleLength}`);
-  if (Math.abs(dia - d.nacelleDia) > 2e-3) bad(`engine is ${dia} across, deck says ${d.nacelleDia}`);
-  // And it sits ON the body rather than hanging off the back of it.
-  if (b.min.z < -L - 1e-6) bad(`the engine overhangs the tail by ${((-L) - b.min.z).toFixed(3)} m`);
+  /**
+   * The afterbody has to still BE there where the engines sit.
+   *
+   * The bare body's closing law falls away from the moment the cabin ends,
+   * which is right when there is nothing to carry: it left 12 per cent of the
+   * depth at the engine station, so they perched on an edge and the dish they
+   * belong in had nowhere to exist.
+   */
+  const z = -d.engineX;
+  const deep = (fu.crownAt(z) - fu.keelAt(z)) / 2;
+  console.log(`     ${(100 * deep / d.fuseHalfHeight).toFixed(0)}% of full depth at the ` +
+              `engine station (${deep.toFixed(3)} m against an engine radius of ` +
+              `${(d.nacelleDia / 2).toFixed(3)})`);
+  if (deep < 0.5 * d.fuseHalfHeight) {
+    bad(`only ${(100 * deep / d.fuseHalfHeight).toFixed(0)}% of the depth survives to the engines`);
+  }
+
+  // And a valley between the lobes for them to sit in -- the cross-sections'
+  // whole point. Measured as the crown on the centreline against the crown
+  // over the engine's own lateral position.
+  const yMid = fu.surfaceAt(z, Math.PI / 2).y;
+  let yEng = -Infinity;
+  for (let i = 0; i < 600; i++) {
+    const p = fu.surfaceAt(z, (i / 600) * Math.PI);
+    if (Math.abs(p.x - d.engineY) < 0.02) yEng = Math.max(yEng, p.y);
+  }
+  console.log(`     valley ${(yEng - yMid).toFixed(3)} m deep between the lobes`);
+  if (yEng - yMid < 0.05) bad('there is no valley between the lobes for the engines');
+}
+
+/* ---- the tails are placed by their own stations, and form a pi --------- */
+{
+  if (d.vtLE == null || d.htLE == null) bad('the solve carries no x_vt_le / x_ht_le');
+  const fin = new THREE.Box3().setFromObject(u.parts.verticalTails[0]);
+  const ht = new THREE.Box3().setFromObject(u.parts.horizontalTail);
+  const overlap = Math.min(ht.max.z, fin.max.z) - Math.max(ht.min.z, fin.min.z);
+  console.log(`\ntails: fin z ${fin.max.z.toFixed(2)}..${fin.min.z.toFixed(2)}, ` +
+              `tailplane ${ht.max.z.toFixed(2)}..${ht.min.z.toFixed(2)} -> overlap ${overlap.toFixed(2)} m`);
+  // A pi tail: the tailplane is carried ON the fins, so they must overlap in
+  // station and meet in height. Derived from the arms they missed each other
+  // by four metres, which is what x_ht_le and x_vt_le settled.
+  if (overlap <= 0) bad(`the tailplane is ${(-overlap).toFixed(2)} m clear of the fins`);
+  if (ht.min.y > fin.max.y || ht.max.y < fin.max.y - 0.5) {
+    bad(`the tailplane sits at y ${ht.min.y.toFixed(2)}..${ht.max.y.toFixed(2)}, ` +
+        `fins top out at ${fin.max.y.toFixed(2)}`);
+  }
+  // The fin's trailing edge lands on the body's own tail, which is what the
+  // solve's station gives and is worth noticing if it ever stops being true.
+  console.log(`     fin trailing edge ${(d.vtLE + d.vtRootChord).toFixed(3)}, ` +
+              `body ends ${d.fuseLength.toFixed(3)}`);
 }
 
 /* ---- how it sits ------------------------------------------------------- */

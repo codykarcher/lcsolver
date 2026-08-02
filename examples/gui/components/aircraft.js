@@ -86,6 +86,15 @@ export function deckFromSolve(sol, overrides = {}) {
      * of them there are -- the total is the product, not the quotient.
      */
     finCount: typeof sol.n_vt === 'number' ? sol.n_vt : 1,
+    /**
+     * Tail LEADING EDGE stations, when the solve carries them.
+     *
+     * Unambiguous where an arm is not: `x_w + l_ht` and `x_ht_le + c_root/4`
+     * disagree by 0.78 m on the D8, so the arms are measured to a reference
+     * this file was guessing at. Null when absent, and the arms are used.
+     */
+    htLE: typeof sol.x_ht_le === 'number' ? sol.x_ht_le : null,
+    vtLE: typeof sol.x_vt_le === 'number' ? sol.x_vt_le : null,
 
     engineX: g('x_eng'), engineY: g('y_eng'),
     nacelleDia: g('LG_d_nacelle'), nacelleLength: g('l_nacelle'),

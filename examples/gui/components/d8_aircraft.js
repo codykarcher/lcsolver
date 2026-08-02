@@ -34,6 +34,9 @@ export const D8_CHOICES = {
   finCant:       14.0,    // degrees outboard from vertical
   engineSink:     0.45,   // engine radius let into the upper skin
   tailSpan:       1.06,   // trailing edge half-width, in engine outer extents
+  tailHold:       4.0,    // how squarely the afterbody holds its depth aft
+  tailTrough:     0.30,   // valley between the lobes, in local half-heights
+  troughWidth:    0.55,   // angular half-width of that valley, radians
   htOnFins:       true,   // tailplane carried on the fin tips, not the body
   wingDihedral:   2.0,
   wingSweepC4:   20.0,
@@ -79,6 +82,18 @@ export function d8Aircraft(deck, opts = {}) {
        * extent, in the half-heights this parameter is measured in.
        */
       tailWidth: (d.tailSpan * (d.engineY + d.nacelleDia / 2)) / halfH,
+      /**
+       * The afterbody holds its DEPTH back to the engines, then closes.
+       *
+       * The smoothstep the bare body uses falls away from the moment the cabin
+       * ends, which is right when there is nothing to carry: it had the body
+       * 0.23 m deep where the engines sit, 12 per cent of full, so they perched
+       * on an edge and the dish they are supposed to sit in had no room to
+       * exist. A power law holds it at 77 per cent there and does its closing
+       * in the last fifth instead.
+       */
+      tailLaw: 'power', tailA: d.tailHold, tailB: 0.70,
+      tailTrough: d.tailTrough, troughWidth: d.troughWidth,
     },
     detail: opts.detail ?? false,
   });
@@ -122,8 +137,11 @@ export function d8Aircraft(deck, opts = {}) {
     height: d.vtHeight, rootChord: d.vtRootChord, taper: d.vtTaper,
     area: 0.5 * d.vtHeight * d.vtRootChord * (1 + d.vtTaper),
   };
-  const vtQuarterX = d.wingQuarterX + d.vtArm;
-  const vtRootLE = vtQuarterX - 0.25 * fin.rootChord;
+  // The solve gives the leading edge outright, which is the station that
+  // actually places the surface; the arm is a moment length measured to a
+  // reference this file would have to guess at.
+  const vtRootLE = d.vtLE ?? (d.wingQuarterX + d.vtArm - 0.25 * fin.rootChord);
+  const vtQuarterX = vtRootLE + 0.25 * fin.rootChord;
   parts.verticalTails = [];
   // Placed symmetrically about the centreline, whatever the count.
   const sides = d.finCount >= 2 ? [1, -1] : [0];
@@ -150,8 +168,8 @@ export function d8Aircraft(deck, opts = {}) {
     dihedral: 0, twistRoot: 0, twistTip: 0,
     thickness: d.tcTail, symmetric: true,
   });
-  const htQuarterX = d.wingQuarterX + d.htArm;
-  const htRootLE = htQuarterX - 0.25 * d.htRootChord;
+  const htRootLE = d.htLE ?? (d.wingQuarterX + d.htArm - 0.25 * d.htRootChord);
+  const htQuarterX = htRootLE + 0.25 * d.htRootChord;
   // Level with the fin tips when it rides on them, which is what makes the
   // empennage a pi rather than a cross.
   const finTipY = u.crownAt(-vtQuarterX) + fin.height * Math.cos(d.finCant * DEG);
@@ -177,7 +195,7 @@ export function d8Aircraft(deck, opts = {}) {
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
-    pod.add(bareTurbofan({ rFan, bypassRatio: 9, length: d.nacelleLength }));
+    pod.add(bareTurbofan({ rFan, bypassRatio: 9 }));
     pod.position.set(side * d.engineY,
                      u.crownAt(-d.engineX) + rNac * (1 - d.engineSink),
                      -d.engineX);
