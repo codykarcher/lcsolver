@@ -472,6 +472,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # fixes; retest before concluding.
     SMmin = C("SM_min", float(_os.environ.get("SM_MIN", 0.01)), "-",
               "minimum static margin")
+    # ISA pressure at the deck's 8,000 ft cabin altitude over R*T_SL --
+    # getparm.f:427 sets pcabin = ISA(cabin altitude), and mission.f:355
+    # takes cabin air at SEA LEVEL temperature: 75262/(287.05*288.15).
+    rho_cabin = C("rho_cabin_buoy", 0.9102, "kg/m^3",
+                  "cabin air density, 8000 ft cabin at T_SL")
+    Wbuoy = Vn("W_buoy_cab", 2000.0, "N", "cabin-air buoyancy carried by lift")
     # CG travel, as a FRACTION OF MEAN AERODYNAMIC CHORD -- which is how CG
     # envelopes are actually quoted, and the only form in which one number can
     # be shared across a business jet and a widebody.
@@ -1741,7 +1747,18 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Fuselage lift, as a fraction of wing lift.
         Lfuse == (Ltow - 1.) * wing.L_w,                    # [SP] SigEq
         Ltotal == Ltow * wing.L_w,
-        Ltotal >= W_avg + ht.L_ht,
+        # CABIN-AIR BUOYANCY (mission.f:356), cruise segments only, exactly
+        # as TASOPT applies it: the pressurized hull is a bag of sea-level-
+        # temperature air in thin ambient air, and the lift has to carry the
+        # difference -- (p_cabin/(R*T_SL) - rho0)*g*cabVol, ~530 lbf on the
+        # D8 at cruise. p_cabin is the ISA pressure at the deck's 8,000 ft
+        # cabin altitude. One-sided with W_buoy charged in the lift balance,
+        # so it binds where the difference is positive and floors where a
+        # low-altitude segment would make it negative; TASOPT zeroes climb
+        # and descent explicitly, which the segment slice mirrors.
+        Ltotal >= W_avg + ht.L_ht + Wbuoy,
+        Wbuoy + st.rho * g * fu.V_cabin
+            >= rho_cabin * g * fu.V_cabin,                     # [SP] SigIneq
 
         # ---- drag ------------------------------------------------------
         # Drag AREA straight from the BL fit -- no reference-area convention
