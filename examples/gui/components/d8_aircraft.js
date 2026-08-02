@@ -52,7 +52,25 @@ export const D8_CHOICES = {
   planTaperA:     1.0,    // the plan narrows EARLY -- the depth does not
   planTaperB:     2.0,
   runStart:       1.5,    // where the run begins, in tailcone lengths off the tail
-  tailHold:       4.0,    // how squarely the afterbody holds its depth aft
+  ductGap:        0.03,   // clearance between the lid and the engines
+  /**
+   * How far the section centre stays below the lid.
+   *
+   * The centre has to be under the roof it describes, and it descends more
+   * slowly than the lid does -- at 0.45 the lid overtook it just before the
+   * engine face and that station read as empty. 0.80 keeps it clear the whole
+   * way; it costs nothing visible, since the keel is a metre and a half below
+   * either way.
+   */
+  lidClearance:   0.80,
+  /**
+   * How squarely the afterbody holds its depth aft.
+   *
+   * Lower than it was. With the centreline pushed down to stay under the lid,
+   * holding the depth late leaves the body to close in the last stretch and the
+   * underside necks in at 65 degrees; 0.8 spreads the close and brings it to 35.
+   */
+  tailHold:       0.8,
   tailTrough:     0.30,   // valley between the lobes, in local half-heights
   troughWidth:    0.55,   // angular half-width of that valley, radians
   htOnFins:       true,   // tailplane carried on the fin tips, not the body
@@ -126,34 +144,31 @@ export function d8Aircraft(deck, opts = {}) {
        * in the last fifth instead.
        */
       tailLaw: 'power', tailA: d.tailHold, tailB: 0.70,
-      /**
-       * Where the afterbody's centreline ends up: in the CHANNEL.
-       *
-       * A section is one radius per angle about that centreline, so the
-       * centreline has to be inside the shape it describes. Left at its own
-       * default the body closes at 0.35 of its height while the channel, with
-       * the engines at 0.70, floors at 0.47 -- the origin ends up below the
-       * floor, outside the section, and the whole afterbody collapses to
-       * nothing. Aiming it at the middle of the channel is not a tuning
-       * choice; it is what keeps the description valid.
-       */
-      tailEdgeHeight: ((engineAxisY - (d.nacelleDia / 2 + 0.02) / 2) + halfH) / (2 * halfH),
       // The plan narrows on its own law, and earlier than the depth, so the
-      // afterbody is no wider than the engines by the time it has to hold them.
+      // afterbody is no wider than what it has to carry.
       tailWidthA: d.planTaperA, tailWidthB: d.planTaperB,
-      // And the afterbody closes into the channel that holds the engines: a
-      // flat floor with sides rounding up at their own radius.
-      channel: { x: d.engineY, y: engineAxisY, r: d.nacelleDia / 2 },
       /**
-       * The run starts 1.5 tailcone-lengths off the tail -- so it begins well
-       * forward of the cone, where there is length to climb in -- and runs
-       * straight through to the body's TRAILING EDGE. Every metre it is given
-       * is a degree it does not have to climb at: over the cone alone the keel
-       * swept up at 48 degrees, to the engines' nose at 23, and to the trailing
-       * edge at less again.
+       * The lid: the top of the afterbody, descending from the cabin's crown to
+       * just under the engines by the time it reaches their face, and holding
+       * there. The engines then sit ON it rather than in a hole cut through it,
+       * and their fairings are their own lofted pieces.
        */
-      channelFromX: d.fuseLength - d.runStart * d.coneLength,
-      channelToX: d.fuseLength,
+      lid: {
+        top: d.fuseHalfHeight,
+        floor: engineAxisY - d.nacelleDia / 2 - d.ductGap,
+        fromX: d.cabinEnd,
+        toX: engineNoseX,
+      },
+      /**
+       * And the body's centreline stays BELOW that lid.
+       *
+       * A section is one radius per angle about the centreline, so the centre
+       * has to be under the roof it describes. Aimed into the engines -- which
+       * is what it needed when they were cradled in the body -- it ends up
+       * above the lid and every ray reads as empty.
+       */
+      tailEdgeHeight: ((engineAxisY - d.nacelleDia / 2 - d.ductGap - d.lidClearance)
+                       + halfH) / (2 * halfH),
     },
     detail: opts.detail ?? false,
   });

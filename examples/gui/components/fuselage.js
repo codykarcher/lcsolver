@@ -1095,43 +1095,54 @@ export function d8Fuselage({
       return Math.pow(f, p.channelEase);
     };
     /**
-     * The section along the run, as a channel whose PARAMETERS travel.
+     * The afterbody: the cabin's own section, narrowing, under a descending LID.
      *
-     * Not a blend between the cabin's shape and the channel's. Interpolating
-     * two radius functions angle by angle does not keep a shape convex: the
-     * two disagree most at the bottom corners, and the sections came out
-     * pinched there for most of the run. Interpolating the channel's own
-     * parameters instead means every station IS a channel -- the hull of two
-     * circles, cut by a half-plane, both convex operations -- so the underside
-     * is a proper U the whole way and cannot be anything else.
+     * A flat lid, not a trough. A trough -- a floor with its corners rounding
+     * up to the sides -- is what a duct wants to be, and it cannot be said
+     * here: on a section written as one radius per angle, a ray from inside
+     * leaves the trough and then goes back under its rising corner, so it
+     * crosses material twice. Measured, 54 rays in 720 do it, and no choice of
+     * origin fixes it. A flat lid cannot, because it never rises.
      *
-     * At the start of the run the parameters ARE the cabin: two circles of the
-     * body's own half-height, spaced so their hull is its width, with the cut
-     * up at the crown where it does nothing.
+     * So the body stops at the lid and whatever sits above it -- nacelles,
+     * fairings -- is its own lofted piece. Which is what they physically are.
      */
     const cabinHalfW = radius * p.cabinWidth;
-    const asChannel = (th, z, base) => {
-      const f = openAt(z);
-      if (f <= 0) return base;
+    const lidAt = (z) => {
+      if (!p.lid) return Infinity;
+      const x = -z;
+      const t = (x - p.lid.fromX) / Math.max(p.lid.toX - p.lid.fromX, 1e-6);
+      const g = Math.min(1, Math.max(0, t));
+      const eased = g * g * (3 - 2 * g);
+      return p.lid.top + (p.lid.floor - p.lid.top) * eased;
+    };
+
+    /** The cabin's section, narrowed and capped, at any station. */
+    const capped = (th, z, halfWNorm) => {
       const sh = shape.at(z);
-      if (!(sh.r > 1e-6)) return base;
-      const lerp = (a, b) => a + (b - a) * f;
-      const sp = lerp(Math.max(cabinHalfW - radius, 0), p.channel.x);
-      const rr = lerp(radius, p.channel.r + p.channelGap);
-      const ax = lerp(0, p.channel.y);
-      const cp = lerp(radius, p.channel.y);
+      if (!(sh.r > 1e-6)) return stadiumSection(halfWNorm, p.cabinCrown)(th);
+      const lid = lidAt(z);
+      if (!Number.isFinite(lid)) return stadiumSection(halfWNorm, p.cabinCrown)(th);
+      const halfWm = halfWNorm * sh.r;
       return channelSection({
-        halfSpacing: sp / sh.r,
-        radius: rr / sh.r,
-        axisY: (ax - sh.yc) / sh.r,
-        cap: (cp - sh.yc) / sh.r,
+        halfSpacing: Math.max(halfWm - sh.r, 0) / sh.r,
+        radius: 1,
+        axisY: 0,
+        cap: (lid - sh.yc) / sh.r,
       })(th);
     };
 
     return (th, z) => {
-      // The channel reaches forward of the tailcone, so it has to be applied to
-      // the cabin's own section too, not only to the closing one.
-      if (z > shape.zTail) return asChannel(th, z, morph(th, z));
+      // The lid reaches forward of the tailcone, so the cabin's own section has
+      // to know about it too, not only the closing one.
+      if (z > shape.zTail) {
+        // Only where the lid has actually started. Forward of that the body is
+        // untouched -- and must be: at the nose the section radius goes to zero,
+        // so a width expressed as a multiple of it is not a number.
+        const sh0 = shape.at(z);
+        if (!p.lid || -z < p.lid.fromX || !(sh0.r > 1e-6)) return morph(th, z);
+        return capped(th, z, (p.cabinWidth * radius) / sh0.r);
+      }
       // Aft: the half-width follows its own taper, so the aspect the stadium is
       // built at is whatever holds that width against a height that is on its
       // way down. With tailWidth equal to cabinWidth -- the default -- the
@@ -1142,8 +1153,8 @@ export function d8Fuselage({
       const halfW = tailW + (p.cabinWidth - tailW) * k;
       const sh = shape.at(z);
       const halfH = sh.r / radius;
-      let base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
-      base = asChannel(th, z, base);
+      const aspect = halfW / Math.max(halfH, 1e-6);
+      let base = p.lid ? capped(th, z, aspect) : stadiumSection(aspect, p.cabinCrown)(th);
       if (!(p.tailTrough > 0)) return base;
       // The dish, eased in over the afterbody so the roof leaves the cabin
       // flat and falls away smoothly rather than stepping.

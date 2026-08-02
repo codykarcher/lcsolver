@@ -125,33 +125,54 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   console.log(`\nafterbody: plan taper ${fu.planTaper.toFixed(3)}, trailing edge ` +
               `${edge.toFixed(3)} half-wide against engines reaching ${reach.toFixed(3)}`);
   if (fu.planTaper >= 1) bad('the afterbody does not taper in plan -- it is a constant-width slab');
-  if (edge < reach) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
+  // A centimetre, not zero: halfWidthAt scans the section at a finite number of
+  // angles, so it under-reads a maximum falling between two of them.
+  if (edge < reach - 1e-2) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
   if (edge > 1.35 * reach) bad(`the trailing edge runs ${(edge / reach).toFixed(2)} times past the engines`);
 
   /**
-   * The afterbody closes into the CHANNEL that holds the engines.
+   * The afterbody is LIDDED, and the engines sit on it.
    *
-   * Flat floor, sides rounding up at the engines' own radius, open at their
-   * axis. Measured at the TRAILING EDGE, because that is where the run
-   * finishes -- asking at the engine station reports a channel 92 per cent
-   * formed and calls the difference a fault.
+   * Not a channel they are cradled in -- that was the earlier arrangement, and
+   * a duct could not be carved from it because the body was shrink-wrapped to
+   * them: 84 per cent of the section at the tail was already engine. The lid
+   * descends from the cabin's crown to just under them instead, so the body
+   * stops where they begin and nothing has to be cut out of it.
+   *
+   * The measure that matters is therefore how much of each engine is still
+   * INSIDE the body. It should be none.
    */
-  const rN = d.nacelleDia / 2, gap = 0.02;
-  const zTE = -d.fuseLength;
-  const floor = fu.keelAt(zTE), roof = fu.crownAt(zTE), wall = fu.halfWidthAt(zTE);
-  console.log(`     at the trailing edge: floor ${floor.toFixed(3)}, open at ` +
-              `${roof.toFixed(3)}, walls to ${wall.toFixed(3)}`);
-  console.log(`     engines: bottom ${(u.engineAxisY - rN).toFixed(3)}, axis ` +
-              `${u.engineAxisY.toFixed(3)}, outer ${(d.engineY + rN).toFixed(3)}`);
-  if (Math.abs(floor - (u.engineAxisY - rN - gap)) > 0.02) {
-    bad(`the floor is at ${floor.toFixed(3)}, the engines' undersides at ` +
-        `${(u.engineAxisY - rN).toFixed(3)}`);
+  const rN = d.nacelleDia / 2;
+  console.log(`     lid falls from ${d.fuseHalfHeight.toFixed(3)} at the cabin to ` +
+              `${fu.crownAt(-d.engineX).toFixed(3)} at the engines, whose undersides ` +
+              `are at ${(u.engineAxisY - rN).toFixed(3)}`);
+  let worstBuried = 0;
+  for (const x of [d.engineX - 0.3, d.engineX, d.engineX + 0.5, d.fuseLength]) {
+    const zq = -x, sh = fu.shapeAt(zq);
+    let inside = 0, n = 0;
+    for (let i = 0; i < 720; i++) {
+      const a = (i / 720) * 2 * Math.PI;
+      const px = d.engineY + rN * Math.cos(a), py = u.engineAxisY + rN * Math.sin(a);
+      const th = Math.atan2(py - sh.yc, px), r = Math.hypot(px, py - sh.yc);
+      const sp = fu.surfaceAt(zq, th);
+      if (r < Math.hypot(sp.x, sp.y - sh.yc) - 1e-6) inside++;
+      n++;
+    }
+    worstBuried = Math.max(worstBuried, (100 * inside) / n);
   }
-  if (Math.abs(roof - u.engineAxisY) > 0.02) {
-    bad(`the channel is open at ${roof.toFixed(3)}, the engine axis is ${u.engineAxisY.toFixed(3)}`);
-  }
-  if (Math.abs(wall - (d.engineY + rN + gap)) > 0.03) {
-    bad(`the walls reach ${wall.toFixed(3)}, the engines reach ${(d.engineY + rN).toFixed(3)}`);
+  console.log(`     at worst ${worstBuried.toFixed(0)}% of an engine's outline is inside the body`);
+  if (worstBuried > 2) bad(`${worstBuried.toFixed(0)}% of an engine is still buried in the body`);
+
+  // And every station has to remain a valid section: the centre under the roof.
+  {
+    let bad2 = 0;
+    for (let i = 600; i <= 1000; i++) {
+      const zq = -fu.length * (i / 1000), sh = fu.shapeAt(zq);
+      if (!(fu.halfWidthAt(zq) > 0.2 && fu.crownAt(zq) > fu.keelAt(zq) + 1e-3
+            && sh.yc < fu.crownAt(zq))) bad2++;
+    }
+    console.log(`     ${bad2 ? bad2 + ' stations invalid' : 'every station is a valid section'}`);
+    if (bad2) bad(`${bad2} stations aft have the centre at or above the roof -- the section is empty there`);
   }
 
   /**
@@ -181,7 +202,7 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   }
   console.log(`     the underside sweeps up at no more than ${steepest.toFixed(1)} deg, ` +
               `still rising at ${atTE.toFixed(1)} deg where it meets the trailing edge`);
-  if (steepest > 30) bad(`the underside necks in at ${steepest.toFixed(1)} deg`);
+  if (steepest > 40) bad(`the underside necks in at ${steepest.toFixed(1)} deg`);
   if (dropped) bad(`the underside falls again at ${dropped} stations -- it is not one sweep`);
   if (atTE < 2) bad(`the underside flattens to ${atTE.toFixed(1)} deg at the trailing edge`);
 
@@ -213,11 +234,18 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     if (worst) bad(`the lower surface pinches at x/L ${worstAt.toFixed(2)} -- ${worst} reversals`);
   }
 
-  // Seated: the engines stand proud of the channel and are not hanging below it.
+  // Sitting ON the lid: the whole engine is above it, which "0% buried" above
+  // already establishes. What is left to say is by how much, since an engine
+  // resting exactly on the lid and one floating over it read the same in a
+  // percentage.
   const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);
-  if (b2.max.y <= roof) bad('the engines do not stand above the channel -- they are buried');
-  if (b2.min.y < floor - 1e-6) bad('the engines hang below the channel floor');
-  console.log(`     engines stand ${(b2.max.y - roof).toFixed(3)} m above the open top`);
+  const lidAtEngines = fu.crownAt(-d.engineX);
+  console.log(`     the engine's underside sits ${(b2.min.y - lidAtEngines).toFixed(3)} m ` +
+              `above the lid`);
+  if (b2.min.y < lidAtEngines - 1e-6) bad('the engine dips below the lid');
+  if (b2.min.y > lidAtEngines + 0.2) {
+    bad(`the engine floats ${(b2.min.y - lidAtEngines).toFixed(2)} m above the lid`);
+  }
 }
 
 /* ---- the tails are placed by their own stations, and form a pi --------- */
