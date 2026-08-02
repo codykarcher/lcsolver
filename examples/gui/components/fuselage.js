@@ -163,6 +163,36 @@ export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0
  * end of a transition -- which matters, because a discontinuity in the SECTION
  * is a ring-shaped crease around the whole body and is impossible to miss.
  */
+/**
+ * A section with pods let into it: the union of a core shape and some circles.
+ *
+ * The union, not a blend, because that is what the thing physically is. A
+ * nacelle faired into an afterbody is two solids sharing a skin, and the skin
+ * is the outer envelope of both -- exactly as the cabin's stadium is the convex
+ * hull of two lobes. Taking the larger radius at every angle gives the receptacle
+ * a nacelle drops into, with the fillet where the two surfaces meet falling out
+ * of the geometry instead of being modelled.
+ *
+ * Everything is in units of the local HALF-HEIGHT, which is what a section
+ * multiplier means here.
+ */
+export function podSection(core, pods) {
+  return (th) => {
+    let r = core(th);
+    for (const q of pods) {
+      if (!(q.r > 1e-9)) continue;
+      const d = Math.hypot(q.x, q.y);
+      const a = th - Math.atan2(q.y, q.x);
+      const sa = d * Math.sin(a);
+      const disc = q.r * q.r - sa * sa;
+      if (disc < 0) continue;                 // this ray misses the circle
+      const rr = d * Math.cos(a) + Math.sqrt(disc);
+      if (rr > r) r = rr;
+    }
+    return r;
+  };
+}
+
 export function morphSection(stops, length) {
   return (th, z) => {
     const u = Math.min(1, Math.max(0, -z / length));
@@ -925,6 +955,39 @@ const D8 = {
    */
   tailTrough:  0.00,
   troughWidth: 0.50,  // angular half-width of the dish, radians
+
+  /**
+   * What the afterbody turns into behind the cabin.
+   *
+   * The cabin's stadium is the fairing over the pressure lobes and stops being
+   * the right shape the moment the cabin does. Aft of it the section narrows to
+   * a SUPERELLIPSE -- squarer than an ellipse, which is what lets it keep width
+   * while losing height -- and then the propulsors are let into it as circles,
+   * giving the omega: a core with two thick channels below it that the engines
+   * drop into.
+   *
+   * `pods` are given in METRES in the body's own frame, {x, y, r}, and are
+   * mirrored across the centreline. Empty by default, so a body with nothing on
+   * the back of it is unaffected.
+   */
+  /**
+   * The plan taper gets its OWN law.
+   *
+   * Sharing the height's is right for a body that just closes: both go together
+   * and the thing narrows evenly. It is wrong for one that has to turn into an
+   * omega, because that shape needs the WIDTH gone early -- so the core is
+   * narrower than the channels and they stand out of it -- while the DEPTH
+   * stays, so there is something for them to stand out of. Null means "the same
+   * as the height", which is what a bare body wants.
+   */
+  tailWidthA:  null,
+  tailWidthB:  null,
+
+  aftShape:   'stadium',   // or 'superellipse'
+  aftN:        3.0,        // superellipse exponent aft
+  pods:        [],
+  podStart:    0.45,       // fraction along the tailcone where they begin
+  podFull:     0.80,       // and where they are fully formed
 };
 
 /**
@@ -1003,10 +1066,42 @@ export function d8Fuselage({
       // way down. With tailWidth equal to cabinWidth -- the default -- the
       // width does not taper at all and the planform is a constant-width slab.
       const s = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
-      const k = Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+      const wA = p.tailWidthA ?? p.tailA, wB = p.tailWidthB ?? p.tailB;
+      const k = Math.pow(1 - Math.pow(s, wA), wB);
       const halfW = tailW + (p.cabinWidth - tailW) * k;
-      const halfH = shape.at(z).r / radius;
-      const base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      const sh = shape.at(z);
+      const halfH = sh.r / radius;
+      const aspect = halfW / Math.max(halfH, 1e-6);
+      // The core narrows from the cabin's stadium into a superellipse, eased in
+      // over the first part of the afterbody.
+      let base;
+      if (p.aftShape === 'superellipse') {
+        const t = Math.min(1, s / Math.max(p.podStart, 1e-6));
+        const w = t * t * (3 - 2 * t);
+        base = (1 - w) * stadiumSection(aspect, p.cabinCrown)(th)
+             + w * superellipseSection(aspect, p.aftN)(th);
+      } else {
+        base = stadiumSection(aspect, p.cabinCrown)(th);
+      }
+      // The propulsor channels, growing out of the core just before the engines
+      // reach them so the nacelle has a receptacle waiting rather than a shape
+      // that appears under it.
+      if (p.pods.length && sh.r > 1e-6) {
+        const t = (s - p.podStart) / Math.max(p.podFull - p.podStart, 1e-6);
+        const f = Math.min(1, Math.max(0, t));
+        const grow = f * f * (3 - 2 * f);
+        if (grow > 0) {
+          const local = [];
+          for (const pod of p.pods) {
+            for (const side of [1, -1]) {
+              local.push({ x: (side * pod.x) / sh.r,
+                           y: (pod.y - sh.yc) / sh.r,
+                           r: (grow * pod.r) / sh.r });
+            }
+          }
+          base = podSection(() => base, local)(th);
+        }
+      }
       if (!(p.tailTrough > 0)) return base;
       // The dish, eased in over the afterbody so the roof leaves the cabin
       // flat and falls away smoothly rather than stepping.

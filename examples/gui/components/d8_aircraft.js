@@ -30,13 +30,45 @@ const IN = 0.0254;
  */
 export const D8_CHOICES = {
   wingRootY:     -0.55,   // wing root chord height, in body half-heights
-  finY:           0.62,   // fin root, as a fraction of the body's half-width
+  /**
+   * Where the fins stand, as a multiple of the engine's outer extent.
+   *
+   * One means tangent to the outside of the nacelle, which is what the
+   * arrangement drawing shows: the fins ARE the outer wall of the channels.
+   */
+  finY:           1.00,
   finCant:       14.0,    // degrees outboard from vertical
-  engineSink:     0.45,   // engine radius let into the upper skin
-  tailSpan:       1.06,   // trailing edge half-width, in engine outer extents
+  /**
+   * Engine axis height, as a fraction of the BODY's height up from its keel.
+   *
+   * Referred to the cabin's own height rather than the local one, because the
+   * afterbody is closing and a fraction of a collapsing number is not a place.
+   */
+  engineHeight:   0.55,
+  /**
+   * The trailing edge's half-width, in engine outer extents.
+   *
+   * One puts it exactly on the outside of the channels, which is the flat
+   * region the fins' trailing edges integrate into.
+   */
+  tailSpan:       0.60,
+  planTaperA:     0.9,    // plan taper law: narrows EARLY, unlike the depth
+  planTaperB:     2.0,
   tailHold:       4.0,    // how squarely the afterbody holds its depth aft
-  tailTrough:     0.30,   // valley between the lobes, in local half-heights
-  troughWidth:    0.55,   // angular half-width of that valley, radians
+  aftN:           3.0,    // superellipse exponent behind the cabin
+  podStart:       0.00,   // channels begin as the cabin ends, so they fill in
+                          // as the core narrows -- starting later pinched the plan
+  /**
+   * Where the channels are fully formed, along the tailcone.
+   *
+   * Early -- a quarter along, well before the engine's nose at 0.63 -- and it
+   * has to be. The core narrows past where the channels will end up, so if they
+   * are still growing when it passes them the plan pinches in and swells back
+   * out. Formed by 0.25 the two move together and the silhouette narrows
+   * monotonically: 0.2 mm of widening over the whole afterbody, against 107 mm
+   * when they formed late.
+   */
+  podFull:        0.25,
   htOnFins:       true,   // tailplane carried on the fin tips, not the body
   wingDihedral:   2.0,
   wingSweepC4:   20.0,
@@ -60,6 +92,9 @@ export function d8Aircraft(deck, opts = {}) {
   // `radius` is the body's HALF-HEIGHT and `cabinWidth` its width over that,
   // which is exactly the pair the solve reports.
   const halfH = d.fuseHalfHeight, halfW = d.fuseHalfWidth;
+  // 55% of the body's height up from its keel. Fixed before the body is built,
+  // because the body's own afterbody is shaped around it.
+  const engineAxisY = -halfH + d.engineHeight * 2 * halfH;
   const fuse = d8Fuselage({
     radius: halfH,
     length: d.fuseLength,
@@ -93,7 +128,26 @@ export function d8Aircraft(deck, opts = {}) {
        * in the last fifth instead.
        */
       tailLaw: 'power', tailA: d.tailHold, tailB: 0.70,
-      tailTrough: d.tailTrough, troughWidth: d.troughWidth,
+      /**
+       * The plan narrows on its own law, and much earlier than the depth.
+       *
+       * That separation is what makes an omega possible at all: the width has
+       * to be gone before the channels form, so the core is narrower than they
+       * are and they stand out of it, while the depth has to stay, so there is
+       * something for them to stand out OF. Sharing one law -- which is right
+       * for a body that merely closes -- left the core 2.37 m half-wide where
+       * the channels reach 1.70, and the engines were simply buried in it.
+       */
+      tailWidthA: d.planTaperA, tailWidthB: d.planTaperB,
+      /**
+       * Behind the cabin the section narrows to a superellipse and the two
+       * propulsor channels are let into it -- the omega. The channels are the
+       * engines themselves, given in metres, so the fairing IS the receptacle
+       * and nothing has to be fitted to anything afterwards.
+       */
+      aftShape: 'superellipse', aftN: d.aftN,
+      podStart: d.podStart, podFull: d.podFull,
+      pods: [{ x: d.engineY, y: engineAxisY, r: d.nacelleDia / 2 }],
     },
     detail: opts.detail ?? false,
   });
@@ -154,7 +208,7 @@ export function d8Aircraft(deck, opts = {}) {
       // of it and the pair splay outboard rather than both leaning one way.
       cant: side * d.finCant,
     });
-    const y = side * d.finY * halfW;
+    const y = side * d.finY * (d.engineY + d.nacelleDia / 2);
     vt.position.set(y, u.crownAt(-vtQuarterX), -vtRootLE);
     vt.name = side > 0 ? 'starboardFin' : 'portFin';
     vt.userData.side = side;
@@ -196,9 +250,8 @@ export function d8Aircraft(deck, opts = {}) {
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
     pod.add(bareTurbofan({ rFan, bypassRatio: 9 }));
-    pod.position.set(side * d.engineY,
-                     u.crownAt(-d.engineX) + rNac * (1 - d.engineSink),
-                     -d.engineX);
+    // Into the receptacle the afterbody has already made for it.
+    pod.position.set(side * d.engineY, engineAxisY, -d.engineX);
     pod.userData.isEnginePod = true;
     pod.userData.side = side;
     pod.name = side > 0 ? 'starboardPod' : 'portPod';
@@ -253,7 +306,7 @@ export function d8Aircraft(deck, opts = {}) {
       // Every fin together, which is what the deck's solvedAreas counts.
       verticalTail: parts.verticalTails.reduce((t, f) => t + f.userData.area, 0),
     },
-    fin, finCount: parts.verticalTails.length,
+    fin, finCount: parts.verticalTails.length, engineAxisY,
     wheelbase, groundAttitude: attitude, ground,
     noseContact, mainContact,
     leadingEdgeSweeps: {
