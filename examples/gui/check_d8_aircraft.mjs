@@ -267,9 +267,31 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   for (const lg of sat.userData.parts.gear) {
     lowest = Math.min(lowest, new THREE.Box3().setFromObject(lg).min.y);
   }
-  console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg, wheels within ` +
-              `${(1000 * Math.abs(lowest)).toFixed(1)} mm of the ground`);
+  /**
+   * How nearly the wheels lie in ONE plane.
+   *
+   * The lowest wheel touching says nothing -- sitting the aeroplane down puts
+   * it there by construction. What matters is the spread between the legs, and
+   * it is worth measuring because it is not free: the deck fixes both strut
+   * lengths and where they attach follows from the airframe, so a large spread
+   * means the attachment is wrong, not the struts.
+   *
+   * Hung from the body's keel the main legs left the nose wheel 901 mm clear
+   * and the aeroplane 3.22 degrees nose-up. From the wing, which is 0.73 m
+   * higher and is what the solve's longer main leg is measured from, 171 mm.
+   */
+  let highest = -Infinity;
+  for (const lg of sat.userData.parts.gear) {
+    highest = Math.max(highest, new THREE.Box3().setFromObject(lg).min.y);
+  }
+  const spread = highest - lowest;
+  console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg; the wheels lie within ` +
+              `${(1000 * spread).toFixed(0)} mm of one plane`);
   if (Math.abs(lowest) > 0.01) bad(`sat down, the lowest wheel is ${lowest.toFixed(3)} off the ground`);
+  if (spread > 0.25) {
+    bad(`the wheels are ${(1000 * spread).toFixed(0)} mm out of plane -- the gear ` +
+        `attachments do not match the deck's strut lengths`);
+  }
 }
 
 console.log(failures ? `\nFAIL: ${failures} problem(s)`
