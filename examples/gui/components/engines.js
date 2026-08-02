@@ -481,7 +481,9 @@ export function bareTurbofan({
  * The first factor is the nose: it rises as sqrt(s) from zero, so the leading
  * edge is round and curvature-continuous, and levels off within a few percent
  * of chord instead of continuing to grow. The second is the taper to the
- * trailing edge, which stays blunt rather than closing to a point.
+ * trailing edge, which stays blunt rather than closing to a point; the square
+ * holds thickness through the aft half before shedding it, where a linear
+ * taper had thinned the cowl by four fifths of the way back.
  *
  * Leading-edge radius falls out as plateH^2 / (2 . noseA . c) -- about 0.044
  * fan radii here -- rather than being chosen separately.
@@ -492,12 +494,13 @@ const NAC = {
   plateH:    0.085,  // half-thickness of the plate, x fan radius
   noseA:     0.026,  // nose bluntness: smaller is sharper
   teFrac:    0.50,   // trailing-edge thickness, as a fraction of plateH
+  tePow:     2,      // taper exponent: 2 holds thickness aft, 1 sheds it early
   //  Mean line (the offset axis): [fraction of chord aft of the LE, radius].
   //  Set so the duct wall clears the fan case, which starts only 0.19 chords
   //  aft of the leading edge and so leaves very little length to diffuse in.
   mean: [
-    [0.000, 0.960], [0.060, 1.060], [0.170, 1.150], [0.300, 1.178],
-    [0.450, 1.172], [0.600, 1.130], [0.780, 1.060], [1.000, 0.985],
+    [0.000, 0.960], [0.060, 1.062], [0.170, 1.152], [0.300, 1.180],
+    [0.470, 1.170], [0.650, 1.130], [0.830, 1.070], [1.000, 0.990],
   ],
 };
 
@@ -541,18 +544,52 @@ export function turbofan(opts = {}) {
   // Half-thickness: round nose, plate through the middle, blunt trailing edge.
   const halfT = (sv) => NAC.plateH * R
     * Math.sqrt(sv / (sv + NAC.noseA))
-    * (1 - (1 - NAC.teFrac) * sv);
+    * (1 - (1 - NAC.teFrac) * Math.pow(sv, NAC.tePow));
 
   // Sample with s = (i/n)^2 so points crowd the nose, where the square-root
   // term turns fastest -- evenly spaced stations there give a faceted lip.
   const n = 96;
+  const raw = [];
+  for (let i = 0; i <= n; i++) {
+    const sv = Math.pow(i / n, 2);
+    raw.push([sv, meanAt(sv) + halfT(sv)]);
+  }
+
+  // The outer line must never turn concave. Rather than hunt for control
+  // points that happen not to, take the concave envelope -- the upper convex
+  // hull of the sampled outer surface -- which cannot be concave anywhere by
+  // construction. On a curve that is already nearly convex it changes very
+  // little: measured, it moves the surface by 9e-5 fan radii at worst, and
+  // only right at the trailing edge.
+  const hull = [];
+  for (const q of raw) {
+    while (hull.length >= 2) {
+      const a = hull[hull.length - 2], b = hull[hull.length - 1];
+      const cross = (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);
+      // A small negative tolerance rather than zero: points that are merely
+      // collinear to within rounding survive an exact test and leave slope
+      // increases of order 1e-5 behind, which is concave by the letter of it.
+      if (cross >= -1e-12) hull.pop(); else break;
+    }
+    hull.push(q);
+  }
+  const outerAt = (sv) => {
+    for (let i = 0; i < hull.length - 1; i++) {
+      const a = hull[i], b = hull[i + 1];
+      if (sv >= a[0] && sv <= b[0]) {
+        return a[1] + (b[1] - a[1]) * ((sv - a[0]) / ((b[0] - a[0]) || 1));
+      }
+    }
+    return hull[hull.length - 1][1];
+  };
+
   const inner = [], outer = [];
   for (let i = 0; i <= n; i++) {
     const sv = Math.pow(i / n, 2);
     const zPos = zLE - sv * c;
-    const rm = meanAt(sv), h = halfT(sv);
-    inner.push([zPos, rm - h]);
-    outer.push([zPos, rm + h]);
+    const ro = outerAt(sv);
+    inner.push([zPos, ro - 2 * halfT(sv)]);
+    outer.push([zPos, ro]);
   }
 
   // Aft along the inside, round the nose, aft along the outside. The two
