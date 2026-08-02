@@ -76,6 +76,7 @@ from pyomo.environ import units
 from edi import Formulation
 
 from components.far import add_far, link as far_link
+from components.noise import add_noise
 from components.flight_state import add_flight_state
 from components import fuselage as _fuse
 from components.fuselage import add_fuselage
@@ -315,6 +316,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # TASOPT's Webare, which tfweight.f builds as We1*neng.
         eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
                             prefix="Eng_",
+                            n_eng=(float(size_class.n_fans) if electric
+                                   else 2.0)); cons += c
+        # Sideline-noise bookkeeping (tfnoise.f, monomialized -- see
+        # components/noise.py). Reported, not constrained, exactly as TASOPT
+        # treats noise; pass noise_limit_dBA to make the cap bind.
+        _nzv, c = add_noise(f, N, eng, st,
                             n_eng=(float(size_class.n_fans) if electric
                                    else 2.0)); cons += c
 

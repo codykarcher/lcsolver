@@ -1053,7 +1053,9 @@ def add_engine(f, N, state, *, engine: str = "CFM56", BLI: bool = False,
                A_2=A2, A_25=A25, A_5=A5, A_7=A7, d_f=df, d_LPC=dlpc,
                alpha=alpha, alpha_p1=alphap1, OPR=OPR, T_t_41=Tt41,
                T_t_4=Tt4, m_core=mCore, m_fan=mFan, m_total=mtot, f=fuel,
-               pi_f=pif, pi_lc=pilc, pi_hc=pihc, N_1=N1, N_2=N2, I_sp=Isp)
+               pi_f=pif, pi_lc=pilc, pi_hc=pihc, N_1=N1, N_2=N2, I_sp=Isp,
+               # exit velocities, exported for the noise module
+               u_6=u6, u_8=u8)
     out.update(out_extra)
     return eng, cons
 
