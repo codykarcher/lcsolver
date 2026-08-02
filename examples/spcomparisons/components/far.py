@@ -236,6 +236,8 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
     sbf_sl = V("s_BF_sl", 2000.0, "m", "balanced field length, sea level")
     mub = C("mu_brake", 0.35, "-",
             "max braking coefficient (TASOPT mubrake, both decks)")
+    k_roll = C("k_thrust_roll", 1.07, "-",
+               "ground-roll mean thrust / rotation-point thrust (Mattingly)")
     kmcg = C("k_MCG", k_mcg, "-",
              "V_MCG as a fraction of V_s_TO (calibrated; see SizeClass)")
 
@@ -248,6 +250,7 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
                V_1=V1, a_OEI=a_oei, s_go_OEI=s_go, s_stop=s_stp, s_BF=s_bf,
                V_1_sl=V1_sl, a_OEI_sl=aoei_sl, s_go_OEI_sl=sgo_sl,
                s_stop_sl=sstp_sl, s_BF_sl=sbf_sl, mu_brake=mub, k_MCG=kmcg,
+               k_thrust_roll=k_roll,
                s_ground=s_g, s_air=s_air, s_TO=s_TO, s_land=s_land, a_TO=a_TO,
                s_air_land=s_air_ld,
                C_Lmax_TO=CLmaxTO, C_Lmax_land=CLmaxLD, dC_D_flap_TO=dCD_to,
@@ -419,7 +422,18 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
         # it depressed mean acceleration to 1.3 m/s2 against a transport's
         # 2.0-2.5, which lengthened the ground roll, which drove the wing to
         # 165.9 m2 against a real 124.6 to make the field length.
-        a * W_TO == g * (T_TO - mu_eff * W_TO),               # [SP] SigEq
+        # k_roll: T_TO is the thrust at the ROTATION point (M ~ 0.23 -- see
+        # aircraft.py's F_takeoff chain), but the ground roll's mean
+        # acceleration is evaluated near 0.7 V_LOF, M ~ 0.15, where a
+        # high-bypass engine makes more thrust. Mattingly's lapse
+        # F ~ (1 - 0.49 sqrt(M)) gives (1-0.49*sqrt(0.15))/(1-0.49*sqrt(0.23))
+        # = 1.07. This is the constant-factor reduction of TASOPT's
+        # F = F0 - KV*V^2 thrust decay through the roll (takeoff.f:88-92),
+        # which was the remaining piece of the engine's off-design behaviour
+        # the field rows ignored. The OEI continue phase (V1 to V2) runs AT
+        # rotation speeds, so its row keeps T_TO unscaled.
+        a * W_TO == g * (o["k_thrust_roll"] * T_TO
+                         - mu_eff * W_TO),                    # [SP] SigEq
         s_g * 2.0 * a == Vlof ** 2,                            # [SP] SigEq
         # Air distance from lift-off to the 35 ft screen, as a climb at the
         # second-segment gradient.
@@ -476,7 +490,9 @@ def link(far, out, *, W_TO, W_land, S, rho_TO, T_TO, D_clean_TO, AR, e,
         cons += [
             0.5 * rho_sl * Vs_sl ** 2 * S * CLmaxTO == W_TO,      # [SP] SigEq
             Vlof_sl == 1.10 * Vs_sl,
-            a_sl * W_TO == g * (T_TO_sl - mu_eff * W_TO),         # [SP] SigEq
+            a_sl * W_TO
+                == g * (o["k_thrust_roll"] * T_TO_sl
+                        - mu_eff * W_TO),                     # [SP] SigEq
             sg_sl * 2.0 * a_sl == Vlof_sl ** 2,                   # [SP] SigEq
             sair_sl * rs.second_segment[ne] == h_screen,          # [SP] SigEq
             sTO_sl == rs.takeoff_field_factor * (sg_sl + sair_sl),  # [SP] SigEq
