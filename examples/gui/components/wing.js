@@ -1,17 +1,13 @@
 /**
  * Wings, and anything else that is aerofoils lofted along a span.
  *
- * A horizontal tail is a wing with no crank; a raked tip is the same wing
- * carried on past the tip until its edges converge. So there is one loft here
- * and everything else is what gets fed to it, because three implementations of
- * one loft is three places for one bug.
+ * A horizontal tail is a wing with no crank, so there is one loft here and the
+ * rest is what gets fed to it -- two implementations of one loft would be two
+ * places for one bug.
  *
- * The loft runs over a list of **frames**: a leading-edge point, a chord, a
- * twist, and a ROLL -- the angle the section's own vertical makes with the
- * world's. A raked tip needs no roll at all, since it stays in the wing's
- * plane, which is exactly why it reads the same from every view. Roll is kept
- * because a canted winglet would be the same loft with it wound up, and that is
- * a frame list rather than a new component.
+ * The loft runs over a list of **frames**: a leading-edge point, a chord and a
+ * twist. Anything that wants to extend or bend a surface adds frames rather
+ * than adding a code path.
  *
  * **Parameterised the standard way.** Reference area, aspect ratio, taper,
  * leading-edge sweep, dihedral, twist -- the numbers on a three-view.
@@ -58,29 +54,18 @@ const WING = {
   kink:         0.35,  // fraction of semispan, or null for a plain trapezoid
   root: '2412', kinkFoil: null, tip: '2410',   // kinkFoil null means blended
 
-  /* ---- raked tip: visual only ------------------------------------------ */
-  // A raked wingtip, not a canted winglet: the wing carries on OUTBOARD, its
-  // leading edge sweeping hard back while the trailing edge runs on, so the two
-  // converge and the tip closes to a point. It stays in the wing's own plane.
-  rakedTip:     true,
-  rakeLength:   0.09,   // extra semispan, as a fraction of the wing's
-  rakeSweep:   60.0,    // degrees, its leading edge -- much more than the wing's
-  rakeTip:     0.06,    // tip chord over the wing's tip chord; small is a point
-  rakeCant:     3.0,    // degrees of EXTRA dihedral over the rake, if any
-  rakeBlend:    0.30,   // how much of the length is spent turning the LE back
 
   nChord:         80,  // points around each section
   nInner:          8,  // spanwise stations, root to crank
   nOuter:         16,  // crank to tip
-  nRake:          18,  // and out along the raked tip
 };
 
-/** A plain swept trapezoid: no crank, no rake, symmetric sections. */
+/** A plain swept trapezoid: no crank, symmetric sections. */
 const TAIL = {
   ...WING,
   area:         32.8, aspectRatio: 5.0, rootChord: null, taperRatio: 0.30,
   sweep:        32.0, dihedral: 5.0,
-  twistTip:      0.0, kink: null, rakedTip: false,
+  twistTip:      0.0, kink: null,
   root: '0010', tip: '0010',
   nInner:          2, nOuter: 20,
 };
@@ -158,10 +143,10 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
 
   /* ---- frames --------------------------------------------------------- */
   // One list for the starboard half, tip outward, then mirrored. A frame is a
-  // leading-edge point, a chord, a twist and a roll.
+  // leading-edge point, a chord and a twist.
   const half = [];
-  const push = (x, y, zLE, chord, twist, roll, foil, wing) =>
-    half.push({ x, y, zLE, chord, twist, roll, foil, wing });
+  const push = (x, y, zLE, chord, twist, foil) =>
+    half.push({ x, y, zLE, chord, twist, foil });
 
   const etas = [0];
   if (p.kink != null) {
@@ -172,75 +157,11 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   }
   for (const t of etas) {
     push(t * semi, t * semi * Math.tan(p.dihedral * DEG), leAt(t),
-         chordAt(t), twistAt(t), 0, foilAt(t), true);
-  }
-
-  /**
-   * The raked tip, carried on from the wing tip.
-   *
-   * Not a separate part and not a joint: the frames simply keep coming. The
-   * leading-edge sweep turns back over the first `rakeBlend` of the length, the
-   * chord runs down to almost nothing, and the two edges converge on a point.
-   * Because it stays in the wing's plane the section roll stays at zero, so
-   * unlike a canted winglet there is nothing to wind up -- which is why this
-   * shape is the same in every view and reads unambiguously from all of them.
-   *
-   * The chord is a cubic Hermite rather than a taper, and that is the part that
-   * matters. The trailing edge is not steered directly -- it is wherever the
-   * leading edge and the chord put it -- so a chord that simply starts shrinking
-   * at the junction drags the trailing edge FORWARD there, at 33 degrees for a
-   * plain power taper. Which looks broken, and only in plan view.
-   *
-   * Matching the wing's own dc/dy at the start fixes it: the trailing edge then
-   * leaves the junction at exactly the angle it arrived, so the break is zero by
-   * construction rather than by tuning. Zero slope at the far end closes the tip
-   * off gently instead of running into it. `rake.trailingBreak` measures what
-   * actually came out.
-   */
-  if (p.rakedTip && p.rakeLength > 0) {
-    const tip = half[half.length - 1];
-    const Y = p.rakeLength * semi;
-    const wingSweep = p.sweep * DEG, rake = p.rakeSweep * DEG;
-    const dihedral = p.dihedral * DEG, cant = (p.dihedral + p.rakeCant) * DEG;
-    const blend = Math.min(0.999, Math.max(0.02, p.rakeBlend));
-    // The wing's own chord slope at the tip, in chord per unit span, taken off
-    // the last two frames so it is right for a cranked or a plain planform.
-    const prev = half[half.length - 2];
-    const dcdy = (tip.chord - prev.chord) / (tip.x - prev.x);
-    const m0 = dcdy * Y, c1 = cTip * p.rakeTip;
-    const hermite = (t) => {
-      const t2 = t * t, t3 = t2 * t;
-      return (2 * t3 - 3 * t2 + 1) * cTip + (t3 - 2 * t2 + t) * m0
-           + (-2 * t3 + 3 * t2) * c1;
-    };
-
-    let x = tip.x, y = tip.y, zLE = tip.zLE;
-    // Clustered toward the JUNCTION. All of the rake's curvature is in its
-    // first fraction -- the leading edge turning back and the chord starting
-    // down -- and beyond that it is nearly a straight wedge. Even spacing puts
-    // most of the stations where nothing is happening and then resolves the
-    // turn with three.
-    const sAt = (i) => (i / p.nRake) ** 1.6;
-    for (let i = 1; i <= p.nRake; i++) {
-      const s0 = sAt(i - 1), s1 = sAt(i), ds = s1 - s0;
-      const w = (t) => smooth(Math.min(1, t / blend));
-      const mid = (s0 + s1) / 2;
-      // Sweep and dihedral both turn over the blend, integrated at the midpoint
-      // so the tip lands where the length says it should.
-      const lam = wingSweep + (rake - wingSweep) * w(mid);
-      const psi = dihedral + (cant - dihedral) * w(mid);
-      const dy = Y * ds;
-      x += dy;
-      y += dy * Math.tan(psi);
-      zLE += dy * Math.tan(lam);
-      const chord = Math.max(cTip * p.rakeTip * 0.5, hermite(s1));
-      push(x, y, zLE, chord, p.twistTip, 0,
-           { a: tipFoil, b: tipFoil, f: 0 }, false);
-    }
+         chordAt(t), twistAt(t), foilAt(t));
   }
 
   const frames = mirror
-    ? [...half.slice(1).map((f) => ({ ...f, x: -f.x, roll: -f.roll })).reverse(), ...half]
+    ? [...half.slice(1).map((f) => ({ ...f, x: -f.x })).reverse(), ...half]
     : half;
 
   /* ---- loft ----------------------------------------------------------- */
@@ -248,10 +169,6 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const pos = [], idx = [];
   for (const fr of frames) {
     const eps = fr.twist * DEG, ce = Math.cos(eps), se = Math.sin(eps);
-    // The section's own vertical, rolled. On a wing this is straight up; up the
-    // rake it stays put, and it is here so a canted surface would need no new
-    // code path.
-    const uy = Math.cos(fr.roll * DEG), ux = -Math.sin(fr.roll * DEG);
     for (let i = 0; i < M; i++) {
       const { a, b, f } = fr.foil;
       const q0 = a[i][0] + (b[i][0] - a[i][0]) * f;
@@ -259,7 +176,7 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
       const dq = q0 - p.twistAxis;
       const q = p.twistAxis + dq * ce + v0 * se;
       const v = (-dq * se + v0 * ce) * fr.chord;
-      pos.push(fr.x + ux * v, fr.y + uy * v, -(fr.zLE + q * fr.chord));
+      pos.push(fr.x, fr.y + v, -(fr.zLE + q * fr.chord));
     }
   }
   for (let i = 0; i < frames.length - 1; i++) {
@@ -297,11 +214,8 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
 
   /* ---- what the planform actually came out as ------------------------- */
   // Integrated from the frames, so these measure the surface that was built
-  // rather than restating the request. The raked tip is excluded: reference
-  // area and aspect ratio are properties of the WING, and a tip that quietly
-  // added itself to them would make every number here disagree with the
-  // three-view it came from.
-  const panel = half.filter((f) => f.wing);
+  // rather than restating the request.
+  const panel = half;
   let S = 0, macNum = 0, yNum = 0, xNum = 0;
   for (let i = 0; i < panel.length - 1; i++) {
     const a = panel[i], b = panel[i + 1], dy = b.x - a.x;
@@ -312,7 +226,6 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   }
   const area = mirror ? 2 * S : S;
   const mac = macNum / S;
-  const rakeTop = p.rakedTip ? half[half.length - 1] : null;
 
   Object.assign(g.userData, {
     span, semiSpan: semi, area, referenceArea: p.area, mirror,
@@ -325,26 +238,6 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     mac, yMac: yNum / S, xMacLE: xNum / S, xMacQuarter: xNum / S + 0.25 * mac,
     rootThickness: thicknessOf(rootFoil), tipThickness: thicknessOf(tipFoil),
     sections: { root: rootFoil.name, kink: kinkFoil?.name ?? null, tip: tipFoil.name },
-    /**
-     * The raked tip as built. `trailingBreak` is the angle its trailing edge
-     * comes out at relative to the wing's own -- positive means it sweeps back
-     * harder, negative means it kicks forward, which looks wrong immediately
-     * and is hard to see in anything but a plan view.
-     */
-    rake: rakeTop && (() => {
-      const w0 = panel[panel.length - 2], w1 = panel[panel.length - 1];
-      const teWing = Math.atan2((w1.zLE + w1.chord) - (w0.zLE + w0.chord), w1.x - w0.x);
-      // Measured across the FIRST rake panel, not the last. A kink at the
-      // junction is what would look wrong; the trailing edge curving as it runs
-      // out to the point is the shape doing its job.
-      const r0 = half.filter((f) => !f.wing)[0], r1 = half.filter((f) => !f.wing)[1];
-      const teRake = Math.atan2((r1.zLE + r1.chord) - (r0.zLE + r0.chord), r1.x - r0.x);
-      return {
-        outboard: rakeTop.x - w1.x, rise: rakeTop.y - w1.y,
-        tipChord: rakeTop.chord, sweep: p.rakeSweep,
-        trailingBreak: (teRake - teWing) / DEG,
-      };
-    })(),
     frames: half, planform: p, skinMesh: mesh,
     /** Chord, leading edge and twist at any fraction of semispan. */
     at: (t) => ({ chord: chordAt(t), xLE: leAt(t),
@@ -353,7 +246,7 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   return g;
 }
 
-/** A wing: cranked, cambered, washed out, with a winglet. */
+/** A wing: cranked, cambered, washed out. */
 export function wing(o = {}) { return liftingSurface({ ...WING, ...o }); }
 
 /** A horizontal tail: the same loft with no crank and symmetric sections. */

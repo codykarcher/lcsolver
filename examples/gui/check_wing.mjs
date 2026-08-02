@@ -65,8 +65,6 @@ const CASES = [
   { name: 'htail',       build: () => horizontalTail() },
   { name: 'no crank',    build: () => wing({ kink: null }) },
   { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
-  { name: 'no rake',     build: () => wing({ rakedTip: false }) },
-  { name: 'long rake',   build: () => wing({ rakeLength: 0.16, rakeSweep: 66 }) },
   { name: 'derived root', build: () => wing({ rootChord: null }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
@@ -203,31 +201,6 @@ for (const c of CASES) {
       bad(`tip/crank ${(u.tipChord / u.kinkChord).toFixed(4)}, asked ${p.taperRatio}`);
   }
 
-  // A raked tip is decoration and must not change the numbers on the
-  // three-view.
-  if (p.rakedTip) {
-    // Same surface in every other respect, INCLUDING which halves are built --
-    // comparing a single side against a mirrored one measures the mirror, not
-    // the rake, and reports a 65 unit discrepancy that is not there.
-    const plain = liftingSurface({ ...p, rakedTip: false, mirror: u.mirror });
-    if (Math.abs(u.area - plain.userData.area) > 1e-9)
-      bad(`rake changed the reference area by ` +
-          `${(u.area - plain.userData.area).toExponential(2)}`);
-    if (Math.abs(u.mac - plain.userData.mac) > 1e-9)
-      bad(`rake changed the MAC by ${(u.mac - plain.userData.mac).toExponential(2)}`);
-    if (!(u.rake.outboard > 0)) bad(`rake reaches nowhere`);
-    // It closes to a POINT: the tip chord has to be a small fraction of the
-    // wing's, or it is a clipped tip and not a rake at all.
-    if (u.rake.tipChord / u.tipChord > 0.15)
-      bad(`rake tip chord is ${(100 * u.rake.tipChord / u.tipChord).toFixed(0)}% ` +
-          `of the wing's -- not a point`);
-    // And no KINK where it joins. The trailing edge is allowed to curve as it
-    // runs out to the point -- that is the shape working -- but it must leave
-    // the junction at the angle it arrived. A plain power taper leaves at -33
-    // degrees, which is a visible break and only in plan view.
-    if (Math.abs(u.rake.trailingBreak) > 8)
-      bad(`trailing edge breaks ${u.rake.trailingBreak.toFixed(1)} deg at the rake junction`);
-  }
 
   // Twist, off the geometry rather than off the parameter: the angle of the tip
   // section's own chord line against the root's.
@@ -244,11 +217,7 @@ for (const c of CASES) {
         `${(p.twistTip - p.twistRoot).toFixed(2)}`);
 
   console.log(`  LE sweep ${gotSweep.toFixed(2)} deg (varies ${sweepSpread.toExponential(1)}), ` +
-              `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg` +
-              (u.rake ? `, rake ${u.rake.outboard.toFixed(2)} out / ` +
-                        `${u.rake.rise.toFixed(2)} up, tip chord ` +
-                        `${u.rake.tipChord.toFixed(3)}, TE break ` +
-                        `${u.rake.trailingBreak.toFixed(1)} deg` : ''));
+              `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg`);
   console.log(`  ${nRing} stations x ${M} points, volume ${vol.toFixed(3)}, ` +
               `${open} open edges, ${degenerate} degenerate, ` +
               `panel jump ${panelJump.toFixed(2)}x`);
