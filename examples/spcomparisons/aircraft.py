@@ -749,7 +749,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # ~0.98, so Raymer and the aeroplane agree; TASOPT's deck uses 1.45, which
     # is conservative and, imposed here, distorts the layout -- it pushes the
     # wing aft and stretches the nose to 10.4 m to find the moment arm.
-    V_HT_FLOOR = float(_os.environ.get("V_HT_FLOOR", 0.01))
+    # Env override wins; else the class's own floor; else the inactive 0.01.
+    _vht_cls = getattr(size_class, "v_ht_min", None)
+    V_HT_FLOOR = float(_os.environ.get("V_HT_FLOOR",
+                                       _vht_cls if _vht_cls else 0.01))
     # Minimum nose-gear load fraction at the AFT CG. Per class, because it
     # selects the gear layout rather than nudging it. See
     # SizeClass.f_nose_load_min for the calibration and its branch behaviour.
@@ -1923,6 +1926,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Kept as a switch rather than deleted: set V_HT_FLOOR back to 1.00 to
         # restore the old behaviour.
         ht.V_ht >= V_HT_FLOOR,
+        # Class cabin-comfort floor on the section, when the class states one.
+        *([fu.R_fuse >= C("R_fuse_min_cls", size_class.R_fuse_min, "m",
+                          "class minimum cabin radius")]
+          if getattr(size_class, "R_fuse_min", None) else []),
 
         # THE TAIL MUST BE ABLE TO GENERATE THE LIFT IT IS SIZED FOR.
         #

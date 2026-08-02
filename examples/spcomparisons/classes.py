@@ -43,6 +43,18 @@ class SizeClass:
     engine: str = "D82_SPaircraft"
     n_fans: int = 2
     fan_d_max: float = 4.5
+    #: Horizontal-tail volume floor, the real airframe's value -- TASOPT's own
+    #: practice (its 737 deck PRESCRIBES Vh = 1.45; it derives no tail).
+    #: None leaves the model's derived tail alone; set it for classes whose
+    #: derived volume is known to under-shoot the airframe (the E175's
+    #: certification/family margin puts its real Vh near 1.5 against a
+    #: derived 1.12).
+    v_ht_min: float | None = None
+    #: Cabin radius floor, m. The model's seat-pitch tube is a MINIMUM
+    #: section; a class whose real aircraft is deliberately roomier (the
+    #: E-jet double-dome is 3.0 m across against the 4-abreast minimum of
+    #: 2.7) states that here.
+    R_fuse_min: float | None = None
     # Engine-out decision speed, which sets the vertical tail. Pinned at the
     # D8.2's 70 m/s it gave a Citation and a 787 the same V1, which they
     # emphatically do not have.
@@ -198,6 +210,7 @@ CLASSES = {
         # 0.914) and makes this class consistent with how b737 is set up.
         n_pass=88, seats_abreast=4, range_nmi=2200,
         R_fuse_guess=1.41, ref_MTOW_lb=85_517, ref_OEW_lb=48_100,
+        v_ht_min=1.50, R_fuse_min=1.50,
         ref_mach=0.78,
         n_aisles=1, ceiling_ft=41000.0,
         span_max_m=28.7, field_length_ft=6900.0, v_stall_kt=110.0, v_land_mps=66.0, wing_load_max=5500.0,
