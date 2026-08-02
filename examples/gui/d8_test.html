@@ -94,7 +94,7 @@
   <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
-  <div class="check"><input type="checkbox" id="glass"><label for="glass">windscreen</label></div>
+  <div class="check"><input type="checkbox" id="glass" checked><label for="glass">windscreen</label></div>
 
   <h2>reference image</h2>
   <input type="file" id="refFile" accept="image/*">
@@ -415,7 +415,7 @@ function ortho(axis) {
 for (const id of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
   el(id).addEventListener('input', build);
 for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid',
-                  'detail', 'refShow', 'refFlip'])
+                  'detail', 'glass', 'refShow', 'refFlip'])
   el(id).addEventListener('change', build);
 for (const v of ['front', 'side', 'top', 'nose', 'aft'])
   el(v).addEventListener('click', () => ortho(v));
