@@ -33,7 +33,11 @@ let failures = 0;
 const bad = (msg) => { console.log(`  FAIL  ${msg}`); failures++; };
 
 for (const c of CASES) {
-  const body = jetlinerFuselage({ radius: c.radius, length: c.fineness * 2 * c.radius });
+  // detail: true on purpose. The default body is bare OML now, and a check that
+  // built the default would silently stop testing the decal machinery -- which
+  // is precisely where the degenerate triangles and the overlaps came from.
+  const body = jetlinerFuselage({
+    radius: c.radius, length: c.fineness * 2 * c.radius, detail: true });
   const u = body.userData;
   console.log(`${c.name}: L=${u.length.toFixed(2)} D=${(2 * u.radius).toFixed(2)} ` +
               `L/D=${u.fineness.toFixed(2)} parts=${body.children.length}`);

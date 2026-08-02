@@ -361,35 +361,40 @@ const DEG = Math.PI / 180;
 /**
  * A conventional jetliner fuselage.
  *
- * Every feature switches independently, because on a body this size it is
- * genuinely hard to tell by eye which grey rectangle is a door and which is an
- * overwing exit, and turning one off is the quickest way to find out what it
- * was.
+ * **What you get by default is the bare outer mould line and nothing else.**
+ * Windows, doors, exits, the flight deck, the radome and the APU exhaust are
+ * all detail applied to a shape, and none of them can tell you whether the
+ * shape underneath is right -- they mostly get in the way of seeing it. So they
+ * are off unless asked for. The machinery for all of them is intact and
+ * verified; `detail: true` turns the lot back on at once.
  *
- * @param {number} radius        body radius. Default 1.88 -- a 737's 3.76 m tube.
- * @param {number} length        nose to tailcone tip. Default fineness 10.1.
- * @param {number} droop         nose centreline drop, in radii.
- * @param {Function} section     section shape, th -> radius multiplier.
- * @param {boolean} radome       the nose cap.
- * @param {boolean} flightDeck   windscreen and side windows.
- * @param {boolean} cabinWindows the passenger window row.
- * @param {boolean} doors        main entry doors.
- * @param {boolean} exits        overwing exits.
+ * Every term of the shape law is overridable through `shape`. Getting an OML
+ * right is a matter of pushing on those numbers and looking, and a parameter
+ * you have to edit a source file to change is a parameter you will not try.
+ *
+ * @param {number} radius     body radius. Default 1.88 -- a 737's 3.76 m tube.
+ * @param {number} length     nose to tailcone tip. Default fineness 10.1.
+ * @param {object} shape      overrides on the shape law; see JET above.
+ * @param {Function} section  section shape, th -> radius multiplier.
+ * @param {boolean} detail    shorthand for every feature flag at once.
  */
 export function jetlinerFuselage({
   radius = 1.88,
   length = null,
-  droop = JET.droop,
+  shape: shapeOverrides = {},
   section = circularSection,
-  radome = true,
-  flightDeck = true,
-  cabinWindows = true,
-  doors = true,
-  exits = true,
+  detail = false,
+  radome = detail,
+  flightDeck = detail,
+  cabinWindows = detail,
+  doors = detail,
+  exits = detail,
+  apu = detail,
   nSeg = 64,
 } = {}) {
-  const L = length ?? JET.fineness * 2 * radius;
-  const shape = jetShape({ length: L, radius, droop });
+  const p = { ...JET, ...shapeOverrides };
+  const L = length ?? p.fineness * 2 * radius;
+  const shape = jetShape({ length: L, radius, p });
   const g = new THREE.Group();
   const lift = radius * 0.005;
   const parts = [], occ = [];
@@ -467,14 +472,16 @@ export function jetlinerFuselage({
 
   // The APU exhaust: the tailcone does not close to a point, it closes onto a
   // hole, and a hole has to read as one.
-  const apu = new THREE.Mesh(
-    new THREE.CircleGeometry(shape.rTip * 0.86, 24), cavity);
-  apu.position.set(0, shape.at(-L).yc, -L + lift);
-  apu.rotation.y = Math.PI;
-  g.add(apu);
+  if (apu) {
+    const hole = new THREE.Mesh(
+      new THREE.CircleGeometry(shape.rTip * 0.86, 24), cavity);
+    hole.position.set(0, shape.at(-L).yc, -L + lift);
+    hole.rotation.y = Math.PI;
+    g.add(hole);
+  }
 
   Object.assign(g.userData, {
-    length: L, radius, section, droop,
+    length: L, radius, section, shapeParams: p, droop: p.droop,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),
