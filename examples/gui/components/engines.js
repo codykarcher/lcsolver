@@ -930,25 +930,21 @@ export function electricMotor({ power = 124, diameter = null, length = null } = 
     g.add(bolt);
   }
 
-  // ---- phase leads --------------------------------------------------------
+  // ---- terminal box -------------------------------------------------------
+  // Kept, with the phase leads removed: it is a real part of the housing and
+  // sits on it, unlike a cable that has to go somewhere off-model to mean
+  // anything.
   const gland = roundedBox(0.16 * D, 0.10 * D, 0.30 * L, 0.03 * D, M.accessory);
   gland.position.set(0, -EM.rimR * 1.02 * D, zF - 0.5 * L);
   g.add(gland);
-  for (let i = -1; i <= 1; i++) {
-    const y0 = -EM.rimR * 1.06 * D;
-    g.add(pipe([
-      new THREE.Vector3(i * 0.05 * D, y0, zF - 0.5 * L),
-      new THREE.Vector3(i * 0.07 * D, y0 - 0.14 * D, zF - 0.62 * L),
-      new THREE.Vector3(i * 0.08 * D, y0 - 0.26 * D, zF - 0.85 * L),
-    ], 0.020 * D, M.painted, 20));
-  }
 
   g.userData.power = power;
   g.userData.diameter = D;
   g.userData.axialLength = L;
   g.userData.diameterMm = D * 1000;
   g.userData.lengthMm = L * 1000;
-  return finish(g, -(zB - 0.25 * L), EM.rimR * 1.06 * D, 'electricMotor');
+  return finish(g, -(zB - 0.25 * L), EM.rimR * 1.02 * D + 0.05 * D,
+                'electricMotor');
 }
 
 /* ==================================================================== *
