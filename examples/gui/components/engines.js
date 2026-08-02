@@ -39,8 +39,7 @@
  */
 import * as THREE from 'three';
 import * as M from './materials.js';
-import { latheZ, tubeZ, bladeRow, rod, roundedBox, pipe, solid }
-  from './geom.js';
+import { latheZ, tubeZ, bladeRow, rod, roundedBox, pipe } from './geom.js';
 
 const SEG = 48;
 
@@ -472,8 +471,6 @@ const NAC = {
   coreGap:   0.055,  // minimum clearance from the core skin
   coreWall:  0.030,  // core cowl thickness
   coreAft:  -0.14,   // core cowl ends this far forward of the core outlet
-  chevrons:  14,     // serrations on the fan cowl trailing edge
-  chevLen:   0.17,   // ... how far aft they run
 };
 
 /**
@@ -597,31 +594,6 @@ export function turbofan(opts = {}) {
   coreCowl.name = 'coreCowl';
   g.add(coreCowl);
 
-  // ---- chevrons -----------------------------------------------------------
-  // Serrations on the fan cowl trailing edge. Each is a wedge: the full exit
-  // annulus at the base, tapering to an edge aft.
-  const n = NAC.chevrons;
-  const half = (Math.PI / n) * 0.88;            // leave a notch between them
-  const rI = NAC.exitInner * R, rO = NAC.exitOuter * R;
-  const zTip = zAft - NAC.chevLen * R;
-  for (let i = 0; i < n; i++) {
-    const c = (i / n) * Math.PI * 2;
-    const P = (r, a, zz) => [r * Math.cos(c + a), r * Math.sin(c + a), zz];
-    const pos = [
-      ...P(rI, -half, zAft), ...P(rO, -half, zAft),
-      ...P(rO, half, zAft), ...P(rI, half, zAft),
-      ...P(rI * 0.995, 0, zTip), ...P(rO * 0.995, 0, zTip),
-    ];
-    const idx = [
-      1, 2, 5,          // outer face
-      3, 0, 4,          // inner face
-      0, 1, 5, 0, 5, 4, // side
-      2, 3, 4, 2, 4, 5, // side
-      0, 3, 2, 0, 2, 1, // base
-    ];
-    g.add(solid(pos, idx, M.casing));
-  }
-
   // Carry the bare engine's own properties forward. A podded engine HAS a
   // core radius, an outlet, a bypass ratio -- it just has a nacelle round
   // them -- so a caller should not have to know which variant it holds.
@@ -635,7 +607,6 @@ export function turbofan(opts = {}) {
   g.userData.nacelleNoseZ = zLip + lipR;
   g.userData.bypassExitZ = zAft;
   g.userData.coreCowlScale = fit;
-  g.userData.chevrons = NAC.chevrons;
   g.userData.bare = core.userData;
   return finish(g, core.userData.length, NAC.maxR * R, 'turbofan');
 }
