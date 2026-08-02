@@ -622,6 +622,13 @@ export function turbofan(opts = {}) {
     g.add(solid(pos, idx, M.casing));
   }
 
+  // Carry the bare engine's own properties forward. A podded engine HAS a
+  // core radius, an outlet, a bypass ratio -- it just has a nacelle round
+  // them -- so a caller should not have to know which variant it holds.
+  // Without this the two are not interchangeable, and anything reading
+  // userData off the podded one gets undefined.
+  Object.assign(g.userData, core.userData);
+
   g.userData.rFan = R;
   g.userData.nacelleMaxRadius = NAC.maxR * R;
   g.userData.highlightRadius = hi;

@@ -157,7 +157,7 @@ function build() {
     `<br>` +
     `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
     `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
-    `duct-face r <span>${(engine.userData.rCore ?? engine.userData.bare.rCore).toFixed(3)}</span>` +
+    `duct-face r <span>${engine.userData.rCore.toFixed(3)}</span>` +
     (Math.abs(engine.userData.bypassRatioEffective - num('bpr')) > 1e-6
       ? ` <span>(capped, BPR ${engine.userData.bypassRatioEffective.toFixed(2)})</span>`
       : '') + `<br>` +
