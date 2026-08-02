@@ -726,7 +726,7 @@ export const WINDSCREEN = {
 export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
-  colour = WINDSCREEN.colour, nz = 40, nv = 12, name = 'windscreen',
+  colour = WINDSCREEN.colour, nz = 64, nv = 14, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
   const noseLength = fu.noseLength;
@@ -740,14 +740,29 @@ export function windscreen(fuselage, {
   const yLo = keel + low * H, yHi = keel + high * H;
 
   const zBack = -backFraction * noseLength;
+  /** The station forward of which the crown has dropped below a given line. */
+  const crownCrosses = (target) => {
+    let a = zBack, b = 0;
+    for (let i = 0; i < 60; i++) {
+      const m = (a + b) / 2;
+      if (fu.crownAt(m) > target) a = m; else b = m;
+    }
+    return a;
+  };
   // Forward end: where the crown drops to the lower line, so the glass runs out
   // on its own rather than at a station picked by hand.
-  let a = zBack, b = 0;
-  for (let i = 0; i < 60; i++) {
-    const m = (a + b) / 2;
-    if (fu.crownAt(m) > yLo) a = m; else b = m;
-  }
-  const zNose = a;
+  const zNose = crownCrosses(yLo);
+  // And the CORNER: where the crown drops past the upper line and the two side
+  // strips merge into one wrap. The boundary genuinely turns there -- it stops
+  // following a level plane and starts following the crown ridge -- so a
+  // station has to land exactly on it. Without one the mesh chords straight
+  // across the turn and takes a wedge out of the glass beside the centreline,
+  // which is the bite. Same rule as a wing putting a station on every planform
+  // break, for the same reason.
+  const zCorner = crownCrosses(yHi);
+  // z runs NEGATIVE aft, so a corner between the two ends is GREATER than the
+  // aft station and LESS than the forward one.
+  const hasCorner = zCorner > zBack + 1e-9 && zCorner < zNose - 1e-9;
 
   /** Angle of the upper edge: the upper line, or the crown where that is lower. */
   const upperAngle = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
@@ -759,13 +774,36 @@ export function windscreen(fuselage, {
   const material = glazingMaterial(colour);
   let wraps = 0;
 
+  /**
+   * The stations, in two runs that share the corner.
+   *
+   * Each run is bunched towards its FORWARD end, where the band's edge turns
+   * hardest -- `1 - (1 - t)^2` rather than `t^2`, which bunched them at the
+   * back and left the forward taper, which shrinks to nothing over a fifth of a
+   * metre, drawn with two stations.
+   */
+  const ease2 = (t) => 1 - (1 - t) * (1 - t);
+  const stations = [];
+  if (hasCorner) {
+    const nA = Math.max(3, Math.round(nz * 0.45)), nB = Math.max(4, nz - nA);
+    for (let i = 0; i < nA; i++) {
+      stations.push(zBack + (zCorner - zBack) * ease2(i / (nA - 1)));
+    }
+    // The forward run is bunched at BOTH ends -- the corner behind it and the
+    // vanishing tip ahead of it are each places the edge turns hard, and a
+    // distribution that only refines one leaves a facet at the other.
+    const cosine = (t) => (1 - Math.cos(Math.PI * t)) / 2;
+    for (let i = 1; i < nB; i++) {
+      stations.push(zCorner + (zNose - zCorner) * cosine(i / (nB - 1)));
+    }
+  } else {
+    for (let i = 0; i < nz; i++) stations.push(zBack + (zNose - zBack) * ease2(i / (nz - 1)));
+  }
+
   for (const side of [1, -1]) {
     const pos = [], idx = [];
-    for (let iz = 0; iz < nz; iz++) {
-      // Squared towards the nose, so the stations bunch where the band is
-      // narrowing fast and its edge is most curved.
-      const f = iz / (nz - 1);
-      const z = zBack + (zNose - zBack) * (f * f);
+    for (let iz = 0; iz < stations.length; iz++) {
+      const z = stations[iz];
       const thLo = angleAtHeight(fu, z, yLo) ?? Math.PI / 2;
       const thHi = upperAngle(z) ?? Math.PI / 2;
       if (side > 0 && thHi >= Math.PI / 2 - 1e-9) wraps++;
@@ -776,7 +814,7 @@ export function windscreen(fuselage, {
         pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
       }
     }
-    for (let iz = 0; iz < nz - 1; iz++) {
+    for (let iz = 0; iz < stations.length - 1; iz++) {
       for (let iv = 0; iv < nv - 1; iv++) {
         const p0 = iz * nv + iv, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
         idx.push(p0, p2, p1, p1, p2, p3);
@@ -799,8 +837,10 @@ export function windscreen(fuselage, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown,
     zRange: [zBack, zNose],
+    /** Where the two side strips merge into one wrap, and whether there is one. */
+    zCorner: hasCorner ? zCorner : null, hasCorner,
     /** Stations at which the band closes over the crown rather than at yHigh. */
-    wrapStations: wraps, stations: nz,
+    wrapStations: wraps, stations: stations.length, stationZ: stations,
   });
   return group;
 }

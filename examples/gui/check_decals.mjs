@@ -556,15 +556,99 @@ console.log('\n=== windscreen ===');
     }, mesh.name);
   }
 
+  /**
+   * How closely does the mesh's upper edge follow the TRUE one?
+   *
+   * This is the check for the bite. The boundary turns where the crown drops
+   * past the upper line -- it stops following a level plane and starts
+   * following the crown ridge -- and with no station on that turn the mesh
+   * chords straight across it and takes a wedge out of the glass beside the
+   * centreline. Measured as the worst gap between the built edge and the real
+   * one, sampled between stations where a chord is furthest from its curve.
+   */
+  {
+    const sb = scr.children[0];
+    const pos = sb.geometry.getAttribute('position');
+    const nvv = 14;
+    const edge = [];
+    for (let i = 0; i * nvv < pos.count; i++) {
+      edge.push(new THREE.Vector3().fromBufferAttribute(pos, i * nvv + nvv - 1));
+    }
+    const trueEdge = (z) => {
+      const top = fuse.userData.surfaceAt(z, Math.PI / 2).y;
+      let th;
+      if (top <= su.yHigh) th = Math.PI / 2;
+      else {
+        let lo2 = -Math.PI / 2, hi2 = Math.PI / 2;
+        for (let k = 0; k < 48; k++) {
+          const m = (lo2 + hi2) / 2;
+          if (fuse.userData.surfaceAt(z, m).y < su.yHigh) lo2 = m; else hi2 = m;
+        }
+        th = (lo2 + hi2) / 2;
+      }
+      const p = fuse.userData.surfaceAt(z, th), n = fuse.userData.normalAt(z, th);
+      return new THREE.Vector3(p.x + n.x * su.lift, p.y + n.y * su.lift, p.z + n.z * su.lift);
+    };
+    // Compared as CURVES, by nearest approach, not by pairing on z. The band is
+    // lifted along the surface normal and on the nose that normal has a z
+    // component, so a vertex's z is a few millimetres forward of the station it
+    // came from -- enough, right at the corner, to look up the true edge on the
+    // wrong side of the turn and report a 46 mm bite that is not there.
+    const dense = [];
+    for (let k = 0; k <= 2000; k++) {
+      dense.push(trueEdge(su.zRange[0] + (su.zRange[1] - su.zRange[0]) * (k / 2000)));
+    }
+    const toCurve = (q) => {
+      let best = Infinity;
+      for (let k = 0; k < dense.length - 1; k++) {
+        const a3 = dense[k], b3 = dense[k + 1];
+        const ab = b3.clone().sub(a3);
+        const t = Math.max(0, Math.min(1, q.clone().sub(a3).dot(ab) / Math.max(ab.lengthSq(), 1e-18)));
+        best = Math.min(best, q.distanceTo(a3.clone().addScaledVector(ab, t)));
+      }
+      return best;
+    };
+    let worst = 0, worstZ = 0;
+    for (let i = 0; i < edge.length - 1; i++) {
+      const a2 = edge[i], b2 = edge[i + 1];
+      for (let k = 1; k < 8; k++) {
+        const f = k / 8;
+        const chord = a2.clone().lerp(b2, f);
+        const d = toCurve(chord);
+        if (d > worst) { worst = d; worstZ = chord.z; }
+      }
+    }
+    console.log(`  upper edge follows the true boundary to ` +
+                `${(1000 * worst).toFixed(2)} mm (worst near z ${worstZ.toFixed(3)})`);
+    if (worst > 3e-3) {
+      fail(`the glass edge cuts ${(1000 * worst).toFixed(1)} mm off the true boundary ` +
+           `near z ${worstZ.toFixed(3)} -- a bite`);
+    }
+    if (su.hasCorner && !su.stationZ.some((z) => Math.abs(z - su.zCorner) < 1e-9)) {
+      fail('no station lands on the corner where the band starts to wrap');
+    }
+  }
+
   // Where the band wraps, the two halves must MEET on the crown: each ends on
   // it, so a gap there would be a slot down the top of the nose.
   {
     const [sb, pt] = scr.children;
     const A = sb.geometry.getAttribute('position'), B = pt.geometry.getAttribute('position');
+    // Only stations in the WRAP, where the band genuinely reaches the crown.
+    // Aft of the corner the two strips are separate and are supposed to be, and
+    // a station a millimetre aft of the turn sits close enough to the centreline
+    // to be mistaken for a crown vertex.
+    const nvv2 = 14;
     let worst = 0;
     for (let i = 0; i < A.count; i++) {
+      // The shared edge is the TOP vertex of each wrapping station and nothing
+      // else. Near the tip the whole band is squeezed against the centreline,
+      // so its LOWER edge also has a small x -- but those two points are the
+      // y-low contour on either side, which are supposed to be distinct.
+      if (i % nvv2 !== nvv2 - 1) continue;
+      const station = Math.floor(i / nvv2);
+      if (su.hasCorner && su.stationZ[station] < su.zCorner - 1e-9) continue;
       const a2 = new THREE.Vector3().fromBufferAttribute(A, i);
-      if (Math.abs(a2.x) > 0.02) continue;             // only the crown edge
       let near = Infinity;
       for (let j = 0; j < B.count; j++) {
         near = Math.min(near, a2.distanceTo(new THREE.Vector3().fromBufferAttribute(B, j)));
