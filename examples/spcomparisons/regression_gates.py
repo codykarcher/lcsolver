@@ -33,11 +33,14 @@ warnings.filterwarnings("ignore")
 # 737 gate updated again at 86a22af (underwing engine station at the wing
 # LE): its message documents "MTOW 165,346 (-0.1%), fuel 46,385 (+0.47%)",
 # bit-identical to this runner's solve at that commit.
+# Updated at eb06bed (nose-gear bay reach): "conventional +0.70% fuel (NEW
+# BASELINE ... 46,709 fuel)" -- fuel matches this runner to the digit; the
+# D8 moved +2.4% fuel ("its 14.3 m gear was doing free CG work").
 GATES = {
-    "b737/conventional_M": {"W_total": 165346.5, "W_f_total": 46384.9},
+    "b737/conventional_M": {"W_total": 166289.7, "W_f_total": 46709.0},
     # Free-Mach d8: the double-bubble build pins cruise near M 0.72 itself;
     # d8_M would wrongly lock it to the 737 class's 0.785.
-    "b737/d8": {"W_total": 136540.2, "W_f_total": 26337.4},
+    "b737/d8": {"W_total": 140594.5, "W_f_total": 26978.1},
 }
 
 # Per-case environment: the D8 gate needs its own tech level and knobs.

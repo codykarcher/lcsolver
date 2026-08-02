@@ -50,6 +50,13 @@ HOT_FIELD_FT = 10000.0
 #: spanwise station: 0 = front spar, 1 = rear spar. Set GEAR_BOX_FRAC to
 #: sweep it; see the note at the constraint itself.
 _GEAR_BOX_FRAC = float(_os.environ.get("GEAR_BOX_FRAC", "0.0"))
+# MASTER SWITCH for the SP-native rubber engine (HANDOFF_ENGINE.md,
+# milestone 4). Empty (the default) leaves every existing build untouched;
+# a technology-level name ("cfm56_era", "genx_era") swaps the deck engine
+# for the free-cycle SP engine on jet-A single-bubble builds. A separate
+# module behind one switch, per the house preference, not a conditional
+# forest inside the deck engine.
+_SP_ENGINE = _os.environ.get("SP_ENGINE", "")
 
 #: Engine spanwise station, as a fraction of semi-span. Was 0.35, which is
 #: about 17% too far outboard: TASOPT mounts the engine AT the planform break
@@ -339,10 +346,17 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             eng_key = size_class.engine + ("_LH2" if arch.fuel == "lh2" else "")
         # n_eng so the weight fit can return ONE engine: it reproduces
         # TASOPT's Webare, which tfweight.f builds as We1*neng.
-        eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
-                            prefix="Eng_",
-                            n_eng=(float(size_class.n_fans) if electric
-                                   else 2.0)); cons += c
+        if _SP_ENGINE and not arch.double_bubble and arch.fuel == "jeta":
+            from components.turbofan.sp_engine import (add_engine_sp,
+                                                       TECHS as _SP_TECHS)
+            eng, c = add_engine_sp(f, N, st, tech=_SP_TECHS[_SP_ENGINE],
+                                   prefix="Eng_", Nclimb=Nclimb)
+            cons += c
+        else:
+            eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
+                                prefix="Eng_",
+                                n_eng=(float(size_class.n_fans) if electric
+                                       else 2.0)); cons += c
         # Sideline-noise bookkeeping (tfnoise.f, monomialized -- see
         # components/noise.py). Reported, not constrained, exactly as TASOPT
         # treats noise; pass noise_limit_dBA to make the cap bind.

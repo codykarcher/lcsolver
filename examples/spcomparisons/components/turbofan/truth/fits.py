@@ -476,7 +476,7 @@ def generate(path=None):
                   f"max|res|/span {res:.2e}")
 
     # -- burner equilibrium constants --------------------------------------
-    Ts_burn = np.linspace(1400.0, 2200.0, 33)
+    Ts_burn = np.linspace(1250.0, 2200.0, 39)
     out['KP'] = {}
     for sp, r in REACTIONS.items():
         Ks = []
@@ -499,7 +499,7 @@ def generate(path=None):
         out['KP'][sp] = {'kind': kind,
                          'terms': [list(map(float, t)) for t in terms],
                          'T_ref_K': (t_ref if kind != 'monomial' else 1.0),
-                         'stoich': r['from'], 'range_K': [1400.0, 2200.0]}
+                         'stoich': r['from'], 'range_K': [1250.0, 2200.0]}
         report.append(f"Kp {sp:3s} {kind:9s}({len(terms)} terms) "
                       f"max|res| {res:.2e} "
                       f"(mono {res_m:.1e} posy {res_p:.1e} inv {res_i:.1e})")

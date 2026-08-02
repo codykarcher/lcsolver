@@ -189,11 +189,14 @@ class ODPins:
     P0_Pa: float
     MN: float
     V0_m_s: float
-    #: 'T4' throttles to T4_K; 'PC' to PC * (net thrust of point pc_of).
+    #: 'T4' throttles to T4_K; 'PC' to PC * (net thrust of point pc_of);
+    #: 'F' to a required net thrust F_N with the rating cap T4_cap_K.
     mode: str
     T4_K: float | None = None
     PC: float | None = None
     pc_of: str | None = None
+    F_N: float | None = None
+    T4_cap_K: float | None = None
     choked_core: bool = False
     choked_byp: bool = True
 
@@ -215,6 +218,13 @@ def _complete_combustion(far):
             'Ar': w_air * air['Ar'], 'CO2': nCO2, 'H2O': nH2O,
             'CO': 3e-7, 'H2': 1e-7, 'OH': 3e-6, 'NO': 3e-5,
             'O': 3e-8, 'H': 1e-9}
+
+
+def _gval(x, fallback):
+    """A float for a GUESS: ``x`` itself when it is a number, else the
+    fallback -- the rubber engine hands variables in as design pins, and a
+    pyomo variable is not a guess."""
+    return x if isinstance(x, (int, float)) else fallback
 
 
 def _u0_from(T0, MN):
@@ -239,31 +249,55 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     continuity."""
     design = shared is None
     P = lambda n: f"{tag}{n}"
-    if warm:
-        V_raw = V
-        V = lambda n, gs, d, bounds=None: V_raw(n, warm.get(n, gs), d,
-                                                bounds=bounds)
+    # Guards are emitted as explicit inequality ROWS, not variable bounds:
+    # the aircraft build path (unit_corrector on a unit-ful formulation)
+    # DROPS declared variable bounds entirely -- measured: 0 of 1589
+    # bounds survived into the detected structure, and every
+    # restoration-ray blowup the guards had killed came straight back
+    # inside the aircraft. Rows survive every path. (Blanket guards on
+    # every variable were separately tried and broke the solver; the set
+    # stays TARGETED on the observed ray families: nozzle block, thrust,
+    # turbine expansion, compressor block, burner species/far, map
+    # coordinates.)
+    V_raw = V
 
+    def V(n, gs, d, bounds=None):
+        v = V_raw(n, warm.get(n, gs) if warm else gs, d)
+        if bounds is not None:
+            lo, hi = bounds
+            if lo is not None and lo > 0:
+                cons.append(v >= lo)
+            if hi is not None:
+                cons.append(v <= hi)
+        return v
+
+    # Conditions may be plain numbers (truth validation pins them) or pyomo
+    # expressions (the aircraft's flight state supplies them); guesses come
+    # from the *_g entries when the conditions are symbolic.
     T0, P0, MN, u0 = cond['T0'], cond['P0'], cond['MN'], cond['V0']
+    T0g = cond.get('T0_g', T0 if isinstance(T0, (int, float)) else 288.15)
+    P0g = cond.get('P0_g', P0 if isinstance(P0, (int, float)) else 101325.0)
+    u0g = cond.get('u0_g', u0 if isinstance(u0, (int, float)) else 230.0)
+    MNg = cond.get('MN_g', MN if isinstance(MN, (int, float)) else 0.75)
     # guess scale: mass flows and powers track ambient pressure across
     # operating points (house rule 7 -- an SLS point runs 3-4x the cruise
     # flows, and a decade-off guess is what non-convergence looks like).
-    sc = P0 / pins.P0_Pa
-    h0s = float(h_air(T0))
-    psi0s = float(psi_air(T0))
-    ram = (1 + 0.2 * MN**2)
+    sc = P0g / pins.P0_Pa
+    h0s_g = float(h_air(T0g))
+    psi0s_g = float(psi_air(T0g))
+    ram = (1 + 0.2 * MNg**2)
 
-    Tt0 = V(P("Tt0"), T0 * ram, "freestream total temperature, K")
-    ht0 = V(P("ht0"), h0s + u0**2 / 2 + H_SHIFT, "shifted total h, J/kg")
-    psi0 = V(P("psi0"), psi0s * ram**3.5, "psi at Tt0")
-    Pt0 = V(P("Pt0"), P0 * ram**3.5, "freestream total pressure, Pa")
+    Tt0 = V(P("Tt0"), T0g * ram, "freestream total temperature, K")
+    ht0 = V(P("ht0"), h0s_g + u0g**2 / 2 + H_SHIFT, "shifted total h, J/kg")
+    psi0 = V(P("psi0"), psi0s_g * ram**3.5, "psi at Tt0")
+    Pt0 = V(P("Pt0"), P0g * ram**3.5, "freestream total pressure, Pa")
     cons += [
         ht0 == H_SHIFT + h_air(Tt0),                       # [SP] SigEq
-        ht0 == H_SHIFT + h0s + u0**2 / 2.0,                # [SP] SigEq
+        ht0 == H_SHIFT + h_air(T0) + u0**2 / 2.0,          # [SP] SigEq
         psi0 == psi_air(Tt0),                              # [SP] SigEq
-        Pt0 * psi0s == P0 * psi0,
+        Pt0 * psi_air(T0) == P0 * psi0,                    # [SP] SigEq
     ]
-    Pt2 = V(P("Pt2"), P0 * ram**3.5, "station 2 total pressure, Pa")
+    Pt2 = V(P("Pt2"), P0g * ram**3.5, "station 2 total pressure, Pa")
     cons += [Pt2 == Pt0 * pins.ram_recovery]
 
     # spool speeds: design pins them; off-design solves them from power.
@@ -285,17 +319,28 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         if design:
             PR, eff = PR_pin, eff_pin
         else:
-            PR = V(n("PR"), PR_pin, f"{key} pressure ratio")
-            eff = V(n("eff"), eff_pin, f"{key} adiabatic efficiency")
+            PR = V(n("PR"), _gval(PR_pin, 1.8), f"{key} pressure ratio")
+            eff = V(n("eff"), _gval(eff_pin, 0.89),
+                    f"{key} adiabatic efficiency")
 
-        Tts = V(n("Tts"), T_guess * 0.97, f"{key} ideal exit Tt, K")
-        Tt = V(n("Tt"), T_guess, f"{key} exit Tt, K")
+        # guard bounds, same story as the turbine/nozzle/burner blocks:
+        # the restoration ray that survived all the earlier guards ran
+        # through the COMPRESSOR block (lpc_dhs hit 1e16 in the aircraft
+        # solve). Physical ranges, so they cannot pinch a real solution.
+        Tts = V(n("Tts"), T_guess * 0.97, f"{key} ideal exit Tt, K",
+                bounds=(150.0, 1400.0))
+        Tt = V(n("Tt"), T_guess, f"{key} exit Tt, K",
+               bounds=(150.0, 1400.0))
         psis = V(n("psis"), psi_g * 0.9, f"psi at {key} ideal exit")
         psi = V(n("psi"), psi_g, f"psi at {key} exit")
-        Pt = V(n("Pt"), Pt_guess, f"{key} exit Pt, Pa")
-        dhs = V(n("dhs"), 3e4, f"{key} ideal enthalpy rise, J/kg")
-        dh = V(n("dh"), 3e4, f"{key} enthalpy rise, J/kg")
-        ht = V(n("ht"), h_g, f"{key} exit shifted ht, J/kg")
+        Pt = V(n("Pt"), Pt_guess, f"{key} exit Pt, Pa",
+               bounds=(5e2, 2e7))
+        dhs = V(n("dhs"), 3e4, f"{key} ideal enthalpy rise, J/kg",
+                bounds=(1e2, 1.5e6))
+        dh = V(n("dh"), 3e4, f"{key} enthalpy rise, J/kg",
+               bounds=(1e2, 1.5e6))
+        ht = V(n("ht"), h_g, f"{key} exit shifted ht, J/kg",
+               bounds=(4e5, 3.5e6))
         cons.extend([
             Pt == Pt_in * PR,
             psis == psi_in * PR,          # isentrope: monomial, exact
@@ -335,13 +380,23 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             sNc = V(n("sNc"), 4500.0, f"{key} speed map scalar")
             cons.extend([sWc * (at['Wc'] * LB2KG) == Wc,
                          sNc * M['NcMap_d'] == Nc])
-            del x0c, y0c
-            # PR and eff are pinned constants at design, so their scalars
-            # are plain numbers.
+            # Fixed decks pin PR/eff as constants and the scalars are plain
+            # numbers; the RUBBER engine hands in variables, and the scalars
+            # become variables with their defining rows.
+            if isinstance(c['PR_pin'], (int, float)):
+                sPR = (c['PR_pin'] - 1.0) / (at['PR'] - 1.0)
+            else:
+                sPR = V(n("sPR"), 0.9, f"{key} PR map scalar")
+                cons.extend([sPR * (at['PR'] - 1.0) + 1.0
+                             == c['PR_pin']])              # SigEq (posy)
+            if isinstance(c['eff_pin'], (int, float)):
+                sEff = c['eff_pin'] / at['eff']
+            else:
+                sEff = V(n("sEff"), 1.0, f"{key} eff map scalar")
+                cons.extend([sEff * at['eff'] == c['eff_pin']])
             shared_out.update({
                 f"s_Wc_{key}": sWc, f"s_Nc_{key}": sNc,
-                f"s_PR_{key}": (c['PR_pin'] - 1.0) / (at['PR'] - 1.0),
-                f"s_eff_{key}": c['eff_pin'] / at['eff']})
+                f"s_PR_{key}": sPR, f"s_eff_{key}": sEff})
         else:
             wNc, wR = M['window']['Nc'], M['window']['R']
             NcM = V(n("NcMap"), M['NcMap_d'], f"{key} map corrected speed",
@@ -362,17 +417,17 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             ])
 
     fan = compressor('fan', Tt0, ht0, psi0, Pt2, LPN, pins.FPR,
-                     pins.eff_fan, 290.0, P0 * 2.5)
-    Pt_lpc_in = V(P("Pt_lpc_in"), P0 * 2.4, "LPC face Pt, Pa")
+                     pins.eff_fan, 290.0, P0g * 2.5)
+    Pt_lpc_in = V(P("Pt_lpc_in"), P0g * 2.4, "LPC face Pt, Pa")
     cons += [Pt_lpc_in == fan['Pt'] * (1.0 - pins.dP_duct4)]
     lpc = compressor('lpc', fan['Tt'], fan['ht'], fan['psi'], Pt_lpc_in,
                      LPN, pins.LPC_PR, pins.eff_lpc, 350.0,
-                     P0 * 2.5 * pins.LPC_PR)
-    Pt_hpc_in = V(P("Pt_hpc_in"), P0 * 2.4 * pins.LPC_PR, "HPC face Pt, Pa")
+                     P0g * 2.5 * pins.LPC_PR)
+    Pt_hpc_in = V(P("Pt_hpc_in"), P0g * 2.4 * pins.LPC_PR, "HPC face Pt, Pa")
     cons += [Pt_hpc_in == lpc['Pt'] * (1.0 - pins.dP_duct6)]
     hpc = compressor('hpc', lpc['Tt'], lpc['ht'], lpc['psi'], Pt_hpc_in,
                      HPN, pins.HPC_PR, pins.eff_hpc, 800.0,
-                     P0 * 2.5 * pins.LPC_PR * pins.HPC_PR)
+                     P0g * 2.5 * pins.LPC_PR * pins.HPC_PR)
     Tt3, ht3, psi3, Pt3, dh_hpc = (hpc['Tt'], hpc['ht'], hpc['psi'],
                                    hpc['Pt'], hpc['dh'])
     ht25 = lpc['ht']
@@ -384,7 +439,7 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     if design:
         BPR = pins.BPR
     else:
-        BPR = V(P("BPR"), pins.BPR, "bypass ratio")
+        BPR = V(P("BPR"), _gval(pins.BPR, 5.5), "bypass ratio")
     cons += [W == Wcore * (1.0 + BPR), Wbyp == Wcore * BPR]
     fW_c1, fW_c2, fW_cust = (pins.cool1.frac_W, pins.cool2.frac_W,
                              pins.cust.frac_W)
@@ -400,8 +455,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     comp_maps(lpc, Wcore, shared_out)
     comp_maps(hpc, Wcore, shared_out)
 
-    far = V(P("far"), 0.025, "burner fuel-air ratio")
-    Wf = V(P("Wf"), 0.5 * sc, "fuel flow, kg/s")
+    # far bounds bracket the vitiated-fit validity range with margin; the
+    # restoration phases found an unbounded ray through (far, Wf, species)
+    # on the climb-segment builds, the same guard-rail story as the nozzle
+    # and turbine blocks.
+    far = V(P("far"), 0.025, "burner fuel-air ratio", bounds=(0.008, 0.048))
+    Wf = V(P("Wf"), 0.5 * sc, "fuel flow, kg/s",
+           bounds=(0.5 * sc / 300.0, 0.5 * sc * 300.0))
     W4 = V(P("W4"), 18.0 * sc, "burner exit flow, kg/s")
     cons += [Wf == far * W31, W4 == W31 + Wf]
 
@@ -430,7 +490,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         T4 = V(P("Tt4"), cond['T4'], "burner exit Tt, K")
         cons += [T4 == cond['T4']]
     else:
-        T4 = V(P("Tt4"), pins.T4_K * 0.95, "burner exit Tt, K")
+        T4 = V(P("Tt4"), _gval(pins.T4_K, 1550.0) * 0.95,
+               "burner exit Tt, K")
 
     # Species are scaled by N_SCALE: trace radicals sit at 2.5e-10 kmol/kg
     # at cruise T4, BELOW the solver's 1e-9 positivity floor, and the
@@ -438,10 +499,18 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     # cancel identically in the mass-action rows PROVIDED the pressure
     # factor uses the scaled mole sum (see below).
     n_guess = _complete_combustion(0.025)
+    # Lower bounds six decades under the stoichiometric guess: trace
+    # radicals COLLAPSE at part-power T4 (H is 4e-7 scaled at 1360 K, three
+    # decades under its 1900 K value), and a guess/1e3 floor pinched the
+    # true solution -- complementarity 1e9, the bound-pinch signature.
     n = {sp: V(P(f"n_{sp}"), n_guess[sp] * N_SCALE,
-               f"{sp} kmol/kg mix, x{N_SCALE:.0e}") for sp in SPECIES}
+               f"{sp} kmol/kg mix, x{N_SCALE:.0e}",
+               bounds=(max(n_guess[sp] * N_SCALE / 1e6, 5e-9),
+                       n_guess[sp] * N_SCALE * 1e3)) for sp in SPECIES}
     ntot = V(P("n_tot"), sum(n_guess.values()) * N_SCALE,
-             f"total kmol/kg mix, x{N_SCALE:.0e}")
+             f"total kmol/kg mix, x{N_SCALE:.0e}",
+             bounds=(sum(n_guess.values()) * N_SCALE / 10.0,
+                     sum(n_guess.values()) * N_SCALE * 10.0))
     cons += [ntot == sum(n.values())]                       # SigEq (posy)
 
     air_b = {e: 0.0 for e in _ELEM_ORDER}
@@ -480,7 +549,7 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                              for sp, nj in n.items()),      # [SP] SigEq
         (1.0 + far) * h4m == ht3 + far * H_SHIFT,           # [SP] SigEq
     ]
-    psi4 = V(P("psi4"), 6.0, "psi_vit at Tt4")
+    psi4 = V(P("psi4"), 6.0, "psi_vit at Tt4", bounds=(1e-2, 1e3))
     cons += [psi4 == psi_vit(T4, far)]                      # [SP] SigEq
 
     # ---- turbines --------------------------------------------------------
@@ -492,14 +561,23 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         at = {k: float(map2d(M[f'terms_{k}'], M['NpMap_d'] / x0t,
                              M['PRmap_d'] / y0t))
               for k in ('Wp', 'eff')}
-        Pt_out = V(nm("Ptout"), 3e5, f"{key} exit Pt, Pa")
-        Ti = V(nm("Ti"), T_out_guess, f"{key} ideal exit Tt, K")
+        # Bounds on the expansion blocks are the same NUMERICAL GUARDS as
+        # the nozzle's: the slacked restoration phases found unbounded rays
+        # through the cooling ideal-expansion variables (lpt_hci -> inf,
+        # caught by instrumentation) exactly as they had through Fg_core.
+        Pt_out = V(nm("Ptout"), 3e5, f"{key} exit Pt, Pa",
+                   bounds=(1e3, 1e7))
+        Ti = V(nm("Ti"), T_out_guess, f"{key} ideal exit Tt, K",
+               bounds=(400.0, 2000.0))
         psii = V(nm("psii"), float(psi_vit(T_out_guess, 0.025)),
                  f"psi_vit at {key} ideal exit")
-        hi = V(nm("hi"), H_SHIFT, f"{key} ideal exit shifted ht, J/kg")
-        dh = V(nm("dh"), 4e5, f"{key} ideal enthalpy drop, J/kg")
+        hi = V(nm("hi"), H_SHIFT, f"{key} ideal exit shifted ht, J/kg",
+               bounds=(1e5, 3e6))
+        dh = V(nm("dh"), 4e5, f"{key} ideal enthalpy drop, J/kg",
+               bounds=(1e2, 2e6))
         eff = (eff_pin if design
-               else V(nm("eff"), eff_pin, f"{key} adiabatic efficiency"))
+               else V(nm("eff"), _gval(eff_pin, 0.90),
+                      f"{key} adiabatic efficiency"))
         cons.extend([
             psii * Pt_in == psi_in * Pt_out,
             psii == psi_vit(Ti, far_in),                    # [SP] SigEq
@@ -510,10 +588,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         # frac_P=1 cooling enters at the TURBINE's inlet pressure (pycycle
         # BleedPressure), NOT its own supply Pt, and expands to Pt_out.
         Wci, htci, psici = cool_at_inlet
-        Tci = V(nm("Tci"), 500.0, f"{key} inlet-cooling ideal exit Tt, K")
+        Tci = V(nm("Tci"), 500.0, f"{key} inlet-cooling ideal exit Tt, K",
+                bounds=(200.0, 1500.0))
         psci = V(nm("psci"), float(psi_air(500.0)), f"psi at that Tt")
-        hci = V(nm("hci"), H_SHIFT, f"ideally expanded cooling ht, J/kg")
-        dhc = V(nm("dhc"), 1e5, f"{key} cooling ideal drop, J/kg")
+        hci = V(nm("hci"), H_SHIFT, f"ideally expanded cooling ht, J/kg",
+                bounds=(1e5, 3e6))
+        dhc = V(nm("dhc"), 1e5, f"{key} cooling ideal drop, J/kg",
+                bounds=(1e2, 2e6))
         cons.extend([
             psci * Pt_in == psici * Pt_out,
             psci == psi_air(Tci),                           # [SP] SigEq
@@ -525,7 +606,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         cons.extend([Pwr == W_in * eff * dh + Wci * eff * dhc])
         W_out = V(nm("Wout"), 21.0 * sc, f"{key} exit flow, kg/s")
         ht_out = V(nm("htout"), H_SHIFT, f"{key} exit mixed ht, J/kg")
-        far_out = V(nm("farout"), 0.021, f"fuel fraction at {key} exit")
+        far_out = V(nm("farout"), 0.021, f"fuel fraction at {key} exit",
+                    bounds=(0.005, 0.05))
         Tt_out = V(nm("Ttout"), T_out_guess * 1.02, f"{key} exit Tt, K")
         psi_out = V(nm("psiout"), float(psi_vit(T_out_guess * 1.02, 0.02)),
                     f"psi_vit at {key} exit")
@@ -555,9 +637,14 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             cons.extend([sWp * at['Wp'] == Wp,
                          sNp * M['NpMap_d'] == Np,
                          sPR * (M['PRmap_d'] - 1.0) + 1.0 == PRv])  # SigEq
+            if isinstance(eff_pin, (int, float)):
+                sEfft = eff_pin / at['eff']
+            else:
+                sEfft = V(nm("sEff"), 3.0, f"{key} eff map scalar")
+                cons.extend([sEfft * at['eff'] == eff_pin])
             shared_out.update({f"s_Wp_{key}": sWp, f"s_Np_{key}": sNp,
                                f"s_PR_{key}": sPR,
-                               f"s_eff_{key}": eff_pin / at['eff']})
+                               f"s_eff_{key}": sEfft})
         else:
             wNp, wPR = M['window']['Np'], M['window']['PR']
             NpM = V(nm("NpMap"), M['NpMap_d'], f"{key} map referred speed",
@@ -685,7 +772,14 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     # ---- performance -----------------------------------------------------
     Fn = V(P("Fn"), pins.Fn_N * sc, "net thrust, N", bounds=(1e1, 1e7))
     cons += [Fn + W * u0 == Fg_core + Fg_byp]               # SigEq (posy)
-    if design:
+    if cond.get('F') is not None:
+        # mission mode: the aircraft states the thrust it needs; the rating
+        # cap is one-sided BY ARGUMENT -- required thrust pushes T4 up, the
+        # cap holds it down, so the row binds exactly when the rating does.
+        cons += [Fn == cond['F']]
+        if cond.get('T4_cap') is not None:
+            cons += [T4 <= cond['T4_cap']]
+    elif design:
         cons += [Fn == pins.Fn_N]
     elif cond['mode'] == 'PC':
         cons += [Fn == cond['PC'] * out_by_tag[cond['pc_of'] + "_"]['Fn']]
@@ -729,6 +823,7 @@ def build(pins: CyclePins, od_points: tuple = (),
     for od in od_points:
         cond = dict(T0=od.T0_K, P0=od.P0_Pa, MN=od.MN, V0=od.V0_m_s,
                     mode=od.mode, T4=od.T4_K, PC=od.PC, pc_of=od.pc_of,
+                    F=od.F_N, T4_cap=od.T4_cap_K,
                     choked_core=od.choked_core, choked_byp=od.choked_byp)
         out_by_tag[f"{od.name}_"] = _point(V, cons, f"{od.name}_", cond,
                                            pins, des['shared'], out_by_tag,

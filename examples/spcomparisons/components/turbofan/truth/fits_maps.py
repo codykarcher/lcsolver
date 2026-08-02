@@ -47,6 +47,11 @@ from .fits import fit_signomial_2d
 # inverting the fitted Wc surfaces against truth puts the GEnx takeoff HPC
 # at R = 2.77 and the CFM56 top-of-climb fan at 2.71, and a 2.70 window
 # bound left phase-1 with a 2.9%-inconsistent row it could only slack.
+# NOTE: extending windows past the table edges (R 3.3, Nc 1.15) was tried
+# for the mission's high-corrected-speed climb states and REVERTED: the
+# slinear eff extrapolation goes wild (878% fit error in the skirt) and
+# the mid-climb stall it was meant to fix did not move -- the R=3.0 pinch
+# was a symptom of a garbage attractor, not its cause.
 COMPRESSORS = {
     'fan': (pyc.FanMap, dict(Nc=(0.80, 1.10), R=(1.40, 3.00))),
     'lpc': (pyc.LPCMap, dict(Nc=(0.80, 1.10), R=(1.40, 3.00))),
@@ -58,9 +63,14 @@ COMPRESSORS = {
 # s_PR from the truth PRs). The first windows were sized on actual PRs
 # (3-5), put the operating point OUTSIDE the fit, and the multipoint solve
 # went infeasible against the window bounds.
+# Widened again for the RUBBER engine: with the design anchor at
+# part-power cruise (deck Tt4 1360 K, not the 1587 K rating) the map
+# coordinate frame shifts, and the mission's high-thrust climb points need
+# LPT PRmap below the old 5.0 floor (s0_lpt_PRmap sat ON the bound with a
+# persistent 4.3e-3 row violation and 1e9 complementarity).
 TURBINES = {
-    'hpt': (pyc.HPTMap, dict(Np=(85.0, 115.0), PR=(5.0, 7.0))),
-    'lpt': (pyc.LPTMap, dict(Np=(85.0, 115.0), PR=(5.0, 7.0))),
+    'hpt': (pyc.HPTMap, dict(Np=(80.0, 120.0), PR=(4.0, 8.0))),
+    'lpt': (pyc.LPTMap, dict(Np=(80.0, 120.0), PR=(3.0, 8.0))),
 }
 
 
@@ -157,9 +167,9 @@ def generate(path=None):
                            ('effMap', 'eff')):
             itp = _interp(mp, field, alpha_idx=0)
             # per-component core boxes from the measured anchor excursions
-            core = {'fan': ((0.93, 1.04), (1.7, 2.85)),
-                    'lpc': ((0.94, 1.05), (1.7, 2.85)),
-                    'hpc': ((0.96, 1.01), (1.7, 2.85))}[name]
+            core = {'fan': ((0.93, 1.06), (1.7, 2.9)),
+                    'lpc': ((0.94, 1.06), (1.7, 2.9)),
+                    'hpc': ((0.96, 1.02), (1.7, 2.9))}[name]
             terms, res, res_off, cr, (x0, y0) = _fit_surface(
                 f"{name}.{key}", itp, w['Nc'], w['R'], exps_n, exps_r,
                 core=core)
@@ -192,7 +202,7 @@ def generate(path=None):
         # that matches (the alpha grid is [0, 1] for both turbine maps).
         for field, key in (('WpMap', 'Wp'), ('effMap', 'eff')):
             itp = _interp(mp, field, alpha_idx=alpha_idx)
-            core = ((95.0, 110.0), (w['PR'][0] + 0.6, w['PR'][1] - 0.6))
+            core = ((90.0, 112.0), (w['PR'][0] + 0.8, w['PR'][1] - 0.8))
             terms, res, res_off, cr, (x0t, y0t) = _fit_surface(
                 f"{name}.{key}", itp, w['Np'], w['PR'],
                 exps_np, exps_pr, core=core)
