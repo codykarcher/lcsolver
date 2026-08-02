@@ -37,7 +37,7 @@
  */
 import * as THREE from 'three';
 import * as M from './materials.js';
-import { latheZ, tubeZ, bladeRow, rod, roundedBox } from './geom.js';
+import { latheZ, tubeZ, bladeRow, rod, roundedBox, pipe } from './geom.js';
 
 const SEG = 48;
 
@@ -737,12 +737,14 @@ export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) 
 /** Visual proportions, all x bore. Not physical. */
 const PE = {
   barrel:   0.58,   // barrel radius
-  fin:      0.84,   // cooling fin radius
+  fin:      0.85,   // cooling fin radius
   finThick: 0.055,
   cylLen:   1.35,   // case side to head face
   caseHalf: 0.72,   // crankcase half-width
   caseHigh: 1.45,   // crankcase height
-  spacing:  1.55,   // between cylinders on one bank
+  // Cylinder pitch. Must clear twice the fin radius or adjacent cylinders
+  // intersect -- at 1.55 against a 1.70 fin diameter they always did.
+  spacing:  1.80,
   stagger:  0.20,   // fore-aft offset between the two banks
   head:     0.95,   // head block, across
   shaft:    0.17,   // propeller shaft radius
@@ -838,12 +840,6 @@ export function pistonEngine({
   const zCollar = -0.52 * PE.shaftLen * B;
   rotor.add(tubeZ(PE.shaft * B, PE.flange * B,
                   zCollar + 0.07 * B, zCollar - 0.07 * B, M.hardware, 28));
-  // A witness mark on the collar. Without it a body of revolution turning
-  // about its own axis is completely still to look at.
-  const dot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.055 * B, 12, 10), M.marking);
-  dot.position.set(0, PE.flange * B * 0.72, zCollar + 0.055 * B);
-  rotor.add(dot);
   g.add(rotor);
 
   // ---- crankcase ---------------------------------------------------------
@@ -901,54 +897,57 @@ export function pistonEngine({
       head.position.set(side * (xOut + 0.21 * B), 0, zs);
       g.add(head);
 
-      const rocker = roundedBox(0.60 * B, 0.62 * B, 0.34 * B,
-                                0.11 * B, M.accessory);
-      rocker.rotation.y = Math.PI / 2;
-      rocker.position.set(side * (xOut + 0.34 * B), 0.52 * B, zs);
+      // Rocker cover: big, polished, lying along the top of the head. On the
+      // real engine it is the brightest thing on the cylinder and it is what
+      // the eye reads first.
+      const rocker = roundedBox(0.56 * B, 0.86 * B, 0.30 * B,
+                                0.13 * B, M.piston);
+      rocker.rotation.x = Math.PI / 2;      // rounded corners lie horizontal
+      rocker.position.set(side * (xOut + 0.16 * B), 0.60 * B, zs);
       g.add(rocker);
-
-      // Exhaust down from the head into the collector below.
-      const stub = rod(new THREE.Vector3(side * (xOut - 0.05 * B), -0.30 * B, zs),
-                       new THREE.Vector3(side * PE.collectorX * B,
-                                         -PE.collectorY * B, zs),
-                       0.115 * B, M.hot, 14);
-      if (stub) g.add(stub);
     }
   }
 
-  // ---- exhaust collector -------------------------------------------------
-  // A Lycoming runs a collector under each bank gathering every cylinder into
-  // one pipe. It is a large part of the engine's silhouette from below, and
-  // without it the stubs end in mid air.
+  // ---- exhaust -----------------------------------------------------------
+  // Individual polished pipes sweeping down from each head and curving aft
+  // into a common collector, which is what a Lycoming actually looks like --
+  // a single fat tube under the bank reads as plumbing, not as an engine.
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
   for (const side of [-1, 1]) {
-    const zFront = zOf(0, side) + 0.45 * B;
-    const zBack = zOf(perSide - 1, side) - 0.55 * B;
-    const pipe = rod(new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zFront),
-                     new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zBack),
-                     0.19 * B, M.hot, 18);
-    if (pipe) g.add(pipe);
-    // Rounded ends, so the collector is closed rather than a cut tube.
-    for (const z of [zFront, zBack]) {
-      const capm = new THREE.Mesh(
-        new THREE.SphereGeometry(0.19 * B, 14, 10), M.hot);
-      capm.position.set(side * PE.collectorX * B, -PE.collectorY * B, z);
-      g.add(capm);
+    const zMerge = zOf(perSide - 1, side) - 0.75 * B;
+    const merge = V(side * PE.collectorX * B, -PE.collectorY * B, zMerge);
+
+    for (let i = 0; i < perSide; i++) {
+      const zs = zOf(i, side);
+      g.add(pipe([
+        V(side * (xOut - 0.02 * B), -0.34 * B, zs),
+        V(side * (xOut - 0.10 * B), -0.80 * B, zs),
+        V(side * (PE.collectorX + 0.16) * B, -1.12 * B, zs - 0.10 * B),
+        V(side * PE.collectorX * B, -PE.collectorY * B,
+          zs + (zMerge - zs) * 0.55),
+        merge,
+      ], 0.105 * B, M.piston, 36));
     }
+
     // Tailpipe, aft and outboard.
-    const tail = rod(new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zBack),
-                     new THREE.Vector3(side * (PE.collectorX + 0.30) * B,
-                                       -(PE.collectorY + 0.18) * B, zBack - 0.85 * B),
-                     0.155 * B, M.hot, 14);
-    if (tail) g.add(tail);
+    g.add(pipe([
+      merge,
+      V(side * (PE.collectorX + 0.12) * B, -(PE.collectorY + 0.06) * B,
+        zMerge - 0.45 * B),
+      V(side * (PE.collectorX + 0.28) * B, -(PE.collectorY + 0.16) * B,
+        zMerge - 1.05 * B),
+    ], 0.155 * B, M.piston, 24));
   }
 
   // ---- accessory case ----------------------------------------------------
-  const acc = roundedBox(1.5 * PE.caseHalf * B, PE.caseHigh * 0.85 * B,
-                         0.58 * B, 0.16 * B, M.accessory);
-  acc.position.z = zCaseBack - 0.29 * B;
+  // Accessory case: on the real engine this is a big dark block filling the
+  // whole back of the crankcase, not a small pad.
+  const acc = roundedBox(1.72 * PE.caseHalf * B, PE.caseHigh * 1.18 * B,
+                         0.95 * B, 0.18 * B, M.hardware);
+  acc.position.set(0, -0.06 * B, zCaseBack - 0.47 * B);
   g.add(acc);
 
-  const length = -(zCaseBack - 0.58 * B);
+  const length = -(zCaseBack - 0.95 * B);
   g.userData.power = power;
   g.userData.bore = B;
   g.userData.boreInches = B / 0.0254;

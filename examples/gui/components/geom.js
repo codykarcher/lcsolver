@@ -154,6 +154,27 @@ export function roundedBox(w, h, d, r, material) {
 }
 
 /**
+ * A pipe following a path, capped so it is a closed solid.
+ *
+ * TubeGeometry leaves its ends open; a bead at each end closes them and
+ * rounds the pipe off at the same time. Slightly over-sized, because a sphere
+ * of exactly the tube radius meets the rim coincidentally and z-fights.
+ */
+export function pipe(points, radius, material, segments = 48) {
+  const g = new THREE.Group();
+  const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
+  g.add(new THREE.Mesh(
+    new THREE.TubeGeometry(curve, segments, radius, 12, false), material));
+  for (const p of [points[0], points[points.length - 1]]) {
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(radius * 1.04, 12, 8), material);
+    cap.position.copy(p);
+    g.add(cap);
+  }
+  return g;
+}
+
+/**
  * One twisted, tapered blade, lofted from a stack of elliptical sections.
  *
  * Built with the span along +Y, chord along Z and thickness along X, so a row
