@@ -210,7 +210,13 @@ CLASSES = {
         # 0.914) and makes this class consistent with how b737 is set up.
         n_pass=88, seats_abreast=4, range_nmi=2200,
         R_fuse_guess=1.41, ref_MTOW_lb=85_517, ref_OEW_lb=48_100,
-        v_ht_min=1.50, R_fuse_min=1.50,
+        # R_fuse_min IS class data (the E-jet double-dome is a published
+        # 3.01 m section; the seat-pitch minimum tube is 2.71). v_ht_min is
+        # deliberately NOT set: prescribing the real 26 m2 tail's volume is
+        # not repeatable across classes -- see the tail-sizing note in
+        # aircraft.py. The derived tail is the point-design answer; the real
+        # E175's excess over it is E170/E175 COMMON-EMPENNAGE margin.
+        R_fuse_min=1.50,
         ref_mach=0.78,
         n_aisles=1, ceiling_ft=41000.0,
         span_max_m=28.7, field_length_ft=6900.0, v_stall_kt=110.0, v_land_mps=66.0, wing_load_max=5500.0,
