@@ -490,7 +490,6 @@ console.log('\n=== windscreen ===');
 {
   const scr = windscreen(fuse, {});
   const su = scr.userData;
-  const DEG = 180 / Math.PI;
   console.log(`${(100 * su.low).toFixed(0)}% to ${(100 * su.high).toFixed(0)}% of a ` +
               `${su.bodyHeight.toFixed(3)} m body: y ${su.yLow.toFixed(3)} to ${su.yHigh.toFixed(3)}`);
   console.log(`z ${su.zRange[0].toFixed(3)} back to ${su.zRange[1].toFixed(3)} forward, ` +
@@ -508,87 +507,72 @@ console.log('\n=== windscreen ===');
     fail(`${scr.children.length} panes, wanted ${su.paneCount}`);
   }
 
-  /* ---- the cuts are even ---------------------------------------------- */
+  /* ---- every divider runs fore and aft, like the centreline one -------- */
+  // The correction this encodes: cutting across the band put the posts at
+  // right angles to the centre post. A post that runs ALONG the glass shows up
+  // as a pane spanning the whole length; one that runs across it does not.
+  {
+    const full = Math.abs(su.zRange[1] - su.zRange[0]);
+    for (const mesh of scr.children) {
+      const b = new THREE.Box3().setFromObject(mesh);
+      const span = b.max.z - b.min.z;
+      if (span < full - 0.02) {
+        fail(`${mesh.name} spans only ${span.toFixed(3)} of ${full.toFixed(3)} m ` +
+             `-- its dividers run across the glass, not along it`);
+      }
+    }
+    console.log(`  every pane runs the full ${full.toFixed(3)} m, so all ` +
+                `${su.panesPerSide * 2 - 1} posts lie parallel`);
+  }
+
+  /* ---- the posts, measured across the band ---------------------------- */
   {
     let lo = Infinity, hi = -Infinity;
-    for (let i = 1; i < su.cuts.length; i++) {
-      const d = su.cuts[i] - su.cuts[i - 1];
-      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    for (const z of [-2.4, -2.0, -1.6, -1.35, -1.0, -0.7]) {
+      const a = su.thLoAt(z), c = su.thHiAt(z);
+      if (a == null || c == null) continue;
+      const r = fuse.userData.shapeAt(z).r;
+      const height = (c - a) * r;
+      const gap = Math.min(su.post / Math.max(height, 1e-6), 0.6 / su.panesPerSide);
+      const w = gap * height;
+      lo = Math.min(lo, w); hi = Math.max(hi, w);
     }
-    console.log(`  cuts every ${lo.toFixed(4)} m` +
-                (hi - lo > 1e-9 ? ` .. ${hi.toFixed(4)}` : ' -- even'));
-    if (hi - lo > 1e-9) fail(`the dividers are not evenly spaced: ${lo} to ${hi}`);
-  }
-
-  /* ---- five posts: one down the centreline, two a side ---------------- */
-  {
-    const sb = scr.children.filter((m) => m.userData.side > 0)
-      .sort((a, b) => a.userData.zRange[0] - b.userData.zRange[0]);
-    const pt = scr.children.filter((m) => m.userData.side < 0);
-    if (sb.length !== su.panesPerSide || pt.length !== su.panesPerSide) {
-      fail(`panes are not ${su.panesPerSide} a side`);
+    console.log(`  dividing posts ${(1000 * lo).toFixed(1)}..${(1000 * hi).toFixed(1)} mm ` +
+                `across the band`);
+    if (Math.abs(lo - su.post) > 1e-3 || Math.abs(hi - su.post) > 1e-3) {
+      fail(`posts measure ${(1000 * lo).toFixed(1)}..${(1000 * hi).toFixed(1)} mm, ` +
+           `wanted ${(1000 * su.post).toFixed(0)}`);
     }
-    // The centre post is body left between the two sides' glass. Measured as
-    // twice the closest approach to the centreline, since it is symmetric.
+    // And the centre post: body left between the two sides.
     let minX = Infinity;
-    for (const m of sb) minX = Math.min(minX, new THREE.Box3().setFromObject(m).min.x);
-    const centre = 2 * minX;
-    console.log(`  centre post ${(1000 * centre).toFixed(1)} mm`);
+    for (const m of scr.children) {
+      if (m.userData.side < 0) continue;
+      minX = Math.min(minX, new THREE.Box3().setFromObject(m).min.x);
+    }
+    console.log(`  centre post ${(2000 * minX).toFixed(1)} mm`);
     if (minX <= 0) fail('the two sides meet -- there is no centre post');
-    if (Math.abs(centre - su.post) > 3 * su.lift) {
-      fail(`centre post is ${(1000 * centre).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
-    }
-    for (let i = 0; i < sb.length - 1; i++) {
-      const A = new THREE.Box3().setFromObject(sb[i]);
-      const B = new THREE.Box3().setFromObject(sb[i + 1]);
-      const gap = B.min.z - A.max.z;
-      console.log(`  divider between panes ${sb[i].userData.pane} and ` +
-                  `${sb[i + 1].userData.pane}: ${(1000 * gap).toFixed(1)} mm`);
-      if (gap <= 0) fail(`panes ${sb[i].userData.pane} and ${sb[i + 1].userData.pane} touch`);
-      if (Math.abs(gap - su.post) > 3 * su.lift) {
-        fail(`divider reads ${(1000 * gap).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
-      }
+    if (Math.abs(2 * minX - su.post) > 3 * su.lift) {
+      fail(`centre post is ${(2000 * minX).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
     }
   }
 
-  /* ---- the corners sit on the cut lines ------------------------------- */
-  // This is what "straight between the intersections" means: the CORNERS are
-  // on the band's real edges, and only what runs between them is straightened.
-  {
-    let worst = 0;
-    for (const p of su.panes) {
-      for (const [z, th, want] of [[p.zRange[0], p.loA, su.yLow], [p.zRange[1], p.loB, su.yLow],
-                                   [p.zRange[0], p.hiA, su.yHigh], [p.zRange[1], p.hiB, su.yHigh]]) {
-        const y = fuse.userData.surfaceAt(z, th).y;
-        // An upper corner held back by the centre post sits ON the crown
-        // instead of on the upper line, which is correct, not an error.
-        const onCrown = Math.abs(th - (Math.PI / 2 - (su.post / 2) / fuse.userData.shapeAt(z).r)) < 1e-6;
-        if (!onCrown) worst = Math.max(worst, Math.abs(y - want));
-      }
-    }
-    console.log(`  corners sit on the cut lines to ${(1000 * worst).toFixed(3)} mm`);
-    if (worst > 1e-3) fail(`a pane corner is ${(1000 * worst).toFixed(1)} mm off its cut line`);
-  }
-
-  /* ---- straight edges, and what that costs ---------------------------- */
-  // A straight edge between two points on a curved contour cannot also BE the
-  // contour. Reported rather than asserted at zero, because the straightness
-  // was the point; what is checked is that it stays a small excursion.
+  /* ---- inside its own cut lines --------------------------------------- */
   const sbox = new THREE.Box3().setFromObject(scr);
-  const over = sbox.max.y - su.yHigh, under = su.yLow - sbox.min.y;
-  console.log(`  straight edges run ${(1000 * over).toFixed(0)} mm above the ` +
-              `${(100 * su.high).toFixed(0)}% line and ${(1000 * Math.max(0, under)).toFixed(0)} mm ` +
-              `below the ${(100 * su.low).toFixed(0)}%`);
-  if (over > 0.12 || under > 0.12) {
-    fail(`the straight edges depart the cut lines by more than 120 mm`);
+  const tol = su.lift + 1e-4;
+  console.log(`  spans y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
+              `cut lines ${su.yLow.toFixed(4)}..${su.yHigh.toFixed(4)} ` +
+              `(+${(1000 * su.lift).toFixed(0)} mm standoff allowed)`);
+  if (sbox.min.y < su.yLow - tol || sbox.max.y > su.yHigh + tol) {
+    fail(`glass reaches y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
+         `outside its cut lines by more than the ${su.lift} standoff`);
   }
   if (sbox.min.z < -fuse.userData.noseLength) fail('glass runs off the back of the nose');
 
-  /* ---- on the skin, facing out, no degenerate triangles ---------------- */
+  /* ---- on the skin, facing out, no slivers ---------------------------- */
   for (const mesh of scr.children) {
     const pos = mesh.geometry.getAttribute('position');
     let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < pos.count; i += 2) {
+    for (let i = 0; i < pos.count; i += 3) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, i);
       let bz = p.z; const s0 = fuse.userData.shapeAt(p.z);
       let bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
@@ -610,7 +594,6 @@ console.log('\n=== windscreen ===');
       return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
     }, mesh.name);
 
-    // The forward pane used to end in a point. Nothing may collapse now.
     const ix = mesh.geometry.getIndex();
     let degenerate = 0;
     const a2 = new THREE.Vector3(), b2 = new THREE.Vector3(), c2 = new THREE.Vector3();

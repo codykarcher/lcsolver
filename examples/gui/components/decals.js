@@ -747,7 +747,7 @@ export function windscreen(fuselage, {
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
   colour = WINDSCREEN.colour, panesPerSide = WINDSCREEN.panesPerSide,
   post = WINDSCREEN.post, tipEdge = WINDSCREEN.tipEdge,
-  nu = 12, nv = 8, name = 'windscreen',
+  nz = 72, nv = 5, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
   const noseLength = fu.noseLength;
@@ -764,7 +764,6 @@ export function windscreen(fuselage, {
 
   /* ---- the band's two edges, as angles at a station ------------------- */
   const thLoAt = (z) => angleAtHeight(fu, z, yLo);
-  /** Upper edge: the upper line, or the crown where that is lower. */
   const thHiRaw = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
     ? Math.PI / 2
     : angleAtHeight(fu, z, yHi));
@@ -777,7 +776,6 @@ export function windscreen(fuselage, {
    * glass stops short of the centreline and the body between them IS the post.
    */
   const halfPost = (z) => (post / 2) / Math.max(fu.shapeAt(z).r, 1e-6);
-  /** Upper edge with the centre post taken out of it. */
   const thHiAt = (z) => {
     const raw = thHiRaw(z);
     if (raw == null) return null;
@@ -787,11 +785,9 @@ export function windscreen(fuselage, {
   /**
    * Forward end of the glass: where it is still `tipEdge` tall.
    *
-   * The band tapers to nothing on the nose -- the crown drops below the upper
-   * line and then below the lower one -- so running to the vanishing point
-   * would end the forward pane in a sliver and a degenerate row of triangles.
-   * Stopping while the glass is still a hand's width tall gives it the blunt
-   * straight edge the panes are supposed to have.
+   * The band tapers to nothing on the nose, so running to the vanishing point
+   * would end it in a sliver and a row of degenerate triangles. Stopping while
+   * it is still a hand's width tall gives it a blunt straight edge.
    */
   let a = zBack, b = 0;
   for (let i = 0; i < 60; i++) {
@@ -802,13 +798,44 @@ export function windscreen(fuselage, {
   }
   const zTip = a;
 
-  /* ---- the dividers: even verticals across the band ------------------- */
-  // Even in z, so they read as evenly spaced verticals from the side. With the
-  // centre post down the crown, `panesPerSide` a side makes twice that in all.
-  const span = zTip - zBack;
-  const cuts = [];
-  for (let i = 0; i <= panesPerSide; i++) cuts.push(zBack + span * (i / panesPerSide));
+  /**
+   * The corner, where the crown drops past the upper line and the glass starts
+   * to wrap. The band's upper edge turns there, so a station lands on it.
+   */
+  let ca = zBack, cb = 0;
+  for (let i = 0; i < 60; i++) {
+    const m = (ca + cb) / 2;
+    if (fu.crownAt(m) > yHi) ca = m; else cb = m;
+  }
+  const zCorner = ca;
+  const hasCorner = zCorner > zBack + 1e-9 && zCorner < zTip - 1e-9;
 
+  /* ---- stations along the glass --------------------------------------- */
+  const cosine = (t) => (1 - Math.cos(Math.PI * t)) / 2;
+  const stations = [];
+  for (let i = 0; i < nz; i++) stations.push(zBack + (zTip - zBack) * cosine(i / (nz - 1)));
+  if (hasCorner) {
+    stations.push(zCorner);
+    for (let d = (zTip - zBack) * 0.04; d > 1e-4; d *= 0.4) {
+      if (zCorner - d > zBack) stations.push(zCorner - d);
+      if (zCorner + d < zTip) stations.push(zCorner + d);
+    }
+    stations.sort((x, y) => x - y);
+  }
+
+  /**
+   * The dividers run ALONG the glass, parallel to the centreline cut.
+   *
+   * The centre post is the body left between the two sides where the band wraps
+   * over the crown -- a line running fore and aft. The posts that split each
+   * side are the same kind of line: they follow the glass from its aft edge to
+   * its forward one, evenly spaced across its height, so all five posts lie
+   * parallel. Cutting the other way, across the band, put them at right angles
+   * to the centre post, which is not how a windscreen is framed.
+   *
+   * Spaced evenly in the band's own height rather than in angle, so the panes
+   * stay equal shares of the glass as the band narrows towards the nose.
+   */
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
@@ -816,35 +843,33 @@ export function windscreen(fuselage, {
 
   for (const side of [1, -1]) {
     for (let k = 0; k < panesPerSide; k++) {
-      // Held back half a post at every INTERNAL divider. The aft edge and the
-      // forward edge are the glass's own ends, not joints, so they stay put.
-      const zA = cuts[k] + (k === 0 ? 0 : post / 2);
-      const zB = cuts[k + 1] - (k === panesPerSide - 1 ? 0 : post / 2);
-
-      // The four corners, on the band's true edges. Everything between them is
-      // interpolated STRAIGHT rather than following those edges -- which is
-      // what makes a pane a flat-sided quadrilateral instead of a slice of a
-      // curved ribbon. Straight in the surface's own (station, angle)
-      // coordinates, so the pane still lies on the nose: a chord drawn through
-      // space would sink into it by the sagitta of whatever it spans.
-      const loA = thLoAt(zA), hiA = thHiAt(zA);
-      const loB = thLoAt(zB), hiB = thHiAt(zB);
-      if (loA == null || hiA == null || loB == null || hiB == null) continue;
-
       const pos = [], idx = [];
-      for (let i = 0; i < nu; i++) {
-        const t = i / (nu - 1);
-        const z = zA + (zB - zA) * t;
-        const thLo = loA + (loB - loA) * t;       // straight edge, not the contour
-        const thHi = hiA + (hiB - hiA) * t;
+      const rows = [];
+      for (const z of stations) {
+        const lo = thLoAt(z), hi = thHiAt(z);
+        if (lo == null || hi == null || hi <= lo) { rows.push(null); continue; }
+        // The post as a fraction of THIS station's band height, so it stays a
+        // constant width in metres while the band narrows.
+        const r = fu.shapeAt(z).r;
+        const height = (hi - lo) * r;
+        const gap = Math.min(post / Math.max(height, 1e-6), 0.6 / panesPerSide);
+        const v0 = k / panesPerSide + (k === 0 ? 0 : gap / 2);
+        const v1 = (k + 1) / panesPerSide - (k === panesPerSide - 1 ? 0 : gap / 2);
+        rows.push([lo + (hi - lo) * v0, lo + (hi - lo) * v1]);
+      }
+      const kept = [];
+      rows.forEach((row, i) => { if (row) kept.push([stations[i], row]); });
+      if (kept.length < 2) continue;
+
+      for (const [z, [thA, thB]] of kept) {
         for (let j = 0; j < nv; j++) {
-          const th = thLo + (thHi - thLo) * (j / (nv - 1));
+          const th = thA + (thB - thA) * (j / (nv - 1));
           const tt = side > 0 ? th : Math.PI - th;
           const p = fu.surfaceAt(z, tt), n = fu.normalAt(z, tt);
           pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
         }
       }
-      for (let i = 0; i < nu - 1; i++) {
+      for (let i = 0; i < kept.length - 1; i++) {
         for (let j = 0; j < nv - 1; j++) {
           const p0 = i * nv + j, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
           idx.push(p0, p2, p1, p1, p2, p3);
@@ -859,15 +884,12 @@ export function windscreen(fuselage, {
         return fu.normalAt(q.z, Math.atan2(q.y - s.yc, q.x));
       });
       const mesh = new THREE.Mesh(g, material);
+      // Numbered from the LOWER edge up, so pane 3 is the one against the
+      // centre post where the glass wraps.
       mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}${k + 1}`;
-      mesh.userData = {
-        pane: k + 1, side, nu, nv, zRange: [zA, zB],
-        corners: { loA, hiA, loB, hiB },
-      };
+      mesh.userData = { pane: k + 1, side, nv, stations: kept.map((e) => e[0]) };
       group.add(mesh);
-      if (side > 0) {
-        built.push({ pane: k + 1, zRange: [zA, zB], loA, hiA, loB, hiB });
-      }
+      if (side > 0) built.push({ pane: k + 1, stations: kept.length });
     }
   }
 
@@ -875,10 +897,9 @@ export function windscreen(fuselage, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown,
     zRange: [zBack, zTip],
-    /** The even cuts, and the post held out of the crown and each divider. */
-    cuts, post, tipEdge, panesPerSide, paneCount: 2 * panesPerSide,
-    panes: built, nu, nv,
-    thLoAt, thHiAt,
+    zCorner: hasCorner ? zCorner : null, hasCorner,
+    post, tipEdge, panesPerSide, paneCount: 2 * panesPerSide,
+    panes: built, nv, thLoAt, thHiAt,
   });
   return group;
 }
