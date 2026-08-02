@@ -23,10 +23,21 @@
 import * as THREE from 'three';
 import { jetlinerFuselage } from './components/fuselage.js';
 
+// The three reference noses plus two synthetic extremes. The real ones are here
+// because a shape law that only holds at its own defaults is worth very little:
+// they span tip radii from 0.32 to 0.70 of the body radius and nose lengths
+// from 0.9 to 1.7 diameters, which is the range the blunting has to survive.
 const CASES = [
-  { name: '737-ish',   radius: 1.88, fineness: 10.1 },
-  { name: 'stubby',    radius: 1.20, fineness: 7.0 },
-  { name: 'widebody',  radius: 3.20, fineness: 13.0 },
+  { name: '737',      radius: 1.88, fineness: 10.1,
+    shape: { noseD: 1.70, noseRadius: 0.32, noseB: 0.95, noseA: 1.90, keelHold: 0.85 } },
+  { name: 'A350',     radius: 2.98, fineness: 11.2,
+    shape: { noseD: 1.35, noseRadius: 0.52, noseB: 0.85, noseA: 2.20, keelHold: 0.85,
+             tailD: 3.10, tailA: 1.55, tailB: 0.72, tipR: 0.09 } },
+  { name: 'Citation', radius: 0.80, fineness: 8.1,
+    shape: { noseD: 0.90, noseRadius: 0.70, noseB: 0.80, noseA: 2.40, keelHold: 0.80,
+             tailD: 2.20, tailA: 1.70, tailB: 0.80, tipR: 0.12, crownHold: 0.90 } },
+  { name: 'stubby',   radius: 1.20, fineness: 7.0 },
+  { name: 'widebody', radius: 3.20, fineness: 13.0 },
 ];
 
 let failures = 0;
@@ -37,7 +48,8 @@ for (const c of CASES) {
   // built the default would silently stop testing the decal machinery -- which
   // is precisely where the degenerate triangles and the overlaps came from.
   const body = jetlinerFuselage({
-    radius: c.radius, length: c.fineness * 2 * c.radius, detail: true });
+    radius: c.radius, length: c.fineness * 2 * c.radius,
+    shape: c.shape ?? {}, detail: true });
   const u = body.userData;
   console.log(`${c.name}: L=${u.length.toFixed(2)} D=${(2 * u.radius).toFixed(2)} ` +
               `L/D=${u.fineness.toFixed(2)} parts=${body.children.length}`);
@@ -166,8 +178,13 @@ for (const c of CASES) {
     crownDrift = Math.max(crownDrift, Math.abs(u.crownAt(z) - u.radius));
     keelRise = Math.max(keelRise, u.keelAt(z) - u.keelAt(u.cabinZ[1]));
   }
-  if (crownDrift > 1e-9) bad(`crown moves ${crownDrift.toFixed(4)} over the tailcone`);
-  if (keelRise < u.radius) bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
+  // At crownHold 1 the crown is dead level; below it the roof is allowed to come
+  // down by exactly the fraction given up, and no more.
+  const crownBudget = (1 - u.crownHold) * u.radius + 1e-9;
+  if (crownDrift > crownBudget)
+    bad(`crown moves ${crownDrift.toFixed(4)}, budget ${crownBudget.toFixed(4)} at crownHold ${u.crownHold}`);
+  if (keelRise < u.radius * (0.5 + u.crownHold / 2))
+    bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
 
   /* 5b. the nose is the tailcone, mirrored ------------------------------- */
   // Same three claims as aft, with crown and keel swapped: the keel holds its
@@ -273,7 +290,7 @@ for (const c of CASES) {
   console.log(`  ${patches} applied patches, volume ${vol.toFixed(2)}, ` +
               `${open} open edges, ${inward} inward normals, ` +
               `${slivers} slivers, ${overlaps} overlaps`);
-  console.log(`  crown level to ${crownDrift.toExponential(1)}, ` +
+  console.log(`  crown drift ${crownDrift.toExponential(1)}/${crownBudget.toExponential(1)}, ` +
               `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
               `nose: keel moves ${keelDrift.toFixed(3)}/${keelBudget.toFixed(3)}, ` +
               `crown falls ${crownFall.toFixed(2)}, tip y ${u.shapeAt(0).yc.toFixed(2)}`);

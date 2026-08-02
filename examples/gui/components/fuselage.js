@@ -47,17 +47,19 @@ export const circularSection = () => 1;
  * so they hold at any size. Numbers are off a 737-800 / A320: 37-38 m long,
  * 3.8-4.0 m across, so a fineness ratio right around 10.
  *
- * Both taper laws come from `(1 - x^A)^B`. B < 1 makes the end round rather
- * than pointed, A > 1 makes the slope vanish where the taper meets the barrel,
- * so neither end blends in with a crease. The tailcone still takes both
- * exponents directly; the nose does not, because B there is pinned at 1/2 and A
- * is solved for from the tip radius -- see noseRadiusExponent below.
+ * Both ends come from `(1 - x^A)^B`. B < 1 makes the end round rather than
+ * pointed, A > 1 makes the slope vanish where the taper meets the barrel, so
+ * neither end blends in with a crease. The tailcone uses that curve as it
+ * stands; the nose uses it only as a BASE, and has its point cut off by a
+ * sphere of a radius you choose -- see bluntNose below.
  */
 const JET = {
   fineness:   10.1,  // overall length / diameter
   noseD:       1.70, // nose length, in diameters
   tailD:       2.90, // tailcone length, in diameters
-  noseRadius:  0.50, // RADIUS OF CURVATURE at the nose point, in radii
+  noseRadius:  0.32, // RADIUS OF CURVATURE at the nose point, in radii
+  noseA: 1.90,       // nose: how softly the taper meets the barrel
+  noseB: 0.95,       // nose: fullness of the taper, tip radius aside
   tipFlat:     0.18, // see noseCentre(): how the tip cap is kept spherical
   tailA: 1.6, tailB: 0.75,
   tipR:        0.10, // tailcone tip radius, in radii -- the APU exhaust
@@ -66,29 +68,87 @@ const JET = {
 };
 
 /**
- * The nose profile: a sphere of radius `rho` at the point, faired out to the
- * barrel.
+ * A **spherically blunted** nose: a base curve run out to a virtual sharp
+ * point, with the point cut off by a sphere of radius `rho` tangent to it.
  *
- * Asking for the nose by its tip RADIUS rather than by an exponent is worth a
- * little algebra, because a radius is a thing you can picture and an exponent
- * is not. The family r = R*(1 - (1-t)^A)^B turns out to give it up cheaply:
- * near the point, (1-t)^A ~ 1 - At, so
+ * The tip radius cannot come from the exponent, and it is worth being precise
+ * about why. For a base curve going as r ~ x^B, the radius of curvature at the
+ * point is zero for every B > 1/2, infinite for every B < 1/2, and finite only
+ * at B = 1/2 exactly. So an exponent gives you a knife edge, a flat, or one
+ * single radius tied to the nose length -- never a radius you can choose. Pin
+ * B = 1/2 to get it and the whole nose is dragged along: the section reaches
+ * 95% of full radius only 30% of the way aft, which is far blunter than any of
+ * these aeroplanes and was the shape that kept coming out wrong.
  *
- *     r ~ R * (A t)^B      against a sphere's      r = sqrt(2 rho |z|)
+ * So the sphere is grafted on, which is how a real radome is drawn anyway:
+ * length, tip radius and body shape are three separate decisions, and this is
+ * the construction that keeps them separate.
  *
- * The sphere's square-root is B = 1/2 exactly. So B is not a free parameter at
- * all -- it is 1/2, or the tip is not spherical -- and with it fixed, matching
- * the coefficients gives the tip radius outright:
+ * Tangency, with x aft from the virtual point and the sphere centred on the
+ * axis at x_c: the centre lies a distance rho along the inward normal, and its
+ * radial coordinate has to vanish, which gives both unknowns at once --
  *
- *     rho = R^2 A / (2 * lNose)      i.e.   A = 2 rho lNose / R^2
+ *     r(x_t) * sqrt(1 + r'(x_t)^2) = rho          (where to cut)
+ *     x_c = x_t + r(x_t) * r'(x_t)                (where the centre goes)
  *
- * One knob, and it is the one that means something. A also sets how the taper
- * meets the barrel, and that comes out right on its own: a blunt nose needs a
- * large A, which is a soft join, and A stays above 1 -- the condition for no
- * crease -- for any tip radius above about 0.15 of the body radius.
+ * -- and the finished point sits at x_c - rho. One bisection, no fitting.
+ * Slope continuity at the join is not something to check afterwards; it is the
+ * condition that was solved.
+ *
+ * Blunting shortens the nose, so the virtual length is solved for as well, to
+ * make the finished nose exactly the length asked for.
+ *
+ * The base curve is the same (1 - (1-t)^A)^B as the tailcone. A > 1 keeps the
+ * barrel join free of a crease; B is now free to shape the body of the nose,
+ * because it is no longer carrying the tip.
  */
-function noseRadiusExponent(rho, lNose, radius) {
-  return Math.max(1.02, 2 * rho * lNose / (radius * radius));
+function bluntNose({ radius, lNose, rho, A, B }) {
+  const rBase = (x, L) => {
+    const t = Math.min(1, Math.max(0, x / L));
+    return radius * Math.pow(1 - Math.pow(1 - t, A), B);
+  };
+  const dBase = (x, L) => {
+    const t = Math.min(1 - 1e-12, Math.max(1e-12, x / L));
+    const w = Math.pow(1 - t, A);
+    return radius * B * Math.pow(1 - w, B - 1) * A * Math.pow(1 - t, A - 1) / L;
+  };
+
+  const solve = (L) => {
+    const g = (x) => rBase(x, L) * Math.hypot(1, dBase(x, L)) - rho;
+    let lo = 1e-7 * L, hi = L;
+    // g(hi) = radius - rho > 0 as long as rho < radius, which the caller
+    // guarantees. g(lo) < 0 unless the base curve is already blunter than the
+    // sphere asked for, in which case there is nothing to cut off.
+    if (g(lo) >= 0) return { xt: 0, rt: 0, xc: rho, x0: 0, blunt: false };
+    for (let i = 0; i < 90; i++) {
+      const mid = (lo + hi) / 2;
+      if (g(mid) < 0) lo = mid; else hi = mid;
+    }
+    const xt = (lo + hi) / 2, rt = rBase(xt, L), m = dBase(xt, L);
+    const xc = xt + rt * m;
+    return { xt, rt, xc, x0: xc - rho, blunt: true };
+  };
+
+  let L = lNose, s = solve(L);
+  for (let i = 0; i < 80; i++) {
+    const err = (L - s.x0) - lNose;
+    if (Math.abs(err) < 1e-12 * lNose) break;
+    L -= err * 0.9;                       // d(L - x0)/dL is near 1; damp a little
+    s = solve(L);
+  }
+
+  return {
+    ...s, L,
+    capFraction: s.rt / radius,
+    /** Radius at station z, with z = 0 at the finished point. */
+    at: (z) => {
+      const x = -z + s.x0;
+      if (s.blunt && x <= s.xt) {
+        return Math.sqrt(Math.max(0, rho * rho - (x - s.xc) * (x - s.xc)));
+      }
+      return rBase(x, L);
+    },
+  };
 }
 
 /**
@@ -174,8 +234,11 @@ function jetShape({ length, radius, p = JET }) {
   const zTail = -(length - lTail);         // tailcone begins here
   const rTip  = p.tipR * radius;
 
-  const rho = p.noseRadius * radius;
-  const noseA = noseRadiusExponent(rho, lNose, radius);
+  // A sphere bigger than the body cannot be tangent to the taper, and one much
+  // blunter than the base curve has nothing to cut off. Clamp both ends.
+  const rho = Math.min(p.noseRadius, 0.92) * radius;
+  const nose = bluntNose({ radius, lNose, rho,
+                           A: Math.max(1.02, p.noseA), B: Math.max(0.52, p.noseB) });
   // Above hold = 1 - tipFlat/2 the keel turns back on itself. Clamp rather than
   // let a slider produce a shape the geometry cannot support, and publish what
   // was actually used so the read-out cannot claim otherwise.
@@ -183,9 +246,7 @@ function jetShape({ length, radius, p = JET }) {
 
   function at(z) {
     if (z > zNose) {                                     // nose
-      const t = Math.min(1, Math.max(0, -z / lNose));
-      // Exponent 1/2 is not a choice: it is what makes the point spherical.
-      const r = radius * Math.sqrt(1 - Math.pow(1 - t, noseA));
+      const r = nose.at(z);
       return {
         r,
         yc: radius * (noseCentre(r / radius, keelHold, p.tipFlat) - keelHold),
@@ -198,7 +259,7 @@ function jetShape({ length, radius, p = JET }) {
   }
 
   return { at, length, radius, lNose, lTail, zNose, zTail, rTip,
-           rho, noseA, keelHold };
+           rho, nose, keelHold };
 }
 
 /* ---- lofting ----------------------------------------------------------- */
@@ -572,8 +633,11 @@ export function jetlinerFuselage({
   Object.assign(g.userData, {
     length: L, radius, section, shapeParams: p,
     keelHold: shape.keelHold, crownHold: p.crownHold,
-    /** What the tip radius and derived blend exponent actually came out as. */
-    noseRadius: shape.rho, noseExponent: shape.noseA,
+    /** What the blunting actually produced -- tip sphere and how far it runs. */
+    noseRadius: shape.rho,
+    noseCapRadius: shape.nose.rt,
+    noseCapFraction: shape.nose.capFraction,
+    noseVirtualLength: shape.nose.L,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),

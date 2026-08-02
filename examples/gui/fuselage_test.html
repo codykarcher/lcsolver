@@ -31,6 +31,7 @@
     border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
   button:hover { background: #2f353f; }
   .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair.three { grid-template-columns: 1fr 1fr 1fr; }
   .pair button { margin-top: 0; }
   #readout { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2e343d;
     font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
@@ -57,7 +58,11 @@
   <div class="row"><label for="noseD">length &middot; diameters</label><output id="oNoseD"></output></div>
   <input type="range" id="noseD" min="0.60" max="3.50" step="0.01" value="1.70">
   <div class="row"><label for="noseRadius">tip radius &middot; radii</label><output id="oNoseRadius"></output></div>
-  <input type="range" id="noseRadius" min="0.12" max="1.30" step="0.01" value="0.50">
+  <input type="range" id="noseRadius" min="0.04" max="0.92" step="0.01" value="0.32">
+  <div class="row"><label for="noseB">fullness</label><output id="oNoseB"></output></div>
+  <input type="range" id="noseB" min="0.55" max="1.40" step="0.01" value="0.95">
+  <div class="row"><label for="noseA">shoulder</label><output id="oNoseA"></output></div>
+  <input type="range" id="noseA" min="1.05" max="3.50" step="0.01" value="1.90">
   <div class="row"><label for="keelHold">keel hold</label><output id="oKeelHold"></output></div>
   <input type="range" id="keelHold" min="0.00" max="0.90" step="0.01" value="0.85">
 
@@ -82,6 +87,13 @@
   <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
+
+  <h2>presets</h2>
+  <div class="pair three">
+    <button id="p737">737</button>
+    <button id="pA350">A350</button>
+    <button id="pCitation">Citation</button>
+  </div>
 
   <div class="pair">
     <button id="side">side</button>
@@ -160,8 +172,27 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 /** Every slider that feeds the shape law, by the name the law knows it by. */
-const SHAPE = ['fineness', 'noseD', 'noseRadius', 'keelHold',
+const SHAPE = ['fineness', 'noseD', 'noseRadius', 'noseB', 'noseA', 'keelHold',
                'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
+
+/**
+ * Three real aeroplanes, as far apart as noses get: a 737 drawn out and
+ * comparatively sharp, an A350 shorter with a big blunt radome and a heavy
+ * brow, a Citation shorter and blunter again. They are here to be switched
+ * between -- a shape law that cannot reach all three is not general enough,
+ * and that is much easier to see by flipping between them than by reasoning.
+ */
+const PRESETS = {
+  '737': { rad: 1.88, fineness: 10.1,
+           noseD: 1.70, noseRadius: 0.32, noseB: 0.95, noseA: 1.90, keelHold: 0.85,
+           tailD: 2.90, tailA: 1.60, tailB: 0.75, tipR: 0.10, crownHold: 1.00 },
+  'A350': { rad: 2.98, fineness: 11.2,
+            noseD: 1.35, noseRadius: 0.52, noseB: 0.85, noseA: 2.20, keelHold: 0.85,
+            tailD: 3.10, tailA: 1.55, tailB: 0.72, tipR: 0.09, crownHold: 1.00 },
+  'Citation': { rad: 0.80, fineness: 8.1,
+                noseD: 0.90, noseRadius: 0.70, noseB: 0.80, noseA: 2.40, keelHold: 0.80,
+                tailD: 2.20, tailA: 1.70, tailB: 0.80, tipR: 0.12, crownHold: 0.90 },
+};
 const DEFAULTS = Object.fromEntries(
   [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
 
@@ -259,8 +290,9 @@ function build() {
     `<span>${u.crownAt(-L).toFixed(2)}</span> ` +
     `&middot; keel <span>${u.keelAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
     `<span>${u.keelAt(-L).toFixed(2)}</span><br>` +
-    `tip radius <span>${u.noseRadius.toFixed(2)}</span> ` +
-    `(blend exp <span>${u.noseExponent.toFixed(2)}</span>)<br>` +
+    `tip sphere <span>${u.noseRadius.toFixed(2)}</span>, runs out to ` +
+    `<span>${u.noseCapRadius.toFixed(2)}</span> ` +
+    `(<span>${(100 * u.noseCapFraction).toFixed(0)}%</span> of R)<br>` +
     `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
     `(keel <span>${u.keelAt(u.cabinZ[0]).toFixed(2)}</span> &rarr; ` +
     `<span>${u.keelAt(0).toFixed(2)}</span>) &middot; ` +
@@ -307,6 +339,14 @@ el('reset').addEventListener('click', () => {
   for (const [k, v] of Object.entries(DEFAULTS)) el(k).value = v;
   build();
 });
+for (const [name, preset] of Object.entries(PRESETS)) {
+  el(`p${name}`).addEventListener('click', () => {
+    for (const [k, v] of Object.entries(preset)) el(k).value = v;
+    build();
+    frameBody();
+    ortho('side');
+  });
+}
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
