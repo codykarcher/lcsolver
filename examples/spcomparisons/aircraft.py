@@ -1676,7 +1676,22 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # out, and it would have collapsed onto its lower bound. With the
         # relief span-dependent there is a real trade -- outboard relieves the
         # wing and grows the fin -- so both directions are now resisted.
-        *([y_eng == 0.5 * fu.w_fuse] if _rear else
+        # REAR ENGINES: placed between walls, not pinned. y_eng == 0.5*w_fuse
+        # was a fixed fraction of the CABIN's width -- no engine-integration
+        # content, and unguarded: an electric D8's fans (class d_max up to
+        # 4.5 m) pinned at that spacing would interleave each other and punch
+        # through the fin plane with nothing objecting. Now the pods live
+        # between two clearance rows, k_eng_clear (the same 1.2 the underwing
+        # gear row uses) applied on both sides:
+        #   nacelle-nacelle:  2 y_eng >= k d_f   (centres k fan-radii apart
+        #                                         per side of the centreline)
+        #   nacelle-fin:      y_eng + k d_f/2 <= w_fuse
+        # Pressure is downward -- y_eng feeds the engine-out yaw moment and
+        # the yaw inertia, both of which want it small -- so the pods snuggle
+        # to the inner wall: the real D8 layout, engines shoulder-to-shoulder
+        # on the tailcone centreline between the fins.
+        *([2.0 * y_eng >= k_eng_clear * eng.d_f,
+           y_eng + k_eng_clear * eng.d_f / 2.0 <= fu.w_fuse] if _rear else
           ([y_eng >= 1.15 * (fu.w_fuse + 0.5 * lg.d_nacelle),
             y_eng <= 0.5 * (wing.b / 2.0)]
            if _FREE_Y_ENG else
