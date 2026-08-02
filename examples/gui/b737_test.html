@@ -57,8 +57,9 @@
   <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
 
   <h2>moving parts</h2>
+  <button id="spin">spin the engines</button>
   <button id="gear">raise the gear</button>
-  <p class="hint" style="margin-top:6px">click an engine to spin it</p>
+  <p class="hint" style="margin-top:6px">or click either engine on its own</p>
 
   <h2>view from</h2>
   <div class="pair three">
@@ -127,6 +128,9 @@ for (const [v, colour] of [[[4, 0, 0], 0xd8544f], [[0, 4, 0], 0x74c46a], [[0, 0,
 }
 
 let plane = null, craft = null;
+// Kept outside the aircraft so that rebuilding it -- which every checkbox does
+// -- does not stop the engines.
+let spinning = [false, false];
 
 /* ---- spin an engine by clicking it ----------------------------------- *
  * The rotor carries its own direction and rate -- which way a fan has to turn
@@ -134,22 +138,37 @@ let plane = null, craft = null;
  * only decides WHETHER, never which way.                                    */
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
-let dragged = false;
+let downAt = null;
 
-canvas.addEventListener('pointerdown', () => { dragged = false; });
-canvas.addEventListener('pointermove', (e) => { if (e.buttons) dragged = true; });
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
 canvas.addEventListener('pointerup', (e) => {
-  // Orbiting ends in a pointerup too, and treating that as a click would make
-  // the engines start and stop every time the camera moved.
-  if (dragged || !craft) return;
+  // Orbiting ends in a pointerup too, so a click has to be told from a drag.
+  // By DISTANCE, though, not by whether the pointer moved at all: a real click
+  // moves a pixel or two, and rejecting any movement rejects nearly every
+  // click -- which is what the first version of this did.
+  if (!craft || !downAt) return;
+  const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+  downAt = null;
+  if (moved > 5) return;
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
   for (const hit of raycaster.intersectObject(craft, true)) {
     let o = hit.object;
     while (o && !o.userData.isEnginePod) o = o.parent;
-    if (o) { o.userData.spinning = !o.userData.spinning; return; }
+    if (o) {
+      o.userData.spinning = !o.userData.spinning;
+      spinning = craft.userData.parts.engines.map((p) => !!p.userData.spinning);
+      syncSpinButton();
+      return;
+    }
   }
 });
+
+/** Both engines at once, and the label says which way the button will go. */
+function syncSpinButton() {
+  const on = craft && craft.userData.parts.engines.some((p) => p.userData.spinning);
+  el('spin').textContent = on ? 'stop the engines' : 'spin the engines';
+}
 
 /* ---- gear retraction -------------------------------------------------- *
  * Each leg knows its own axis and angle -- recorded where it was placed, since
@@ -189,7 +208,9 @@ function build() {
   });
   scene.add(craft);
   const u = craft.userData;
+  u.parts.engines.forEach((p, i) => { p.userData.spinning = spinning[i]; });
   applyGear();
+  syncSpinButton();
 
   if (el('ground').checked) {
     plane = new THREE.Mesh(
@@ -263,6 +284,13 @@ for (const id of ['ground', 'sit', 'wire', 'axes'])
 for (const v of ['side', 'plan', 'front']) el(v).addEventListener('click', () => ortho(v));
 el('three').addEventListener('click', () => ortho('three'));
 el('frame').addEventListener('click', frameAll);
+el('spin').addEventListener('click', () => {
+  const pods = craft.userData.parts.engines;
+  const on = pods.some((p) => p.userData.spinning);
+  for (const p of pods) p.userData.spinning = !on;
+  spinning = pods.map((p) => !!p.userData.spinning);
+  syncSpinButton();
+});
 el('gear').addEventListener('click', () => {
   gearTarget = gearTarget > 0.5 ? 0 : 1;
   el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
