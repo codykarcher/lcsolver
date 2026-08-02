@@ -38,7 +38,46 @@ export const hardware = new THREE.MeshStandardMaterial({
   color: 0x3f4650, roughness: 0.45, metalness: 0.9,
 });
 
-export const all = { tire, rim, piston, structure, hardware };
+/* ---- engines ---------------------------------------------------------- */
+
+/** Engine casing: light, slightly warm metal. */
+export const casing = new THREE.MeshStandardMaterial({
+  color: 0xc3c8ce, roughness: 0.34, metalness: 0.92,
+});
+
+/** Fan and compressor blades -- titanium, brighter than the case. */
+export const blade = new THREE.MeshStandardMaterial({
+  color: 0xd9dde3, roughness: 0.22, metalness: 1.0,
+  side: THREE.DoubleSide,
+});
+
+/** Anything downstream of the burner: discoloured, dark, barely reflective. */
+export const hot = new THREE.MeshStandardMaterial({
+  color: 0x4a4038, roughness: 0.74, metalness: 0.75,
+});
+
+/** Spinners, cowl noses, propeller blades -- painted rather than bare. */
+export const painted = new THREE.MeshStandardMaterial({
+  color: 0x23262b, roughness: 0.48, metalness: 0.15,
+});
+
+/** Accessories, gearboxes, crankcases: cast and unpolished. */
+export const accessory = new THREE.MeshStandardMaterial({
+  color: 0x878d95, roughness: 0.72, metalness: 0.55,
+});
+
+/** Cylinder barrels and cooling fins on a piston engine. */
+export const finned = new THREE.MeshStandardMaterial({
+  color: 0x555b62, roughness: 0.85, metalness: 0.5,
+});
+
+/** Copper-ish: motor windings seen through a vented can. */
+export const winding = new THREE.MeshStandardMaterial({
+  color: 0xa8632f, roughness: 0.55, metalness: 0.8,
+});
+
+export const all = { tire, rim, piston, structure, hardware,
+                     casing, blade, hot, painted, accessory, finned, winding };
 
 /** Free every material. Call when tearing down a scene you built. */
 export function dispose() {
