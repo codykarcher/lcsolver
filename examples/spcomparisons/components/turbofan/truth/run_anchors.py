@@ -138,7 +138,8 @@ def _collect_point(prob, pt, design):
     try:
         from pycycle.thermo.cea import species_data
         from pycycle.constants import CEA_AIR_FUEL_COMPOSITION
-        n = prob.get_val(f"{pt}.burner.Fl_O:tot:n")
+        n = prob.get_val(
+            f"{pt}.burner.vitiated_flow.base_thermo.chem_eq.n")
         thermo = species_data.Properties(
             species_data.janaf, init_elements=CEA_AIR_FUEL_COMPOSITION)
         if len(thermo.products) == len(n):
