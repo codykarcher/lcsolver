@@ -106,8 +106,7 @@ const PLUG_EMBED = 0.05;
  * The list is not fixed at three -- any number of stations works, they are
  * simply spline control points between inlet and outlet.
  */
-const CORE_SECTIONS = [{ z: 0.25, r: 1.0 }, { z: 0.50, r: 1.0 },
-                       { z: 0.75, r: 1.0 }];
+const CORE_SECTIONS = [{ z: 0.33, r: 1.0 }, { z: 0.67, r: 1.0 }];
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
