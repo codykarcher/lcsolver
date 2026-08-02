@@ -734,72 +734,191 @@ export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) 
  * Piston engine -- horizontally opposed
  * ==================================================================== */
 
+/** Visual proportions, all x bore. Not physical. */
+const PE = {
+  barrel:   0.58,   // barrel radius
+  fin:      0.84,   // cooling fin radius
+  finThick: 0.055,
+  cylLen:   1.35,   // case side to head face
+  caseHalf: 0.72,   // crankcase half-width
+  caseHigh: 1.45,   // crankcase height
+  spacing:  1.55,   // between cylinders on one bank
+  stagger:  0.20,   // fore-aft offset between the two banks
+  head:     0.95,   // head block, across
+  shaft:    0.17,   // propeller shaft radius
+  flange:   0.46,   // propeller flange radius
+  sump:     0.55,   // sump depth below the case
+};
+
 /**
- * Air-cooled horizontally opposed piston engine, four or six cylinders.
+ * Crude Lycoming-like sizing: shaft power in, cylinder count and bore out.
+ *
+ * Fitted by eye to the published lineup (O-235, O-320, O-360, IO-390, IO-540,
+ * IO-580, IO-720), and it wants only two observations:
+ *
+ * 1. Power tracks displacement at about half a horsepower per cubic inch --
+ *    0.47 at the bottom of the range, 0.55 at the top, so 0.52 splits it.
+ *
+ * 2. Lycoming barely changes bore. Almost the whole family runs 5.125 in and
+ *    grows by ADDING CYLINDERS: the O-360, IO-540 and IO-720 are four, six and
+ *    eight cylinders of very nearly the same 90 cu in pot. So cylinder count
+ *    steps with power and bore only trims the remainder.
+ *
+ * With bore/stroke 1.17 (also Lycoming's, 5.125/4.375), a cylinder is
+ * (pi/4) b^2 (b/1.17) = 0.671 b^3, which inverts for the bore.
+ *
+ * Accurate to a few percent against the real engines, which is far better than
+ * this needs to be:
+ *
+ *     O-235   115 hp -> 4 cyl, 4.35 in   (real 4.375)
+ *     O-360   180 hp -> 4 cyl, 5.05 in   (real 5.125)
+ *     IO-540  300 hp -> 6 cyl, 5.23 in   (real 5.125)
+ *     IO-720  400 hp -> 8 cyl, 5.23 in   (real 5.125)
+ *
+ * @param {number} power  shaft horsepower
+ * @returns {{cylinders:number, bore:number, boreInches:number,
+ *            displacement:number}}  bore in metres, displacement in cu in
+ */
+export function lycomingSizing(power) {
+  const hp = Math.max(20, power);
+  // Steps taken from where the family actually changes: the four-cylinder
+  // range tops out at the IO-390, six spans the O-540s, eight is the IO-720.
+  const cylinders = hp < 225 ? 4 : hp < 360 ? 6 : 8;
+  const displacement = hp / 0.52;                       // cubic inches
+  const boreInches = Math.cbrt((displacement / cylinders) / 0.671);
+  return { cylinders, displacement, boreInches, bore: boreInches * 0.0254 };
+}
+
+/**
+ * Air-cooled horizontally opposed piston engine, without a propeller.
  *
  * The cylinders stick straight out to port and starboard with their cooling
  * fins showing, which is the whole silhouette of a light-aircraft engine. Fins
- * are drawn as a stack of discs -- crude, but at this size a fin is two
- * triangles' worth of information and a stack of them reads correctly.
+ * are a stack of discs -- crude, but a fin is two triangles' worth of
+ * information and a stack of them reads correctly at any size you would draw
+ * this at.
+ *
+ * Sized on POWER: cylinder count and bore come from `lycomingSizing`, and
+ * everything else is proportioned to bore. Pass `cylinders` or `bore`
+ * explicitly to override either.
+ *
+ * The banks are staggered fore-and-aft, as they are in life: opposed cylinders
+ * share a crank throw, so they cannot sit in the same plane.
  */
-export function pistonEngine({ cylinders = 4, size = 0.34, finsPer = 7 } = {}) {
+export function pistonEngine({
+  power = 180, cylinders = null, bore = null, finsPer = 7,
+} = {}) {
+  const sized = lycomingSizing(power);
+  cylinders = cylinders ?? sized.cylinders;
+  bore = bore ?? sized.bore;
   if (cylinders % 2) throw new Error('pistonEngine: cylinders must be even');
   const g = new THREE.Group();
-  const S = size;
+  const B = bore;
   const perSide = cylinders / 2;
 
-  const caseLen = S * (1.15 + 0.95 * perSide);
+  const caseLen = (perSide - 1) * PE.spacing * B + 2.0 * B;
+  const zCaseFront = -0.30 * B;
+  const zCaseBack = zCaseFront - caseLen;
+
+  // Propeller shaft and flange. Tagged as the rotor so a viewer has something
+  // to turn even with no propeller fitted.
+  const rotor = new THREE.Group();
+  rotor.userData.rotating = true;
+  rotor.userData.spin = -1;
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(PE.shaft * B, PE.shaft * B, 0.62 * B, 20),
+    M.hardware);
+  shaft.rotation.x = Math.PI / 2;
+  shaft.position.z = zCaseFront + 0.31 * B;
+  rotor.add(shaft);
+  rotor.add(tubeZ(PE.shaft * B, PE.flange * B,
+                  -0.02 * B, -0.13 * B, M.hardware, 28));
+  g.add(rotor);
+
+  // Crankcase, with a nose that tapers to the shaft.
   const crank = new THREE.Mesh(
-    new THREE.BoxGeometry(1.05 * S, 0.95 * S, caseLen), M.accessory);
-  crank.position.z = -caseLen / 2 - 0.30 * S;
+    new THREE.BoxGeometry(2 * PE.caseHalf * B, PE.caseHigh * B, caseLen),
+    M.accessory);
+  crank.position.z = zCaseFront - caseLen / 2;
   g.add(crank);
 
-  // Propeller shaft and flange.
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.11 * S, 0.11 * S, 0.42 * S, 20), M.hardware);
-  shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = 0.16 * S;
-  g.add(shaft);
-  g.add(tubeZ(0.11 * S, 0.30 * S, -0.02 * S, -0.10 * S, M.hardware, 24));
+  const nose = latheZ([
+    [zCaseFront + 0.16 * B, 0], [zCaseFront + 0.16 * B, PE.flange * B],
+    [zCaseFront - 0.10 * B, 0.78 * B], [zCaseFront - 0.10 * B, 0],
+  ], M.accessory, 28);
+  g.add(nose);
 
-  const rBarrel = 0.30 * S;
-  const xIn = 0.52 * S, xOut = 1.18 * S;
-  const finGeo = new THREE.CylinderGeometry(0.40 * S, 0.40 * S, 0.035 * S, 20);
-  const barGeo = new THREE.CylinderGeometry(rBarrel, rBarrel, xOut - xIn, 20);
-  const headGeo = new THREE.BoxGeometry(0.34 * S, 0.72 * S, 0.66 * S);
+  // Sump slung under the case.
+  const sump = new THREE.Mesh(
+    new THREE.BoxGeometry(1.15 * PE.caseHalf * B, PE.sump * B, caseLen * 0.78),
+    M.accessory);
+  sump.position.set(0, -(PE.caseHigh * 0.5 + PE.sump * 0.45) * B,
+                    zCaseFront - caseLen / 2);
+  g.add(sump);
+
+  const xIn = PE.caseHalf * B;
+  const xOut = xIn + PE.cylLen * B;
+  const finGeo = new THREE.CylinderGeometry(PE.fin * B, PE.fin * B,
+                                            PE.finThick * B, 20);
+  const barGeo = new THREE.CylinderGeometry(PE.barrel * B, PE.barrel * B,
+                                            xOut - xIn, 20);
+  const headGeo = new THREE.BoxGeometry(0.42 * B, PE.head * B, PE.head * B);
 
   for (let i = 0; i < perSide; i++) {
-    // Banks are staggered fore-and-aft, as they are on a real opposed engine.
-    const z = -0.72 * S - i * 0.95 * S;
-    for (const s of [-1, 1]) {
-      const zs = z - (s < 0 ? 0.14 * S : 0);
+    const z = zCaseFront - 0.95 * B - i * PE.spacing * B;
+    for (const side of [-1, 1]) {
+      const zs = z - (side < 0 ? PE.stagger * B : 0);
 
       const bar = new THREE.Mesh(barGeo, M.finned);
       bar.rotation.z = Math.PI / 2;
-      bar.position.set(s * (xIn + xOut) / 2, 0, zs);
+      bar.position.set(side * (xIn + xOut) / 2, 0, zs);
       g.add(bar);
 
       for (let f = 0; f < finsPer; f++) {
         const t = (f + 0.5) / finsPer;
         const fin = new THREE.Mesh(finGeo, M.finned);
         fin.rotation.z = Math.PI / 2;
-        fin.position.set(s * (xIn + t * (xOut - xIn)), 0, zs);
+        fin.position.set(side * (xIn + t * (xOut - xIn)), 0, zs);
         g.add(fin);
       }
 
       const head = new THREE.Mesh(headGeo, M.accessory);
-      head.position.set(s * (xOut + 0.15 * S), 0, zs);
+      head.position.set(side * (xOut + 0.19 * B), 0, zs);
       g.add(head);
+
+      // Exhaust stub down and aft, and an intake riser up and forward. Two
+      // small pipes, but they are most of what stops a finned cylinder
+      // looking like a stack of washers.
+      const ex = rod(new THREE.Vector3(side * xOut, -0.15 * B, zs),
+                     new THREE.Vector3(side * (xOut + 0.10 * B),
+                                       -0.85 * B, zs - 0.30 * B),
+                     0.13 * B, M.hot, 14);
+      if (ex) g.add(ex);
+      const inl = rod(new THREE.Vector3(side * (xOut - 0.15 * B), 0.30 * B, zs),
+                      new THREE.Vector3(side * (xIn + 0.15 * B),
+                                        0.92 * B, zs + 0.10 * B),
+                      0.11 * B, M.accessory, 14);
+      if (inl) g.add(inl);
     }
   }
 
   // Accessory case on the back.
   const acc = new THREE.Mesh(
-    new THREE.BoxGeometry(0.80 * S, 0.70 * S, 0.34 * S), M.accessory);
-  acc.position.z = -caseLen - 0.45 * S;
+    new THREE.BoxGeometry(1.5 * PE.caseHalf * B, PE.caseHigh * 0.85 * B,
+                          0.55 * B),
+    M.accessory);
+  acc.position.z = zCaseBack - 0.27 * B;
   g.add(acc);
 
-  return finish(g, caseLen + 0.62 * S, xOut + 0.32 * S, 'pistonEngine');
+  const length = -(zCaseBack - 0.55 * B);
+  g.userData.power = power;
+  g.userData.bore = B;
+  g.userData.boreInches = B / 0.0254;
+  g.userData.cylinders = cylinders;
+  g.userData.displacement = sized.displacement;
+  g.userData.width = 2 * (xOut + 0.40 * B);
+  g.userData.height = (PE.caseHigh + PE.sump) * B + 0.92 * B;
+  return finish(g, length, xOut + 0.40 * B, 'pistonEngine');
 }
 
 export const ENGINES = {
