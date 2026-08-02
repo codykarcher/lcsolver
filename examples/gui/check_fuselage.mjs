@@ -29,12 +29,12 @@ import { jetlinerFuselage } from './components/fuselage.js';
 // from 0.9 to 1.7 diameters, which is the range the blunting has to survive.
 const CASES = [
   { name: '737',      radius: 1.88, fineness: 10.1,
-    shape: { noseD: 1.70, noseRadius: 0.32, noseB: 0.95, noseA: 1.90, keelHold: 0.85 } },
+    shape: { noseD: 1.15, noseRadius: 0.22, noseB: 1.00, noseA: 1.70, keelHold: 0.86 } },
   { name: 'A350',     radius: 2.98, fineness: 11.2,
-    shape: { noseD: 1.35, noseRadius: 0.52, noseB: 0.85, noseA: 2.20, keelHold: 0.85,
+    shape: { noseD: 1.10, noseRadius: 0.34, noseB: 0.78, noseA: 2.10, keelHold: 0.72,
              tailD: 3.10, tailA: 1.55, tailB: 0.72, tipR: 0.09 } },
   { name: 'Citation', radius: 0.80, fineness: 8.1,
-    shape: { noseD: 0.90, noseRadius: 0.70, noseB: 0.80, noseA: 2.40, keelHold: 0.80,
+    shape: { noseD: 0.78, noseRadius: 0.46, noseB: 0.70, noseA: 2.30, keelHold: 0.60,
              tailD: 2.20, tailA: 1.70, tailB: 0.80, tipR: 0.12, crownHold: 0.90 } },
   { name: 'stubby',   radius: 1.20, fineness: 7.0 },
   { name: 'widebody', radius: 3.20, fineness: 13.0 },

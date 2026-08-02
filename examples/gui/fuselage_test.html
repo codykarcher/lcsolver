@@ -88,6 +88,19 @@
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
 
+  <h2>reference</h2>
+  <input type="file" id="refFile" accept="image/*" style="width:100%;font-size:10.5px;margin-bottom:7px">
+  <div class="check"><input type="checkbox" id="refShow" checked><label for="refShow">show</label></div>
+  <div class="check"><input type="checkbox" id="refFlip"><label for="refFlip">nose to the right</label></div>
+  <div class="row"><label for="refScale">height &middot; diameters</label><output id="oRefScale"></output></div>
+  <input type="range" id="refScale" min="0.20" max="10.0" step="0.02" value="2.60">
+  <div class="row"><label for="refZ">shift aft &middot; radii</label><output id="oRefZ"></output></div>
+  <input type="range" id="refZ" min="-14.0" max="4.0" step="0.02" value="-1.60">
+  <div class="row"><label for="refY">shift up &middot; radii</label><output id="oRefY"></output></div>
+  <input type="range" id="refY" min="-5.0" max="5.0" step="0.02" value="0.00">
+  <div class="row"><label for="refOpacity">opacity</label><output id="oRefOpacity"></output></div>
+  <input type="range" id="refOpacity" min="0.05" max="1.00" step="0.01" value="0.70">
+
   <h2>presets</h2>
   <div class="pair three">
     <button id="p737">737</button>
@@ -95,7 +108,8 @@
     <button id="pCitation">Citation</button>
   </div>
 
-  <div class="pair">
+  <div class="pair three">
+    <button id="nose">nose</button>
     <button id="side">side</button>
     <button id="top">top</button>
   </div>
@@ -184,19 +198,69 @@ const SHAPE = ['fineness', 'noseD', 'noseRadius', 'noseB', 'noseA', 'keelHold',
  */
 const PRESETS = {
   '737': { rad: 1.88, fineness: 10.1,
-           noseD: 1.70, noseRadius: 0.32, noseB: 0.95, noseA: 1.90, keelHold: 0.85,
+           noseD: 1.15, noseRadius: 0.22, noseB: 1.00, noseA: 1.70, keelHold: 0.86,
            tailD: 2.90, tailA: 1.60, tailB: 0.75, tipR: 0.10, crownHold: 1.00 },
   'A350': { rad: 2.98, fineness: 11.2,
-            noseD: 1.35, noseRadius: 0.52, noseB: 0.85, noseA: 2.20, keelHold: 0.85,
+            noseD: 1.10, noseRadius: 0.34, noseB: 0.78, noseA: 2.10, keelHold: 0.72,
             tailD: 3.10, tailA: 1.55, tailB: 0.72, tipR: 0.09, crownHold: 1.00 },
   'Citation': { rad: 0.80, fineness: 8.1,
-                noseD: 0.90, noseRadius: 0.70, noseB: 0.80, noseA: 2.40, keelHold: 0.80,
+                noseD: 0.78, noseRadius: 0.46, noseB: 0.70, noseA: 2.30, keelHold: 0.60,
                 tailD: 2.20, tailA: 1.70, tailB: 0.80, tipR: 0.12, crownHold: 0.90 },
 };
 const DEFAULTS = Object.fromEntries(
   [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
 
 let body = null, extra = [];
+
+/* ---- reference image -------------------------------------------------- *
+ * Judging a nose against a photograph by eye and adjectives does not work --
+ * three rounds of it produced three wrong noses. Put the photograph IN the
+ * scene, in the plane of symmetry behind the model, and the sliders can be
+ * dialled until the silhouettes agree. That is a measurement.
+ *
+ * The plane is rotated so its own +X runs AFT, because both reference photos
+ * have the nose to the left; `refFlip` covers the ones that do not.          */
+let refMesh = null, refTex = null;
+
+function buildRef() {
+  if (refMesh) {
+    refMesh.geometry.dispose(); refMesh.material.dispose();
+    scene.remove(refMesh); refMesh = null;
+  }
+  if (!refTex || !el('refShow').checked || !body) return;
+  const R = body.userData.radius;
+  const img = refTex.image;
+  const h = num('refScale') * 2 * R;
+  const plane = new THREE.PlaneGeometry(h * img.width / img.height, h);
+  refMesh = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({
+    map: refTex, transparent: true, opacity: num('refOpacity'),
+    side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+  }));
+  refMesh.rotation.y = Math.PI / 2;
+  if (el('refFlip').checked) refMesh.scale.x = -1;
+  // Parked well off to the far side so the body always reads in front of it.
+  refMesh.position.set(-R * 6, num('refY') * R, num('refZ') * R);
+  refMesh.renderOrder = -1;
+  scene.add(refMesh);
+}
+
+el('refFile').addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  new THREE.TextureLoader().load(URL.createObjectURL(file), (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    if (refTex) refTex.dispose();
+    refTex = tex;
+    buildRef();
+  });
+});
+for (const id of ['refScale', 'refZ', 'refY', 'refOpacity'])
+  el(id).addEventListener('input', () => {
+    for (const k of ['refScale', 'refZ', 'refY', 'refOpacity'])
+      el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
+    buildRef();
+  });
+for (const id of ['refShow', 'refFlip']) el(id).addEventListener('change', buildRef);
 
 function line(pts, colour, opacity = 0.9) {
   const l = new THREE.Line(
@@ -306,6 +370,10 @@ function build() {
   // go straight into a call without being transcribed off a set of sliders.
   el('params').textContent =
     `shape: { ${SHAPE.map((k) => `${k}: ${num(k)}`).join(', ')} }`;
+
+  for (const k of ['refScale', 'refZ', 'refY', 'refOpacity'])
+    el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
+  buildRef();
 }
 
 function frameBody() {
@@ -322,10 +390,25 @@ function frameBody() {
 
 /** Straight-on views: the only ones a shape can honestly be judged from. */
 function ortho(axis) {
-  const L = body.userData.length;
-  controls.target.set(0, 0, -L / 2);
-  if (axis === 'side') camera.position.set(L * 1.55, 0, -L / 2);
-  else camera.position.set(0, L * 1.55, -L / 2 + 0.001);
+  const u = body.userData, L = u.length;
+  if (axis === 'nose') {
+    // Framed on the nose, side-on. Framing the whole aeroplane is useless for
+    // this: the nose is a seventh of the length, every body fills the screen
+    // the same way, and switching between two quite different noses looks like
+    // nothing happened -- which is exactly what it looked like.
+    const N = u.noseLength, c = -N * 0.55;
+    const d = 2.3 * Math.max(N, 2 * u.radius);
+    controls.target.set(0, -u.radius * 0.15, c);
+    camera.position.set(d, -u.radius * 0.15, c);
+    camera.near = d / 500; camera.far = d * 100;
+    camera.updateProjectionMatrix();
+  } else if (axis === 'side') {
+    controls.target.set(0, 0, -L / 2);
+    camera.position.set(L * 1.55, 0, -L / 2);
+  } else {
+    controls.target.set(0, 0, -L / 2);
+    camera.position.set(0, L * 1.55, -L / 2 + 0.001);
+  }
   controls.update();
 }
 
@@ -333,6 +416,7 @@ for (const id of ['rad', ...SHAPE]) el(id).addEventListener('input', build);
 for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid', 'detail'])
   el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameBody);
+el('nose').addEventListener('click', () => ortho('nose'));
 el('side').addEventListener('click', () => ortho('side'));
 el('top').addEventListener('click', () => ortho('top'));
 el('reset').addEventListener('click', () => {
@@ -343,8 +427,7 @@ for (const [name, preset] of Object.entries(PRESETS)) {
   el(`p${name}`).addEventListener('click', () => {
     for (const [k, v] of Object.entries(preset)) el(k).value = v;
     build();
-    frameBody();
-    ortho('side');
+    ortho('nose');
   });
 }
 
@@ -363,7 +446,7 @@ function tick() {
 
 resize();
 build();
-ortho('side');
+ortho('nose');
 tick();
 </script>
 </body>
