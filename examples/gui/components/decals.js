@@ -800,6 +800,28 @@ export const WINDSCREEN = {
   tipEdge: 0.12,
 };
 
+/**
+ * The same windscreen, with numbers that suit the D8.
+ *
+ * The construction carries over untouched -- it only ever asks a body for its
+ * crown, its keel and its surface, which every fuselage here provides, and it
+ * comes out square to 0.13 degrees on the D8 against 0.31 on the jetliner.
+ * What does NOT carry over is where to put it, and for a reason worth stating:
+ * a jetliner's nose tip DROOPS, sitting at 27% of the body's height, so a band
+ * across the upper nose runs out before reaching it. The D8's tip is high, at
+ * 57%, so the same band never runs out and the glass wraps right around the
+ * point of the nose.
+ *
+ * So the band is lifted and shortened until it stops on the nose rather than on
+ * the tip. Everything else -- panes, posts, the carved lower edge -- is shared.
+ */
+export const WINDSCREEN_D8 = {
+  ...WINDSCREEN,
+  low: 0.66,
+  high: 0.82,
+  backFraction: 0.35,
+};
+
 export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,

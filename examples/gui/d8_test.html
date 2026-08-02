@@ -94,6 +94,7 @@
   <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
+  <div class="check"><input type="checkbox" id="glass"><label for="glass">windscreen</label></div>
 
   <h2>reference image</h2>
   <input type="file" id="refFile" accept="image/*">
@@ -137,6 +138,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { d8Fuselage } from './components/fuselage.js';
+import { windscreen, WINDSCREEN_D8 } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS, setTranslucent } from './components/materials.js';
 
@@ -255,6 +257,11 @@ function build() {
   });
   scene.add(body);
   setTranslucent(el('xray').checked, 0.16);
+
+  // The jetliner's windscreen, unmodified, on its own numbers. It asks the body
+  // only for its crown, its keel and its surface, so it does not care which
+  // fuselage it is on.
+  if (el('glass').checked) body.add(windscreen(body, WINDSCREEN_D8));
 
   const u = body.userData, L = u.length;
 

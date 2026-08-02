@@ -13,8 +13,9 @@
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
-import { surfaceArt, fuselageTitles, cabinWindows, windscreen, windowLayout,
+import { surfaceArt, fuselageTitles, cabinWindows, windscreen, WINDSCREEN_D8, windowLayout,
          TAIL_ART, TAIL_HEIGHT, artNames } from './components/decals.js';
+import { jetlinerFuselage, d8Fuselage } from './components/fuselage.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_conventional_solve.json', import.meta.url), 'utf8'));
 const deck = deckFromSolve(sol);
@@ -729,6 +730,68 @@ console.log('\n=== windscreen ===');
   console.log(`\ntitles start at ${titles.userData.startZ.toFixed(3)}, ` +
               `window line front is ${wl.zFwd.toFixed(3)}`);
   if (d > 1e-9) fail(`titles start ${d.toFixed(3)} m off the front of the window line`);
+}
+
+/* ---- the windscreen is not tied to one body, or one size --------------- */
+// It asks a fuselage only for its crown, its keel and its surface, so what is
+// checked is that it still comes out square and its posts still one width on a
+// body of a different SHAPE and on bodies of very different SIZE. Squareness is
+// the property; if the construction depended on anything particular to the
+// jetliner it would show up here first.
+console.log('\n=== the same windscreen on other bodies ===');
+{
+  const squareness = (fuse, opts) => {
+    const scr = windscreen(fuse, opts);
+    const u = scr.userData, fud = fuse.userData;
+    let worst = 0, plo = Infinity, phi = 0;
+    for (const [s0, s1] of u.edges) {
+      for (const a of [s0, s1]) {
+        const path = u.marchPost(a);
+        if (path.length < 2) return { worst: 999, plo: 0, phi: 0, panes: 0 };
+        const q0 = fud.surfaceAt(path[0].z, path[0].th);
+        const dir = fud.surfaceAt(path[1].z, path[1].th).sub(q0).normalize();
+        const e = 1e-3;
+        const c0 = u.atArc(Math.max(0, a - e)), c1 = u.atArc(Math.min(u.topLength, a + e));
+        const tan = fud.surfaceAt(c1.z, c1.th).sub(fud.surfaceAt(c0.z, c0.th)).normalize();
+        worst = Math.max(worst, Math.abs(90 - Math.acos(Math.min(1, Math.abs(dir.dot(tan)))) * 180 / Math.PI));
+      }
+    }
+    for (let d = 0; d < u.dividers.length; d++) {
+      const A = u.offsetPath(u.dividerPaths[d], u.post / 2);
+      const B = u.offsetPath(u.dividerPaths[d], -u.post / 2);
+      for (let i = 0; i < Math.min(A.length, B.length); i++) {
+        const w = fud.surfaceAt(A[i].z, A[i].th).distanceTo(fud.surfaceAt(B[i].z, B[i].th));
+        plo = Math.min(plo, w); phi = Math.max(phi, w);
+      }
+    }
+    return { worst, plo, phi, panes: scr.children.length, u };
+  };
+
+  for (const r of [0.6, 1.855, 4.5]) {
+    const f = jetlinerFuselage({ radius: r, fineness: 10.1, detail: false });
+    const { worst, plo, phi, panes } = squareness(f, {});
+    console.log(`  jetliner radius ${r.toFixed(3)}: ${panes} panes, square to ` +
+                `${worst.toFixed(2)} deg, posts ${(1000 * plo).toFixed(1)}..${(1000 * phi).toFixed(1)} mm`);
+    if (panes !== 6) fail(`radius ${r} gave ${panes} panes`);
+    if (worst > 0.5) fail(`radius ${r} is ${worst.toFixed(2)} deg off square`);
+    if (phi - plo > 1e-3) fail(`radius ${r} posts vary by ${(1000 * (phi - plo)).toFixed(1)} mm`);
+  }
+  {
+    const d8 = d8Fuselage({ detail: false });
+    const { worst, plo, phi, panes, u } = squareness(d8, WINDSCREEN_D8);
+    const b = new THREE.Box3().setFromObject(windscreen(d8, WINDSCREEN_D8));
+    console.log(`  D8 (flat-topped section): ${panes} panes, square to ${worst.toFixed(2)} deg, ` +
+                `posts ${(1000 * plo).toFixed(1)}..${(1000 * phi).toFixed(1)} mm`);
+    console.log(`     glass z ${b.max.z.toFixed(2)}..${b.min.z.toFixed(2)} on a ` +
+                `${d8.userData.noseLength.toFixed(2)} m nose`);
+    if (panes !== 6) fail(`the D8 gave ${panes} panes`);
+    if (worst > 0.5) fail(`the D8 is ${worst.toFixed(2)} deg off square`);
+    if (phi - plo > 1e-3) fail(`the D8's posts vary by ${(1000 * (phi - plo)).toFixed(1)} mm`);
+    // The D8's nose tip sits HIGH -- 57% of the body's height against the
+    // jetliner's 27% -- so a band placed like the jetliner's never runs out and
+    // wraps the point of the nose. Its own numbers have to stop short of it.
+    if (b.max.z > -0.02) fail('the D8 windscreen reaches the nose tip');
+  }
 }
 
 console.log(bad ? `\nFAIL: ${bad} problem(s)` : '\nPASS: artwork, windows and glass lie on the skin, placed as the solve says');
