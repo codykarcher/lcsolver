@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fuselage shape &mdash; component test</title>
+<title>Fuselage &mdash; component test</title>
 <style>
   :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; overflow: hidden;
@@ -11,19 +11,19 @@
     font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   #view { position: fixed; inset: 0; }
 
-  #panel { position: fixed; top: 14px; left: 14px; width: 234px;
+  #panel { position: fixed; top: 14px; left: 14px; width: 236px;
     max-height: calc(100vh - 28px); overflow-y: auto; padding: 14px 16px;
     background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
     backdrop-filter: blur(6px); }
   #panel h1 { margin: 0 0 2px; font-size: 13px; }
   #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
-  #panel h2 { margin: 12px 0 6px; font-size: 10.5px; text-transform: uppercase;
+  #panel h2 { margin: 13px 0 7px; font-size: 10.5px; text-transform: uppercase;
     letter-spacing: .07em; color: #6f7884;
     border-top: 1px solid #2e343d; padding-top: 10px; }
   .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
   .row label { font-size: 11.5px; color: #aab3bf; }
   .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
-  input[type=range] { width: 100%; margin: 1px 0 7px; accent-color: #e6a34a; }
+  input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
   .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
     font-size: 11.5px; color: #aab3bf; }
   button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
@@ -33,48 +33,37 @@
   .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .pair.three { grid-template-columns: 1fr 1fr 1fr; }
   .pair button { margin-top: 0; }
-  #readout { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2e343d;
+  #locked { font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #locked div { display: grid; grid-template-columns: 1fr auto; }
+  #locked b { color: #8b939f; font-weight: 500; }
+  #readout { margin-top: 11px; padding-top: 9px; border-top: 1px solid #2e343d;
     font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
   #readout span { color: #98a2ae; }
-  #params { margin-top: 7px; font-size: 10px; color: #59616c; word-break: break-all;
-    user-select: all; }
-  .hint { margin-top: 8px; font-size: 10.5px; color: #565e69; }
+  #params { margin-top: 7px; font-size: 10px; color: #59616c;
+    word-break: break-all; user-select: all; }
+  .hint { margin-top: 9px; font-size: 10.5px; color: #565e69; }
+  input[type=file] { width: 100%; font-size: 10.5px; margin-bottom: 7px; }
 </style>
 </head>
 <body>
 <canvas id="view"></canvas>
 
 <div id="panel">
-  <h1>Fuselage shape</h1>
-  <p class="sub">bare OML &mdash; nose tip at the origin</p>
+  <h1>Fuselage</h1>
+  <p class="sub">conventional jetliner &mdash; nose tip at the origin</p>
 
+  <h2>deck inputs</h2>
   <div class="row"><label for="rad">body radius</label><output id="oRad"></output></div>
-  <input type="range" id="rad" min="0.80" max="3.50" step="0.01" value="1.88">
+  <input type="range" id="rad" min="0.60" max="4.00" step="0.01" value="1.88">
 
   <div class="row"><label for="fineness">fineness L/D</label><output id="oFineness"></output></div>
   <input type="range" id="fineness" min="5.0" max="16.0" step="0.05" value="10.1">
 
-  <h2>nose</h2>
-  <div class="row"><label for="noseD">length &middot; diameters</label><output id="oNoseD"></output></div>
+  <div class="row"><label for="noseD">nose length &middot; dia</label><output id="oNoseD"></output></div>
   <input type="range" id="noseD" min="0.60" max="3.50" step="0.01" value="1.70">
-  <div class="row"><label for="noseA">blend into barrel</label><output id="oNoseA"></output></div>
-  <input type="range" id="noseA" min="1.00" max="4.50" step="0.01" value="2.20">
-  <div class="row"><label for="noseB">tip fullness</label><output id="oNoseB"></output></div>
-  <input type="range" id="noseB" min="0.25" max="1.20" step="0.01" value="0.55">
-  <div class="row"><label for="keelHold">keel hold</label><output id="oKeelHold"></output></div>
-  <input type="range" id="keelHold" min="0.00" max="1.00" step="0.01" value="0.85">
 
-  <h2>tailcone</h2>
-  <div class="row"><label for="tailD">length &middot; diameters</label><output id="oTailD"></output></div>
-  <input type="range" id="tailD" min="1.00" max="5.00" step="0.01" value="2.90">
-  <div class="row"><label for="tailA">blend into barrel</label><output id="oTailA"></output></div>
-  <input type="range" id="tailA" min="1.00" max="4.00" step="0.01" value="1.60">
-  <div class="row"><label for="tailB">taper fullness</label><output id="oTailB"></output></div>
-  <input type="range" id="tailB" min="0.30" max="1.60" step="0.01" value="0.75">
-  <div class="row"><label for="tipR">tip radius &middot; radii</label><output id="oTipR"></output></div>
-  <input type="range" id="tipR" min="0.00" max="0.35" step="0.005" value="0.10">
-  <div class="row"><label for="crownHold">crown hold</label><output id="oCrownHold"></output></div>
-  <input type="range" id="crownHold" min="0.00" max="1.30" step="0.01" value="1.00">
+  <h2>locked</h2>
+  <div id="locked"></div>
 
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="prof" checked><label for="prof">crown, keel &amp; centreline</label></div>
@@ -86,8 +75,8 @@
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
 
-  <h2>reference</h2>
-  <input type="file" id="refFile" accept="image/*" style="width:100%;font-size:10.5px;margin-bottom:7px">
+  <h2>reference image</h2>
+  <input type="file" id="refFile" accept="image/*">
   <div class="check"><input type="checkbox" id="refShow" checked><label for="refShow">show</label></div>
   <div class="check"><input type="checkbox" id="refFlip"><label for="refFlip">nose to the right</label></div>
   <div class="row"><label for="refScale">height &middot; diameters</label><output id="oRefScale"></output></div>
@@ -99,7 +88,7 @@
   <div class="row"><label for="refOpacity">opacity</label><output id="oRefOpacity"></output></div>
   <input type="range" id="refOpacity" min="0.05" max="1.00" step="0.01" value="0.70">
 
-
+  <h2>view from</h2>
   <div class="pair three">
     <button id="nose">nose</button>
     <button id="side">side</button>
@@ -131,7 +120,7 @@ import { all as MATERIALS, setTranslucent } from './components/materials.js';
 
 const canvas = document.getElementById('view');
 // A body tens of metres long, inspected from a metre away, spans a depth range
-// a linear 24-bit buffer cannot resolve -- and the first symptom is surfaces
+// a linear 24-bit buffer cannot resolve -- the first symptom is surfaces
 // trading places in patches as the camera moves.
 const renderer = new THREE.WebGLRenderer({
   canvas, antialias: true, logarithmicDepthBuffer: true });
@@ -177,23 +166,26 @@ scene.add(grid);
 const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
-/** Every slider that feeds the shape law, by the name the law knows it by. */
-const SHAPE = ['fineness', 'noseD', 'noseA', 'noseB', 'keelHold',
-               'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
-
-const DEFAULTS = Object.fromEntries(
-  [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
+/** The three the deck sets. Everything else about the shape is fixed. */
+const DECK = ['rad', 'fineness', 'noseD'];
+const DEFAULTS = Object.fromEntries(DECK.map((k) => [k, el(k).value]));
 
 let body = null, extra = [];
 
+function line(pts, colour, opacity = 0.9) {
+  const l = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity }));
+  scene.add(l); extra.push(l);
+}
+
 /* ---- reference image -------------------------------------------------- *
- * Judging a nose against a photograph by eye and adjectives does not work --
- * three rounds of it produced three wrong noses. Put the photograph IN the
- * scene, in the plane of symmetry behind the model, and the sliders can be
- * dialled until the silhouettes agree. That is a measurement.
+ * Judging a shape against a photograph by eye and adjectives does not work.
+ * Put the photograph IN the scene, in the plane of symmetry behind the model,
+ * and the deck inputs can be dialled until the silhouettes agree.
  *
- * The plane is rotated so its own +X runs AFT, because both reference photos
- * have the nose to the left; `refFlip` covers the ones that do not.          */
+ * The plane is rotated so its own +X runs AFT, since photographs of aeroplanes
+ * usually have the nose to the left; `refFlip` covers the ones that do not.   */
 let refMesh = null, refTex = null;
 
 function buildRef() {
@@ -202,17 +194,15 @@ function buildRef() {
     scene.remove(refMesh); refMesh = null;
   }
   if (!refTex || !el('refShow').checked || !body) return;
-  const R = body.userData.radius;
-  const img = refTex.image;
+  const R = body.userData.radius, img = refTex.image;
   const h = num('refScale') * 2 * R;
-  const plane = new THREE.PlaneGeometry(h * img.width / img.height, h);
-  refMesh = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({
-    map: refTex, transparent: true, opacity: num('refOpacity'),
-    side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
-  }));
+  refMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(h * img.width / img.height, h),
+    new THREE.MeshBasicMaterial({
+      map: refTex, transparent: true, opacity: num('refOpacity'),
+      side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
   refMesh.rotation.y = Math.PI / 2;
   if (el('refFlip').checked) refMesh.scale.x = -1;
-  // Parked well off to the far side so the body always reads in front of it.
   refMesh.position.set(-R * 6, num('refY') * R, num('refZ') * R);
   refMesh.renderOrder = -1;
   scene.add(refMesh);
@@ -228,20 +218,8 @@ el('refFile').addEventListener('change', (e) => {
     buildRef();
   });
 });
-for (const id of ['refScale', 'refZ', 'refY', 'refOpacity'])
-  el(id).addEventListener('input', () => {
-    for (const k of ['refScale', 'refZ', 'refY', 'refOpacity'])
-      el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
-    buildRef();
-  });
-for (const id of ['refShow', 'refFlip']) el(id).addEventListener('change', buildRef);
 
-function line(pts, colour, opacity = 0.9) {
-  const l = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity }));
-  scene.add(l); extra.push(l);
-}
+/* ---- build ------------------------------------------------------------ */
 
 function build() {
   if (body) { disposeTree(body); scene.remove(body); }
@@ -251,15 +229,19 @@ function build() {
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
   const radius = num('rad');
-  const shape = Object.fromEntries(SHAPE.map((k) => [k, num(k)]));
-  body = jetlinerFuselage({ radius, shape, detail: el('detail').checked });
+  body = jetlinerFuselage({
+    radius,
+    fineness: num('fineness'),
+    noseD: num('noseD'),
+    detail: el('detail').checked,
+  });
   scene.add(body);
   setTranslucent(el('xray').checked, 0.16);
 
   const u = body.userData, L = u.length;
 
-  // The three curves the body is actually made of. When a shape looks wrong it
-  // is nearly always one of these, and reading it off a shaded surface in
+  // The curves the body is actually made of. When a shape looks wrong it is
+  // nearly always one of these, and reading it off a shaded surface in
   // perspective is guesswork.
   if (el('prof').checked) {
     const top = [], bot = [], mid = [];
@@ -270,8 +252,6 @@ function build() {
       mid.push(new THREE.Vector3(0, u.shapeAt(z).yc, z));
     }
     line(top, 0xe6a34a); line(bot, 0xe6a34a); line(mid, 0x5b8ff5, 0.8);
-    // Where the barrel starts and ends: the two joins are what the blend
-    // exponents control, so mark them rather than eyeballing them.
     for (const z of u.cabinZ) {
       line([new THREE.Vector3(0, u.keelAt(z), z),
             new THREE.Vector3(0, u.crownAt(z), z)], 0x74c46a, 0.55);
@@ -286,19 +266,20 @@ function build() {
     }
   }
 
-  // Cross-sectional area against station. For a body meant to go fast this is
-  // the curve that matters more than the silhouette does -- a kink here is wave
-  // drag, and it is completely invisible in the shaded view.
+  // Cross-sectional area against station. For a body meant to go fast this
+  // matters more than the silhouette does -- a kink here is wave drag, and it
+  // is completely invisible in the shaded view.
   if (el('area').checked) {
-    const pts = [];
     let aMax = 0;
     for (let i = 0; i <= 260; i++) {
       const r = u.shapeAt(-L * i / 260).r;
       aMax = Math.max(aMax, Math.PI * r * r);
     }
+    const pts = [];
     for (let i = 0; i <= 260; i++) {
       const z = -L * i / 260, r = u.shapeAt(z).r;
-      pts.push(new THREE.Vector3(0, -radius * 1.4 - (Math.PI * r * r / aMax) * radius * 1.6, z));
+      pts.push(new THREE.Vector3(
+        0, -radius * 1.4 - (Math.PI * r * r / aMax) * radius * 1.6, z));
     }
     line(pts, 0xd8544f, 0.85);
   }
@@ -310,38 +291,49 @@ function build() {
   grid.scale.setScalar(radius / 1.88);
 
   el('oRad').textContent = radius.toFixed(2);
-  for (const k of SHAPE) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
-    num(k).toFixed(k === 'tipR' ? 3 : 2);
+  el('oFineness').textContent = num('fineness').toFixed(2);
+  el('oNoseD').textContent = num('noseD').toFixed(2);
+  for (const k of ['refScale', 'refZ', 'refY', 'refOpacity'])
+    el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
 
+  const sp = u.shapeParams;
+  el('locked').innerHTML = [
+    ['nose blend into barrel', sp.noseA],
+    ['nose tip fullness', sp.noseB],
+    ['nose keel hold', sp.keelHold],
+    ['tailcone length &middot; dia', sp.tailD],
+    ['tail blend into barrel', sp.tailA],
+    ['tail taper fullness', sp.tailB],
+    ['tailcone tip &middot; radii', sp.tipR],
+    ['tail crown hold', sp.crownHold],
+  ].map(([k, v]) => `<div>${k}<b>${(+v).toFixed(2)}</b></div>`).join('');
 
   el('readout').innerHTML =
-    `L <span>${L.toFixed(2)}</span> &middot; D <span>${(2 * radius).toFixed(2)}</span> ` +
-    `&middot; L/D <span>${u.fineness.toFixed(2)}</span><br>` +
+    `L <span>${L.toFixed(2)}</span> &middot; D <span>${(2 * radius).toFixed(2)}</span><br>` +
     `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +
     `barrel <span>${(u.cabinZ[0] - u.cabinZ[1]).toFixed(2)}</span> &middot; ` +
     `tail <span>${u.tailLength.toFixed(2)}</span><br>` +
-    `crown <span>${u.crownAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
-    `<span>${u.crownAt(-L).toFixed(2)}</span> ` +
-    `&middot; keel <span>${u.keelAt(u.cabinZ[1]).toFixed(2)}</span> &rarr; ` +
-    `<span>${u.keelAt(-L).toFixed(2)}</span><br>` +
     `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
-    `(keel <span>${u.keelAt(u.cabinZ[0]).toFixed(2)}</span> &rarr; ` +
-    `<span>${u.keelAt(0).toFixed(2)}</span>) &middot; ` +
-    `tip r <span>${u.shapeAt(-L).r.toFixed(3)}</span><br>` +
+    `(<span>${(u.shapeAt(0).yc / radius).toFixed(2)}</span> R)<br>` +
+    // The tip is round in SECTION and nowhere near round in profile, because
+    // the centreline is still moving there. Only the meridians are visible, so
+    // show those rather than the section value alone.
+    `tip radius: crown <span>${u.noseTipRadiusCrown.toFixed(2)}</span>, ` +
+    `keel <span>${u.noseTipRadiusKeel.toFixed(2)}</span> ` +
+    `(section <span>${u.noseTipRadius.toFixed(2)}</span>)<br>` +
+    `keel <span>${u.keelAt(u.cabinZ[0]).toFixed(2)}</span> &rarr; ` +
+    `<span>${u.keelAt(0).toFixed(2)}</span> over the nose &middot; ` +
+    `crown <span>${u.crownAt(-L).toFixed(2)}</span> at the tail tip<br>` +
     `upsweep <span>${(Math.atan2(u.keelAt(-L) - u.keelAt(u.cabinZ[1]),
-                                 u.tailLength) * 180 / Math.PI).toFixed(1)}&deg;</span> ` +
-    `&middot; over-nose <span>${(Math.atan2(u.radius - u.shapeAt(0).yc,
-                                 u.noseLength) * 180 / Math.PI).toFixed(1)}&deg;</span>`;
+                                 u.tailLength) * 180 / Math.PI).toFixed(1)}&deg;</span>`;
 
-  // The numbers, in the form the component takes them, so a shape you like can
-  // go straight into a call without being transcribed off a set of sliders.
   el('params').textContent =
-    `shape: { ${SHAPE.map((k) => `${k}: ${num(k)}`).join(', ')} }`;
+    `{ radius: ${radius}, fineness: ${num('fineness')}, noseD: ${num('noseD')} }`;
 
-  for (const k of ['refScale', 'refZ', 'refY', 'refOpacity'])
-    el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
   buildRef();
 }
+
+/* ---- views ------------------------------------------------------------ */
 
 function frameBody() {
   const b = new THREE.Box3().setFromObject(body);
@@ -359,10 +351,9 @@ function frameBody() {
 function ortho(axis) {
   const u = body.userData, L = u.length;
   if (axis === 'nose') {
-    // Framed on the nose, side-on. Framing the whole aeroplane is useless for
-    // this: the nose is a seventh of the length, every body fills the screen
-    // the same way, and switching between two quite different noses looks like
-    // nothing happened -- which is exactly what it looked like.
+    // Framed on the nose. Framing the whole aeroplane is useless for judging
+    // one: every body fills the screen the same way, so a real change of shape
+    // can look like nothing happened.
     const N = u.noseLength, c = -N * 0.55;
     const d = 2.3 * Math.max(N, 2 * u.radius);
     controls.target.set(0, -u.radius * 0.15, c);
@@ -379,13 +370,15 @@ function ortho(axis) {
   controls.update();
 }
 
-for (const id of ['rad', ...SHAPE]) el(id).addEventListener('input', build);
-for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid', 'detail'])
+for (const id of [...DECK, 'refScale', 'refZ', 'refY', 'refOpacity'])
+  el(id).addEventListener('input', build);
+for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid',
+                  'detail', 'refShow', 'refFlip'])
   el(id).addEventListener('change', build);
-el('frame').addEventListener('click', frameBody);
 el('nose').addEventListener('click', () => ortho('nose'));
 el('side').addEventListener('click', () => ortho('side'));
 el('top').addEventListener('click', () => ortho('top'));
+el('frame').addEventListener('click', frameBody);
 el('reset').addEventListener('click', () => {
   for (const [k, v] of Object.entries(DEFAULTS)) el(k).value = v;
   build();
@@ -406,7 +399,7 @@ function tick() {
 
 resize();
 build();
-ortho('nose');
+ortho('side');
 tick();
 </script>
 </body>

@@ -39,10 +39,10 @@ const PAGES = {
   'piston_test.html':   { build: [() => E.pistonEngine({})], vars: ['engine.userData', 'd'] },
   'motor_test.html':    { build: [() => E.electricMotor({})], vars: ['engine.userData', 'd'] },
   'fuselage_test.html': { build: [() => F.jetlinerFuselage({}),
+                                  () => F.jetlinerFuselage({ detail: true }),
                                   () => F.jetlinerFuselage({
-                                    radome: false, flightDeck: false,
-                                    cabinWindows: false, doors: false, exits: false })],
-                          vars: ['body.userData', 'u'] },
+                                    radius: 3.2, fineness: 13, noseD: 2.6 })],
+                          vars: ['body.userData', 'u', 'u.shapeParams'] },
 };
 
 let bad = 0;

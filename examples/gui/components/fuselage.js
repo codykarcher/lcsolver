@@ -50,15 +50,26 @@ export const circularSection = () => 1;
  * Both ends come from `(1 - x^A)^B`. B < 1 makes the end round rather than
  * pointed, A > 1 makes the slope vanish where the taper meets the barrel, so
  * neither end blends in with a crease.
+ *
+ * **Three of these are deck inputs**: fineness, noseD, and the body radius that
+ * arrives beside them. Everything else is the shape of a conventional jetliner
+ * and is fixed. They remain overridable through `shape` so a different aircraft
+ * can be described later, but nothing routine should touch them.
+ *
+ * noseB is locked at exactly 1/2, which is worth knowing rather than treating
+ * as one value among many: it is the only exponent at which the point has a
+ * finite radius of curvature. Above it the tip is a knife edge, below it a
+ * flat. At 1/2 the nose closes on a sphere of radius R^2 * noseA / (2 * lNose),
+ * which the model reports -- see `noseTipRadius`.
  */
 const JET = {
-  fineness:   10.1,  // overall length / diameter
-  noseD:      1.70,  // nose length, in diameters
+  fineness:   10.1,  // DECK: overall length / diameter
+  noseD:      1.70,  // DECK: nose length, in diameters
   tailD:      2.90,  // tailcone length, in diameters
-  noseA: 2.2, noseB: 0.55,
-  tailA: 1.6, tailB: 0.75,
+  noseA: 2.7, noseB: 0.50,   // locked
+  tailA: 1.6, tailB: 0.75,   // locked
   tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
-  keelHold:   0.85,  // fraction of the NOSE taper taken off the crown
+  keelHold:   0.45,  // fraction of the NOSE taper taken off the crown
   crownHold:  1.00,  // fraction of the TAILCONE taper taken off the belly
 };
 
@@ -383,6 +394,8 @@ const DEG = Math.PI / 180;
  */
 export function jetlinerFuselage({
   radius = 1.88,
+  fineness = null,
+  noseD = null,
   length = null,
   shape: shapeOverrides = {},
   section = circularSection,
@@ -395,7 +408,13 @@ export function jetlinerFuselage({
   apu = detail,
   nSeg = 64,
 } = {}) {
-  const p = { ...JET, ...shapeOverrides };
+  // The three deck inputs are named parameters rather than buried in `shape`,
+  // because that is how they arrive and how they should read at a call site.
+  const p = {
+    ...JET, ...shapeOverrides,
+    ...(fineness != null ? { fineness } : {}),
+    ...(noseD != null ? { noseD } : {}),
+  };
   const L = length ?? p.fineness * 2 * radius;
   const shape = jetShape({ length: L, radius, p });
   const g = new THREE.Group();
@@ -486,6 +505,24 @@ export function jetlinerFuselage({
   Object.assign(g.userData, {
     length: L, radius, section, shapeParams: p,
     keelHold: p.keelHold, crownHold: p.crownHold,
+    /**
+     * Curvature at the point, three ways. Meaningful ONLY because noseB is 1/2
+     * -- at any other exponent the tip curvature is 0 or unbounded and there is
+     * no radius to report, so these are null rather than numbers that lie.
+     *
+     * The section curve closes on rho = R^2 * noseA / (2 * lNose). What you
+     * SEE, though, is the two meridians, and they are not that: the centreline
+     * is still moving at the point, so crown and keel pick up (1 +/- keelHold)^2
+     * of it. At keelHold 0.45 that is 2.10 and 0.30 -- the underside of the tip
+     * is seven times tighter than the top. The tip is round in section and a
+     * long way from round in profile, and only the meridians are visible.
+     */
+    noseTipRadius: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) : null,
+    noseTipRadiusCrown: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) * (1 + p.keelHold) ** 2 : null,
+    noseTipRadiusKeel: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) * (1 - p.keelHold) ** 2 : null,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),
