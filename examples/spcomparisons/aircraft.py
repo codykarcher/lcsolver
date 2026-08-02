@@ -517,8 +517,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
                "pylon weight fraction")
     feadd = C("f_eadd", 0.1, "-", "additional engine weight fraction")
     Ceng = C("C_engsys", 1.0, "-", "engine system weight margin")
-    Dreduct = C("D_reduct", 0.98416 if arch.BLI else 1.0, "-",
-                "BLI drag reduction factor")
+    # fBLIf: fraction of the fuselage boundary-layer KE defect the aft
+    # propulsors ingest -- d82.tas carries 0.4. f_wake_fuse: the wake's
+    # share of the fuselage profile drag area, measured from TASOPT's D8
+    # output (see the drag buildup row for the derivation).
+    f_BLIf = C("f_BLI_f", 0.4, "-",
+               "ingested fraction of fuselage BL KE defect (deck fBLIf)")
+    f_wake_fuse = C("f_wake_fuse", 0.098, "-",
+                    "fuselage wake dissipation / profile drag area")
     bmax = C("b_max", size_class.span_max_m, "m", "gate-box span limit")
     CLwmax = V("C_L_w_max", 2.15 / cos(SWEEP_W * pi / 180) ** 2, "-",
                "max wing lift coefficient")
@@ -1754,8 +1760,24 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         Dfuse >= (0.5 * st.rho * st.V ** 2 * DAfuse
                      * (st.M ** 2 / fu.M_fuseD ** 2)),
         Dfuse >= 0.5 * st.rho * st.V ** 2 * DAfuse,
-        D >= Dreduct * (wing.D_wing + Dfuse + numVT * vt.D_vt
-                           + ht.D_ht + numeng * Dnace),
+        # BLI, TASOPT's way (cdsum.f:322): the airframe is credited the
+        # ingested fraction of the FUSELAGE WAKE dissipation only,
+        # dCD_BLI = -fBLIf * DAfwake/S, not a flat factor on total drag.
+        # The wake share of the fuselage drag area is measured from
+        # TASOPT's own D8 cruise printout: its component CDs sum to
+        # 0.03246 against a printed total of 0.03212, so the credit is
+        # 0.00034 = fBLIf(0.4, deck) * f_wake * CDfuse(0.00866), giving
+        # f_wake = 0.098. The old Dreduct = 0.98416 was 1.5x too generous
+        # AND scaled with total drag, so it handed the D8 a credit that
+        # grew with wing area. The engine side -- the fan paying for the
+        # momentum-deficient inflow -- is f_BLI_P/f_BLI_V in the cycle,
+        # active whenever arch.BLI is.
+        *([D + f_BLIf * f_wake_fuse * Dfuse
+           >= wing.D_wing + Dfuse + numVT * vt.D_vt
+            + ht.D_ht + numeng * Dnace]
+          if arch.BLI else
+          [D >= wing.D_wing + Dfuse + numVT * vt.D_vt
+              + ht.D_ht + numeng * Dnace]),
         C_D == D / (.5 * st.rho * st.V ** 2 * wing.S),
         LoD == W_avg / D,
 
