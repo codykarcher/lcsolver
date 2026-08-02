@@ -913,6 +913,15 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # Minimising the variable drives it forward; minimising its reciprocal
         # drives it aft. Both are monomial, so neither disturbs the structure.
         f.Objective(_pv if _dir == "fwd" else 1.0 / _pv)
+    elif batt is not None:
+        # A battery aircraft has no fuel: W_f_total sits on the positivity
+        # floor and minimising it applies NO design pressure anywhere --
+        # measured: objective 2.7e-08, stationarity met trivially, and the
+        # geometry SigEq chain left 2% violated because nothing pushed the
+        # iterates to polish it. The pack's mission energy is the honest
+        # analogue of fuel burn (it is the operating cost), and minimising
+        # it restores the gradient the whole solve organises around.
+        f.Objective(batt.E_req)
     else:
         f.Objective(W_ftotal)
 
