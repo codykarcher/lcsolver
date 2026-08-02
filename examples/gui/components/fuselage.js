@@ -163,6 +163,44 @@ export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0
  * end of a transition -- which matters, because a discontinuity in the SECTION
  * is a ring-shaped crease around the whole body and is impossible to miss.
  */
+/**
+ * The channel an afterbody closes into: a flat floor, sides rounding up at the
+ * radius of what it holds, and an open top.
+ *
+ * Built as the convex hull of the things being cradled -- two circles, which
+ * gives a stadium: flat top and bottom joined by arcs of exactly their radius
+ * -- and then capped at their axis height so the top is open and they sit half
+ * in it. The walls cannot be the wrong curve for what they hold, because they
+ * ARE its curve.
+ *
+ * Carving the circles OUT of a wider body was the other way to try it and does
+ * not work: where the body runs wider than what it holds, a ray out of the
+ * section crosses skin, the opening, then skin again, and a section written as
+ * one radius per angle cannot say that. It collapsed the afterbody instead.
+ *
+ * Everything is in units of the local HALF-HEIGHT, about the section's centre.
+ */
+export function channelSection({ halfSpacing, radius, axisY, capped = true }) {
+  const inside = (x, y) => {
+    if (capped && y > axisY) return false;
+    const dy = y - axisY, ax = Math.abs(x);
+    return ax <= halfSpacing
+      ? Math.abs(dy) <= radius
+      : (ax - halfSpacing) * (ax - halfSpacing) + dy * dy <= radius * radius;
+  };
+  const reach = Math.hypot(halfSpacing + radius, Math.abs(axisY) + radius) + 1;
+  return (th) => {
+    const c = Math.cos(th), sn = Math.sin(th);
+    if (!inside(0, 0)) return 1e-4;           // the origin is outside: degenerate
+    let lo = 0, hi = reach;
+    for (let i = 0; i < 40; i++) {
+      const m = (lo + hi) / 2;
+      if (inside(m * c, m * sn)) lo = m; else hi = m;
+    }
+    return Math.max(lo, 1e-4);
+  };
+}
+
 export function morphSection(stops, length) {
   return (th, z) => {
     const u = Math.min(1, Math.max(0, -z / length));
@@ -925,6 +963,30 @@ const D8 = {
    */
   tailTrough:  0.00,
   troughWidth: 0.50,  // angular half-width of the dish, radians
+
+  /**
+   * The plan taper gets its own law when the afterbody has to become a channel.
+   *
+   * Sharing the height's is right for a body that merely closes. It is wrong
+   * for one that has to cradle something, because the cradle needs the WIDTH
+   * gone -- so the section is no wider than what it is holding -- while the
+   * DEPTH stays, so there is something to hold it in. Null means "the same as
+   * the height".
+   */
+  tailWidthA:  null,
+  tailWidthB:  null,
+
+  /**
+   * What the afterbody closes into, in METRES in the body's frame.
+   *
+   * `{ x, y, r }` for one of a mirrored pair, and the afterbody's section
+   * becomes the flat-floored channel that holds them. Null leaves the plain
+   * closing wedge, which is what a body with nothing on the back of it wants.
+   */
+  channel:      null,
+  channelGap:   0.02,  // clearance between the skin and what it holds
+  channelStart: 0.00,  // fraction along the tailcone where it starts forming
+  channelFull:  0.45,  // and where it is fully formed
 };
 
 /**
@@ -1003,10 +1065,27 @@ export function d8Fuselage({
       // way down. With tailWidth equal to cabinWidth -- the default -- the
       // width does not taper at all and the planform is a constant-width slab.
       const s = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
-      const k = Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+      const wA = p.tailWidthA ?? p.tailA, wB = p.tailWidthB ?? p.tailB;
+      const k = Math.pow(1 - Math.pow(s, wA), wB);
       const halfW = tailW + (p.cabinWidth - tailW) * k;
-      const halfH = shape.at(z).r / radius;
-      const base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      const sh = shape.at(z);
+      const halfH = sh.r / radius;
+      let base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      // The cabin's section gives way to the channel over the afterbody, so the
+      // roof leaves the cabin whole and opens gradually rather than stepping.
+      if (p.channel && sh.r > 1e-6) {
+        const t = (s - p.channelStart) / Math.max(p.channelFull - p.channelStart, 1e-6);
+        const f = Math.min(1, Math.max(0, t));
+        const open = f * f * (3 - 2 * f);
+        if (open > 0) {
+          const ch = channelSection({
+            halfSpacing: p.channel.x / sh.r,
+            radius: (p.channel.r + p.channelGap) / sh.r,
+            axisY: (p.channel.y - sh.yc) / sh.r,
+          })(th);
+          base = base + (ch - base) * open;
+        }
+      }
       if (!(p.tailTrough > 0)) return base;
       // The dish, eased in over the afterbody so the roof leaves the cabin
       // flat and falls away smoothly rather than stepping.

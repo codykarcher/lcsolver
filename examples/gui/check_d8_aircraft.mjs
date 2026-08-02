@@ -129,33 +129,39 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   if (edge > 1.35 * reach) bad(`the trailing edge runs ${(edge / reach).toFixed(2)} times past the engines`);
 
   /**
-   * The afterbody has to still BE there where the engines sit.
+   * The afterbody closes into the CHANNEL that holds the engines.
    *
-   * The bare body's closing law falls away from the moment the cabin ends,
-   * which is right when there is nothing to carry: it left 12 per cent of the
-   * depth at the engine station, so they perched on an edge and the dish they
-   * belong in had nowhere to exist.
+   * Flat floor, sides rounding up at the engines' own radius, open at their
+   * axis so they sit half in it. All three come from the engines, so all three
+   * are checkable against them and none is a number anybody chose.
+   *
+   * Not "how much depth survives" and not "is there a valley" -- those were the
+   * questions while the body closed to a wedge and carried the engines on top
+   * of it, and both report faults against a body that is the cradle itself.
    */
   const z = -d.engineX;
-  const deep = (fu.crownAt(z) - fu.keelAt(z)) / 2;
-  console.log(`     ${(100 * deep / d.fuseHalfHeight).toFixed(0)}% of full depth at the ` +
-              `engine station (${deep.toFixed(3)} m against an engine radius of ` +
-              `${(d.nacelleDia / 2).toFixed(3)})`);
-  if (deep < 0.5 * d.fuseHalfHeight) {
-    bad(`only ${(100 * deep / d.fuseHalfHeight).toFixed(0)}% of the depth survives to the engines`);
+  const rN = d.nacelleDia / 2, gap = 0.02;
+  const floor = fu.keelAt(z), roof = fu.crownAt(z), wall = fu.halfWidthAt(z);
+  console.log(`     channel: floor ${floor.toFixed(3)}, open at ${roof.toFixed(3)}, ` +
+              `walls to ${wall.toFixed(3)}`);
+  console.log(`     engines: bottom ${(u.engineAxisY - rN).toFixed(3)}, axis ` +
+              `${u.engineAxisY.toFixed(3)}, outer ${(d.engineY + rN).toFixed(3)}`);
+  if (Math.abs(floor - (u.engineAxisY - rN - gap)) > 0.02) {
+    bad(`the floor is at ${floor.toFixed(3)}, the engines' undersides at ` +
+        `${(u.engineAxisY - rN).toFixed(3)}`);
   }
-
-  // And a valley between the lobes for them to sit in -- the cross-sections'
-  // whole point. Measured as the crown on the centreline against the crown
-  // over the engine's own lateral position.
-  const yMid = fu.surfaceAt(z, Math.PI / 2).y;
-  let yEng = -Infinity;
-  for (let i = 0; i < 600; i++) {
-    const p = fu.surfaceAt(z, (i / 600) * Math.PI);
-    if (Math.abs(p.x - d.engineY) < 0.02) yEng = Math.max(yEng, p.y);
+  if (Math.abs(roof - u.engineAxisY) > 0.02) {
+    bad(`the channel is open at ${roof.toFixed(3)}, the engine axis is ${u.engineAxisY.toFixed(3)}`);
   }
-  console.log(`     valley ${(yEng - yMid).toFixed(3)} m deep between the lobes`);
-  if (yEng - yMid < 0.05) bad('there is no valley between the lobes for the engines');
+  if (Math.abs(wall - (d.engineY + rN + gap)) > 0.03) {
+    bad(`the walls reach ${wall.toFixed(3)}, the engines reach ${(d.engineY + rN).toFixed(3)}`);
+  }
+  // Half in it: the engines stand proud above the open top, and their
+  // undersides are held.
+  const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);
+  if (b2.max.y <= roof) bad('the engines do not stand above the channel -- they are buried');
+  if (b2.min.y < floor - 1e-6) bad('the engines hang below the channel floor');
+  console.log(`     engines stand ${(b2.max.y - roof).toFixed(3)} m above the open top`);
 }
 
 /* ---- the tails are placed by their own stations, and form a pi --------- */

@@ -40,7 +40,19 @@ export const D8_CHOICES = {
    * a place. Set against the arrangement drawing, not derived.
    */
   engineHeight:   0.55,
-  tailSpan:       1.06,   // trailing edge half-width, in engine outer extents
+  /**
+   * The afterbody's trailing-edge half-width, in engine outer extents.
+   *
+   * One puts the walls of the channel exactly on the outside of the engines.
+   * The cradle needs this: where the body runs wider than what it holds, a ray
+   * out of the section crosses skin, the opening, then skin again, and a
+   * section written as one radius per angle cannot say that.
+   */
+  tailSpan:       1.00,
+  planTaperA:     1.0,    // the plan narrows EARLY -- the depth does not
+  planTaperB:     2.0,
+  cradleStart:    0.00,   // the channel opens as the cabin ends
+  cradleFull:     0.45,   // and is fully open before the engines at 0.75
   tailHold:       4.0,    // how squarely the afterbody holds its depth aft
   tailTrough:     0.30,   // valley between the lobes, in local half-heights
   troughWidth:    0.55,   // angular half-width of that valley, radians
@@ -102,7 +114,13 @@ export function d8Aircraft(deck, opts = {}) {
        * in the last fifth instead.
        */
       tailLaw: 'power', tailA: d.tailHold, tailB: 0.70,
-      tailTrough: d.tailTrough, troughWidth: d.troughWidth,
+      // The plan narrows on its own law, and earlier than the depth, so the
+      // afterbody is no wider than the engines by the time it has to hold them.
+      tailWidthA: d.planTaperA, tailWidthB: d.planTaperB,
+      // And the afterbody closes into the channel that holds the engines: a
+      // flat floor with sides rounding up at their own radius.
+      channel: { x: d.engineY, y: engineAxisY, r: d.nacelleDia / 2 },
+      channelStart: d.cradleStart, channelFull: d.cradleFull,
     },
     detail: opts.detail ?? false,
   });
