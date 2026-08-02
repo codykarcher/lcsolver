@@ -438,6 +438,7 @@ export function turbofan({
   g.userData.exposedCoreLength = Lv;
   g.userData.outletRadius = rOutlet;
   g.userData.plugExitRadius = rPlugExit;
+  g.userData.plugBaseRadius = rPlugBase;
   g.userData.overallLength = zNose + NOSE + TAIL * Lc;
   g.userData.lengthOverDiameter = g.userData.overallLength / (2 * R);
   return finish(g, NOSE + TAIL * Lc, rCaseOut, 'turbofan');
@@ -465,7 +466,10 @@ const JET_WALL = 0.035;
  * Defaults hold the case parallel and let it converge only at the end, which
  * is what a plain turbojet looks like.
  */
-const JET_SECTIONS = [{ z: 0.35, r: 1.0 }, { z: 0.70, r: 1.0 }];
+const JET_SECTIONS = [{ z: 0.35, r: 0.95 }, { z: 0.70, r: 1.0 }];
+
+/** Nozzle exit radius, x rCase. */
+const JET_EXIT = 0.90;
 
 /**
  * Turbojet: an annular casing with a compressor face at the inlet and a
@@ -480,7 +484,7 @@ const JET_SECTIONS = [{ z: 0.35, r: 1.0 }, { z: 0.70, r: 1.0 }];
  * hole, and bare metal all the way down reads as a pipe.
  */
 export function turbojet({
-  rCase = 0.42, length = null, nozzleExit = 0.62,
+  rCase = 0.42, length = null, nozzleExit = JET_EXIT,
   sections = JET_SECTIONS, blades = 26,
 } = {}) {
   const g = new THREE.Group();
@@ -499,13 +503,32 @@ export function turbojet({
                      r: Math.max(0.05, sec.r) }))
     .sort((a, b) => a.z - b.z);
 
+  // The case is held parallel until the compressor is behind it: a spline
+  // straight from the lip to the first station starts curving inward at the
+  // lip itself, narrowing the case over the very blades it houses.
+  const lSpin = 0.62 * R;
+  const zFanAft = Math.max(-(lSpin + 0.20 * R), -0.5 * secs[0].z * Lb);
+
   const rExit = Math.max(0.1, nozzleExit) * R;
   const ctrl = [
     new THREE.Vector2(0, R),
+    new THREE.Vector2(zFanAft, R),                 // still parallel here
     ...secs.map((sec) => new THREE.Vector2(-sec.z * Lb, sec.r * R)),
     new THREE.Vector2(zExit, rExit),
   ];
   const wall = new THREE.SplineCurve(ctrl).getPoints(40);
+
+  /** Case inner radius at an axial station, read off the wall curve. */
+  const wallInnerAt = (z) => {
+    for (let i = 0; i < wall.length - 1; i++) {
+      const a = wall[i], b = wall[i + 1];
+      if (z <= a.x && z >= b.x) {
+        const f = (a.x - z) / ((a.x - b.x) || 1);
+        return a.y + (b.y - a.y) * f - t;
+      }
+    }
+    return wall[wall.length - 1].y - t;
+  };
 
   // Closed annulus: down the outside, back up the inside, shut at the lip.
   const prof = [
@@ -532,9 +555,8 @@ export function turbojet({
   // spinner's own length, not to body length: tied to the body it crept out
   // through the inlet as the engine got shorter, and nose-to-tail then
   // measured from the spinner rather than from the lip.
-  const lSpin = 0.62 * R;
   rotor.position.z = -(lSpin + 0.06 * R);
-  rotor.add(spinner(0.26 * R, lSpin, M.casing, 0));
+  rotor.add(spinner(0.26 * R, lSpin, spinnerMaterial(), 0));
   rotor.add(bladeRow({
     count: blades, material: M.blade, hubMaterial: M.casing,
     hubLength: 0.30 * R,
@@ -556,10 +578,14 @@ export function turbojet({
   const rPlugExit = rExit * (1 - EXHAUST_GAP_FRAC);
   const zPlugTip = zExit - JET_PLUG_TIP * Lb;
   const embed = 0.06 * Lb;
+  // Continuing the cone's taper forward would put its base at 1.11 x the exit
+  // radius -- wider than the hole it comes out of, so it burst through the
+  // casing. Held inside the case wall at the station where it actually sits.
+  const rPlugBase = Math.min(
+    rPlugExit * (1 + embed / (JET_PLUG_TIP * Lb)),
+    0.90 * wallInnerAt(zExit + embed));
   g.add(latheZ([
-    [zExit + embed, 0],
-    [zExit + embed, rPlugExit * (1 + embed / (JET_PLUG_TIP * Lb))],
-    [zPlugTip, 0],
+    [zExit + embed, 0], [zExit + embed, rPlugBase], [zPlugTip, 0],
   ], M.hot, SEG));
 
   const mouth = new THREE.Mesh(
@@ -571,6 +597,7 @@ export function turbojet({
   g.userData.bodyLength = Lb;
   g.userData.exitRadius = rExit;
   g.userData.plugExitRadius = rPlugExit;
+  g.userData.plugBaseRadius = rPlugBase;
   g.userData.sections = secs;
   g.userData.overallLength = L;
   g.userData.lengthOverDiameter = L / (2 * R);
