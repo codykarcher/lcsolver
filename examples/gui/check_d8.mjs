@@ -159,7 +159,6 @@ for (const c of CASES) {
   // Asked of the SECTION rather than of the body. At 6% of the length the morph
   // toward the cabin has already begun, so measuring the body there and calling
   // it "the nose ellipse" reports the blend and blames the ellipse.
-  const za = -L * p.uTrough;
   const noseW = u.section(0, -1e-9) / u.section(Math.PI / 2, -1e-9);
   if (Math.abs(noseW - p.noseWidth) > 2e-3)
     bad(`nose section is ${noseW.toFixed(3)} wide per unit tall, asked ${p.noseWidth}`);
@@ -177,12 +176,6 @@ for (const c of CASES) {
 
   // Aft, the roof is dished for the engines: the centreline drops below the
   // shoulders. Over the cabin it does not.
-  const aftDish = (u.crownAt(za) - valley(za)) / (u.crownAt(za) - u.keelAt(za));
-  const cabDish = (u.crownAt(zc) - valley(zc)) / (u.crownAt(zc) - u.keelAt(zc));
-  if (p.trough > 0.05 && aftDish < 0.04)
-    bad(`aft roof is dished only ${(100 * aftDish).toFixed(1)}% -- no seat for an engine`);
-  if (cabDish > 0.01)
-    bad(`cabin roof is already dished by ${(100 * cabDish).toFixed(1)}% -- the trough has leaked forward`);
 
   /* 4a. the tail closes on a HORIZONTAL LINE ------------------------------- */
   // Not on a point, and not on a channel. The height goes almost to nothing
@@ -191,18 +184,25 @@ for (const c of CASES) {
   // tall the body is, rather than being a fixed multiple of it.
   const tailEdge = u.tailEdge;
   const edgeRatio = tailEdge.halfWidth / tailEdge.halfHeight;
-  if (edgeRatio < 5)
-    bad(`tail closes at width/height ${edgeRatio.toFixed(1)} -- a point, not a line`);
-  if (Math.abs(tailEdge.halfWidth / R - p.tailWidth) > 2e-3)
-    bad(`tail half-width ${(tailEdge.halfWidth / R).toFixed(3)}R, asked ${p.tailWidth}`);
+  if (Math.abs(tailEdge.heightFraction - p.tipR) > 2e-3)
+    bad(`trailing edge is ${(100 * tailEdge.heightFraction).toFixed(1)}% of ` +
+        `body height, tipR asks ${(100 * p.tipR).toFixed(1)}%`);
+  // No taper in plan: the top view is a constant-width slab from the cabin to
+  // the trailing edge, so the half-width may not move over the whole aft body.
+  let planDrift = 0;
+  for (let i = 0; i <= 120; i++) {
+    const z = u.cabinZ[1] - (L + u.cabinZ[1]) * (i / 120);
+    planDrift = Math.max(planDrift, Math.abs(u.halfWidthAt(z) - u.halfWidthAt(zc)));
+  }
+  if (u.planTaper === 1 && planDrift > 1e-6)
+    bad(`half-width moves ${planDrift.toFixed(4)} over the aft body -- it tapers in plan`);
   // And nothing on the way there may dish: no channel down the aft deck.
   let dished = 0;
   for (let i = 0; i <= 200; i++) {
     const z = u.cabinZ[1] - (L + u.cabinZ[1]) * (i / 200);
     if (u.crownAt(z) - valley(z) > 1e-6) dished++;
   }
-  if (p.trough <= 0 && dished)
-    bad(`aft deck is dished at ${dished} stations with trough 0 -- a channel`);
+  if (dished) bad(`aft deck is dished at ${dished} stations -- a channel`);
 
   /* 4b. the point sits above the axis -------------------------------------- */
   // The one thing about this nose that is not simply "wider than a tube's". A
@@ -271,9 +271,12 @@ for (const c of CASES) {
   console.log(`  nose-to-cabin section change ${secDiff.toFixed(3)}`);
   console.log(`  roof drops ${(100 * midDrop).toFixed(3)}% across the flat; ` +
               `shoulder ${gotShoulder.toFixed(3)}R vs semicircle ${wantShoulder.toFixed(3)}R`);
-  console.log(`  tail edge ${tailEdge.halfWidth.toFixed(2)} wide x ` +
-              `${tailEdge.halfHeight.toFixed(3)} tall -- W/H ${edgeRatio.toFixed(1)}, ` +
-              `${dished} dished stations`);
+  console.log(`  trailing edge ${(2 * tailEdge.halfWidth).toFixed(2)} x ` +
+              `${(2 * tailEdge.halfHeight).toFixed(2)} = ` +
+              `${(100 * tailEdge.heightFraction).toFixed(1)}% of height, ` +
+              `W/H ${edgeRatio.toFixed(1)}`);
+  console.log(`  plan taper ${u.planTaper.toFixed(3)}, ` +
+              `half-width drifts ${planDrift.toFixed(5)} aft, ${dished} dished stations`);
   console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
               `${outside} stations outside the envelope`);
   console.log(`  worst section spike ${spike.toFixed(2)}x its neighbours`);

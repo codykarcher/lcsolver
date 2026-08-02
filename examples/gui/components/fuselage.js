@@ -109,6 +109,10 @@ export function stadiumSection(w, crown = 0) {
 /**
  * Two overlapping circles side by side -- a double bubble.
  *
+ * Not currently used by either aircraft -- the D8's fairing is the stadium
+ * above, which is these two lobes' convex hull -- but kept because it is the
+ * shape the name refers to and the obvious thing to reach for next.
+ *
  * On a D8 this is the PRESSURE VESSEL, not the outer mould line. The two lobes
  * are what carries cabin pressure in tension; the shape the air sees is the
  * superellipse above, wrapped round them. Modelling the bubbles as the OML --
@@ -761,11 +765,11 @@ const D8 = {
   tailD:      2.30,  // aft body length, in full heights
   noseA: 2.4, noseB: 0.50,
   tailA: 1.5, tailB: 0.70,
-  // The aft body closes to a HORIZONTAL LINE, not to a point and not to a
-  // channel: the height goes almost to nothing while the width is still there,
-  // which leaves a wide thin edge. So the two taper separately.
-  tipR:       0.05,  // half-height at the very tail, in half-heights
-  tailWidth:  0.55,  // half-WIDTH there, in half-heights -- much the larger
+  // The aft body closes on a BLUNT EDGE, not on a point: the height tapers to
+  // about a third while the width does not taper at all. So the two are
+  // separate, and one of them is simply switched off.
+  tipR:       0.35,  // half-height at the trailing edge, in half-heights
+  tailWidth:  null,  // half-width there; null means "the same as the cabin"
   crownHold:  1.00,
 
   // The point sits ABOVE the axis, which is the opposite of a tube and is the
@@ -781,12 +785,8 @@ const D8 = {
   cabinWidth: 1.55,  // width over height
   cabinCrown: 0.12,  // 0 a dead flat roof, 1 a full ellipse
 
-  trough:     0.00,  // roof dish for engines; off until there are engines
-  troughWidth: 0.60, // angular width of that dish, radians
   // Where along the body each transition happens, as a fraction of length.
   uBubble:    0.24,  // elliptical nose has become the double bubble by here
-  uOpen:      0.66,  // aft opening starts
-  uTrough:    0.84,  // and is fully open by here
 };
 
 /**
@@ -805,9 +805,11 @@ const D8 = {
  * top and bottom joined by semicircular sides. Semicircular because they are
  * arcs of the lobes themselves; the fairing is their convex hull.
  *
- * The aft body closes on a HORIZONTAL LINE rather than on a point: the height
- * goes almost to nothing while the width is still there, leaving a wide thin
- * edge. That is why the tail has two tapers and not one.
+ * The aft body closes on a BLUNT EDGE rather than on a point: the height tapers
+ * to about a third of the body's while the width does not taper at all, so the
+ * planform is a constant-width slab and the back of the aeroplane is a wide
+ * flat face. That is why the tail has two tapers and not one -- and why one of
+ * them is switched off.
  */
 export function d8Fuselage({
   radius = 1.90,            // HALF-HEIGHT, not a radius -- see the section note
@@ -837,30 +839,22 @@ export function d8Fuselage({
   // multiple of the local height therefore has to get wider and wider as the
   // height collapses, and it can only know how much by asking the size
   // distribution what the height IS.
+  const tailW = p.tailWidth ?? p.cabinWidth;
   const sectionFor = (shape) => {
     const nose = ellipticalSection(p.noseWidth);
     const cabin = stadiumSection(p.cabinWidth, p.cabinCrown);
-    const morph = morphSection([
-      [0.00, nose],
-      [p.uBubble, cabin],
-      [1.00, cabin],
-    ], L);
-    const dish = (th) => {
-      if (p.trough <= 0) return 1;
-      const d = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
-      const g = d / p.troughWidth;
-      return 1 - p.trough * Math.exp(-g * g);
-    };
+    const morph = morphSection([[0.00, nose], [p.uBubble, cabin], [1.00, cabin]], L);
     return (th, z) => {
-      if (z > shape.zTail) return morph(th, z) * dish(th);
-      // Aft: half-width follows its own taper to tailWidth, so the aspect the
-      // stadium is built at is whatever holds that width against a height that
-      // is on its way to nothing.
+      if (z > shape.zTail) return morph(th, z);
+      // Aft: the half-width follows its own taper, so the aspect the stadium is
+      // built at is whatever holds that width against a height that is on its
+      // way down. With tailWidth equal to cabinWidth -- the default -- the
+      // width does not taper at all and the planform is a constant-width slab.
       const s = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
       const k = Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
-      const halfW = p.tailWidth + (p.cabinWidth - p.tailWidth) * k;
+      const halfW = tailW + (p.cabinWidth - tailW) * k;
       const halfH = shape.at(z).r / radius;
-      return stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th) * dish(th);
+      return stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
     };
   };
 
@@ -874,11 +868,15 @@ export function d8Fuselage({
     /** Section width over height at the cabin -- what makes it look like a D8. */
     cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
       / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
-    /** The closing edge: how wide and how thin the very end of the body is. */
+    /** The blunt trailing edge: how wide and how deep the back of the body is. */
     tailEdge: {
       halfWidth: u.halfWidthAt(-L),
       halfHeight: (u.crownAt(-L) - u.keelAt(-L)) / 2,
+      /** As a fraction of the body's own height -- the number that was asked for. */
+      heightFraction: (u.crownAt(-L) - u.keelAt(-L)) / (2 * radius),
     },
+    /** Planform taper: 1.00 means the top view is a constant-width slab. */
+    planTaper: tailW / p.cabinWidth,
   });
 
   return g;
