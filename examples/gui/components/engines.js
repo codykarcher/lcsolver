@@ -49,22 +49,25 @@ const SEG = 48;
 const LENGTH_OVER_DIAMETER = 2.0;
 
 /**
- * RADII BELOW ARE FRACTIONS OF FAN RADIUS -- equivalently, the part's diameter
- * as a fraction of fan diameter. Not multiples of rCore, which is what they
- * used to be: tied to the core they moved with bypass ratio, so raising BPR
- * shrank the whole profile instead of only the station BPR actually governs.
+ * RADII BELOW ARE MULTIPLES OF rCore, the BPR-derived radius at the fan duct's
+ * back face. So the whole core follows bypass ratio: drop BPR and the core
+ * swells with it, in proportion, rather than only the duct station moving.
+ *
+ * They are then ceilinged at MAX_RADIUS x FAN RADIUS, which is the one place
+ * a fan-relative number belongs -- the core cannot be allowed out through its
+ * own fan case however low the bypass ratio goes.
  */
 
 /** Core outlet wall. */
-const R_OUTLET = 0.3953;
+const R_OUTLET = 1.25;
 
 /**
- * Ceiling on every radius in the core, fan radius included in the reckoning.
+ * Ceiling on every radius in the core, as a fraction of FAN RADIUS.
  *
- * Applies to the BPR-derived duct-face radius as well, so a very low bypass
- * ratio cannot drive the core out through its own fan case. When it binds the
- * geometry stops honouring BPR exactly, and `userData.bypassRatioEffective`
- * reports what was actually built.
+ * Applies to the BPR-derived duct-face radius too, so a very low bypass ratio
+ * cannot drive the core out through its own fan case. When it binds on the
+ * duct face the geometry stops honouring BPR exactly, and
+ * `userData.bypassRatioEffective` reports what was actually built.
  */
 const MAX_RADIUS = 0.95;
 
@@ -105,7 +108,7 @@ const PLUG_EMBED = 0.05;
  *         at the exit plane. Measured from the duct rather than from the core
  *         front because the part forward of the duct exit is inside the
  *         bypass annulus and is not shaped by these.
- *     r   radius as a fraction of FAN RADIUS (see the note above)
+ *     r   radius as a multiple of rCore, ceilinged (see the note above)
  *
  * The inlet is not adjustable because bypass ratio sets it, and the outlet is
  * not adjustable because the exhaust annulus does. Everything between is
@@ -117,8 +120,7 @@ const PLUG_EMBED = 0.05;
  * The list is not fixed at three -- any number of stations works, they are
  * simply spline control points between inlet and outlet.
  */
-const CORE_SECTIONS = [{ z: 0.36, r: 0.3953 },
-                       { z: 0.67, r: 0.4838 }];
+const CORE_SECTIONS = [{ z: 0.36, r: 1.25 }, { z: 0.67, r: 1.53 }];
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
@@ -368,12 +370,14 @@ export function turbofan({
   // shape with its inside out.
   const secs = sections
     .map((sec) => ({ z: Math.min(0.98, Math.max(0.02, sec.z)),
-                     r: Math.min(MAX_RADIUS, Math.max(0.02, sec.r)) }))
+                     r: Math.max(0.02, sec.r) }))
     .sort((a, b) => a.z - b.z);
 
   // Outlet wall, and the plug that scales with it. Measured IN THE EXIT
   // PLANE, which is the only place the annulus is visible.
-  const cap = (frac) => Math.min(Math.max(0.02, frac), MAX_RADIUS) * R;
+  // Multiples of rCore, so the profile follows bypass ratio; ceilinged
+  // against fan radius, so it can never leave the duct.
+  const cap = (mult) => Math.min(Math.max(0.02, mult) * rCore, MAX_RADIUS * R);
   const rOutlet = cap(outletRadius);
   const rPlugExit = rOutlet * (1 - EXHAUST_GAP_FRAC);
   // Continuing the same taper forward to the buried base.
