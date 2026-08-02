@@ -81,8 +81,8 @@ const MAX_RADIUS = 0.95;
  * with it as well means a low-bypass engine swells along its entire length,
  * and by BPR 2 the turbine and the exhaust are nearly as fat as the fan.
  *
- * So below this ratio the duct face and the first station keep tracking the
- * bypass ratio, and everything aft of them holds the size it had here.
+ * So below this ratio only the duct face tracks the bypass ratio, and the
+ * whole shaped body aft of it holds the size it had here.
  */
 const AFT_LOCK_BPR = 3;
 
@@ -413,10 +413,11 @@ export function bareTurbofan({
   const ctrl = [
     new THREE.Vector2(z0, rCore),                      // inside the duct
     new THREE.Vector2(zSplit, rCore),                  // duct back face: BPR
-    // First station follows the bypass ratio with the duct face; the rest are
-    // held at the locked size, so a low-bypass core keeps a sensible tail.
-    ...secs.map((sec, i) => new THREE.Vector2(
-      zSplit - sec.z * Lv, cap(sec.r, i === 0 ? rCore : rCoreAft))),
+    // Every shaping station is held at the locked size below the lock ratio.
+    // Only the duct face tracks bypass ratio, which is the one station the
+    // area ratio actually defines.
+    ...secs.map((sec) => new THREE.Vector2(
+      zSplit - sec.z * Lv, cap(sec.r, rCoreAft))),
     new THREE.Vector2(zAft, rOutlet),                  // outlet
   ];
   // Clamp the SAMPLED curve, not just the control points. A Catmull-Rom
@@ -513,8 +514,11 @@ export function bareTurbofan({
 const NAC = {
   lipZ:      0.78,   // leading edge station, ahead of the fan plane
   cowlAft:  -2.35,   // trailing edge
-  plateH:    0.085,  // half-thickness of the plate, x fan radius
-  noseA:     0.026,  // nose bluntness: smaller is sharper
+  plateH:    0.0425, // half-thickness of the plate, x fan radius
+  // Nose bluntness. Halving plateH would quarter the leading-edge radius,
+  // since it goes as plateH^2 / (2 . noseA . c); noseA is cut to match so the
+  // lip stays as blunt as it was rather than sharpening with the section.
+  noseA:     0.0066,
   teFrac:    0.50,   // trailing-edge thickness, as a fraction of plateH
   tePow:     2,      // taper exponent: 2 holds thickness aft, 1 sheds it early
   //  Mean line (the offset axis): [fraction of chord aft of the LE, radius].
@@ -570,7 +574,10 @@ export function turbofan(opts = {}) {
 
   // Sample with s = (i/n)^2 so points crowd the nose, where the square-root
   // term turns fastest -- evenly spaced stations there give a faceted lip.
-  const n = 96;
+  // 128 rather than 96: with a nose this blunt relative to its thickness, the
+  // square-root term does all its work inside the first percent of chord, and
+  // coarser sampling facets the lip.
+  const n = 128;
   const raw = [];
   for (let i = 0; i <= n; i++) {
     const sv = Math.pow(i / n, 2);
