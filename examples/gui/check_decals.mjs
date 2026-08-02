@@ -558,14 +558,28 @@ console.log('\n=== windscreen ===');
 
   /* ---- the posts, measured along the upper edge ------------------------ */
   {
-    // The centre post is body left between the two sides.
-    let minX = Infinity;
+    /**
+     * The centre post, measured down its WHOLE length.
+     *
+     * A minimum is not enough and reading only one is how this was missed: the
+     * post was 70 mm at the top and 223 at the bottom, and a check that looked
+     * at the narrowest point called that 70 and passed. The port side is this
+     * one's mirror, so any drift of the divider off the centreline counts
+     * twice.
+     */
+    let minX = Infinity, maxX = 0;
     for (const m of scr.children) {
-      if (m.userData.side < 0) continue;
-      minX = Math.min(minX, new THREE.Box3().setFromObject(m).min.x);
+      if (m.userData.side < 0 || m.userData.pane !== 1) continue;
+      const pos = m.geometry.getAttribute('position');
+      for (let i = 0; i < pos.count; i += m.userData.nv) {
+        minX = Math.min(minX, pos.getX(i)); maxX = Math.max(maxX, pos.getX(i));
+      }
     }
-    console.log(`  centre post ${(2000 * minX).toFixed(1)} mm`);
+    console.log(`  centre post ${(2000 * minX).toFixed(1)}..${(2000 * maxX).toFixed(1)} mm`);
     if (minX <= 0) fail('the two sides meet -- there is no centre post');
+    if (2 * (maxX - minX) > 1e-3) {
+      fail(`the centre post varies by ${(2000 * (maxX - minX)).toFixed(1)} mm down its length`);
+    }
     if (Math.abs(2 * minX - su.post) > 4 * su.lift) {
       fail(`centre post is ${(2000 * minX).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
     }

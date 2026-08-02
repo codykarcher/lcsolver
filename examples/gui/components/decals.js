@@ -882,6 +882,30 @@ export function windscreen(fuselage, {
   const marchPost = (sStart) => {
     const start = atArc(sStart);
     let z = start.z, th = start.th;
+
+    /**
+     * The centre divider is the crown line, and is walked exactly.
+     *
+     * It lies in the body's plane of symmetry, so its geodesic curvature
+     * vanishes and the correct walk keeps the angle at a right angle the whole
+     * way. Integrating it like any other only approximates that: the direction
+     * is set from a one-sided tangent at a point where the surface is flat, and
+     * geodesics amplify whatever error that leaves. It drifted from 90.00 to
+     * 83.39 degrees, which put the divider 76 mm off the centreline -- and the
+     * port side being its mirror, the centre post opened from 70 mm at the top
+     * to 223 at the bottom.
+     *
+     * Nothing is approximated here, so nothing drifts.
+     */
+    if (Math.abs(th - Math.PI / 2) < 1e-6) {
+      const crown = [];
+      const dz = 0.008;
+      for (let zz = z; zz < 0; zz += dz) {
+        if (fu.surfaceAt(zz, Math.PI / 2).y <= yLo) { crown.push({ z: zz, th: Math.PI / 2 }); break; }
+        crown.push({ z: zz, th: Math.PI / 2 });
+      }
+      return crown;
+    }
     // Set off perpendicular to the upper edge: normal cross tangent lies in the
     // tangent plane and square to the curve, by construction.
     const eps = 1e-4;
