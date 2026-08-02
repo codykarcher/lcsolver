@@ -159,94 +159,109 @@ export function underMountPylon(engine, opts = {}) {
 }
 
 /**
- * Over-mount pylon: the engine sits above the wing and the strut hangs down.
+ * Over-mount pylon: the engine sits above the wing and the pylon hangs down.
  *
- * Geometrically the under-mount inverted, with two differences that are not
- * cosmetic.
+ * Not the under-mount mirrored, because both of its edges are defined by the
+ * nacelle rather than by the strut:
  *
- * The forward fairing runs all the way to the NACELLE'S LEADING EDGE, along
- * the outside of the cowl. On an over-wing installation that fairing is what
- * you see; it is the reason the pylon reads as part of the nacelle rather than
- * as a post under it.
+ *   LEADING EDGE runs from the wing up to the NACELLE'S LEADING EDGE, with no
+ *   gap between them. An over-wing pylon sits in front of the engine and the
+ *   two fair into one another; a strut that stopped short of the nose would
+ *   leave a slot for the flow to find.
  *
- * And nothing may cut the fan or the stator row. The strut therefore keeps its
- * root aft of the fan case, exactly as the under-mount does, and the forward
- * reach to the nacelle nose is carried by a fin that sits ON the cowl instead
- * of by the strut passing through it. Extending the strut itself forward would
- * take it straight through the fan.
+ *   TRAILING EDGE runs from the wing up to the NACELLE'S TRAILING EDGE, and
+ *   from there aft to the trailing edge of the CORE CASE. So the aft edge
+ *   steps inboard where the cowl ends, following the engine rather than
+ *   cutting across it.
+ *
+ * Nothing may touch the fan or the stator row, and the shape is what keeps it
+ * clear: the body is bounded above by the cowl's own lower surface, so at the
+ * fan station it only exists outboard of the nacelle -- well outside the duct.
+ * The structural root inside stays aft of the fan case, as on the under-mount.
  */
 export function overMountPylon(engine, opts = {}) {
   const u = engine.userData;
   const R = u.rFan ?? (u.rMax ? u.rMax / 1.037 : 1);
   const g = new THREE.Group();
 
-  // The strut is the under-mount, mirrored. Building it that way rather than
-  // writing a second loft keeps the two in step: a change to the section or
-  // the kink shows up in both.
-  const under = underMountPylon(engine, opts);
-  const strut = under.getObjectByName('pylonStrut');
-  under.remove(strut);
-  strut.scale.y = -1;
-  strut.name = 'pylonStrut';
-  g.add(strut);
+  const engineZ = opts.engineZ ?? 0;
+  const attachY = (opts.attachY ?? P.attachY) * R;
+  const topZ0 = (opts.topZ0 ?? P.topZ0) * R;
+  const topZ1 = (opts.topZ1 ?? P.topZ1) * R;
 
-  const plate = under.getObjectByName('pylonPlate');
-  under.remove(plate);
-  plate.position.y = -plate.position.y;
+  const w = u.coreWall;
+  const rootZ0 = (u.caseAft ?? P.rootZ0 * R) + engineZ;
+  const rootZ1 = (w ? w[w.length - 1][0] : P.rootZ1 * R) + engineZ;
+
+  const cowl = u.cowlOuter ?? [[0.78 * R, 0.96 * R], [-2.35 * R, 1.03 * R]];
+  const zNoseC = cowl[0][0] + engineZ, rNose = cowl[0][1];
+  const zTailC = cowl[cowl.length - 1][0] + engineZ;
+  const rTail = cowl[cowl.length - 1][1];
+  const cowlR = (z) => {
+    for (let k = 0; k < cowl.length - 1; k++) {
+      const a0 = cowl[k][0] + engineZ, b0 = cowl[k + 1][0] + engineZ;
+      if (z <= a0 && z >= b0) {
+        return cowl[k][1] + (cowl[k + 1][1] - cowl[k][1])
+          * ((a0 - z) / ((a0 - b0) || 1));
+      }
+    }
+    return z > zNoseC ? rNose : rTail;
+  };
+
+  // ---- forward body: wing up to the nacelle nose --------------------------
+  // Swept in z, each station spanning from the wing (or the leading edge line
+  // where that has lifted off it) up to the cowl's lower surface.
+  const leSlope = (-attachY + rNose) / (topZ0 - zNoseC);
+  const pos = [], idx = [], ring = [];
+  const N = 30;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const z = zNoseC + (rootZ1 - zNoseC) * t;
+    const yTop = -cowlR(z) * 0.99;
+    // Above the nacelle's tail the body follows the core in, not the cowl.
+    const yTopUse = z < zTailC
+      ? -Math.max(0, rTail * (1 - (zTailC - z) / ((zTailC - rootZ1) || 1)))
+      : yTop;
+    const yBot = z >= topZ0
+      ? -rNose + (z - zNoseC) * leSlope       // the leading-edge line
+      : -attachY;
+    const th = P.rootT * R * Math.pow(Math.min(1, t * 3), 0.7);
+    ring.push(pos.length / 3);
+    pos.push(th, Math.min(yBot, yTopUse), z,  th, yTopUse, z,
+             -th, yTopUse, z, -th, Math.min(yBot, yTopUse), z);
+  }
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < 4; j++) {
+      const a = ring[i] + j, b = ring[i] + ((j + 1) % 4);
+      const a2 = ring[i + 1] + j, b2 = ring[i + 1] + ((j + 1) % 4);
+      idx.push(a, b, a2, b, b2, a2);
+    }
+  }
+  idx.push(ring[0], ring[0] + 2, ring[0] + 1, ring[0], ring[0] + 3, ring[0] + 2);
+  const e = ring[N];
+  idx.push(e, e + 1, e + 2, e, e + 2, e + 3);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const body = new THREE.Mesh(geo, M.structure);
+  body.name = 'pylonStrut';
+  g.add(body);
+
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(P.plateX * 2 * R, P.plateT * R, topZ0 - topZ1),
+    M.structure);
+  plate.position.set(0, -attachY - P.plateT * R * 0.5, (topZ0 + topZ1) / 2);
+  plate.name = 'pylonPlate';
   g.add(plate);
 
-  // ---- forward fairing on the cowl ---------------------------------------
-  const cowl = u.cowlOuter;
-  const engineZ = opts.engineZ ?? 0;
-  const rootZ0 = under.userData.rootZ[0];
-  const yKink = under.userData.kinkY;
-
-  if (cowl) {
-    const zNose = cowl[0][0] + engineZ;
-    const finT = P.rootT * R * 0.55;
-    const pos = [], idx = [], ring = [];
-    const N = 22;
-
-    for (let i = 0; i <= N; i++) {
-      const t = i / N;
-      const z = zNose + (rootZ0 - zNose) * t;
-      // Nacelle skin at this station, from the engine's own cowl line.
-      let rN = cowl[0][1];
-      for (let k = 0; k < cowl.length - 1; k++) {
-        const [z0, r0] = cowl[k], [z1, r1] = cowl[k + 1];
-        const a = z0 + engineZ, b = z1 + engineZ;
-        if (z <= a && z >= b) { rN = r0 + (r1 - r0) * ((a - z) / ((a - b) || 1)); break; }
-      }
-      const yIn = -rN * 0.985;                       // just inside the skin
-      const yOut = -(rN + (yKink - rN) * t * t);     // sweeping down to the kink
-      const th = finT * Math.pow(t, 0.6);            // grows from a point
-      ring.push(pos.length / 3);
-      pos.push(th, yIn, z,  th, yOut, z,  -th, yOut, z,  -th, yIn, z);
-    }
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < 4; j++) {
-        const a = ring[i] + j, b = ring[i] + ((j + 1) % 4);
-        const a2 = ring[i + 1] + j, b2 = ring[i + 1] + ((j + 1) % 4);
-        idx.push(a, b, a2, b, b2, a2);
-      }
-    }
-    idx.push(ring[0], ring[0] + 2, ring[0] + 1, ring[0], ring[0] + 3, ring[0] + 2);
-    const e = ring[N];
-    idx.push(e, e + 1, e + 2, e, e + 2, e + 3);
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    const fin = new THREE.Mesh(geo, M.structure);
-    fin.name = 'pylonFairing';
-    g.add(fin);
-  }
-
-  g.userData.attachY = -under.userData.attachY;
-  g.userData.attachZ = under.userData.attachZ;
-  g.userData.rootZ = under.userData.rootZ;
-  g.userData.kinkY = -yKink;
+  g.userData.attachY = -attachY - P.plateT * R;
+  g.userData.attachZ = [topZ0, topZ1];
+  g.userData.rootZ = [rootZ0, rootZ1];
+  g.userData.kinkY = -rNose;
+  g.userData.noseJoin = [zNoseC, -rNose];
+  g.userData.tailJoin = [zTailC, -rTail];
   g.name = 'overMountPylon';
   return g;
 }
