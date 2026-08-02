@@ -24,14 +24,41 @@ So this deck is checked two ways instead:
 1. **Feasibility.** Every constraint satisfied, the mission closed, nothing
    resting on the 1e-30/1e30 box. That is a real check -- it is precisely what
    the diverging gpkit run fails.
-2. **TASOPT.** ``percent_diff.py`` carries the TASOPT 737-800 weights and
-   areas that SPaircraft itself compares ``optimal737`` against, and
-   :data:`TASOPT` reproduces them. This is a comparison against a *different
-   tool*, not a reproduction of a recorded answer: agreement of a few percent
-   is the most it can show, and a disagreement could be either model's.
+2. **TASOPT, as a sanity check and not a target.** ``percent_diff.py`` carries
+   TASOPT 737-800 weights and areas, and :data:`TASOPT` reproduces them. Read
+   that column carefully: **it is a different aeroplane.** This deck is an
+   *optimized* conventional aircraft carrying a D8.2-class engine, because
+   ``geometryFlags.py`` gives ``optimal737`` ``eng = 3`` -- the same core as
+   the D8, so that a D8-versus-conventional comparison isolates the airframe
+   instead of confounding it with engine technology. TASOPT's 737-800 is the
+   delivered aeroplane with its own engine. Expect this deck to come out
+   *lighter and thirstier-per-mile than nothing*: it should beat TASOPT, and
+   by a lot.
 
-Do not read a number out of this file as validated the way ``model.py``'s D8
-is. It is a faithful transcription of a configuration whose reference
+   It does, by 35% on fuel. That decomposes roughly as:
+
+   * **~14% engine.** Cruise TSFC here is 0.552-0.558 against ~0.645 for the
+     engine in TASOPT's 737-800 run.
+   * **~13.6% empennage.** Forcing ``V_ht >= 1.45``, TASOPT's value, costs
+     29070 -> 33014 lbf and lands ``S_ht`` at 319 ft2 against TASOPT's 314.
+   * **the rest, wing.** Span sits on the 117.5 ft gate limit at AR 11.0,
+     where TASOPT's is 113.6 ft at AR 10.1.
+
+   The open question is the second one. TASOPT sized its tail physically too
+   -- ``percent_diff.py`` says "sizing w/out specifying tail volume" -- and
+   got twice the tail volume this model does. A ``V_ht`` of 0.725 is low for a
+   transport. Whether that is the SP stability constraint being too permissive
+   or TASOPT being conservative is not settled here, and it is worth 13.6% of
+   the fuel burn either way.
+
+Cross-check that does hold: against ``model.py`` on the same solver, the D8.2
+burns 26.1% less fuel than this aircraft (21483 vs 29070 lbf) on an identical
+mission with an identical engine core. That is the comparison the source is
+built to make, and the magnitude the D8 programme claims.
+
+Still, do not read a number out of this file as validated the way
+``model.py``'s D8 is. It is a faithful transcription -- every constant is
+audited against ``subs/optimal737.py`` -- of a configuration whose reference
 implementation does not converge.
 
 Configuration
@@ -235,9 +262,11 @@ def verify(max_iter=MAX_ITER, **kw):
 
 if __name__ == "__main__":
     rows, (nv, worst, where) = verify()
-    print("\nSPaircraft optimal737 (TASOPT 737-800)")
-    print("no gpkit reference exists for this configuration -- see the module "
-          "docstring")
+    print("\nSPaircraft optimal737")
+    print("no gpkit reference exists for this configuration.")
+    print("TASOPT below is a DIFFERENT aeroplane -- the delivered 737-800 with")
+    print("its own engine, where this is an optimized airframe on the D8.2")
+    print("core. This deck should beat it. See the module docstring.")
     print(f"\n{'quantity':18} {'rebuilt':>12} {'TASOPT':>12} {'rel':>9}")
     for key, got, tas, rel in rows:
         print(f"{key:18} {got:12.6g} {tas:12.6g} {rel:9.2e}")
