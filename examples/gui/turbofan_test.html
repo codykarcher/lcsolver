@@ -40,7 +40,7 @@
 
 <div id="panel">
   <h1>Turbofan</h1>
-  <p class="sub">core only &mdash; no nacelle, no bypass duct</p>
+  <p class="sub">podded &mdash; nacelle over the bare engine</p>
 
   <div class="row"><label for="rFan">fan radius</label><output id="oR"></output></div>
   <input type="range" id="rFan" min="0.20" max="2.00" step="0.01" value="0.90">
@@ -50,6 +50,7 @@
 
 
   <h2>view</h2>
+  <div class="check"><input type="checkbox" id="nacelle" checked><label for="nacelle">nacelle</label></div>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
@@ -72,7 +73,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { turbofan } from './components/engines.js';
+import { turbofan, bareTurbofan } from './components/engines.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -132,7 +133,8 @@ function build() {
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
   const rFan = num('rFan');
-  engine = turbofan({
+  const build = el('nacelle').checked ? turbofan : bareTurbofan;
+  engine = build({
     rFan,
     bypassRatio: num('bpr'),
   });
@@ -155,7 +157,7 @@ function build() {
     `<br>` +
     `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
     `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
-    `duct-face r <span>${engine.userData.rCore.toFixed(3)}</span>` +
+    `duct-face r <span>${(engine.userData.rCore ?? engine.userData.bare.rCore).toFixed(3)}</span>` +
     (Math.abs(engine.userData.bypassRatioEffective - num('bpr')) > 1e-6
       ? ` <span>(capped, BPR ${engine.userData.bypassRatioEffective.toFixed(2)})</span>`
       : '') + `<br>` +
@@ -186,7 +188,7 @@ function lookAtOrigin() {
 }
 
 for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
-for (const id of ['axes', 'grid', 'wire']) el(id).addEventListener('change', build);
+for (const id of ['axes', 'grid', 'wire', 'nacelle']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
 

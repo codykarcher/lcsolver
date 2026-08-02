@@ -39,7 +39,7 @@ export function rod(a, b, radius, material, segments = 16) {
  * here, by signed volume -- see the comment in the body for why that and not
  * something simpler.
  */
-function orientOutward(geo) {
+export function orientOutward(geo) {
   const idx = geo.getIndex();
   const pos = geo.getAttribute('position');
   if (!idx || !pos) return geo;
@@ -86,6 +86,20 @@ function orientOutward(geo) {
     geo.computeVertexNormals();
   }
   return geo;
+}
+
+/**
+ * Build a closed solid from raw vertices and triangles, with the winding
+ * fixed for you. Same signed-volume test the lathes use, so a hand-built part
+ * cannot end up inside out.
+ */
+export function solid(positions, indices, material) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  orientOutward(geo);
+  return new THREE.Mesh(geo, material);
 }
 
 /**
