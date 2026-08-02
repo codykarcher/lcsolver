@@ -53,17 +53,22 @@ const R_OUTLET = 0.78;
 const EXHAUST_GAP = 0.24;
 
 /**
- * Exhaust plug, as fractions of core length: where its base sits aft of the
- * core, and how far it runs from there.
+ * Exhaust plug, as fractions of core length: how far the tip runs aft of the
+ * core's exit plane, and how far the base is buried forward of it.
+ *
+ * The plug is defined by its TIP, not its base, for two reasons. The tip sets
+ * overall length, and the base wants to sit inside the core: given a base
+ * aft of the exit plane the cone simply hangs there, and widening the exhaust
+ * annulus put daylight in the gap and detached it.
  *
  * Shortening the plug does NOT shorten the engine -- overall length is held to
- * LENGTH_OVER_DIAMETER -- it lengthens the core to compensate, which in turn
- * scales the plug. So a plug 70% of its drawn length is not 70% of the
- * fraction. Solving f/(1 + PLUG_BASE + f) for the ratio, 0.385 -> 0.242, and
- * because the size cancels that holds at every fan radius and bypass ratio.
+ * LENGTH_OVER_DIAMETER -- it lengthens the core to compensate, which scales
+ * the plug back up. So a spike 70% of its drawn length is not 70% of the
+ * fraction: solving f/(1 + f) for the ratio gives 0.40 -> 0.25, and since the
+ * size term cancels that holds at any fan radius and bypass ratio.
  */
-const PLUG_BASE = 0.015;
-const PLUG_LEN = 0.242;
+const PLUG_TIP = 0.25;
+const PLUG_EMBED = 0.05;
 
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
@@ -244,7 +249,7 @@ export function turbofan({
   const zNose = 0.02 * R + lSpin;         // spinner tip, ahead of the origin
   const z0 = -0.30 * R;                   // core front, just behind the fan
   const NOSE = -z0;                       // aft extent = NOSE + TAIL * Lc
-  const TAIL = 1 + PLUG_BASE + PLUG_LEN;  // core, then the plug beyond it
+  const TAIL = 1 + PLUG_TIP;              // core, then the spike beyond it
   const L = length ?? LENGTH_OVER_DIAMETER * 2 * R;
   // A core shorter than about a diameter stops looking like a core, so a very
   // short request is clamped and the reported lengths then describe what was
@@ -320,26 +325,30 @@ export function turbofan({
   g.add(latheZ([[z0, 0], ...spline.map((p) => [p.x, p.y]), [zAft, 0]],
                coreMaterial(), SEG));
 
-  // The exhaust annulus: outlet wall to plug. Written as a gap rather than as
-  // two independent radii, so widening it cannot silently leave the dark
+  // The exhaust annulus: outlet wall to plug, measured IN THE EXIT PLANE,
+  // which is the only place the gap is visible. Written as a gap rather than
+  // as two independent radii, so widening it cannot silently leave the dark
   // mouth showing a rim of plug or a rim of wall.
   const rOutlet = R_OUTLET * rCore;
-  const rPlug = rOutlet - EXHAUST_GAP * rCore;
+  const rPlugExit = rOutlet - EXHAUST_GAP * rCore;
+  // Continuing the same taper forward to the buried base.
+  const rPlugBase = rPlugExit * (1 + PLUG_EMBED / PLUG_TIP);
 
   // Looking up the exhaust should be looking into a hole. Without this the
   // core's own aft cap is the first thing you meet, lit and metallic. Run a
   // little past the annulus at both edges so it is hidden behind wall and
   // plug rather than ending flush with either.
   const mouth = new THREE.Mesh(
-    new THREE.RingGeometry(rPlug * 0.94, rOutlet * 1.02, SEG), M.cavity);
+    new THREE.RingGeometry(rPlugExit * 0.93, rOutlet * 1.02, SEG), M.cavity);
   mouth.rotation.y = Math.PI;                  // face aft
   mouth.position.z = zAft - 0.004 * Lc;
   g.add(mouth);
 
-  // Exhaust plug.
+  // Exhaust plug: base buried inside the core, tip out beyond the exit, so it
+  // emerges from the body rather than hanging behind it.
   g.add(latheZ([
-    [zAft - PLUG_BASE * Lc, 0], [zAft - PLUG_BASE * Lc, rPlug],
-    [zAft - (PLUG_BASE + PLUG_LEN) * Lc, 0],
+    [zAft + PLUG_EMBED * Lc, 0], [zAft + PLUG_EMBED * Lc, rPlugBase],
+    [zAft - PLUG_TIP * Lc, 0],
   ], M.hot, SEG));
 
   g.userData.rCore = rCore;
