@@ -30,8 +30,11 @@ warnings.filterwarnings("ignore")
 # "b737 mission, conventional 165,495 / 46,170 bit-identical"); the D8 gate
 # is this runner's own post-descent solve at the same commit, bit-stable
 # across repeated runs.
+# 737 gate updated again at 86a22af (underwing engine station at the wing
+# LE): its message documents "MTOW 165,346 (-0.1%), fuel 46,385 (+0.47%)",
+# bit-identical to this runner's solve at that commit.
 GATES = {
-    "b737/conventional_M": {"W_total": 165494.9, "W_f_total": 46170.0},
+    "b737/conventional_M": {"W_total": 165346.5, "W_f_total": 46384.9},
     # Free-Mach d8: the double-bubble build pins cruise near M 0.72 itself;
     # d8_M would wrongly lock it to the 737 class's 0.785.
     "b737/d8": {"W_total": 136540.2, "W_f_total": 26337.4},

@@ -1,68 +1,75 @@
-"""SP-native on-design turbofan cycle: pycycle physics as signomial rows.
+"""SP-native turbofan cycle: pycycle physics as signomial rows.
 
-This is milestone 2 of HANDOFF_ENGINE.md: the two-spool separate-flow
-turbofan of ``truth/hbtf.py`` -- pycycle's validated HBTF -- rewritten as
-signomial-program rows. It is a NEW module; nothing in ``model.py`` is
-touched, and the aircraft does not import it yet. Its stations are validated
-one by one against ``truth/data/*.json`` by ``truth/validate_sp.py``.
+Milestones 2-3 of HANDOFF_ENGINE.md: the two-spool separate-flow turbofan of
+``truth/hbtf.py`` -- pycycle's validated HBTF -- rewritten as
+signomial-program rows. A NEW module; nothing in ``model.py`` is touched.
+Stations are validated against ``truth/data/*.json`` by
+``truth/validate_sp.py`` (design) and ``truth/validate_sp_od.py``
+(off-design).
 
-Fidelity ingredients (all constants from ``sp_thermo.py``, generated from
-the same janaf tables pycycle reads):
+Fidelity ingredients (constants from ``sp_thermo.py`` / ``sp_maps.py``,
+both generated from the same sources pycycle reads):
 
-* Variable-cp enthalpies: h(T) cubics, signomial equalities.
-* Isentropes as monomials: along a frozen-composition isentrope,
-  P2/P1 == psi(T2)/psi(T1) with psi the fitted entropy exponential, so
-  every pressure-temperature coupling is one monomial row.
-* The burner is a mass-action equilibrium block: 11 species, 6 reaction
-  rows (monomial equalities against fitted Kp), 5 element balances, a mole
-  sum, and an absolute-enthalpy conservation row with the fuel stream at
-  exactly zero enthalpy on the CEA scale (pycycle's convention, measured in
-  the truth data). Dissociation at takeoff T4 is therefore in the model,
-  not a calibration factor.
-* Bleed and turbine-cooling bookkeeping copied line for line from
-  pycycle's elements (arithmetic frac_P pressure interpolation, frac_work
-  enthalpy, mass-weighted turbine remix, per-stream ideal expansions).
+* Variable-cp enthalpies: cp-first cubic/quartic fits, signomial equalities.
+* Isentropes as monomials: P2/P1 == psi(T2)/psi(T1) with psi the fitted
+  entropy exponential; the vitiated psi carries the FULL equilibrium entropy
+  (mixing term included) so turbine expansion tracks pycycle's shifting
+  equilibrium, worth 0.5% of HPT work even at cruise T4.
+* The burner is a mass-action equilibrium block: 11 species, 6 monomial
+  reaction rows against fitted 1/Kp posynomials, 5 element balances, mole
+  sum, and absolute-enthalpy conservation with the fuel stream at CEA-zero
+  (pycycle's convention, measured in the truth data).
+* Off-design: the NPSS-heritage maps as signomial surfaces (sp_maps.py) with
+  pycycle's exact scalar structure (s_PR on PR-1, others direct ratios), and
+  the OD closure pycycle uses -- W balances the core nozzle throat area, BPR
+  the bypass nozzle area, spool speeds the two shaft power balances, FAR the
+  T4 rating (or a thrust fraction of a named full-power point).
+* Bleed and turbine-cooling bookkeeping copied line for line from pycycle's
+  elements (arithmetic frac_P interpolation; cooling enters the turbine at
+  the TURBINE's frac_P pressure; mass-weighted remix; per-stream ideal
+  expansions).
 
 Conventions
 -----------
-Everything is dimensionless with SI magnitudes (K, Pa, J/kg, kg/s, N, W);
-descriptions state the unit. Enthalpies are CEA-absolute SHIFTED by
-``H_SHIFT`` so cold-side stations (negative on the CEA scale) stay
-GP-positive: rows that conserve mass cancel the shift, and the two rows
-where mass changes (burner fuel addition) carry the explicit ``far*H_SHIFT``
-term. Nozzle choking is a per-build BRANCH (``choked_core`` /
-``choked_byp``), fixed a priori exactly the way TASOPT's ichoke5/7 does it.
-
-The cycle is written on a PER-POINT basis: ``add_cycle_point`` builds one
-thermodynamic operating point (the design point here; off-design points
-reuse the same rows with map-fit rows added in milestone 3).
+Dimensionless variables with SI magnitudes (K, Pa, J/kg, kg/s, N, W).
+Enthalpies are CEA-absolute SHIFTED by ``H_SHIFT`` so cold-side stations
+stay GP-positive; mass-conserving rows cancel the shift and the burner's
+fuel-addition row carries the explicit ``far*H_SHIFT`` term. Species mole
+numbers are scaled by ``N_SCALE`` (trace radicals sit below the solver's
+positivity floor unscaled); the scale cancels in the mass-action rows
+provided the pressure factor uses the SCALED mole sum. Nozzle choking is a
+per-point branch fixed a priori (TASOPT ichoke5/7 style). Off-design point
+variables are prefixed ``<tag>_``; design variables are unprefixed.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from edi import Formulation
 
 from . import sp_thermo as TH
+from . import sp_maps as MAPS
 
 R_UNIV = TH.R_UNIV            # J/(mol K)
 H_SHIFT = 1.5e6               # J/kg; see module docstring
 N_SCALE = 1.0e6               # species mole-number scaling; see burner block
 P_REF_PA = TH.P_REF_BAR * 1e5
+T_STD = 288.15                # map corrected-flow reference, K (518.67 R)
+P_STD = 101325.0              # and Pa (14.696 psi)
+LB2KG = 0.45359237            # map Wc tables are lbm/s
 
-#: kmol/kg of air, and air's specific gas constant.
 _N_AIR = sum(TH.AIR_COMPOSITION_KMOL_KG.values())
 R_AIR = R_UNIV * 1000.0 * _N_AIR
-#: kmol of gas added per kg of fuel by complete combustion of C12H23
-#: (Delta n = y/4 per mole fuel).
 _FUEL = TH.FUEL
+#: kmol of gas added per kg of fuel by complete combustion of C12H23.
 _N_FUEL_ADD = (_FUEL['elements']['H'] / 4.0) / _FUEL['wt']
 
 
+# ---------------------------------------------------------------------------
+# fitted-property expressions (pyomo-compatible)
+# ---------------------------------------------------------------------------
+
 def h_air(T):
-    """CEA-absolute air enthalpy, J/kg, as a pyomo expression. Coefficients
-    are cp-first (cp fitted, integrated analytically), so dh/dT is accurate
-    to the cp residual everywhere in range."""
     c, Tr = TH.AIR_H['c'], TH.AIR_H['T_ref_K']
     return sum(ck * (T / Tr)**k for k, ck in enumerate(c))
 
@@ -79,18 +86,15 @@ def psi_air(T):
 
 
 def h_vit(T, far):
-    """CEA-absolute vitiated-gas enthalpy, J/kg. Multiply through by
-    (1+far) at the call site -- the closed form here is
-    (A + far B + far^2 C)/(1+far) and rows want the polynomial side."""
+    """(1+far) * h_abs of vitiated gas, J/kg."""
     t = T / TH.VIT_H['T_ref_K']
     A = sum(c * t**i for i, c in enumerate(TH.VIT_H['cA']))
     B = sum(c * t**i for i, c in enumerate(TH.VIT_H['cB']))
     C = sum(c * t**i for i, c in enumerate(TH.VIT_H['cC']))
-    return A + far * B + far**2 * C          # == h_abs * (1 + far)
+    return A + far * B + far**2 * C
 
 
 def cp_vit_times_1pf(T, far):
-    """d/dT of (1+far)*h_vit, J/(kg K)."""
     Tr = TH.VIT_H['T_ref_K']
     t = T / Tr
     dA = sum(i * c * t**(i - 1) for i, c in enumerate(TH.VIT_H['cA']) if i)
@@ -112,11 +116,18 @@ def h_molar(sp, T):
 
 
 def kp_inv(sp, T):
-    """1/Kp as a posynomial in T (all fits landed 'posy_inv')."""
     d = TH.KP[sp]
     assert d['kind'] == 'posy_inv', d['kind']
     return sum(ck * (T / d['T_ref_K'])**a for ck, a in d['terms'])
 
+
+def map2d(terms, x, y):
+    return sum(c * x**a * y**b for c, a, b in terms)
+
+
+# ---------------------------------------------------------------------------
+# pins
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Bleed:
@@ -127,8 +138,7 @@ class Bleed:
 
 @dataclass(frozen=True)
 class CyclePins:
-    """Design-point inputs, mirroring truth/engines.py EngineSpec + the
-    cycle parameters. All SI."""
+    """Design-point inputs. All SI."""
     name: str
     T0_K: float
     P0_Pa: float
@@ -144,6 +154,8 @@ class CyclePins:
     eff_hpc: float
     eff_hpt: float
     eff_lpt: float
+    LP_Nmech: float = 4666.1     # rpm; sets the map corrected-speed scalars
+    HP_Nmech: float = 14705.7
     ram_recovery: float = 0.9990
     dP_duct4: float = 0.0048
     dP_duct6: float = 0.0101
@@ -169,6 +181,23 @@ class CyclePins:
     V0_m_s: float | None = None
 
 
+@dataclass(frozen=True)
+class ODPins:
+    """One off-design operating point."""
+    name: str
+    T0_K: float
+    P0_Pa: float
+    MN: float
+    V0_m_s: float
+    #: 'T4' throttles to T4_K; 'PC' to PC * (net thrust of point pc_of).
+    mode: str
+    T4_K: float | None = None
+    PC: float | None = None
+    pc_of: str | None = None
+    choked_core: bool = False
+    choked_byp: bool = True
+
+
 SPECIES = list(TH.SPECIES_H)
 _ELEM_ORDER = ['C', 'H', 'N', 'O', 'Ar']
 
@@ -178,10 +207,9 @@ def _complete_combustion(far):
     block (house rule 7: guesses within a decade)."""
     air = TH.AIR_COMPOSITION_KMOL_KG
     w_air, w_fuel = 1.0 / (1 + far), far / (1 + far)
-    bC = w_air * 2 * 0.0 + w_air * air['CO2'] + w_fuel * _FUEL['elements']['C'] / _FUEL['wt']
+    bC = w_air * air['CO2'] + w_fuel * _FUEL['elements']['C'] / _FUEL['wt']
     bH = w_fuel * _FUEL['elements']['H'] / _FUEL['wt']
-    nCO2 = bC
-    nH2O = bH / 2.0
+    nCO2, nH2O = bC, bH / 2.0
     nO2 = w_air * air['O2'] - (nCO2 - w_air * air['CO2']) - nH2O / 2.0
     return {'N2': w_air * air['N2'], 'O2': max(nO2, 1e-6),
             'Ar': w_air * air['Ar'], 'CO2': nCO2, 'H2O': nH2O,
@@ -189,94 +217,200 @@ def _complete_combustion(far):
             'O': 3e-8, 'H': 1e-9}
 
 
-def build(pins: CyclePins) -> Formulation:
-    """The standalone on-design cycle, everything pinned, TSFC objective."""
-    f = Formulation()
-    g = f.group("cyc", prefix="")
-    V = lambda n, gs, d: g.Variable(n, gs, "-", d)
-
-    cons = []
-
-    # ---- freestream -------------------------------------------------------
-    T0, P0, MN = pins.T0_K, pins.P0_Pa, pins.MN
-    # Static-point properties of the pinned freestream are plain numbers.
-    h0s = float(h_air(T0))
+def _u0_from(T0, MN):
     cp0 = float(cp_air(T0))
     gam0 = cp0 / (cp0 - R_AIR)
-    u0 = (pins.V0_m_s if pins.V0_m_s is not None
-          else MN * (gam0 * R_AIR * T0) ** 0.5)
-    psi0s = float(psi_air(T0))
+    return MN * (gam0 * R_AIR * T0) ** 0.5
 
-    Tt0 = V("Tt0", T0 * (1 + 0.2 * MN**2), "freestream total temperature, K")
-    ht0 = V("ht0", h0s + u0**2 / 2 + H_SHIFT, "shifted total enthalpy, J/kg")
-    psi0 = V("psi0", psi0s * (1 + 0.2 * MN**2)**3.5, "entropy exponential at Tt0")
-    Pt0 = V("Pt0", P0 * (1 + 0.2 * MN**2)**3.5, "freestream total pressure, Pa")
+
+# ---------------------------------------------------------------------------
+# one operating point
+# ---------------------------------------------------------------------------
+
+def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
+    """Add one operating point's rows. ``tag`` prefixes variable names ("",
+    "TO_", ...). ``shared`` is None for the design point (PRs/effs/BPR come
+    from ``pins`` and this point DEFINES the shared map scalars and nozzle
+    areas); off-design points receive the design's shared dict. ``warm``
+    maps full variable names to initial guesses that override the builder's
+    defaults -- the phase-1 machinery chokes when a cold multipoint start
+    is far from feasible, and the validation warm-starts from truth the
+    same way the aircraft integration will warm-start from mission
+    continuity."""
+    design = shared is None
+    P = lambda n: f"{tag}{n}"
+    if warm:
+        V_raw = V
+        V = lambda n, gs, d, bounds=None: V_raw(n, warm.get(n, gs), d,
+                                                bounds=bounds)
+
+    T0, P0, MN, u0 = cond['T0'], cond['P0'], cond['MN'], cond['V0']
+    # guess scale: mass flows and powers track ambient pressure across
+    # operating points (house rule 7 -- an SLS point runs 3-4x the cruise
+    # flows, and a decade-off guess is what non-convergence looks like).
+    sc = P0 / pins.P0_Pa
+    h0s = float(h_air(T0))
+    psi0s = float(psi_air(T0))
+    ram = (1 + 0.2 * MN**2)
+
+    Tt0 = V(P("Tt0"), T0 * ram, "freestream total temperature, K")
+    ht0 = V(P("ht0"), h0s + u0**2 / 2 + H_SHIFT, "shifted total h, J/kg")
+    psi0 = V(P("psi0"), psi0s * ram**3.5, "psi at Tt0")
+    Pt0 = V(P("Pt0"), P0 * ram**3.5, "freestream total pressure, Pa")
     cons += [
         ht0 == H_SHIFT + h_air(Tt0),                       # [SP] SigEq
         ht0 == H_SHIFT + h0s + u0**2 / 2.0,                # [SP] SigEq
         psi0 == psi_air(Tt0),                              # [SP] SigEq
         Pt0 * psi0s == P0 * psi0,
     ]
-
-    # ---- inlet ------------------------------------------------------------
-    Pt2 = V("Pt2", P0 * 1.5, "station 2 total pressure, Pa")
+    Pt2 = V(P("Pt2"), P0 * ram**3.5, "station 2 total pressure, Pa")
     cons += [Pt2 == Pt0 * pins.ram_recovery]
-    # ht2 == ht0, Tt2 == Tt0, psi2 == psi0: reuse the same variables.
 
-    # ---- compressors ------------------------------------------------------
-    def compressor(tag, Tt_in, ht_in, psi_in, Pt_in, PR, eff, T_guess,
-                   Pt_guess):
-        """PR at given adiabatic eff. Returns (Tt_out, ht_out, psi_out,
-        Pt_out, dh). Guesses computed from T_guess through the fits --
-        house rule 7, a variable ten decades off its magnitude is what
-        non-convergence looks like, and psi spans 0.3..3e3 over the chain."""
+    # spool speeds: design pins them; off-design solves them from power.
+    if design:
+        LPN, HPN = pins.LP_Nmech, pins.HP_Nmech
+    else:
+        LPN = V(P("LP_N"), pins.LP_Nmech, "LP spool speed, rpm")
+        HPN = V(P("HP_N"), pins.HP_Nmech, "HP spool speed, rpm")
+
+    # ---- compressors -----------------------------------------------------
+    def compressor(key, Tt_in, ht_in, psi_in, Pt_in, Nmech, PR_pin,
+                   eff_pin, T_guess, Pt_guess):
+        """Thermodynamic rows now; the corrected-flow/map rows are added by
+        ``comp_maps`` once the mass flows exist."""
         psi_g = float(psi_air(T_guess))
         h_g = H_SHIFT + float(h_air(T_guess))
-        Tts = V(f"Tt{tag}s", T_guess * 0.97, f"{tag} ideal exit Tt, K")
-        Tt = V(f"Tt{tag}", T_guess, f"{tag} exit Tt, K")
-        psis = V(f"psi{tag}s", psi_g * 0.9, f"psi at Tt{tag}s")
-        psi = V(f"psi{tag}", psi_g, f"psi at Tt{tag}")
-        Pt = V(f"Pt{tag}", Pt_guess, f"{tag} exit Pt, Pa")
-        dhs = V(f"dh{tag}s", 3e4, f"{tag} ideal enthalpy rise, J/kg")
-        dh = V(f"dh{tag}", 3e4, f"{tag} enthalpy rise, J/kg")
-        ht = V(f"ht{tag}", h_g, f"{tag} exit shifted ht, J/kg")
+        n = lambda s: P(f"{key}_{s}")
+
+        if design:
+            PR, eff = PR_pin, eff_pin
+        else:
+            PR = V(n("PR"), PR_pin, f"{key} pressure ratio")
+            eff = V(n("eff"), eff_pin, f"{key} adiabatic efficiency")
+
+        Tts = V(n("Tts"), T_guess * 0.97, f"{key} ideal exit Tt, K")
+        Tt = V(n("Tt"), T_guess, f"{key} exit Tt, K")
+        psis = V(n("psis"), psi_g * 0.9, f"psi at {key} ideal exit")
+        psi = V(n("psi"), psi_g, f"psi at {key} exit")
+        Pt = V(n("Pt"), Pt_guess, f"{key} exit Pt, Pa")
+        dhs = V(n("dhs"), 3e4, f"{key} ideal enthalpy rise, J/kg")
+        dh = V(n("dh"), 3e4, f"{key} enthalpy rise, J/kg")
+        ht = V(n("ht"), h_g, f"{key} exit shifted ht, J/kg")
         cons.extend([
             Pt == Pt_in * PR,
             psis == psi_in * PR,          # isentrope: monomial, exact
             psis == psi_air(Tts),                          # [SP] SigEq
             H_SHIFT + h_air(Tts) == ht_in + dhs,           # [SP] SigEq
-            dh == dhs / eff,
+            dh * eff == dhs,
             ht == ht_in + dh,
             ht == H_SHIFT + h_air(Tt),                     # [SP] SigEq
             psi == psi_air(Tt),                            # [SP] SigEq
         ])
-        return Tt, ht, psi, Pt, dh
+        return dict(Tt=Tt, ht=ht, psi=psi, Pt=Pt, dh=dh, PR=PR, eff=eff,
+                    Tt_in=Tt_in, Pt_in=Pt_in, Nmech=Nmech,
+                    PR_pin=PR_pin, eff_pin=eff_pin, key=key)
 
-    Tt21, ht21, psi21, Pt21, dh_fan = compressor(
-        "21", Tt0, ht0, psi0, Pt2, pins.FPR, pins.eff_fan, 290.0,
-        pins.P0_Pa * 2.5)
+    def comp_maps(c, W_in, shared_out):
+        """Corrected-flow and map rows for compressor dict ``c``."""
+        key = c['key']
+        n = lambda s: P(f"{key}_{s}")
+        M = {'fan': MAPS.FAN, 'lpc': MAPS.LPC, 'hpc': MAPS.HPC}[key]
+        # Anchor the design scalars on the FIT evaluated at the map default
+        # coordinates, not the exact table read: the off-design rows read
+        # the fit, and anchoring on the table makes design and off-design
+        # mutually inconsistent by the fit residual -- a contradiction the
+        # solver cannot close below ~1e-4.
+        x0c, y0c = M['x0'], M['y0']
+        at = {k: float(map2d(M[f'terms_{k}'], M['NcMap_d'] / x0c,
+                             M['RlineMap_d'] / y0c))
+              for k in ('Wc', 'PR', 'eff')}
+        Wc = V(n("Wc"), 300.0, f"{key} corrected flow, kg/s")
+        Nc = V(n("Nc"), 4000.0, f"{key} corrected speed, rpm")
+        cons.extend([
+            Wc * c['Pt_in'] / P_STD == W_in * (c['Tt_in'] / T_STD)**0.5,
+            Nc * (c['Tt_in'] / T_STD)**0.5 == c['Nmech'],
+        ])
+        if design:
+            sWc = V(n("sWc"), 1.0, f"{key} flow map scalar")
+            sNc = V(n("sNc"), 4500.0, f"{key} speed map scalar")
+            cons.extend([sWc * (at['Wc'] * LB2KG) == Wc,
+                         sNc * M['NcMap_d'] == Nc])
+            del x0c, y0c
+            # PR and eff are pinned constants at design, so their scalars
+            # are plain numbers.
+            shared_out.update({
+                f"s_Wc_{key}": sWc, f"s_Nc_{key}": sNc,
+                f"s_PR_{key}": (c['PR_pin'] - 1.0) / (at['PR'] - 1.0),
+                f"s_eff_{key}": c['eff_pin'] / at['eff']})
+        else:
+            wNc, wR = M['window']['Nc'], M['window']['R']
+            NcM = V(n("NcMap"), M['NcMap_d'], f"{key} map corrected speed",
+                    bounds=tuple(wNc))
+            Rl = V(n("R"), M['RlineMap_d'], f"{key} map R-line",
+                   bounds=tuple(wR))
+            prm1 = V(n("prm1"), at['PR'] - 1.0, f"{key} map PR - 1")
+            cons.extend([
+                NcM * shared[f"s_Nc_{key}"] == Nc,
+                Wc == shared[f"s_Wc_{key}"] * LB2KG
+                      * map2d(M['terms_Wc'], NcM / x0c, Rl / y0c),  # [SP] SigEq
+                prm1 + 1.0 == map2d(M['terms_PR'], NcM / x0c,
+                                    Rl / y0c),             # [SP] SigEq
+                c['PR'] == 1.0 + shared[f"s_PR_{key}"] * prm1,  # SigEq (posy)
+                c['eff'] == shared[f"s_eff_{key}"]
+                            * map2d(M['terms_eff'], NcM / x0c,
+                                    Rl / y0c),             # [SP] SigEq
+            ])
 
-    # splitter: both legs carry the fan-exit state. duct4 core-side loss:
-    Pt_lpc_in = V("Pt_lpc_in", 1e5, "LPC face Pt, Pa")
-    cons += [Pt_lpc_in == Pt21 * (1.0 - pins.dP_duct4)]
+    fan = compressor('fan', Tt0, ht0, psi0, Pt2, LPN, pins.FPR,
+                     pins.eff_fan, 290.0, P0 * 2.5)
+    Pt_lpc_in = V(P("Pt_lpc_in"), P0 * 2.4, "LPC face Pt, Pa")
+    cons += [Pt_lpc_in == fan['Pt'] * (1.0 - pins.dP_duct4)]
+    lpc = compressor('lpc', fan['Tt'], fan['ht'], fan['psi'], Pt_lpc_in,
+                     LPN, pins.LPC_PR, pins.eff_lpc, 350.0,
+                     P0 * 2.5 * pins.LPC_PR)
+    Pt_hpc_in = V(P("Pt_hpc_in"), P0 * 2.4 * pins.LPC_PR, "HPC face Pt, Pa")
+    cons += [Pt_hpc_in == lpc['Pt'] * (1.0 - pins.dP_duct6)]
+    hpc = compressor('hpc', lpc['Tt'], lpc['ht'], lpc['psi'], Pt_hpc_in,
+                     HPN, pins.HPC_PR, pins.eff_hpc, 800.0,
+                     P0 * 2.5 * pins.LPC_PR * pins.HPC_PR)
+    Tt3, ht3, psi3, Pt3, dh_hpc = (hpc['Tt'], hpc['ht'], hpc['psi'],
+                                   hpc['Pt'], hpc['dh'])
+    ht25 = lpc['ht']
 
-    Tt25, ht25, psi25, Pt25, dh_lpc = compressor(
-        "25", Tt21, ht21, psi21, Pt_lpc_in, pins.LPC_PR, pins.eff_lpc, 350.0,
-        pins.P0_Pa * 2.5 * pins.LPC_PR)
+    # ---- flows -----------------------------------------------------------
+    W = V(P("W"), 150.0 * sc, "inlet total mass flow, kg/s")
+    Wcore = V(P("Wcore"), 25.0 * sc, "core mass flow, kg/s")
+    Wbyp = V(P("Wbyp"), 125.0 * sc, "bypass mass flow, kg/s")
+    if design:
+        BPR = pins.BPR
+    else:
+        BPR = V(P("BPR"), pins.BPR, "bypass ratio")
+    cons += [W == Wcore * (1.0 + BPR), Wbyp == Wcore * BPR]
+    fW_c1, fW_c2, fW_cust = (pins.cool1.frac_W, pins.cool2.frac_W,
+                             pins.cust.frac_W)
+    W3 = V(P("W3"), 20.0 * sc, "HPC exit flow, kg/s")
+    W31 = V(P("W31"), 17.0 * sc, "burner face flow, kg/s")
+    cons += [W3 == Wcore * (1.0 - fW_c1 - fW_c2 - fW_cust),
+             W31 == W3 * (1.0 - pins.frac_cool3 - pins.frac_cool4)]
+    Wc1, Wc2 = Wcore * fW_c1, Wcore * fW_c2
+    Wc3, Wc4 = W3 * pins.frac_cool3, W3 * pins.frac_cool4
 
-    Pt_hpc_in = V("Pt_hpc_in", 2e5, "HPC face Pt, Pa")
-    cons += [Pt_hpc_in == Pt25 * (1.0 - pins.dP_duct6)]
+    shared_out = {}
+    comp_maps(fan, W, shared_out)
+    comp_maps(lpc, Wcore, shared_out)
+    comp_maps(hpc, Wcore, shared_out)
 
-    Tt3, ht3, psi3, Pt3, dh_hpc = compressor(
-        "3", Tt25, ht25, psi25, Pt_hpc_in, pins.HPC_PR, pins.eff_hpc, 800.0,
-        pins.P0_Pa * 2.5 * pins.LPC_PR * pins.HPC_PR)
+    far = V(P("far"), 0.025, "burner fuel-air ratio")
+    Wf = V(P("Wf"), 0.5 * sc, "fuel flow, kg/s")
+    W4 = V(P("W4"), 18.0 * sc, "burner exit flow, kg/s")
+    cons += [Wf == far * W31, W4 == W31 + Wf]
 
     # HPC bleed states (pycycle BleedsAndPower: arithmetic interpolation).
-    def hpc_bleed(tag, b: Bleed):
-        htb = V(f"ht_{tag}", H_SHIFT, f"{tag} bleed shifted ht, J/kg")
-        Ptb = V(f"Pt_{tag}", 5e5, f"{tag} bleed Pt, Pa")
-        Ttb = V(f"Tt_{tag}", 600.0, f"{tag} bleed Tt, K")
-        psib = V(f"psi_{tag}", 30.0, f"psi at {tag} bleed Tt")
+    def hpc_bleed(key, b: Bleed):
+        htb = V(P(f"ht_{key}"), H_SHIFT + 3e5, f"{key} bleed shifted ht")
+        Ptb = V(P(f"Pt_{key}"), 5e5, f"{key} bleed Pt, Pa")
+        Ttb = V(P(f"Tt_{key}"), 600.0, f"{key} bleed Tt, K")
+        psib = V(P(f"psi_{key}"), float(psi_air(600.0)), f"psi {key} bleed")
         cons.extend([
             htb == ht25 + b.frac_work * dh_hpc,
             # Pt interpolation is ARITHMETIC in pycycle; mirrored exactly.
@@ -288,50 +422,28 @@ def build(pins: CyclePins) -> Formulation:
 
     ht_c1, Pt_c1, Tt_c1, psi_c1 = hpc_bleed("cool1", pins.cool1)
     ht_c2, Pt_c2, Tt_c2, psi_c2 = hpc_bleed("cool2", pins.cool2)
-    # cust bleed leaves the engine; only its work matters (in power row).
-
-    # ---- flows ------------------------------------------------------------
-    W = V("W", 150.0, "inlet total mass flow, kg/s")
-    Wcore = V("Wcore", 25.0, "core (splitter O1) mass flow, kg/s")
-    Wbyp = V("Wbyp", 125.0, "bypass mass flow, kg/s")
-    cons += [W == Wcore * (1.0 + pins.BPR),
-             Wbyp == Wcore * pins.BPR]
-    fW_c1, fW_c2, fW_cust = (pins.cool1.frac_W, pins.cool2.frac_W,
-                             pins.cust.frac_W)
-    W3 = V("W3", 20.0, "HPC exit flow, kg/s")
-    W31 = V("W31", 17.0, "burner face flow (after bld3), kg/s")
-    cons += [W3 == Wcore * (1.0 - fW_c1 - fW_c2 - fW_cust),
-             W31 == W3 * (1.0 - pins.frac_cool3 - pins.frac_cool4)]
-    Wc1 = Wcore * fW_c1
-    Wc2 = Wcore * fW_c2
-    Wc3 = W3 * pins.frac_cool3
-    Wc4 = W3 * pins.frac_cool4
-
-    far = V("far", 0.025, "burner fuel-air ratio")
-    Wf = V("Wf", 0.5, "fuel flow, kg/s")
-    W4 = V("W4", 18.0, "burner exit flow, kg/s")
-    cons += [Wf == far * W31, W4 == W31 + Wf]
 
     # ---- burner: mass-action equilibrium block ---------------------------
-    P4 = V("Pt4", 2e6, "burner exit Pt, Pa")
+    P4 = V(P("Pt4"), 2e6, "burner exit Pt, Pa")
     cons += [P4 == Pt3 * (1.0 - pins.dP_burner)]
-    T4 = V("Tt4", pins.T4_K, "burner exit Tt, K")
-    cons += [T4 == pins.T4_K]
+    if cond['mode'] == 'T4':
+        T4 = V(P("Tt4"), cond['T4'], "burner exit Tt, K")
+        cons += [T4 == cond['T4']]
+    else:
+        T4 = V(P("Tt4"), pins.T4_K * 0.95, "burner exit Tt, K")
 
     # Species are scaled by N_SCALE: trace radicals sit at 2.5e-10 kmol/kg
     # at cruise T4, BELOW the solver's 1e-9 positivity floor, and the
     # mass-action rows go infeasible against the floor. The scale factors
-    # cancel identically in the mass-action rows (S^(1-sum c) * S^(sum c-1)),
-    # so only the element balances and the energy row carry N_SCALE.
+    # cancel identically in the mass-action rows PROVIDED the pressure
+    # factor uses the scaled mole sum (see below).
     n_guess = _complete_combustion(0.025)
-    n = {sp: V(f"n_{sp}", n_guess[sp] * N_SCALE,
-               f"{sp} kmol per kg burner-exit mix, x{N_SCALE:.0e}")
-         for sp in SPECIES}
-    ntot = V("n_tot", sum(n_guess.values()) * N_SCALE,
-             f"total kmol per kg mix, x{N_SCALE:.0e}")
+    n = {sp: V(P(f"n_{sp}"), n_guess[sp] * N_SCALE,
+               f"{sp} kmol/kg mix, x{N_SCALE:.0e}") for sp in SPECIES}
+    ntot = V(P("n_tot"), sum(n_guess.values()) * N_SCALE,
+             f"total kmol/kg mix, x{N_SCALE:.0e}")
     cons += [ntot == sum(n.values())]                       # SigEq (posy)
 
-    # element balances: (1+far) * sum_j a_ej n_j == b_air_e + far * b_fuel_e
     air_b = {e: 0.0 for e in _ELEM_ORDER}
     for sp, nj in TH.AIR_COMPOSITION_KMOL_KG.items():
         for e, cnt in TH.SPECIES_ELEM[sp].items():
@@ -339,22 +451,18 @@ def build(pins: CyclePins) -> Formulation:
     fuel_b = {e: _FUEL['elements'].get(e, 0.0) / _FUEL['wt']
               for e in _ELEM_ORDER}
     for e in _ELEM_ORDER:
-        lhs = sum(TH.SPECIES_ELEM[sp].get(e, 0.0) * n[sp] for sp in SPECIES
-                  if TH.SPECIES_ELEM[sp].get(e, 0.0))
-        rhs = N_SCALE * air_b[e] + far * (N_SCALE * fuel_b[e])
         if air_b[e] == 0.0 and fuel_b[e] == 0.0:
             continue
-        cons += [(1.0 + far) * lhs == rhs]                  # SigEq (posy)
+        lhs = sum(TH.SPECIES_ELEM[sp].get(e, 0.0) * n[sp] for sp in SPECIES
+                  if TH.SPECIES_ELEM[sp].get(e, 0.0))
+        cons += [(1.0 + far) * lhs
+                 == N_SCALE * air_b[e] + far * (N_SCALE * fuel_b[e])]
 
-    # mass action: for product p formed from bases with stoich c_b,
-    #   x_p == Kp(T) * prod_b (x_b * Phat)^{c_b} / Phat,  Phat = P4/(ntot*Pref)
-    # written with 1/Kp posynomial on the product side so each row is
-    # monomial * posy(T) == monomial.
     for sp, d in TH.KP.items():
         st = d['stoich']
         lhs = n[sp] * kp_inv(sp, T4)
         num, den = 1.0, 1.0
-        dpow = 1.0 - sum(st.values())   # exponent of (P4/(ntot*Pref*...))
+        dpow = 1.0 - sum(st.values())
         for base, c in st.items():
             if c > 0:
                 num = num * n[base]**c
@@ -362,226 +470,270 @@ def build(pins: CyclePins) -> Formulation:
                 den = den * n[base]**(-c)
         # pressure/mole-number factor. Written with the SCALED ntot on
         # purpose: the scaled product row needs pf_true^dpow * S^-dpow, and
-        # pf_true / S is exactly P4/(ntot_scaled * Pref). Putting N_SCALE
-        # back in here is the bug that left CO and O 1000x low (S^0.5 each)
-        # and OH 31.6x low (S^0.25) while NO (dpow=0) sat at 1.001.
+        # pf_true / S is exactly P4/(ntot_scaled * Pref).
         pf = (P4 / (ntot * P_REF_PA))
         cons += [lhs * den * pf**dpow == num]
 
-    # energy: absolute-enthalpy conservation, fuel at 0 (CEA scale):
-    #   (1+far) * h4_abs == h3_abs   ->  shifted form carries far*H_SHIFT
-    h4m = V("h4_mix", H_SHIFT + 2e5, "burner-exit shifted mix enthalpy, J/kg")
+    h4m = V(P("h4_mix"), H_SHIFT + 4e5, "burner-exit shifted mix h, J/kg")
     cons += [
-        h4m == H_SHIFT
-        + sum(nj * (1000.0 / N_SCALE) * h_molar(sp, T4)
-              for sp, nj in n.items()),                     # [SP] SigEq
+        h4m == H_SHIFT + sum(nj * (1000.0 / N_SCALE) * h_molar(sp, T4)
+                             for sp, nj in n.items()),      # [SP] SigEq
         (1.0 + far) * h4m == ht3 + far * H_SHIFT,           # [SP] SigEq
     ]
-    psi4 = V("psi4", 6.0, "psi_vit at Tt4")
-    opf4 = V("opf4", 1.025, "1 + far at station 4")
-    cons += [opf4 == 1.0 + far,
-             psi4 == psi_vit(T4, far)]                     # [SP] SigEq
+    psi4 = V(P("psi4"), 6.0, "psi_vit at Tt4")
+    cons += [psi4 == psi_vit(T4, far)]                      # [SP] SigEq
 
-    # ---- HPT: solves its PR from the HP shaft balance --------------------
-    # cool3 enters at Pt4 (frac_P=1), cool4 at Pt45 (frac_P=0).
-    Pt45 = V("Pt45", 5e5, "HPT exit Pt, Pa")
-    T41i = V("Tt41i", 1100.0, "HPT ideal exit Tt, K")
-    psi41i = V("psi41i", 2.0, "psi_vit at Tt41i")
-    h41i = V("ht41i", H_SHIFT, "HPT ideal exit shifted ht, J/kg")
-    dh_hpt = V("dh_hpt", 4e5, "HPT ideal enthalpy drop, J/kg")
+    # ---- turbines --------------------------------------------------------
+    def turbine(key, W_in, Tt_in, h_in, psi_in, Pt_in, far_in, Nmech,
+                eff_pin, cool_at_inlet, cool_at_exit, PR_guess, T_out_guess):
+        nm = lambda s: P(f"{key}_{s}")
+        M = {'hpt': MAPS.HPT, 'lpt': MAPS.LPT}[key]
+        x0t, y0t = M['x0'], M['y0']
+        at = {k: float(map2d(M[f'terms_{k}'], M['NpMap_d'] / x0t,
+                             M['PRmap_d'] / y0t))
+              for k in ('Wp', 'eff')}
+        Pt_out = V(nm("Ptout"), 3e5, f"{key} exit Pt, Pa")
+        Ti = V(nm("Ti"), T_out_guess, f"{key} ideal exit Tt, K")
+        psii = V(nm("psii"), float(psi_vit(T_out_guess, 0.025)),
+                 f"psi_vit at {key} ideal exit")
+        hi = V(nm("hi"), H_SHIFT, f"{key} ideal exit shifted ht, J/kg")
+        dh = V(nm("dh"), 4e5, f"{key} ideal enthalpy drop, J/kg")
+        eff = (eff_pin if design
+               else V(nm("eff"), eff_pin, f"{key} adiabatic efficiency"))
+        cons.extend([
+            psii * Pt_in == psi_in * Pt_out,
+            psii == psi_vit(Ti, far_in),                    # [SP] SigEq
+            (1.0 + far_in) * hi == (1.0 + far_in) * H_SHIFT
+                + h_vit(Ti, far_in),                        # [SP] SigEq
+            hi + dh == h_in,                                # SigEq (posy)
+        ])
+        # frac_P=1 cooling enters at the TURBINE's inlet pressure (pycycle
+        # BleedPressure), NOT its own supply Pt, and expands to Pt_out.
+        Wci, htci, psici = cool_at_inlet
+        Tci = V(nm("Tci"), 500.0, f"{key} inlet-cooling ideal exit Tt, K")
+        psci = V(nm("psci"), float(psi_air(500.0)), f"psi at that Tt")
+        hci = V(nm("hci"), H_SHIFT, f"ideally expanded cooling ht, J/kg")
+        dhc = V(nm("dhc"), 1e5, f"{key} cooling ideal drop, J/kg")
+        cons.extend([
+            psci * Pt_in == psici * Pt_out,
+            psci == psi_air(Tci),                           # [SP] SigEq
+            hci == H_SHIFT + h_air(Tci),                    # [SP] SigEq
+            hci + dhc == htci,                              # SigEq (posy)
+        ])
+        Wce, htce = cool_at_exit
+        Pwr = V(nm("P"), 1e7 * sc, f"{key} shaft power, W")
+        cons.extend([Pwr == W_in * eff * dh + Wci * eff * dhc])
+        W_out = V(nm("Wout"), 21.0 * sc, f"{key} exit flow, kg/s")
+        ht_out = V(nm("htout"), H_SHIFT, f"{key} exit mixed ht, J/kg")
+        far_out = V(nm("farout"), 0.021, f"fuel fraction at {key} exit")
+        Tt_out = V(nm("Ttout"), T_out_guess * 1.02, f"{key} exit Tt, K")
+        psi_out = V(nm("psiout"), float(psi_vit(T_out_guess * 1.02, 0.02)),
+                    f"psi_vit at {key} exit")
+        cons.extend([
+            W_out == W_in + Wci + Wce,
+            W_out * ht_out == W_in * (h_in - eff * dh)
+                            + Wci * (htci - eff * dhc)
+                            + Wce * htce,                   # [SP] SigEq
+            far_out * W_out == Wf * (1.0 + far_out),        # SigEq (posy)
+            (1.0 + far_out) * ht_out == (1.0 + far_out) * H_SHIFT
+                + h_vit(Tt_out, far_out),                   # [SP] SigEq
+            psi_out == psi_vit(Tt_out, far_out),            # [SP] SigEq
+        ])
+
+        # map rows. Wp is scaled x1e-4 from SI (kg sqrt(K) / (s Pa)) to
+        # keep it O(1); the scalar absorbs the choice.
+        Wp = V(nm("Wp"), 2.0, f"{key} referred flow, x1e-4 SI")
+        cons.extend([Wp * Pt_in == W_in * Tt_in**0.5 * 1e4])
+        Np = V(nm("Np"), 350.0, f"{key} referred speed, rpm/sqrt(K)")
+        cons.extend([Np * Tt_in**0.5 == Nmech])
+        PRv = V(nm("PR"), PR_guess, f"{key} pressure ratio Pt_in/Pt_out")
+        cons.extend([PRv * Pt_out == Pt_in])
+        if design:
+            sWp = V(nm("sWp"), 1.0, f"{key} flow map scalar")
+            sNp = V(nm("sNp"), 3.0, f"{key} speed map scalar")
+            sPR = V(nm("sPR"), 0.7, f"{key} PR map scalar")
+            cons.extend([sWp * at['Wp'] == Wp,
+                         sNp * M['NpMap_d'] == Np,
+                         sPR * (M['PRmap_d'] - 1.0) + 1.0 == PRv])  # SigEq
+            shared_out.update({f"s_Wp_{key}": sWp, f"s_Np_{key}": sNp,
+                               f"s_PR_{key}": sPR,
+                               f"s_eff_{key}": eff_pin / at['eff']})
+        else:
+            wNp, wPR = M['window']['Np'], M['window']['PR']
+            NpM = V(nm("NpMap"), M['NpMap_d'], f"{key} map referred speed",
+                    bounds=tuple(wNp))
+            PRm = V(nm("PRmap"), M['PRmap_d'], f"{key} map PR",
+                    bounds=tuple(wPR))
+            cons.extend([
+                NpM * shared[f"s_Np_{key}"] == Np,
+                Wp == shared[f"s_Wp_{key}"]
+                      * map2d(M['terms_Wp'], NpM / x0t,
+                              PRm / y0t),                  # [SP] SigEq
+                PRv == 1.0 + shared[f"s_PR_{key}"] * (PRm - 1.0),  # [SP] SigEq
+                eff == shared[f"s_eff_{key}"]
+                       * map2d(M['terms_eff'], NpM / x0t,
+                               PRm / y0t),                 # [SP] SigEq
+            ])
+        return dict(Pt_out=Pt_out, W_out=W_out, ht_out=ht_out,
+                    far_out=far_out, Tt_out=Tt_out, psi_out=psi_out,
+                    Pwr=Pwr, dh=dh, eff=eff)
+
+    hpt = turbine('hpt', W4, T4, h4m, psi4, P4, far, HPN, pins.eff_hpt,
+                  (Wc3, ht3, psi3), (Wc4, ht3), 3.6, 1150.0)
+    Pt_lpt_in = V(P("Pt_lpt_in"), 3e5, "LPT face Pt, Pa")
+    cons += [Pt_lpt_in == hpt['Pt_out'] * (1.0 - pins.dP_duct11)]
+    lpt = turbine('lpt', hpt['W_out'], hpt['Tt_out'], hpt['ht_out'],
+                  hpt['psi_out'], Pt_lpt_in, hpt['far_out'], LPN,
+                  pins.eff_lpt, (Wc1, ht_c1, psi_c1), (Wc2, ht_c2),
+                  4.4, 810.0)
+
+    # ---- shaft balances --------------------------------------------------
+    P_hpc = V(P("P_hpc"), 1e7 * sc, "HPC shaft power, W")
     cons += [
-        psi41i * P4 == psi4 * Pt45,          # isentrope, monomial
-        psi41i == psi_vit(T41i, far),                      # [SP] SigEq
-        (1.0 + far) * (h41i - 0.0) == (1.0 + far) * H_SHIFT
-            + h_vit(T41i, far),                             # [SP] SigEq
-        h41i + dh_hpt == h4m,                               # SigEq (posy)
-    ]
-    # cool3's own ideal expansion Pt4 -> Pt45 (air):
-    T_c3i = V("Tt_c3i", 550.0, "cool3 ideal expansion exit Tt, K")
-    psi_c3i = V("psi_c3i", 20.0, "psi at Tt_c3i")
-    h_c3i = V("ht_c3i", H_SHIFT, "cool3 ideally expanded shifted ht, J/kg")
-    dh_c3 = V("dh_c3", 1e5, "cool3 ideal enthalpy drop, J/kg")
-    cons += [
-        psi_c3i * P4 == psi3 * Pt45,
-        psi_c3i == psi_air(T_c3i),                          # [SP] SigEq
-        h_c3i == H_SHIFT + h_air(T_c3i),                    # [SP] SigEq
-        h_c3i + dh_c3 == ht3,                               # SigEq (posy)
-    ]
-    # power and exit mix (pycycle EnthalpyAndPower, mirrored):
-    P_hpt = V("P_hpt", 1e7, "HPT shaft power, W")
-    P_hpc = V("P_hpc", 1e7, "HPC shaft power, W")
-    cons += [
-        P_hpt == W4 * pins.eff_hpt * dh_hpt + Wc3 * pins.eff_hpt * dh_c3,
-        # HPC power includes the work done on bleed streams up to their
-        # extraction point (frac_work) and on cust which then leaves:
-        P_hpc == dh_hpc * (W3
-                           + Wc1 * pins.cool1.frac_work
+        P_hpc == dh_hpc * (W3 + Wc1 * pins.cool1.frac_work
                            + Wc2 * pins.cool2.frac_work
                            + Wcore * fW_cust * pins.cust.frac_work),
-        P_hpt == P_hpc + pins.HPX_W,
+        hpt['Pwr'] == P_hpc + pins.HPX_W,
     ]
-    W45 = V("W45", 21.0, "HPT exit flow, kg/s")
-    ht45 = V("ht45", H_SHIFT, "HPT exit (mixed) shifted ht, J/kg")
-    far45 = V("far45", 0.021, "fuel fraction at 45")
-    opf45 = V("opf45", 1.021, "1 + far45")
-    Tt45 = V("Tt45", 1150.0, "HPT exit Tt, K")
-    psi45 = V("psi45", 2.0, "psi_vit at Tt45")
-    e_t = pins.eff_hpt
-    cons += [
-        W45 == W4 + Wc3 + Wc4,
-        W45 * ht45 == W4 * (h4m - e_t * dh_hpt)
-                    + Wc3 * (ht3 - e_t * dh_c3)
-                    + Wc4 * ht3,                            # SigEq mixed [SP]
-        far45 * W45 == Wf * (1.0 + far45),                  # SigEq (posy)
-        opf45 == 1.0 + far45,
-        opf45 * ht45 == opf45 * H_SHIFT + h_vit(Tt45, far45),  # [SP] SigEq
-        psi45 == psi_vit(Tt45, far45),                      # [SP] SigEq
-    ]
+    P_fan = V(P("P_fan"), 1.5e7 * sc, "fan shaft power, W")
+    P_lpc = V(P("P_lpc"), 3e6 * sc, "LPC shaft power, W")
+    cons += [P_fan == W * fan['dh'], P_lpc == Wcore * lpc['dh'],
+             lpt['Pwr'] == P_fan + P_lpc]
 
-    # ---- LPT: solves its PR from the LP shaft balance --------------------
-    Pt_lpt_in = V("Pt_lpt_in", 5e5, "LPT face Pt, Pa")
-    cons += [Pt_lpt_in == Pt45 * (1.0 - pins.dP_duct11)]
-    Pt49 = V("Pt49", 1e5, "LPT exit Pt, Pa")
-    T49i = V("Tt49i", 800.0, "LPT ideal exit Tt, K")
-    psi49i = V("psi49i", 0.5, "psi_vit at Tt49i")
-    h49i = V("ht49i", H_SHIFT, "LPT ideal exit shifted ht, J/kg")
-    dh_lpt = V("dh_lpt", 4e5, "LPT ideal enthalpy drop, J/kg")
-    cons += [
-        psi49i * Pt_lpt_in == psi45 * Pt49,
-        psi49i == psi_vit(T49i, far45),                     # [SP] SigEq
-        opf45 * h49i == opf45 * H_SHIFT + h_vit(T49i, far45),  # [SP] SigEq
-        h49i + dh_lpt == ht45,                              # SigEq (posy)
-    ]
-    # cool1 (frac_P=1) expands Pt_c1 -> Pt49; cool2 (frac_P=0) does no work.
-    T_c1i = V("Tt_c1i", 400.0, "cool1 ideal expansion exit Tt, K")
-    psi_c1i = V("psi_c1i", 5.0, "psi at Tt_c1i")
-    h_c1i = V("ht_c1i", H_SHIFT, "cool1 ideally expanded shifted ht, J/kg")
-    dh_c1 = V("dh_c1", 1e5, "cool1 ideal enthalpy drop, J/kg")
-    cons += [
-        # frac_P=1: the bleed enters at the TURBINE's inlet pressure
-        # (pycycle BleedPressure), not at its own HPC-supply Pt_c1 -- using
-        # Pt_c1 overstated the cool1 expansion work and pushed LPT PR to
-        # 0.975 of truth.
-        psi_c1i * Pt_lpt_in == psi_c1 * Pt49,
-        psi_c1i == psi_air(T_c1i),                          # [SP] SigEq
-        h_c1i == H_SHIFT + h_air(T_c1i),                    # [SP] SigEq
-        h_c1i + dh_c1 == ht_c1,                             # SigEq (posy)
-    ]
-    P_lpt = V("P_lpt", 2e7, "LPT shaft power, W")
-    P_fan = V("P_fan", 1.5e7, "fan shaft power, W")
-    P_lpc = V("P_lpc", 3e6, "LPC shaft power, W")
-    e_l = pins.eff_lpt
-    cons += [
-        P_lpt == W45 * e_l * dh_lpt + Wc1 * e_l * dh_c1,
-        P_fan == W * dh_fan,
-        P_lpc == Wcore * dh_lpc,
-        P_lpt == P_fan + P_lpc,
-    ]
-    W5 = V("W5", 21.5, "core nozzle flow, kg/s")
-    ht49 = V("ht49", H_SHIFT, "LPT exit (mixed) shifted ht, J/kg")
-    far49 = V("far49", 0.020, "fuel fraction at 49")
-    opf49 = V("opf49", 1.020, "1 + far49")
-    Tt49 = V("Tt49", 850.0, "LPT exit Tt, K")
-    psi49 = V("psi49", 0.5, "psi_vit at Tt49")
-    cons += [
-        W5 == W45 + Wc1 + Wc2,
-        W5 * ht49 == W45 * (ht45 - e_l * dh_lpt)
-                   + Wc1 * (ht_c1 - e_l * dh_c1)
-                   + Wc2 * ht_c2,                           # SigEq mixed [SP]
-        far49 * W5 == Wf * (1.0 + far49),                   # SigEq (posy)
-        opf49 == 1.0 + far49,
-        opf49 * ht49 == opf49 * H_SHIFT + h_vit(Tt49, far49),  # [SP] SigEq
-        psi49 == psi_vit(Tt49, far49),                      # [SP] SigEq
-    ]
-    Pt5 = V("Pt5", 5e4, "core nozzle Pt, Pa")
-    cons += [Pt5 == Pt49 * (1.0 - pins.dP_duct13)]
-
-    # ---- bypass duct ------------------------------------------------------
-    W15 = V("W15", 120.0, "bypass nozzle flow, kg/s")
-    Pt15 = V("Pt15", 5e4, "bypass nozzle Pt, Pa")
+    W5 = lpt['W_out']
+    Pt5 = V(P("Pt5"), 6e4, "core nozzle Pt, Pa")
+    cons += [Pt5 == lpt['Pt_out'] * (1.0 - pins.dP_duct13)]
+    W15 = V(P("W15"), 120.0 * sc, "bypass nozzle flow, kg/s")
+    Pt15 = V(P("Pt15"), 5e4, "bypass nozzle Pt, Pa")
     cons += [W15 == Wbyp * (1.0 - pins.frac_bypBld),
-             Pt15 == Pt21 * (1.0 - pins.dP_duct15)]
+             Pt15 == fan['Pt'] * (1.0 - pins.dP_duct15)]
 
-    # ---- nozzles ----------------------------------------------------------
-    R_vit_ = V("R_vit", 288.0, "core-gas specific gas constant, J/(kg K)")
-    # complete-combustion mole count: n_tot*(1+far) == n_air + far*(y/4)/wt_f;
-    # dissociation adds ~0.1% moles at 1900 K, ignored for R only.
-    cons += [R_vit_ * opf49 == R_UNIV * 1000.0
-             * (_N_AIR + far49 * _N_FUEL_ADD)]  # SigEq (posy)
+    R_vit_ = V(P("R_vit"), 288.0, "core-gas gas constant, J/(kg K)")
+    # complete-combustion mole count; dissociation adds ~0.1% moles at
+    # 1900 K, ignored for R only.
+    cons += [R_vit_ * (1.0 + lpt['far_out'])
+             == R_UNIV * 1000.0 * (_N_AIR + lpt['far_out'] * _N_FUEL_ADD)]
 
-    def nozzle(tag, Wn, Ttn, htn, psin, Ptn, Cv, choked, vit, farv, opfv,
-               Rgas):
-        """CV nozzle, pycycle branch structure. Returns Fg expression."""
-        Fg = V(f"Fg_{tag}", 3e4, f"{tag} nozzle gross thrust, N")
-        if not choked:
-            # exit at Ps = P0; Fg = Cv * W * V_exit.
-            Ts = V(f"Ts_{tag}", 250.0, f"{tag} exit static T, K")
-            psis_ = V(f"psis_{tag}", 0.5, f"psi at {tag} exit static T")
-            hs = V(f"hs_{tag}", H_SHIFT, f"{tag} exit static shifted h, J/kg")
-            Vx = V(f"V_{tag}", 300.0, f"{tag} exit velocity, m/s")
-            if vit:
-                cons.extend([
-                    psis_ == psi_vit(Ts, farv),             # [SP] SigEq
-                    opfv * hs == opfv * H_SHIFT + h_vit(Ts, farv),  # [SP] SigEq
-                ])
-            else:
-                cons.extend([
-                    psis_ == psi_air(Ts),                   # [SP] SigEq
-                    hs == H_SHIFT + h_air(Ts),              # [SP] SigEq
-                ])
+    # ---- nozzles ---------------------------------------------------------
+    def nozzle(key, Wn, htn, psin, Ptn, Cv, choked, vit, farv, Rgas):
+        """CV nozzle, pycycle branch structure: exit==throat; at Ps=P0 when
+        unchoked, at M=1 when choked. Area rows exist in BOTH branches --
+        the off-design closure matches them to the design values."""
+        # The wide bounds here are NUMERICAL GUARDS, not modelling
+        # statements: in the slacked restoration phase the trio (Fg, A, Ps)
+        # of the choked-thrust row admits an unbounded ray, and the solver
+        # rode design Fg_core to +inf (caught by instrumenting the phase
+        # cache). Any physically meaningful value sits far inside them.
+        Fg = V(P(f"Fg_{key}"), 3e4 * sc, f"{key} nozzle gross thrust, N",
+               bounds=(1e1, 1e7))
+        Ts = V(P(f"Ts_{key}"), 260.0, f"{key} exit static T, K",
+               bounds=(150.0, 2000.0))
+        psis_ = V(P(f"psis_{key}"), 0.7, f"psi at {key} exit static T")
+        hs = V(P(f"hs_{key}"), H_SHIFT, f"{key} exit static shifted h")
+        Vx = V(P(f"V_{key}"), 300.0, f"{key} exit velocity, m/s",
+               bounds=(10.0, 1500.0))
+        Ps = V(P(f"Ps_{key}"), P0, f"{key} exit static pressure, Pa",
+               bounds=(1e3, 1e7))
+        rho = V(P(f"rho_{key}"), 0.7, f"{key} exit density, kg/m^3",
+                bounds=(1e-3, 20.0))
+        A = V(P(f"A_{key}"), 0.3, f"{key} exit/throat area, m^2",
+              bounds=(1e-3, 30.0))
+        if vit:
             cons.extend([
-                psis_ * Ptn == psin * P0,      # expand to ambient
-                hs + Vx**2 / 2.0 == htn,                    # SigEq (posy)
-                Fg == Cv * Wn * Vx,
+                psis_ == psi_vit(Ts, farv),                 # [SP] SigEq
+                (1.0 + farv) * hs == (1.0 + farv) * H_SHIFT
+                    + h_vit(Ts, farv),                      # [SP] SigEq
             ])
         else:
-            # throat at M=1; Fg = Cv*W*V_th + A_th*(Ps_th - P0).
-            Ts = V(f"Ts_{tag}", 250.0, f"{tag} throat static T, K")
-            psis_ = V(f"psis_{tag}", 0.5, f"psi at {tag} throat T")
-            hs = V(f"hs_{tag}", H_SHIFT, f"{tag} throat static shifted h, J/kg")
-            Vx = V(f"V_{tag}", 310.0, f"{tag} throat velocity (sonic), m/s")
-            cp_ = V(f"cp_{tag}", 1010.0, f"{tag} throat cp, J/(kg K)")
-            cv_ = V(f"cv_{tag}", 723.0, f"{tag} throat cv, J/(kg K)")
-            Ps = V(f"Ps_{tag}", 5e4, f"{tag} throat static pressure, Pa")
-            rho = V(f"rho_{tag}", 0.7, f"{tag} throat density, kg/m^3")
-            A = V(f"A_{tag}", 0.3, f"{tag} throat area, m^2")
+            cons.extend([
+                psis_ == psi_air(Ts),                       # [SP] SigEq
+                hs == H_SHIFT + h_air(Ts),                  # [SP] SigEq
+            ])
+        cons.extend([
+            hs + Vx**2 / 2.0 == htn,                        # SigEq (posy)
+            psis_ * Ptn == psin * Ps,
+            rho * Rgas * Ts == Ps,
+            A * rho * Vx == Wn,
+        ])
+        if not choked:
+            cons.extend([Ps == P0 * 1.0, Fg == Cv * Wn * Vx])
+        else:
+            cp_ = V(P(f"cp_{key}"), 1010.0, f"{key} throat cp, J/(kg K)")
+            cv_ = V(P(f"cv_{key}"), 723.0, f"{key} throat cv, J/(kg K)")
             if vit:
-                cons.extend([
-                    psis_ == psi_vit(Ts, farv),             # [SP] SigEq
-                    opfv * hs == opfv * H_SHIFT + h_vit(Ts, farv),  # [SP] SigEq
-                    opfv * cp_ == cp_vit_times_1pf(Ts, farv),  # [SP] SigEq
-                ])
+                cons.extend([(1.0 + farv) * cp_
+                             == cp_vit_times_1pf(Ts, farv)])  # [SP] SigEq
             else:
-                cons.extend([
-                    psis_ == psi_air(Ts),                   # [SP] SigEq
-                    hs == H_SHIFT + h_air(Ts),              # [SP] SigEq
-                    cp_ == cp_air(Ts),                      # [SP] SigEq
-                ])
+                cons.extend([cp_ == cp_air(Ts)])            # [SP] SigEq
             cons.extend([
                 cv_ + Rgas == cp_,                          # SigEq (posy)
                 Vx**2 * cv_ == cp_ * Rgas * Ts,   # sonic; monomial equality
-                hs + Vx**2 / 2.0 == htn,                    # SigEq (posy)
-                psis_ * Ptn == psin * Ps,
-                rho * Rgas * Ts == Ps,
-                A * rho * Vx == Wn,
                 Fg == Cv * Wn * Vx + A * (Ps - P0),         # [SP] SigEq
             ])
-        return Fg
+        return Fg, A
 
-    Fg_core = nozzle("core", W5, Tt49, ht49, psi49, Pt5, pins.Cv_core,
-                     pins.choked_core, True, far49, opf49, R_vit_)
-    Fg_byp = nozzle("byp", W15, Tt21, ht21, psi21, Pt15, pins.Cv_byp,
-                    pins.choked_byp, False, None, None, R_AIR)
+    Fg_core, A_core = nozzle("core", W5, lpt['ht_out'], lpt['psi_out'], Pt5,
+                             pins.Cv_core, cond['choked_core'], True,
+                             lpt['far_out'], R_vit_)
+    Fg_byp, A_byp = nozzle("byp", W15, fan['ht'], fan['psi'], Pt15,
+                           pins.Cv_byp, cond['choked_byp'], False,
+                           None, R_AIR)
 
-    # ---- performance ------------------------------------------------------
-    Fn = V("Fn", pins.Fn_N, "net thrust, N")
-    TSFC = V("TSFC", 1.7e-5, "thrust specific fuel consumption, kg/(N s)")
-    cons += [
-        Fn + W * u0 == Fg_core + Fg_byp,                    # SigEq (posy)
-        Fn == pins.Fn_N,
-        TSFC * Fn == Wf,
-    ]
+    if not design:
+        cons += [A_core == shared['A_core'], A_byp == shared['A_byp']]
 
-    f.Objective(TSFC * 1e5)
+    # ---- performance -----------------------------------------------------
+    Fn = V(P("Fn"), pins.Fn_N * sc, "net thrust, N", bounds=(1e1, 1e7))
+    cons += [Fn + W * u0 == Fg_core + Fg_byp]               # SigEq (posy)
+    if design:
+        cons += [Fn == pins.Fn_N]
+    elif cond['mode'] == 'PC':
+        cons += [Fn == cond['PC'] * out_by_tag[cond['pc_of'] + "_"]['Fn']]
+    TSFC = V(P("TSFC"), 1.7e-5, "TSFC, kg/(N s)")
+    cons += [TSFC * Fn == Wf]
+
+    out = dict(Fn=Fn, TSFC=TSFC, W=W, far=far, Wf=Wf, Fg_core=Fg_core,
+               Fg_byp=Fg_byp, A_core=A_core, A_byp=A_byp, T4=T4)
+    if design:
+        shared_out.update({'A_core': A_core, 'A_byp': A_byp})
+        out['shared'] = shared_out
+    return out
+
+
+def build(pins: CyclePins, od_points: tuple = (),
+          warm: dict | None = None) -> Formulation:
+    """Design point (everything pinned) plus optional off-design points
+    sharing the design's map scalars and nozzle areas. ``warm`` overrides
+    initial guesses by full variable name."""
+    f = Formulation()
+    g = f.group("cyc", prefix="")
+
+    # NOTE on bounds: a blanket +-3-decade guard on every variable was
+    # tried against the restoration-ray blowups and made things worse (the
+    # design-only solve stopped converging); bounds stay TARGETED -- the
+    # nozzle block and net thrust, where the unbounded rays were actually
+    # observed, plus the map-coordinate windows.
+    V = lambda n, gs, d, bounds=None: g.Variable(n, gs, "-", d,
+                                                 bounds=bounds)
+    cons = []
+
+    cond_des = dict(T0=pins.T0_K, P0=pins.P0_Pa, MN=pins.MN,
+                    V0=(pins.V0_m_s if pins.V0_m_s is not None
+                        else _u0_from(pins.T0_K, pins.MN)),
+                    mode='T4', T4=pins.T4_K,
+                    choked_core=pins.choked_core, choked_byp=pins.choked_byp)
+    out_by_tag = {}
+    des = _point(V, cons, "", cond_des, pins, None, out_by_tag, warm)
+    out_by_tag[""] = des
+
+    for od in od_points:
+        cond = dict(T0=od.T0_K, P0=od.P0_Pa, MN=od.MN, V0=od.V0_m_s,
+                    mode=od.mode, T4=od.T4_K, PC=od.PC, pc_of=od.pc_of,
+                    choked_core=od.choked_core, choked_byp=od.choked_byp)
+        out_by_tag[f"{od.name}_"] = _point(V, cons, f"{od.name}_", cond,
+                                           pins, des['shared'], out_by_tag,
+                                           warm)
+
+    f.Objective(des['TSFC'] * 1e5)
     f.ConstraintList(cons)
     return f

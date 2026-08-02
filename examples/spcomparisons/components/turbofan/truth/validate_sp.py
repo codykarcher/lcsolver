@@ -26,13 +26,13 @@ R2K = 1.0 / 1.8
 PSI2PA = 6894.757293168
 BTULBM2JKG = 2326.0
 
-#: SP station tag -> truth flow-station name (DESIGN point).
+#: (truth flow station, SP var basenames for Tt/Pt/ht) per station.
 STATIONS = {
-    "21": "fan.Fl_O",
-    "25": "lpc.Fl_O",
-    "3": "hpc.Fl_O",
-    "45": "hpt.Fl_O",
-    "49": "lpt.Fl_O",
+    "21": ("fan.Fl_O", "fan_Tt", "fan_Pt", "fan_ht"),
+    "25": ("lpc.Fl_O", "lpc_Tt", "lpc_Pt", "lpc_ht"),
+    "3": ("hpc.Fl_O", "hpc_Tt", "hpc_Pt", "hpc_ht"),
+    "45": ("hpt.Fl_O", "hpt_Ttout", "hpt_Ptout", "hpt_htout"),
+    "49": ("lpt.Fl_O", "lpt_Ttout", "lpt_Ptout", "lpt_htout"),
 }
 
 
@@ -118,11 +118,11 @@ def compare(name):
                      mine / truth if truth else float("nan")))
 
     st = des["stations"]
-    for tag, fs in STATIONS.items():
+    for tag, (fs, vT, vP, vh) in STATIONS.items():
         s = st[fs]
-        row(f"Tt{tag} K", vals[f"Tt{tag}"], s["Tt_T"] * R2K)
-        row(f"Pt{tag} Pa", vals[f"Pt{tag}"], s["Pt_psi"] * PSI2PA)
-        row(f"ht{tag} J/kg", vals[f"ht{tag}"] - H + 0.0,
+        row(f"Tt{tag} K", vals[vT], s["Tt_T"] * R2K)
+        row(f"Pt{tag} Pa", vals[vP], s["Pt_psi"] * PSI2PA)
+        row(f"ht{tag} J/kg", vals[vh] - H + 0.0,
             s["ht_Btu_lbm"] * BTULBM2JKG)
     s = st["burner.Fl_O"]
     row("Tt4 K", vals["Tt4"], s["Tt_T"] * R2K)
@@ -138,8 +138,8 @@ def compare(name):
         des["nozzles"]["core_nozz"]["Fg_lbf"] * 4.4482216)
     row("Fg_byp N", vals["Fg_byp"],
         des["nozzles"]["byp_nozz"]["Fg_lbf"] * 4.4482216)
-    hpt_PR = vals["Pt4"] / vals["Pt45"]
-    lpt_PR = vals["Pt_lpt_in"] / vals["Pt49"]
+    hpt_PR = vals["hpt_PR"]
+    lpt_PR = vals["lpt_PR"]
     row("HPT PR", hpt_PR, des["components"]["hpt"]["PR"])
     row("LPT PR", lpt_PR, des["components"]["lpt"]["PR"])
 
