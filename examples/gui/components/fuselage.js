@@ -59,7 +59,8 @@ const JET = {
   noseA: 2.2, noseB: 0.55,
   tailA: 1.6, tailB: 0.75,
   tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
-  droop:      0.30,  // nose centreline drop, in radii
+  droop:      0.30,  // drop of the nose TIP, in radii
+  droopPow:   2.00,  // how fast the drop dies away from the tip
   crownHold:  1.00,  // fraction of the tailcone taper taken off the BELLY
 };
 
@@ -78,10 +79,22 @@ const JET = {
  * +radius for the whole tailcone by construction, under any taper law, and
  * spends the taper entirely on the underside.
  *
- * **Forward**, the whole section drops. The flight deck sits over the nose and
- * the crew have to see the ground short of the aeroplane over the glareshield,
- * so the nose is pitched down relative to the cabin. Dropping the centreline is
- * what buys the over-the-nose angle.
+ * **Forward**, the TIP drops -- and only the tip. The flight deck sits over the
+ * nose and the crew have to see the ground short of the aeroplane over the
+ * glareshield, which is bought by lowering the point of the nose, not by
+ * bending the whole forebody down.
+ *
+ * The distinction matters, and the obvious law gets it wrong. A drop that dies
+ * away with distance from the tip -- droop * (1 - t)^2, say -- still has a
+ * quarter of itself left halfway along the nose, and the result reads as a nose
+ * hanging below the barrel rather than a tip lowered. So the drop is tied to
+ * how far the SECTION has shrunk instead: yc = -droop * (1 - r/radius)^p. Where
+ * the body is at full section there is nothing to drop and the offset is
+ * exactly zero; it only appears as the section closes down toward the point.
+ *
+ * That also makes the centreline C1 at the nose join for free, whatever the
+ * blend exponents are set to, because dr/dz already vanishes there -- so no
+ * setting of the nose sliders can put a kink in the parallel part of the body.
  *
  * Returned as one object carrying `at(z)` and the stations it was cut at, so
  * that everything downstream -- skin, windows, doors, and later whatever mounts
@@ -98,10 +111,8 @@ function jetShape({ length, radius, p = JET, droop = p.droop }) {
   function at(z) {
     if (z > zNose) {                                     // nose
       const t = Math.min(1, Math.max(0, -z / lNose));
-      return {
-        r:  radius * Math.pow(1 - Math.pow(1 - t, p.noseA), p.noseB),
-        yc: -droop * radius * Math.pow(1 - t, 2),
-      };
+      const r = radius * Math.pow(1 - Math.pow(1 - t, p.noseA), p.noseB);
+      return { r, yc: -droop * radius * Math.pow(1 - r / radius, p.droopPow) };
     }
     if (z > zTail) return { r: radius, yc: 0 };          // barrel
     const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone

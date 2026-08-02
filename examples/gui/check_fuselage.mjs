@@ -140,6 +140,24 @@ for (const c of CASES) {
   if (crownDrift > 1e-9) bad(`crown moves ${crownDrift.toFixed(4)} over the tailcone`);
   if (keelRise < u.radius) bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
 
+  /* 5b. the nose lowers its tip, it does not hang ------------------------ */
+  // Two separate claims. Nothing forward of the barrel may sit below the
+  // barrel's own keel -- if it does, the nose is hanging under the tube rather
+  // than tapering to a lowered point. And the centreline must be back on the
+  // axis by the time it reaches the join, or the parallel part starts bent.
+  let hang = 0, worstHang = 0;
+  for (let i = 0; i <= 80; i++) {
+    const z = -u.noseLength * (i / 80);
+    const under = -u.radius - u.keelAt(z);
+    if (under > 1e-6) { hang++; worstHang = Math.max(worstHang, under); }
+  }
+  if (hang) bad(`nose hangs up to ${worstHang.toFixed(3)} below the barrel keel`);
+  const joinYc = Math.abs(u.shapeAt(u.cabinZ[0]).yc);
+  if (joinYc > 1e-6) bad(`centreline is ${joinYc.toFixed(4)} off axis at the nose join`);
+  // And the drop should be spent near the tip, not spread over the forebody.
+  const half = Math.abs(u.shapeAt(-u.noseLength / 2).yc / u.shapeAt(0).yc);
+  if (half > 0.15) bad(`${(half * 100).toFixed(0)}% of the droop survives to mid-nose`);
+
   /* 6. no degenerate triangles ------------------------------------------ */
   // Slivers of near-zero area are what a collapsed grid row leaves behind, and
   // they are the classic source of shards flickering over a surface. The skin's
@@ -194,7 +212,8 @@ for (const c of CASES) {
               `${slivers} slivers, ${overlaps} overlaps`);
   console.log(`  crown level to ${crownDrift.toExponential(1)}, ` +
               `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
-              `nose droop ${(u.droop * u.radius).toFixed(2)}`);
+              `tip drop ${(u.droop * u.radius).toFixed(2)} ` +
+              `(${(half * 100).toFixed(1)}% left at mid-nose, hangs ${hang ? 'YES' : 'no'})`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nPASS: bodies are closed, outward and clean at the joins');

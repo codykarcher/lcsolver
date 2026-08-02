@@ -60,8 +60,10 @@
   <input type="range" id="noseA" min="1.00" max="4.50" step="0.01" value="2.20">
   <div class="row"><label for="noseB">tip fullness</label><output id="oNoseB"></output></div>
   <input type="range" id="noseB" min="0.25" max="1.20" step="0.01" value="0.55">
-  <div class="row"><label for="droop">droop &middot; radii</label><output id="oDroop"></output></div>
+  <div class="row"><label for="droop">tip drop &middot; radii</label><output id="oDroop"></output></div>
   <input type="range" id="droop" min="0.00" max="0.80" step="0.01" value="0.30">
+  <div class="row"><label for="droopPow">drop falloff</label><output id="oDroopPow"></output></div>
+  <input type="range" id="droopPow" min="0.60" max="5.00" step="0.05" value="2.00">
 
   <h2>tailcone</h2>
   <div class="row"><label for="tailD">length &middot; diameters</label><output id="oTailD"></output></div>
@@ -162,7 +164,7 @@ const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
 /** Every slider that feeds the shape law, by the name the law knows it by. */
-const SHAPE = ['fineness', 'noseD', 'noseA', 'noseB', 'droop',
+const SHAPE = ['fineness', 'noseD', 'noseA', 'noseB', 'droop', 'droopPow',
                'tailD', 'tailA', 'tailB', 'tipR', 'crownHold'];
 const DEFAULTS = Object.fromEntries(
   [...SHAPE, 'rad'].map((k) => [k, el(k).value]));
