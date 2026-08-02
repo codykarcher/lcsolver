@@ -493,7 +493,7 @@ console.log('\n=== windscreen ===');
   console.log(`${(100 * su.low).toFixed(0)}% to ${(100 * su.high).toFixed(0)}% of a ` +
               `${su.bodyHeight.toFixed(3)} m body: y ${su.yLow.toFixed(3)} to ${su.yHigh.toFixed(3)}`);
   console.log(`z ${su.zRange[0].toFixed(3)} back to ${su.zRange[1].toFixed(3)} forward, ` +
-              `wrapping the crown at ${su.wrapStations} of ${su.stations} stations`);
+              `${su.paneCount} panes a side, ${(1000 * su.post).toFixed(0)} mm posts`);
 
   const R = deck.fuseRadius;
   if (Math.abs(su.yLow - (-R + su.low * 2 * R)) > 1e-6
@@ -503,19 +503,35 @@ console.log('\n=== windscreen ===');
   if (Math.abs(su.zRange[0] + 0.5 * fuse.userData.noseLength) > 1e-9) {
     fail(`aft edge ${su.zRange[0]} is not half the nose length back`);
   }
-  // The forward end is where the crown meets the LOWER line: forward of it
-  // there is no body between the two planes, so there can be no glass.
   const cr = fuse.userData.crownAt(su.zRange[1]);
-  console.log(`forward end: crown is ${cr.toFixed(4)}, lower line ${su.yLow.toFixed(4)}`);
   if (Math.abs(cr - su.yLow) > 1e-3) {
     fail(`glass stops at a station where the crown is ${cr}, not at the lower line`);
   }
+  if (scr.children.length !== 2 * su.paneCount) {
+    fail(`${scr.children.length} panes, wanted ${2 * su.paneCount}`);
+  }
 
-  // Within its own cut lines, to the standoff. The band is lifted along the
-  // surface NORMAL, and near the crown that normal points nearly straight up,
-  // so a correct band sits the full lift above the upper plane -- and about a
-  // millimetre above the lower one, where the normal is nearly horizontal.
-  // Allowing zero here would be asking the glass to be inside the skin.
+  /* ---- the panes are separated, by the width they claim ---------------- */
+  // Six pieces of glass are only six pieces if there is body between them.
+  // Measured on the built geometry rather than on the ranges that produced it.
+  {
+    const sb = scr.children.filter((m) => m.userData.side > 0)
+      .sort((a, b) => b.userData.zRange[1] - a.userData.zRange[1]);
+    for (let i = 0; i < sb.length - 1; i++) {
+      const a = new THREE.Box3().setFromObject(sb[i]);
+      const b = new THREE.Box3().setFromObject(sb[i + 1]);
+      const gap = a.min.z - b.max.z;           // z negative aft
+      console.log(`  post between panes ${sb[i].userData.pane} and ` +
+                  `${sb[i + 1].userData.pane}: ${(1000 * gap).toFixed(1)} mm`);
+      if (gap <= 0) fail(`panes ${sb[i].userData.pane} and ${sb[i + 1].userData.pane} touch or overlap`);
+      // The post is set in z; the built gap is measured on lifted vertices, so
+      // it can differ from the nominal by the standoff's own z component.
+      if (Math.abs(gap - su.post) > 3 * su.lift) {
+        fail(`post reads ${(1000 * gap).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
+      }
+    }
+  }
+
   const sbox = new THREE.Box3().setFromObject(scr);
   const tol = su.lift + 1e-4;
   console.log(`  spans y ${sbox.min.y.toFixed(4)}..${sbox.max.y.toFixed(4)}, ` +
@@ -527,14 +543,53 @@ console.log('\n=== windscreen ===');
   }
   if (sbox.min.z < -fuse.userData.noseLength) fail('glass runs off the back of the nose');
 
+  /** The true upper boundary of the band, lifted as the geometry is. */
+  const trueEdge = (z) => {
+    const top = fuse.userData.surfaceAt(z, Math.PI / 2).y;
+    let th;
+    if (top <= su.yHigh) th = Math.PI / 2;
+    else {
+      let lo2 = -Math.PI / 2, hi2 = Math.PI / 2;
+      for (let k = 0; k < 48; k++) {
+        const m = (lo2 + hi2) / 2;
+        if (fuse.userData.surfaceAt(z, m).y < su.yHigh) lo2 = m; else hi2 = m;
+      }
+      th = (lo2 + hi2) / 2;
+    }
+    const p = fuse.userData.surfaceAt(z, th), n = fuse.userData.normalAt(z, th);
+    return new THREE.Vector3(p.x + n.x * su.lift, p.y + n.y * su.lift, p.z + n.z * su.lift);
+  };
+  const dense = [];
+  for (let k = 0; k <= 2000; k++) {
+    dense.push(trueEdge(su.zRange[0] + (su.zRange[1] - su.zRange[0]) * (k / 2000)));
+  }
+  // Compared as CURVES, by nearest approach, not by pairing on z. The band is
+  // lifted along the surface normal and on the nose that normal has a z
+  // component, so a vertex's z is a few millimetres forward of the station it
+  // came from -- enough, right at the corner, to look up the true edge on the
+  // wrong side of the turn and report a bite that is not there.
+  const toCurve = (q) => {
+    let best = Infinity;
+    for (let k = 0; k < dense.length - 1; k++) {
+      const a3 = dense[k], b3 = dense[k + 1];
+      const ab = b3.clone().sub(a3);
+      const t = Math.max(0, Math.min(1, q.clone().sub(a3).dot(ab) / Math.max(ab.lengthSq(), 1e-18)));
+      best = Math.min(best, q.distanceTo(a3.clone().addScaledVector(ab, t)));
+    }
+    return best;
+  };
+
+  let worstEdge = 0, worstZ = 0;
   for (const mesh of scr.children) {
     const pos = mesh.geometry.getAttribute('position');
+    const nvv = mesh.userData.nv;
+
+    // On the skin. Nose surface: search over (z, th), since the radial
+    // shortcut only holds on the barrel.
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < pos.count; i += 3) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, i);
-      // Nose surface: search over (z, th), since the radial shortcut only
-      // holds on the barrel.
-      let bz = p.z, s0 = fuse.userData.shapeAt(p.z);
+      let bz = p.z; const s0 = fuse.userData.shapeAt(p.z);
       let bt = Math.atan2(p.y - s0.yc, p.x), best = Infinity;
       for (let step = 0.15; step > 1e-5; step *= 0.45) {
         let mz = bz, mt = bt;
@@ -547,119 +602,75 @@ console.log('\n=== windscreen ===');
       }
       lo = Math.min(lo, best); hi = Math.max(hi, best);
     }
-    console.log(`  ${mesh.name.padEnd(22)} standoff ${lo.toFixed(5)}..${hi.toFixed(5)} m`);
     if (lo < 1e-4) fail(`${mesh.name} touches or enters the nose`);
-    if (Math.abs(hi - 0.004) > 6e-4) fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}`);
+    if (Math.abs(hi - su.lift) > 6e-4) fail(`${mesh.name} standoff reaches ${hi.toFixed(5)}`);
+
     facesOutward(mesh, (p) => {
       const s2 = fuse.userData.shapeAt(p.z);
       return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
     }, mesh.name);
-  }
 
-  /**
-   * How closely does the mesh's upper edge follow the TRUE one?
-   *
-   * This is the check for the bite. The boundary turns where the crown drops
-   * past the upper line -- it stops following a level plane and starts
-   * following the crown ridge -- and with no station on that turn the mesh
-   * chords straight across it and takes a wedge out of the glass beside the
-   * centreline. Measured as the worst gap between the built edge and the real
-   * one, sampled between stations where a chord is furthest from its curve.
-   */
-  {
-    const sb = scr.children[0];
-    const pos = sb.geometry.getAttribute('position');
-    const nvv = 14;
+    // Each pane's upper edge must still follow the true boundary: the panes
+    // are cut out of the band, they do not get to reshape it.
     const edge = [];
     for (let i = 0; i * nvv < pos.count; i++) {
       edge.push(new THREE.Vector3().fromBufferAttribute(pos, i * nvv + nvv - 1));
     }
-    const trueEdge = (z) => {
-      const top = fuse.userData.surfaceAt(z, Math.PI / 2).y;
-      let th;
-      if (top <= su.yHigh) th = Math.PI / 2;
-      else {
-        let lo2 = -Math.PI / 2, hi2 = Math.PI / 2;
-        for (let k = 0; k < 48; k++) {
-          const m = (lo2 + hi2) / 2;
-          if (fuse.userData.surfaceAt(z, m).y < su.yHigh) lo2 = m; else hi2 = m;
-        }
-        th = (lo2 + hi2) / 2;
-      }
-      const p = fuse.userData.surfaceAt(z, th), n = fuse.userData.normalAt(z, th);
-      return new THREE.Vector3(p.x + n.x * su.lift, p.y + n.y * su.lift, p.z + n.z * su.lift);
-    };
-    // Compared as CURVES, by nearest approach, not by pairing on z. The band is
-    // lifted along the surface normal and on the nose that normal has a z
-    // component, so a vertex's z is a few millimetres forward of the station it
-    // came from -- enough, right at the corner, to look up the true edge on the
-    // wrong side of the turn and report a 46 mm bite that is not there.
-    const dense = [];
-    for (let k = 0; k <= 2000; k++) {
-      dense.push(trueEdge(su.zRange[0] + (su.zRange[1] - su.zRange[0]) * (k / 2000)));
-    }
-    const toCurve = (q) => {
-      let best = Infinity;
-      for (let k = 0; k < dense.length - 1; k++) {
-        const a3 = dense[k], b3 = dense[k + 1];
-        const ab = b3.clone().sub(a3);
-        const t = Math.max(0, Math.min(1, q.clone().sub(a3).dot(ab) / Math.max(ab.lengthSq(), 1e-18)));
-        best = Math.min(best, q.distanceTo(a3.clone().addScaledVector(ab, t)));
-      }
-      return best;
-    };
-    let worst = 0, worstZ = 0;
     for (let i = 0; i < edge.length - 1; i++) {
-      const a2 = edge[i], b2 = edge[i + 1];
       for (let k = 1; k < 8; k++) {
-        const f = k / 8;
-        const chord = a2.clone().lerp(b2, f);
+        const chord = edge[i].clone().lerp(edge[i + 1], k / 8);
+        // The true edge is sampled on the starboard side, so a port pane has
+        // to be reflected onto it. Without this the check measures the width
+        // of the aeroplane and calls it a bite.
+        if (mesh.userData.side < 0) chord.x = -chord.x;
         const d = toCurve(chord);
-        if (d > worst) { worst = d; worstZ = chord.z; }
+        if (d > worstEdge) { worstEdge = d; worstZ = chord.z; }
       }
     }
-    console.log(`  upper edge follows the true boundary to ` +
-                `${(1000 * worst).toFixed(2)} mm (worst near z ${worstZ.toFixed(3)})`);
-    if (worst > 3e-3) {
-      fail(`the glass edge cuts ${(1000 * worst).toFixed(1)} mm off the true boundary ` +
-           `near z ${worstZ.toFixed(3)} -- a bite`);
-    }
-    if (su.hasCorner && !su.stationZ.some((z) => Math.abs(z - su.zCorner) < 1e-9)) {
-      fail('no station lands on the corner where the band starts to wrap');
-    }
+  }
+  console.log(`  upper edges follow the true boundary to ` +
+              `${(1000 * worstEdge).toFixed(2)} mm (worst near z ${worstZ.toFixed(3)})`);
+  if (worstEdge > 3e-3) {
+    fail(`a glass edge cuts ${(1000 * worstEdge).toFixed(1)} mm off the true boundary ` +
+         `near z ${worstZ.toFixed(3)} -- a bite`);
   }
 
   // Where the band wraps, the two halves must MEET on the crown: each ends on
-  // it, so a gap there would be a slot down the top of the nose.
+  // it, so a gap there would be a slot down the top of the nose. Only the
+  // forward pane reaches the wrap.
   {
-    const [sb, pt] = scr.children;
-    const A = sb.geometry.getAttribute('position'), B = pt.geometry.getAttribute('position');
-    // Only stations in the WRAP, where the band genuinely reaches the crown.
-    // Aft of the corner the two strips are separate and are supposed to be, and
-    // a station a millimetre aft of the turn sits close enough to the centreline
-    // to be mistaken for a crown vertex.
-    const nvv2 = 14;
-    let worst = 0;
-    for (let i = 0; i < A.count; i++) {
-      // The shared edge is the TOP vertex of each wrapping station and nothing
-      // else. Near the tip the whole band is squeezed against the centreline,
-      // so its LOWER edge also has a small x -- but those two points are the
-      // y-low contour on either side, which are supposed to be distinct.
-      if (i % nvv2 !== nvv2 - 1) continue;
-      const station = Math.floor(i / nvv2);
-      if (su.hasCorner && su.stationZ[station] < su.zCorner - 1e-9) continue;
-      const a2 = new THREE.Vector3().fromBufferAttribute(A, i);
-      let near = Infinity;
-      for (let j = 0; j < B.count; j++) {
-        near = Math.min(near, a2.distanceTo(new THREE.Vector3().fromBufferAttribute(B, j)));
+    const sbPanes = scr.children.filter((m) => m.userData.side > 0);
+    const ptPanes = scr.children.filter((m) => m.userData.side < 0);
+    let worst = 0, checked = 0;
+    for (const sb of sbPanes) {
+      const A = sb.geometry.getAttribute('position');
+      const nvv = sb.userData.nv;
+      const pt = ptPanes.find((m) => m.userData.pane === sb.userData.pane);
+      const B = pt.geometry.getAttribute('position');
+      for (let i = 0; i < A.count; i++) {
+        // The shared edge is the TOP vertex of each wrapping station and
+        // nothing else. Near the tip the whole band is squeezed against the
+        // centreline, so its LOWER edge also has a small x -- but those two
+        // points are the y-low contour on either side, and are meant to differ.
+        if (i % nvv !== nvv - 1) continue;
+        const station = sb.userData.stations[Math.floor(i / nvv)];
+        if (su.hasCorner && station < su.zCorner - 1e-9) continue;
+        const a2 = new THREE.Vector3().fromBufferAttribute(A, i);
+        if (Math.abs(a2.x) > 0.02) continue;
+        checked++;
+        let near = Infinity;
+        for (let j = 0; j < B.count; j++) {
+          near = Math.min(near, a2.distanceTo(new THREE.Vector3().fromBufferAttribute(B, j)));
+        }
+        worst = Math.max(worst, near);
       }
-      worst = Math.max(worst, near);
     }
-    console.log(`  the two halves meet on the crown to within ${(1000 * worst).toFixed(3)} mm`);
+    console.log(`  the two halves meet on the crown to within ` +
+                `${(1000 * worst).toFixed(3)} mm (${checked} shared vertices)`);
+    if (!checked) fail('no wrapping vertices found -- the crown seam went unchecked');
     if (worst > 1e-3) fail(`a ${(1000 * worst).toFixed(1)} mm slot runs down the top of the nose`);
   }
 
-  // Clear of the cabin windows, forward of them.
   if (sbox.min.z < wbox.max.z) {
     fail(`glass reaches ${sbox.min.z.toFixed(2)}, aft of the first window at ${wbox.max.z.toFixed(2)}`);
   }

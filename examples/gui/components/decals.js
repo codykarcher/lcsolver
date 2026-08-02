@@ -721,12 +721,20 @@ export const WINDSCREEN = {
   backFraction: 0.50,
   lift: 0.004,
   colour: 0x12161c,
+  /**
+   * Proportions of the glazed length, NOSE FIRST, and the post between each
+   * pair in metres. Three a side is what an airliner carries: the windscreen,
+   * the sliding window, and the quarter light behind it.
+   */
+  panes: [0.42, 0.31, 0.27],
+  post: 0.07,
 };
 
 export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
-  colour = WINDSCREEN.colour, nz = 64, nv = 14, name = 'windscreen',
+  colour = WINDSCREEN.colour, panes = WINDSCREEN.panes, post = WINDSCREEN.post,
+  nz = 64, nv = 14, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
   const noseLength = fu.noseLength;
@@ -756,12 +764,11 @@ export function windscreen(fuselage, {
   // strips merge into one wrap. The boundary genuinely turns there -- it stops
   // following a level plane and starts following the crown ridge -- so a
   // station has to land exactly on it. Without one the mesh chords straight
-  // across the turn and takes a wedge out of the glass beside the centreline,
-  // which is the bite. Same rule as a wing putting a station on every planform
-  // break, for the same reason.
-  const zCorner = crownCrosses(yHi);
+  // across the turn and takes a wedge out of the glass beside the centreline.
+  // Same rule as a wing putting a station on every planform break.
   // z runs NEGATIVE aft, so a corner between the two ends is GREATER than the
   // aft station and LESS than the forward one.
+  const zCorner = crownCrosses(yHi);
   const hasCorner = zCorner > zBack + 1e-9 && zCorner < zNose - 1e-9;
 
   /** Angle of the upper edge: the upper line, or the crown where that is lower. */
@@ -769,68 +776,99 @@ export function windscreen(fuselage, {
     ? Math.PI / 2
     : angleAtHeight(fu, z, yHi));
 
+  /**
+   * The panes, as z ranges, laid out from the NOSE back.
+   *
+   * `panes` are proportions of the glazed length and are given nose-first,
+   * because that is the order they are named on an aeroplane -- the windscreen,
+   * then the sliding window, then the quarter light. The posts between them are
+   * a width in METRES rather than a proportion: a post is a piece of structure
+   * a hand's breadth across whatever the aeroplane's size, and one expressed as
+   * a fraction would thicken with the nose.
+   */
+  const glazed = Math.abs(zNose - zBack) - post * (panes.length - 1);
+  const weight = panes.reduce((a, b) => a + b, 0);
+  const ranges = [];
+  {
+    let z = zNose;                              // start at the nose, work aft
+    for (const share of panes) {
+      const len = (glazed * share) / weight;
+      ranges.push([z - len, z]);                // [aft, forward], z negative aft
+      z -= len + post;
+    }
+  }
+
+  /**
+   * One pane, as a patch between two stations.
+   *
+   * Stations are bunched at BOTH ends -- each pane's edges are where its shape
+   * is cut off, and a distribution that refined only one would leave a facet at
+   * the other -- and the corner is inserted if it falls inside this pane, so no
+   * pane can chord across the turn.
+   */
+  const cosine = (t) => (1 - Math.cos(Math.PI * t)) / 2;
+  const paneStations = (zAft, zFwd, n) => {
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(zAft + (zFwd - zAft) * cosine(i / (n - 1)));
+    if (hasCorner && zCorner > zAft + 1e-9 && zCorner < zFwd - 1e-9) {
+      // The corner itself, and a geometric fan either side of it. The pane's
+      // own ends are already refined by the cosine, but the turn can fall
+      // anywhere inside a pane -- here it lands 22 mm from pane 1's aft edge --
+      // and it is the sharpest feature the band has.
+      out.push(zCorner);
+      for (let d = (zFwd - zAft) * 0.05; d > 1e-4; d *= 0.4) {
+        if (zCorner - d > zAft) out.push(zCorner - d);
+        if (zCorner + d < zFwd) out.push(zCorner + d);
+      }
+      out.sort((a, b) => a - b);
+    }
+    return out;
+  };
+
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
   let wraps = 0;
-
-  /**
-   * The stations, in two runs that share the corner.
-   *
-   * Each run is bunched towards its FORWARD end, where the band's edge turns
-   * hardest -- `1 - (1 - t)^2` rather than `t^2`, which bunched them at the
-   * back and left the forward taper, which shrinks to nothing over a fifth of a
-   * metre, drawn with two stations.
-   */
-  const ease2 = (t) => 1 - (1 - t) * (1 - t);
-  const stations = [];
-  if (hasCorner) {
-    const nA = Math.max(3, Math.round(nz * 0.45)), nB = Math.max(4, nz - nA);
-    for (let i = 0; i < nA; i++) {
-      stations.push(zBack + (zCorner - zBack) * ease2(i / (nA - 1)));
-    }
-    // The forward run is bunched at BOTH ends -- the corner behind it and the
-    // vanishing tip ahead of it are each places the edge turns hard, and a
-    // distribution that only refines one leaves a facet at the other.
-    const cosine = (t) => (1 - Math.cos(Math.PI * t)) / 2;
-    for (let i = 1; i < nB; i++) {
-      stations.push(zCorner + (zNose - zCorner) * cosine(i / (nB - 1)));
-    }
-  } else {
-    for (let i = 0; i < nz; i++) stations.push(zBack + (zNose - zBack) * ease2(i / (nz - 1)));
-  }
+  const built = [];
 
   for (const side of [1, -1]) {
-    const pos = [], idx = [];
-    for (let iz = 0; iz < stations.length; iz++) {
-      const z = stations[iz];
-      const thLo = angleAtHeight(fu, z, yLo) ?? Math.PI / 2;
-      const thHi = upperAngle(z) ?? Math.PI / 2;
-      if (side > 0 && thHi >= Math.PI / 2 - 1e-9) wraps++;
-      for (let iv = 0; iv < nv; iv++) {
-        const th = thLo + (thHi - thLo) * (iv / (nv - 1));
-        const t = side > 0 ? th : Math.PI - th;
-        const p = fu.surfaceAt(z, t), n = fu.normalAt(z, t);
-        pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
+    ranges.forEach(([zAft, zFwd], pane) => {
+      // Stations shared out by LENGTH, not equally: the panes are different
+      // sizes, and an equal share leaves the longest one coarsest.
+      const share = Math.abs(zFwd - zAft) / glazed;
+      const stations = paneStations(zAft, zFwd, Math.max(8, Math.round(nz * share)));
+      const pos = [], idx = [];
+      for (const z of stations) {
+        const thLo = angleAtHeight(fu, z, yLo) ?? Math.PI / 2;
+        const thHi = upperAngle(z) ?? Math.PI / 2;
+        if (side > 0 && thHi >= Math.PI / 2 - 1e-9) wraps++;
+        for (let iv = 0; iv < nv; iv++) {
+          const th = thLo + (thHi - thLo) * (iv / (nv - 1));
+          const t = side > 0 ? th : Math.PI - th;
+          const p = fu.surfaceAt(z, t), n = fu.normalAt(z, t);
+          pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
+        }
       }
-    }
-    for (let iz = 0; iz < stations.length - 1; iz++) {
-      for (let iv = 0; iv < nv - 1; iv++) {
-        const p0 = iz * nv + iv, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
-        idx.push(p0, p2, p1, p1, p2, p3);
+      for (let iz = 0; iz < stations.length - 1; iz++) {
+        for (let iv = 0; iv < nv - 1; iv++) {
+          const p0 = iz * nv + iv, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
+          idx.push(p0, p2, p1, p1, p2, p3);
+        }
       }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    windOutward(g, (p) => {
-      const s = fu.shapeAt(p.z);
-      return fu.normalAt(p.z, Math.atan2(p.y - s.yc, p.x));
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      windOutward(g, (q) => {
+        const s = fu.shapeAt(q.z);
+        return fu.normalAt(q.z, Math.atan2(q.y - s.yc, q.x));
+      });
+      const mesh = new THREE.Mesh(g, material);
+      mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}${pane + 1}`;
+      mesh.userData = { pane: pane + 1, side, zRange: [zAft, zFwd], stations, nv };
+      group.add(mesh);
+      if (side > 0) built.push({ pane: pane + 1, zRange: [zAft, zFwd], stations: stations.length });
     });
-    const mesh = new THREE.Mesh(g, material);
-    mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}`;
-    group.add(mesh);
   }
 
   Object.assign(group.userData, {
@@ -839,8 +877,10 @@ export function windscreen(fuselage, {
     zRange: [zBack, zNose],
     /** Where the two side strips merge into one wrap, and whether there is one. */
     zCorner: hasCorner ? zCorner : null, hasCorner,
+    /** The panes as built, nose-first, and the posts between them. */
+    panes: built, post, paneCount: panes.length, nv,
     /** Stations at which the band closes over the crown rather than at yHigh. */
-    wrapStations: wraps, stations: stations.length, stationZ: stations,
+    wrapStations: wraps,
   });
   return group;
 }
