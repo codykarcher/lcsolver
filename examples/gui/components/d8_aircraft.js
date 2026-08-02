@@ -41,23 +41,6 @@ export const D8_CHOICES = {
   tcRoot: 0.145, tcCrank: 0.125, tcTip: 0.105, tcTail: 0.09,
 };
 
-/**
- * Twin fins, from a solve that describes one surface.
- *
- * The solve gives a single fin -- its span, root chord and taper reproduce its
- * own area exactly -- but the configuration carries two. Splitting the AREA and
- * holding the aspect ratio and taper is the reading that keeps the number the
- * solve actually cares about: two fins of half the area each, so the total is
- * what was sized. Building two of the given planform would silently double it.
- */
-export function splitFin({ height, rootChord, taper }) {
-  const area = 0.5 * height * rootChord * (1 + taper);
-  const ar = (height * height) / area;
-  const each = area / 2;
-  const h = Math.sqrt(ar * each);
-  return { height: h, rootChord: (2 * each) / (h * (1 + taper)), taper, area: each };
-}
-
 /** Leading-edge sweep from a quarter-chord one. `k` is 1/2 tip-to-tip, 1/4 for a fin. */
 function leadingEdgeSweep(sweepC4, rootChord, taper, span, mirrored = true) {
   const k = mirrored ? 0.5 : 0.25;
@@ -109,12 +92,27 @@ export function d8Aircraft(deck, opts = {}) {
   wing.position.set(0, wingY, -wingRootLE);
   g.add(wing); parts.wing = wing;
 
-  /* ---- twin fins ------------------------------------------------------ */
-  const fin = splitFin({ height: d.vtHeight, rootChord: d.vtRootChord, taper: d.vtTaper });
+  /* ---- the fins ------------------------------------------------------- */
+  /**
+   * Each fin is the solve's planform, unhalved, and there are `n_vt` of them.
+   *
+   * The solve settles this itself and it is worth being precise about, because
+   * the two readings differ by a factor of two: b_vt, c_root_vt and lambda_vt
+   * reproduce S_vt exactly on their own, so S_vt describes ONE surface and n_vt
+   * says how many there are. The total is the product. Splitting the area
+   * instead -- which is what this did before the solve carried n_vt -- builds
+   * two fins that together come to what one was supposed to be.
+   */
+  const fin = {
+    height: d.vtHeight, rootChord: d.vtRootChord, taper: d.vtTaper,
+    area: 0.5 * d.vtHeight * d.vtRootChord * (1 + d.vtTaper),
+  };
   const vtQuarterX = d.wingQuarterX + d.vtArm;
   const vtRootLE = vtQuarterX - 0.25 * fin.rootChord;
   parts.verticalTails = [];
-  for (const side of [1, -1]) {
+  // Placed symmetrically about the centreline, whatever the count.
+  const sides = d.finCount >= 2 ? [1, -1] : [0];
+  for (const side of sides) {
     const vt = verticalTail({
       height: fin.height, rootChord: fin.rootChord, taperRatio: fin.taper,
       sweep: leadingEdgeSweep(d.vtSweepC4, fin.rootChord, fin.taper, fin.height, false),
@@ -210,10 +208,11 @@ export function d8Aircraft(deck, opts = {}) {
     areas: {
       wing: wing.userData.area,
       horizontalTail: ht.userData.area,
-      // Both fins together, which is what the solve sized.
-      verticalTail: 2 * parts.verticalTails[0].userData.area,
+      // Every fin together, which is what the deck's solvedAreas counts.
+      verticalTail: parts.verticalTails.reduce((t, f) => t + f.userData.area, 0),
     },
-    fin, wheelbase, groundAttitude: attitude, ground,
+    fin, finCount: parts.verticalTails.length,
+    wheelbase, groundAttitude: attitude, ground,
     noseContact, mainContact,
     leadingEdgeSweeps: {
       wing: wing.userData.sweep,

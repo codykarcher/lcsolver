@@ -77,6 +77,15 @@ export function deckFromSolve(sol, overrides = {}) {
 
     vtHeight: g('VT_b_vt'), vtRootChord: g('VT_c_root_vt'),
     vtTaper: g('VT_lambda_vt'), vtArm: g('VT_l_vt'),
+    /**
+     * How many fins. Absent on a conventional solve, which means one.
+     *
+     * It settles what `VT_S_vt` counts, and the two readings differ by a factor
+     * of two. The planform answers it: b_vt, c_root_vt and lambda_vt reproduce
+     * S_vt exactly on their own, so S_vt is ONE surface and `n_vt` says how many
+     * of them there are -- the total is the product, not the quotient.
+     */
+    finCount: typeof sol.n_vt === 'number' ? sol.n_vt : 1,
 
     engineX: g('x_eng'), engineY: g('y_eng'),
     nacelleDia: g('LG_d_nacelle'), nacelleLength: g('l_nacelle'),
@@ -116,7 +125,8 @@ export function deckFromSolve(sol, overrides = {}) {
 
     /** What the solve said its own areas were, to check the assembly against. */
     solvedAreas: { wing: g('Wing_S'), horizontalTail: g('HT_S_ht'),
-                   verticalTail: g('VT_S_vt') },
+                   // All the fins together, which is what an assembly has.
+                   verticalTail: (typeof sol.n_vt === 'number' ? sol.n_vt : 1) * g('VT_S_vt') },
     ...overrides,
   };
 }

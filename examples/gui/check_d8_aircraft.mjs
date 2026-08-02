@@ -6,15 +6,15 @@
  * chords, the solve computed them independently, and agreement to machine
  * precision is what says the whole conversion is right.
  *
- * The fins are the one place the reading is not literal. The solve describes ONE
- * surface; the configuration carries two, so the AREA is split and the aspect
- * ratio and taper held. What is checked is the total, because that is the number
- * the solve sized.
+ * The fins are where a solve can be misread by a factor of two, so that reading
+ * is checked rather than assumed: `VT_S_vt` describes ONE surface -- its own
+ * span, root chord and taper reproduce it exactly -- and `n_vt` says how many
+ * there are. The total is the product.
  */
 import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { deckFromSolve } from './components/aircraft.js';
-import { d8Aircraft, splitFin } from './components/d8_aircraft.js';
+import { d8Aircraft } from './components/d8_aircraft.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_d8_solve.json', import.meta.url), 'utf8'));
 const deck = deckFromSolve(sol);
@@ -56,14 +56,24 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
 /* ---- the fins are two, halved ------------------------------------------ */
 {
   const fins = u.parts.verticalTails;
-  const each = splitFin({ height: d.vtHeight, rootChord: d.vtRootChord, taper: d.vtTaper });
-  console.log(`\nfins: ${fins.length}, each ${each.height.toFixed(3)} tall by ` +
-              `${each.rootChord.toFixed(3)} root, ${each.area.toFixed(4)} m2`);
-  if (fins.length !== 2) bad(`${fins.length} fins, wanted 2`);
-  const arOne = (d.vtHeight * d.vtHeight) / sol.VT_S_vt;
-  const arEach = (each.height * each.height) / each.area;
-  console.log(`      aspect ratio held: ${arOne.toFixed(4)} -> ${arEach.toFixed(4)}`);
-  if (Math.abs(arOne - arEach) > 1e-9) bad('splitting the fin changed its aspect ratio');
+  console.log(`\nfins: ${fins.length} (solve says n_vt = ${sol.n_vt}), each ` +
+              `${fins[0].userData.height.toFixed(3)} tall by ` +
+              `${fins[0].userData.rootChord.toFixed(3)} root, ` +
+              `${fins[0].userData.area.toFixed(4)} m2`);
+  if (fins.length !== sol.n_vt) bad(`${fins.length} fins, solve says ${sol.n_vt}`);
+  // Each fin is the solve's own planform, unhalved -- the reading that makes
+  // b_vt, c_root_vt and lambda_vt reproduce S_vt, which they do exactly.
+  const planform = 0.5 * d.vtHeight * d.vtRootChord * (1 + d.vtTaper);
+  console.log(`      planform gives ${planform.toFixed(4)} against VT_S_vt ` +
+              `${sol.VT_S_vt.toFixed(4)}; total ${(fins.length * planform).toFixed(4)}`);
+  if (Math.abs(planform - sol.VT_S_vt) > 1e-9) {
+    bad(`b_vt x c_root x (1+lambda)/2 is ${planform}, not VT_S_vt ${sol.VT_S_vt}`);
+  }
+  for (const f of fins) {
+    if (Math.abs(f.userData.area - sol.VT_S_vt) > 1e-9) {
+      bad(`a fin is ${f.userData.area} m2, not the solve's ${sol.VT_S_vt}`);
+    }
+  }
   // They must splay apart, not both lean the same way.
   const [a, b] = fins.map((f) => new THREE.Box3().setFromObject(f));
   if (a.min.x * b.max.x > 0) bad('both fins are on the same side');
