@@ -73,6 +73,8 @@
   <div class="finOnly">
     <div class="row"><label for="height">height &middot; root to tip</label><output id="oHeight"></output></div>
     <input type="range" id="height" min="1" max="20" step="0.05" value="6.2">
+    <div class="row"><label for="cant">cant &middot; deg from vertical</label><output id="oCant"></output></div>
+    <input type="range" id="cant" min="-60" max="60" step="0.5" value="0">
   </div>
 
   <div class="row"><label for="rootChord">root chord</label><output id="oRootChord"></output></div>
@@ -219,7 +221,7 @@ const NUMS = ['rootChord', 'sweep'];
 const WING_NUMS = ['span', 'crankRatio', 'tipRatio', 'kink',
                    'rootThickness', 'crankThickness', 'tipThickness'];
 const TAIL_NUMS = ['span', 'taperRatio', 'thickness'];
-const FIN_NUMS = ['height', 'taperRatio', 'thickness'];
+const FIN_NUMS = ['height', 'cant', 'taperRatio', 'thickness'];
 const KIND_NUMS = { wing: WING_NUMS, tail: TAIL_NUMS, fin: FIN_NUMS };
 const ALL = [...new Set([...NUMS, ...WING_NUMS, ...TAIL_NUMS, ...FIN_NUMS])];
 const FOILS = ['root', 'kinkFoil', 'tip'];
@@ -336,7 +338,10 @@ function build() {
     (u.isFin
       ? `height <span>${u.height.toFixed(2)}</span> &middot; ` +
         `S <span>${u.area.toFixed(2)}</span> (one surface) &middot; ` +
-        `AR <span>${u.aspectRatio.toFixed(3)}</span> = h&sup2;/S<br>`
+        `AR <span>${u.aspectRatio.toFixed(3)}</span> = h&sup2;/S<br>` +
+        `cant <span>${u.cant.toFixed(1)}&deg;</span> &rarr; tip ` +
+        `<span>${u.tipRise.toFixed(2)}</span> up, ` +
+        `<span>${u.tipOffset.toFixed(2)}</span> across<br>`
       : '') +
     `chords: root <span>${u.rootChord.toFixed(3)}</span>` +
     (u.kinkChord ? ` &middot; crank <span>${u.kinkChord.toFixed(3)}</span>` : '') +

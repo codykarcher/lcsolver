@@ -322,6 +322,7 @@ const FIN = {
   taperRatio:   0.32,
   sweep:        42.0,
   thickness:    0.10,
+  cant:          0.0,  // degrees from VERTICAL; positive leans the tip to +X
   dihedral:      0.0, twistRoot: 0.0, twistTip: 0.0,
   kink:         null, symmetric: true,
   nInner:          2, nOuter: 20,
@@ -340,10 +341,22 @@ const FIN = {
  * something else, and an aspect ratio out by a factor of two is exactly the
  * sort of error that survives a review, because it still looks like a number.
  *
- * So the loft runs unchanged and the two things that differ are handled here:
- * the span passed down is twice the height, so the half-surface the loft builds
- * runs root to tip, and the group is turned a quarter turn about the axis so
- * that span runs UP rather than outboard.
+ * So the loft runs unchanged and the things that differ are handled here: the
+ * span passed down is twice the height, so the half-surface the loft builds
+ * runs root to tip, and the group is turned about the axis so that span runs UP
+ * rather than outboard.
+ *
+ * `cant` tilts it off vertical, positive leaning the tip to starboard, and it
+ * is simply a smaller turn -- pi/2 minus the cant. It is deliberately NOT a
+ * dihedral: dihedral moves the sections and leaves them streamwise, which is
+ * right for a wing and wrong here, because a canted fin's sections lean over
+ * with it. Turning the whole surface is what actually happens to a canted fin
+ * and needs nothing in the loft.
+ *
+ * Area, aspect ratio and MAC are properties of the surface and do not change
+ * with cant. What does change is how much of the height is HEIGHT: a fin canted
+ * 30 degrees reaches only cos(30) of its span above the root, and both numbers
+ * are reported because confusing them is easy and quiet.
  *
  * The geometry accessors in userData -- `at`, `frames` -- are in the loft's own
  * frame, before that quarter turn. The mesh carries the rotation.
@@ -357,7 +370,8 @@ export function verticalTail({ height, ...o } = {}) {
   const h = height ?? p.height;
   p.height = h;
   const g = liftingSurface({ ...p, span: 2 * h, mirror: false });
-  g.rotation.z = Math.PI / 2;
+  const cant = (p.cant ?? 0) * DEG;
+  g.rotation.z = Math.PI / 2 - cant;
 
   const u = g.userData;
   const area = u.area;                       // one surface: mirror was off
@@ -365,8 +379,12 @@ export function verticalTail({ height, ...o } = {}) {
     isFin: true, height: h, area, referenceArea: area,
     /** h^2 / S on ONE surface -- a fin's definition, not a wing's. */
     aspectRatio: h * h / area,
-    /** Height above the root at which the MAC sits. */
+    /** Height above the root at which the MAC sits, along the span. */
     heightMac: u.yMac,
+    cant: p.cant ?? 0,
+    /** Where the tip ends up: canting spends span on lateral reach. */
+    tipRise: h * Math.cos(cant),
+    tipOffset: h * Math.sin(cant),
   });
   return g;
 }

@@ -84,6 +84,8 @@ const CASES = [
                                                        dihedral: 0, twistTip: 0 }) },
   { name: 'fin',         build: () => verticalTail() },
   { name: 'tall fin',    build: () => verticalTail({ height: 9, taperRatio: 0.45 }) },
+  { name: 'canted fin',  build: () => verticalTail({ cant: 30 }) },
+  { name: 'canted -25',  build: () => verticalTail({ cant: -25 }) },
 ];
 
 for (const c of CASES) {
@@ -111,6 +113,34 @@ for (const c of CASES) {
           `${(u.height ** 2 / byHand).toFixed(4)}`);
     if (u.referenceArea !== u.area)
       bad(`fin reference area ${u.referenceArea} is not its own area ${u.area}`);
+
+    // Cant turns the fin about its ROOT CHORD LINE. So that line does not move,
+    // at any cant -- while the section's thickness sweeps about it, which is
+    // what rotating about an axis means and is not the root moving.
+    g.updateMatrixWorld(true);
+    const M3 = 2 * p.nChord - 2;
+    const le = new THREE.Vector3().fromBufferAttribute(pos, p.nChord - 1)
+      .applyMatrix4(g.matrixWorld);
+    const te = new THREE.Vector3().fromBufferAttribute(pos, 0).applyMatrix4(g.matrixWorld);
+    if (le.length() > 1e-9)
+      bad(`root leading edge moved to ${le.toArray().map((v) => v.toFixed(4))}`);
+    if (Math.abs(te.x) > 1e-9 || Math.abs(te.y) > 1e-9
+        || Math.abs(te.z + u.rootChord) > 1e-9)
+      bad(`root trailing edge moved to ${te.toArray().map((v) => v.toFixed(4))}`);
+
+    // And the tip goes where the cant says. Height is measured along the SPAN,
+    // so a canted fin reaches only cos(cant) of it above the root -- confusing
+    // the two is easy and quiet, so both are published and both are checked.
+    const fr = u.frames[u.frames.length - 1];
+    const tip = new THREE.Vector3(fr.x, fr.y, -fr.zLE).applyMatrix4(g.matrixWorld);
+    if (Math.abs(tip.y - u.tipRise) > 1e-6)
+      bad(`tip rises ${tip.y.toFixed(4)}, tipRise says ${u.tipRise.toFixed(4)}`);
+    if (Math.abs(tip.x - u.tipOffset) > 1e-6)
+      bad(`tip offset ${tip.x.toFixed(4)}, tipOffset says ${u.tipOffset.toFixed(4)}`);
+    // Cant is a placement, not a shape: it cannot change the area.
+    const upright = verticalTail({ ...p, cant: 0 }).userData;
+    if (Math.abs(u.area - upright.area) > 1e-9 || Math.abs(u.mac - upright.mac) > 1e-9)
+      bad(`cant changed the area or MAC`);
   } else if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
   // The chords follow from the root and the two ratios, each measured off the
   // chord inboard of it. Checked as a chain, because that is the failure mode:
@@ -223,7 +253,7 @@ for (const c of CASES) {
     console.log(`  MAC ${u.mac.toFixed(4)} vs ${macWant.toFixed(4)} closed form, ` +
                 `y_MAC ${u.yMac.toFixed(4)} vs ${yWant.toFixed(4)}`);
   } else {
-      console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} (cranked -- integrated)`);
+        console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} (cranked -- integrated)`);
   }
 
   // The symmetry convention: a tail or fin is NACA 00xx however it was asked
@@ -288,7 +318,9 @@ for (const c of CASES) {
         `${(p.twistTip - p.twistRoot).toFixed(2)}`);
 
   console.log(`  LE sweep ${gotSweep.toFixed(2)} deg (varies ${sweepSpread.toExponential(1)}), ` +
-              `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg`);
+              `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg` +
+              (u.isFin ? `, cant ${u.cant} -> tip ${u.tipRise.toFixed(2)} up / ` +
+                         `${u.tipOffset.toFixed(2)} across` : ''));
   // Thickness measured off the BUILT surface at each named station, not read
   // back from the parameter it was set from.
   {
