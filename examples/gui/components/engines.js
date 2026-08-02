@@ -168,9 +168,10 @@ export function turbofan({
   rotor.add(fan);
   g.add(rotor);
 
-  // Fan case: bare unfaired metal, so a thin band rather than a thick ring,
-  // carried well down the engine.
-  const zCaseAft = -0.94 * R;
+  // Fan case: bare unfaired metal, so a thin band rather than a thick ring.
+  // Runs 0.18 rFan forward of the fan plane to zCaseAft; the original 0.80
+  // rFan span, carried 20% further aft.
+  const zCaseAft = 0.18 * R - 0.96 * R;   // = -0.78 rFan
   const rCaseOut = 1.045 * R;
   g.add(tubeZ(1.02 * R, rCaseOut, 0.18 * R, zCaseAft, M.casing, SEG));
 
