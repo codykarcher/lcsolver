@@ -54,7 +54,7 @@ from pyomo.environ import units
 
 from edi import Formulation
 
-from . import airframe, layouts
+from . import airframe, defects, layouts
 from .airframe import pin, set_constant
 from .model import MAX_ITER, _bound_constraints, _bound_variables
 
@@ -83,8 +83,13 @@ M_FT = 3.28083990
 
 
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
-          seed: str | None = None) -> Formulation:
-    """Build the 737-800. Returns an EDI ``Formulation``."""
+          faithful: bool = False, seed: str | None = None) -> Formulation:
+    """Build the 737-800. Returns an EDI ``Formulation``.
+
+    ``subs/optimal737.py`` converts its sweeps correctly, so the only upstream
+    defect reaching this deck is the ``M_4a`` inconsistency in the shared
+    engine core; see :mod:`~.defects`. ``faithful=True`` leaves it in place.
+    """
     N = Nclimb + Ncruise
     f = Formulation()
 
@@ -131,6 +136,8 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
     # Cruise turbine inlet temperature limit.
     cons += [p.eng.T_t_41[Nclimb:] <= CRUISE_TT41_MAX * units.K]
+
+    cons += defects.correct_M_4a(p, faithful=faithful)
 
     # ---- component constants declared for the D8 ---------------------------
     # fuselage.py and horizontal_tail.py hard-code these to double-bubble

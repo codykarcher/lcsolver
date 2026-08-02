@@ -153,7 +153,9 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     Vland = C("V_land", 72.0, "m/s", "aircraft landing speed")
     rreq = C("rdot_req", 0.1475, "s^-2", "required yaw rate at landing")
     ReqRng = C("R_req", 3000.0, "nmi", "required cruise range")
-    Vmn = C("V_mn", 133.94, "m/s", "manoeuvring speed")
+    # 133.76, not 133.94: both subs decks say 133.76 and so does the recorded
+    # gpkit solution. The old value was a transcription slip here.
+    Vmn = C("V_mn", 133.76, "m/s", "manoeuvring speed")
     w_seat = C("w_seat", 0.5, "m", "seat width")
     w_aisle = C("w_aisle", 0.51, "m", "aisle width")
     w_sys = C("w_sys", 0.1, "m", "width between cabin and skin for systems")

@@ -42,19 +42,17 @@ quantity                 optimalD8   D8_no_BLI   why
 plus the engine's on-design mass-flow anchors, which are the ``else`` branch
 of ``if eng == 3`` -- see :mod:`turbofan.no_bli`.
 
-The ``C_L_w_max`` bug
----------------------
-``subs/D8_no_BLI.py`` line 76 reads ``2.15/(cos(sweep)**2)`` where every other
-subs deck reads ``2.15/(cos(sweep * pi / 180.)**2)``. ``sweep`` is 13.237
-*degrees*, so the missing conversion feeds 13.237 radians to ``cos`` -- which
-wraps twice round and lands at 0.784 instead of 0.973. The maximum wing lift
-coefficient comes out 3.503 rather than 2.269, a 54% error in a limit that
-sizes the wing for low speed.
+Source defects
+--------------
+This configuration's subs deck carries the worst of the upstream mistakes:
+``C_{L_{w,max}}`` is computed with degrees fed to ``cos`` as radians, putting
+the maximum wing lift coefficient 54% high. That and the ``M_4a``
+inconsistency are described in :mod:`~.defects`.
 
-It is reproduced here, deliberately, because the recorded gpkit reference was
-produced by that file. Correcting it would be a different aeroplane and the
-reference would no longer apply. ``build(cl_max_bug=False)`` uses the intended
-2.269 for anyone who wants to see what it costs.
+``build()`` corrects both. ``build(faithful=True)`` reproduces them, which is
+what the recorded gpkit solution was produced with and therefore what
+:func:`verify` compares -- correcting a defect the reference also has would
+turn a transcription check into a measurement of the correction.
 """
 from __future__ import annotations
 
@@ -65,7 +63,7 @@ from pyomo.environ import units
 
 from edi import Formulation
 
-from . import airframe, layouts
+from . import airframe, defects, layouts
 from .airframe import pin
 # SPR (8 seats/row) and M_fuseD (0.72) are already the double-bubble values in
 # fuselage.py, so unlike the 737 deck this one has no component constants to
@@ -88,9 +86,15 @@ CRUISE_TT41_MAX = 1125.0
 
 
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
-          pi_tail_supports: str = "pinned", cl_max_bug: bool = True,
+          pi_tail_supports: str = "pinned", faithful: bool = False,
           seed: str | None = None) -> Formulation:
-    """Build the non-ingesting D8. Returns an EDI ``Formulation``."""
+    """Build the non-ingesting D8. Returns an EDI ``Formulation``.
+
+    ``faithful=True`` reproduces the two upstream defects in
+    :mod:`~.defects` -- the radians/degrees slip in ``C_L_w_max`` and the
+    ``M_4a`` inconsistency -- which is what the gpkit reference was produced
+    with, and so what :func:`verify` uses. The default is the corrected model.
+    """
     N = Nclimb + Ncruise
     f = Formulation()
 
@@ -107,8 +111,7 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         b_max=140.0 * 0.3048,
         Fsafetyfac=1.0, MinCruiseAlt=38478.0, MaxClimbTime=16.0,
         rdot_req=0.1475, C_D_fuse=0.018081,
-        C_L_w_max=(2.15 / cos(SWEEP_W) ** 2 if cl_max_bug
-                   else 2.15 / cos(SWEEP_W * pi / 180) ** 2),
+        C_L_w_max=defects.cl_w_max(2.15, SWEEP_W, faithful=faithful),
         # --- the clean-inlet numbers ---------------------------------------
         D_reduct=1.0,
         f_pylon=0.11,
@@ -142,6 +145,8 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 
     # Cruise turbine inlet temperature limit.
     cons += [p.eng.T_t_41[Nclimb:] <= CRUISE_TT41_MAX * units.K]
+
+    cons += defects.correct_M_4a(p, faithful=faithful)
 
     # ---- substitutions -------------------------------------------------------
     # Identical to optimalD8's: the subs decks differ only in the numbers
@@ -177,11 +182,16 @@ def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     return f
 
 
-def verify(rtol=0.02, max_iter=MAX_ITER, **kw):
-    """Solve and diff the headline quantities against the gpkit reference."""
+def verify(rtol=0.02, max_iter=MAX_ITER, faithful=True, **kw):
+    """Solve and diff the headline quantities against the gpkit reference.
+
+    Defaults to ``faithful=True``: the reference carries the source's defects,
+    so reproducing them is what makes the diff a measure of the transcription.
+    Pass ``faithful=False`` to see what the corrected model does instead.
+    """
     from harness import solve_edi, feasibility, load_reference, solution_dict
 
-    fm = build(**kw)
+    fm = build(faithful=faithful, **kw)
     solve_edi(fm, solver="ipopt-convex", max_iter=max_iter)
     sol = solution_dict(fm)
     chk = load_reference(Path(__file__).with_name("reference.json"))
