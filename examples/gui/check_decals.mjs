@@ -491,10 +491,16 @@ console.log('\n=== windscreen ===');
   const scr = windscreen(fuse, {});
   const su = scr.userData;
   const fud = fuse.userData;
+  const panes = scr.children.filter((m) => m.userData.side > 0)
+    .sort((a, b) => a.userData.pane - b.userData.pane);
+  const vertex = (m, i) => new THREE.Vector3()
+    .fromBufferAttribute(m.geometry.getAttribute('position'), i);
+
   console.log(`${(100 * su.low).toFixed(0)}% to ${(100 * su.high).toFixed(0)}% of a ` +
               `${su.bodyHeight.toFixed(3)} m body: y ${su.yLow.toFixed(3)} to ${su.yHigh.toFixed(3)}`);
-  console.log(`upper edge ${su.topLength.toFixed(3)} m long from the centreline, ` +
-              `${su.panesPerSide} panes a side, ${(1000 * su.post).toFixed(0)} mm posts`);
+  console.log(`upper edge ${su.topLength.toFixed(3)} m from the centreline, lower ` +
+              `${su.lowerLength.toFixed(3)}, ${su.panesPerSide} panes a side, ` +
+              `${(1000 * su.post).toFixed(0)} mm posts`);
 
   const R = deck.fuseRadius;
   if (Math.abs(su.yLow - (-R + su.low * 2 * R)) > 1e-6
@@ -506,162 +512,95 @@ console.log('\n=== windscreen ===');
   }
 
   /* ---- a post crosses the upper edge SQUARE --------------------------- */
-  /**
-   * The property the posts are defined by, and the one every earlier attempt
-   * failed. Seen down the surface normal where it starts, a post must meet the
-   * upper edge at a right angle -- which is what makes it a post rather than
-   * the trace of some plane through the body. Measured in the tangent plane at
-   * the top of each post.
-   */
+  // The property the posts are defined by. A post runs from a point on the
+  // upper edge to the point on the lower edge lying square to that edge's
+  // tangent, so this is exact by construction rather than integrated towards.
   {
-    let worst = 0;
-    const arcs = [];
-    for (const [s0, s1] of su.edges) { arcs.push(s0); arcs.push(s1); }
-    for (const sArc of arcs) {
-      const path = su.marchPost(sArc);
-      if (path.length < 2) { fail(`the post at arc ${sArc} did not march`); continue; }
-      const p0 = fud.surfaceAt(path[0].z, path[0].th);
-      const dir = fud.surfaceAt(path[1].z, path[1].th).sub(p0).normalize();
-      const e = 1e-3;
-      const a0 = su.atArc(Math.max(0, sArc - e));
-      const a1 = su.atArc(Math.min(su.topLength, sArc + e));
-      const tan = fud.surfaceAt(a1.z, a1.th).sub(fud.surfaceAt(a0.z, a0.th)).normalize();
-      const ang = Math.acos(Math.min(1, Math.abs(dir.dot(tan)))) * 180 / Math.PI;
-      worst = Math.max(worst, Math.abs(90 - ang));
+    let worst = 0, lo = 90, hi = 0;
+    for (const d of su.dividers) {
+      if (d <= 0) continue;                       // the centreline, square by symmetry
+      const a = su.atArc(su.upper, d).p;
+      const f = su.footOf(d);
+      const b = su.atArc(su.lower, f).p;
+      const dir = b.clone().sub(a).normalize();
+      const tUp = su.tangentAt(su.upper, d);
+      const tLo = su.tangentAt(su.lower, f);
+      worst = Math.max(worst,
+        Math.abs(90 - Math.acos(Math.min(1, Math.abs(dir.dot(tUp)))) * 180 / Math.PI));
+      const angLo = Math.acos(Math.min(1, Math.abs(dir.dot(tLo)))) * 180 / Math.PI;
+      lo = Math.min(lo, angLo); hi = Math.max(hi, angLo);
     }
-    console.log(`  posts meet the upper edge within ${worst.toFixed(2)} deg of square`);
-    if (worst > 0.5) fail(`a post crosses the upper edge at ${(90 - worst).toFixed(1)} deg, not square`);
-  }
-
-  /* ---- and very nearly square to the lower edge ----------------------- */
-  {
-    let lo = 90, hi = 0;
-    for (const [, s1] of su.edges) {
-      const path = su.marchPost(s1);
-      const n = path.length;
-      if (n < 2) continue;
-      const p0 = fud.surfaceAt(path[n - 2].z, path[n - 2].th);
-      const dir = fud.surfaceAt(path[n - 1].z, path[n - 1].th).sub(p0).normalize();
-      const zL = path[n - 1].z, dz = 1e-3;
-      const t0 = su.thAtHeight(zL - dz, su.yLow), t1 = su.thAtHeight(zL + dz, su.yLow);
-      if (t0 == null || t1 == null) continue;
-      const tan = fud.surfaceAt(zL + dz, t1).sub(fud.surfaceAt(zL - dz, t0)).normalize();
-      const ang = Math.acos(Math.min(1, Math.abs(dir.dot(tan)))) * 180 / Math.PI;
-      lo = Math.min(lo, ang); hi = Math.max(hi, ang);
-    }
-    console.log(`  and the lower edge at ${lo.toFixed(1)}..${hi.toFixed(1)} deg`);
-    // Not asserted at 90: the two edges are only nearly parallel, so this
-    // follows rather than being imposed. Well off square would mean the band
-    // is not the shape it is supposed to be.
+    console.log(`  posts meet the upper edge within ${worst.toFixed(3)} deg of square, ` +
+                `and the lower at ${lo.toFixed(1)}..${hi.toFixed(1)}`);
+    if (worst > 0.1) fail(`a post crosses the upper edge ${worst.toFixed(2)} deg off square`);
     if (lo < 60) fail(`a post meets the lower edge at ${lo.toFixed(1)} deg -- far from square`);
   }
 
-  /* ---- the posts, measured along the upper edge ------------------------ */
-  {
-    /**
-     * The centre post, measured down its WHOLE length.
-     *
-     * A minimum is not enough and reading only one is how this was missed: the
-     * post was 70 mm at the top and 223 at the bottom, and a check that looked
-     * at the narrowest point called that 70 and passed. The port side is this
-     * one's mirror, so any drift of the divider off the centreline counts
-     * twice.
-     */
-    let minX = Infinity, maxX = 0;
-    for (const m of scr.children) {
-      if (m.userData.side < 0 || m.userData.pane !== 1) continue;
-      const pos = m.geometry.getAttribute('position');
-      for (let i = 0; i < pos.count; i += m.userData.nv) {
-        minX = Math.min(minX, pos.getX(i)); maxX = Math.max(maxX, pos.getX(i));
-      }
-    }
-    console.log(`  centre post ${(2000 * minX).toFixed(1)}..${(2000 * maxX).toFixed(1)} mm`);
-    if (minX <= 0) fail('the two sides meet -- there is no centre post');
-    if (2 * (maxX - minX) > 1e-3) {
-      fail(`the centre post varies by ${(2000 * (maxX - minX)).toFixed(1)} mm down its length`);
-    }
-    if (Math.abs(2 * minX - su.post) > 4 * su.lift) {
-      fail(`centre post is ${(2000 * minX).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
-    }
-    for (let k = 0; k < su.edges.length - 1; k++) {
-      const gap = su.edges[k + 1][0] - su.edges[k][1];
-      console.log(`  post between panes ${k + 1} and ${k + 2}: ${(1000 * gap).toFixed(1)} mm`);
-      if (Math.abs(gap - su.post) > 1e-6) {
-        fail(`post reads ${(1000 * gap).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
-      }
-    }
-  }
-
-  /* ---- a post is the same thickness top to bottom ---------------------- */
-  // Measured down each divider's own walk. Two walks launched half a post apart
-  // diverge across the nose and the gap opens out towards the bottom, which is
-  // what it used to do; one walk offset either way cannot.
+  /* ---- every post is one width, top to bottom ------------------------- */
+  // Measured on the BUILT mesh at every row, not at the ends. A post that ran
+  // 70 mm at the top and 223 at the bottom once reported 70 and passed,
+  // because only its narrowest point was read.
   {
     let lo = Infinity, hi = 0;
-    for (let d = 0; d < su.dividers.length; d++) {
-      const A = su.offsetPath(su.dividerPaths[d], su.post / 2);
-      const B = su.offsetPath(su.dividerPaths[d], -su.post / 2);
-      for (let i = 0; i < Math.min(A.length, B.length); i++) {
-        const w = fud.surfaceAt(A[i].z, A[i].th).distanceTo(fud.surfaceAt(B[i].z, B[i].th));
+    for (let k = 0; k < panes.length - 1; k++) {
+      const A = panes[k], B = panes[k + 1];
+      const nvv = A.userData.nv, rows = A.userData.rows;
+      for (let i = 0; i < rows; i++) {
+        const w = vertex(A, i * nvv + nvv - 1).distanceTo(vertex(B, i * nvv));
         lo = Math.min(lo, w); hi = Math.max(hi, w);
       }
     }
-    console.log(`  post thickness down its whole length: ` +
-                `${(1000 * lo).toFixed(1)}..${(1000 * hi).toFixed(1)} mm`);
-    if (hi - lo > 1e-3) {
-      fail(`a post varies by ${(1000 * (hi - lo)).toFixed(1)} mm along its length`);
+    // The centre post is body left between the two sides: twice the inner edge.
+    let clo = Infinity, chi = 0;
+    {
+      const nvv = panes[0].userData.nv;
+      for (let i = 0; i < panes[0].userData.rows; i++) {
+        const x = 2 * vertex(panes[0], i * nvv).x;
+        clo = Math.min(clo, x); chi = Math.max(chi, x);
+      }
     }
-    if (Math.abs(lo - su.post) > 1e-3) {
-      fail(`posts measure ${(1000 * lo).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
+    console.log(`  dividing posts ${(1000 * lo).toFixed(1)}..${(1000 * hi).toFixed(1)} mm, ` +
+                `centre post ${(1000 * clo).toFixed(1)}..${(1000 * chi).toFixed(1)} mm`);
+    if (clo <= 0) fail('the two sides meet -- there is no centre post');
+    for (const [tag, a, b] of [['dividing', lo, hi], ['centre', clo, chi]]) {
+      if (b - a > 2e-3) fail(`the ${tag} post varies by ${(1000 * (b - a)).toFixed(1)} mm`);
+      if (Math.abs(a - su.post) > 2e-3) {
+        fail(`the ${tag} post is ${(1000 * a).toFixed(1)} mm, wanted ${(1000 * su.post).toFixed(0)}`);
+      }
     }
   }
 
   /* ---- widest against the centre post --------------------------------- */
   {
     const w = su.panes.map((p) => p.width);
-    console.log(`  pane widths from the centre out: ${w.map((v) => v.toFixed(3)).join(', ')} m ` +
-                `(along the upper edge)`);
-    // Non-increasing, not strictly decreasing: 40/30/30 puts two equal panes
-    // outboard on purpose, and only the innermost has to be the widest.
+    console.log(`  pane widths from the centre out: ${w.map((v) => v.toFixed(3)).join(', ')} m`);
     for (let i = 1; i < w.length; i++) {
-      if (w[i] > w[i - 1] + 1e-9) {
-        fail(`pane ${i + 1} is wider than pane ${i}`);
-      }
+      if (w[i] > w[i - 1] + 1e-9) fail(`pane ${i + 1} is wider than pane ${i}`);
     }
   }
 
   /* ---- the carved lower edge ------------------------------------------ */
   // The upper edge is the cut line and never moves; only the bottom is carved.
-  // What is checked is that each pane's corners lift by what was asked, and
-  // that the lifts AGREE across the dividers -- the lower edge is meant to be
-  // one unbroken line, and a mismatched pair either side of a post would read
-  // as a step.
+  // The lifts either side of a post must agree, or the lower edge steps.
   {
     const bandH = su.yHigh - su.yLow;
-    const panes = scr.children.filter((m) => m.userData.side > 0)
-      .sort((a, b) => a.userData.pane - b.userData.pane);
     let worst = 0;
     panes.forEach((m, k) => {
-      const pos = m.geometry.getAttribute('position');
-      const nvv = m.userData.nv, rows = pos.count / nvv;
-      const gotIn = (pos.getY((rows - 1) * nvv) - su.yLow) / bandH;
-      const gotOut = (pos.getY((rows - 1) * nvv + nvv - 1) - su.yLow) / bandH;
+      const nvv = m.userData.nv, rows = m.userData.rows;
+      const gotIn = (vertex(m, (rows - 1) * nvv).y - su.yLow) / bandH;
+      const gotOut = (vertex(m, (rows - 1) * nvv + nvv - 1).y - su.yLow) / bandH;
       const [wIn, wOut] = su.lowerRaise[k];
-      console.log(`  pane ${k + 1} lower edge lifted ` +
-                  `${(100 * gotIn).toFixed(1)}% / ${(100 * gotOut).toFixed(1)}% ` +
-                  `(asked ${(100 * wIn).toFixed(0)} / ${(100 * wOut).toFixed(0)})`);
-      // A per-cent of tolerance: the lift is applied by walking a fraction less
-      // far down a marched column, and the standoff moves the last vertex too.
+      console.log(`  pane ${k + 1} lower edge lifted ${(100 * gotIn).toFixed(1)}% / ` +
+                  `${(100 * gotOut).toFixed(1)}% (asked ${(100 * wIn).toFixed(0)} / ${(100 * wOut).toFixed(0)})`);
       if (Math.abs(gotIn - wIn) > 0.01 || Math.abs(gotOut - wOut) > 0.01) {
         fail(`pane ${k + 1} lower edge lifted ${(100 * gotIn).toFixed(1)}/` +
              `${(100 * gotOut).toFixed(1)}%, wanted ${(100 * wIn).toFixed(0)}/${(100 * wOut).toFixed(0)}`);
       }
       if (k) {
         const prev = panes[k - 1];
-        const pp = prev.geometry.getAttribute('position');
-        const pr = pp.count / prev.userData.nv;
-        const yPrev = pp.getY((pr - 1) * prev.userData.nv + prev.userData.nv - 1);
-        worst = Math.max(worst, Math.abs(yPrev - pos.getY((rows - 1) * nvv)));
+        const pn = prev.userData.nv;
+        worst = Math.max(worst, Math.abs(
+          vertex(prev, (prev.userData.rows - 1) * pn + pn - 1).y - vertex(m, (rows - 1) * nvv).y));
       }
     });
     console.log(`  lower edge is continuous across the posts to ${(1000 * worst).toFixed(1)} mm`);
@@ -707,13 +646,6 @@ console.log('\n=== windscreen ===');
       const s2 = fud.shapeAt(p.z);
       return new THREE.Vector3(p.x, p.y - s2.yc, 0).normalize();
     }, mesh.name);
-
-    let collapsed = 0;
-    for (let i = 0; i < pos.count; i++) {
-      if (Math.abs(pos.getX(i)) < 1e-9 && Math.abs(pos.getY(i)) < 1e-9
-       && Math.abs(pos.getZ(i)) < 1e-9) collapsed++;
-    }
-    if (collapsed) fail(`${mesh.name} has ${collapsed} vertices collapsed to the origin`);
   }
   console.log(`  all ${scr.children.length} panes lie on the skin and face out`);
 

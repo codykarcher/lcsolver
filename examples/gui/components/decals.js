@@ -804,11 +804,10 @@ export function windscreen(fuselage, {
   low = WINDSCREEN.low, high = WINDSCREEN.high,
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
   colour = WINDSCREEN.colour, paneWidths = WINDSCREEN.paneWidths,
-  lowerRaise = WINDSCREEN.lowerRaise,
-  post = WINDSCREEN.post, nv = 8, nMarch = 220, name = 'windscreen',
+  lowerRaise = WINDSCREEN.lowerRaise, post = WINDSCREEN.post,
+  nv = 8, nRows = 16, nCurve = 500, nLevels = 60, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
-  const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
   const zRef = fu.cabinZ[0] - 0.05 * (fu.cabinZ[0] - fu.cabinZ[1]);
   const keel = fu.keelAt(zRef), crown = fu.crownAt(zRef);
@@ -816,198 +815,151 @@ export function windscreen(fuselage, {
   const yLo = keel + low * H, yHi = keel + high * H;
   const zBack = -backFraction * fu.noseLength;
 
-  /* ---- the two curves that bound the glass ---------------------------- */
-  const thAtHeight = (z, y) => angleAtHeight(fu, z, y);
-  /** The upper edge: the upper line, or the crown where that is lower. */
-  const thHiAt = (z) => (fu.surfaceAt(z, Math.PI / 2).y <= yHi
-    ? Math.PI / 2 : thAtHeight(z, yHi));
-
-  // Inner end of the upper edge: where the crown drops to the upper line, which
-  // is the point on the centreline the two sides' glass reaches up to.
-  let a = zBack, b = 0;
-  for (let i = 0; i < 60; i++) {
-    const m = (a + b) / 2;
-    if (fu.crownAt(m) > yHi) a = m; else b = m;
-  }
-  const zInner = a;
-
   /**
-   * The upper edge as a polyline, with arc length along it.
+   * A level line across the nose at a given height, with arc length along it.
    *
-   * Arc length is the measure the posts are spaced by, because it is the one
-   * that means anything on a curved surface: equal steps in station would bunch
-   * the posts where the edge runs fore and aft and spread them where it runs
-   * across, which is most of its length.
+   * Both edges of the glass are one of these, and between them there is
+   * nothing else to know: everything below is two curves, a distance along
+   * them, and a rule for pairing their points up.
+   *
+   * Each starts where the crown drops to its own height -- on the centreline,
+   * so arc zero is the aeroplane's centre for both, which is what makes the
+   * centre post come out symmetric without being told to.
    */
-  const top = [];
-  {
+  const contour = (y) => {
+    let a = zBack, b = 0;
+    for (let i = 0; i < 60; i++) {
+      const m = (a + b) / 2;
+      if (fu.crownAt(m) > y) a = m; else b = m;
+    }
+    const pts = [];
     let s = 0, prev = null;
-    for (let i = 0; i <= nMarch; i++) {
-      const z = zInner + (zBack - zInner) * (i / nMarch);
-      const th = thHiAt(z);
-      if (th == null) continue;
+    for (let i = 0; i <= nCurve; i++) {
+      const z = a + (zBack - a) * (i / nCurve);
+      const th = angleAtHeight(fu, z, y);
+      if (th == null) {
+        if (!pts.length) {
+          const p = fu.surfaceAt(z, Math.PI / 2);
+          pts.push({ z, th: Math.PI / 2, p, s: 0 });
+          prev = p.clone();
+        }
+        continue;
+      }
       const p = fu.surfaceAt(z, th);
       if (prev) s += p.distanceTo(prev);
-      top.push({ z, th, p: p.clone(), s });
+      pts.push({ z, th, p: p.clone(), s });
       prev = p.clone();
     }
+    return pts;
+  };
+  /**
+   * A ladder of those lines, from the upper cut down to the lower.
+   *
+   * The glass is then worked in (distance along a line, height), and that is
+   * the whole trick: a post is a fixed distance from the centreline at every
+   * height, so two posts half a width apart at the top are half a width apart
+   * all the way down. Interpolating station and angle instead does not hold
+   * that -- it bulged the centre post by 10 mm in the middle.
+   */
+  const levels = [];
+  for (let i = 0; i < nLevels; i++) {
+    const y = yHi + (yLo - yHi) * (i / (nLevels - 1));
+    levels.push({ y, c: contour(y) });
   }
-  const topLength = top[top.length - 1].s;
-  /** A station and angle at a given distance along the upper edge. */
-  const atArc = (sWant) => {
-    const t = Math.min(Math.max(sWant, 0), topLength);
+  const upper = levels[0].c, lower = levels[nLevels - 1].c;
+  const upperLength = upper[upper.length - 1].s;
+  const lowerLength = lower[lower.length - 1].s;
+
+  const atArc = (C, sWant) => {
+    const t = Math.min(Math.max(sWant, 0), C[C.length - 1].s);
     let i = 0;
-    while (i < top.length - 2 && top[i + 1].s < t) i++;
-    const d = top[i + 1].s - top[i].s;
-    const f = d > 1e-12 ? (t - top[i].s) / d : 0;
-    return { z: top[i].z + (top[i + 1].z - top[i].z) * f,
-             th: top[i].th + (top[i + 1].th - top[i].th) * f };
+    while (i < C.length - 2 && C[i + 1].s < t) i++;
+    const d = C[i + 1].s - C[i].s;
+    const f = d > 1e-12 ? (t - C[i].s) / d : 0;
+    return { z: C[i].z + (C[i + 1].z - C[i].z) * f,
+             th: C[i].th + (C[i + 1].th - C[i].th) * f,
+             p: C[i].p.clone().lerp(C[i + 1].p, f) };
+  };
+  const tangentAt = (C, s) => {
+    const e = 2e-3, len = C[C.length - 1].s;
+    return atArc(C, Math.min(len, s + e)).p.clone()
+      .sub(atArc(C, Math.max(0, s - e)).p).normalize();
   };
 
-  /* ---- a post: marched across the glass, square to the upper edge ------ */
-  /**
-   * Seen down the surface normal at its top end, a post crosses the upper edge
-   * at a right angle -- and, the band being narrow and its two edges nearly
-   * parallel, meets the lower one square as well. So a post is not the trace of
-   * any plane through the body. It is a walk across the surface that sets off
-   * perpendicular to the edge it starts on and keeps going straight.
-   *
-   * Straight ON THE SURFACE, which is what the marching is for: at each step
-   * the direction is carried forward and pushed back into the new tangent
-   * plane, so the post neither curves within the surface nor leaves it. A
-   * chord through space would leave it; a line of constant station or constant
-   * offset from the centreline would curve within it, which is what every
-   * earlier attempt did and why none of them met the edge square.
-   */
-  const marchPost = (sStart) => {
-    const start = atArc(sStart);
-    let z = start.z, th = start.th;
-
-    /**
-     * The centre divider is the crown line, and is walked exactly.
-     *
-     * It lies in the body's plane of symmetry, so its geodesic curvature
-     * vanishes and the correct walk keeps the angle at a right angle the whole
-     * way. Integrating it like any other only approximates that: the direction
-     * is set from a one-sided tangent at a point where the surface is flat, and
-     * geodesics amplify whatever error that leaves. It drifted from 90.00 to
-     * 83.39 degrees, which put the divider 76 mm off the centreline -- and the
-     * port side being its mirror, the centre post opened from 70 mm at the top
-     * to 223 at the bottom.
-     *
-     * Nothing is approximated here, so nothing drifts.
-     */
-    if (Math.abs(th - Math.PI / 2) < 1e-6) {
-      const crown = [];
-      const dz = 0.008;
-      for (let zz = z; zz < 0; zz += dz) {
-        if (fu.surfaceAt(zz, Math.PI / 2).y <= yLo) { crown.push({ z: zz, th: Math.PI / 2 }); break; }
-        crown.push({ z: zz, th: Math.PI / 2 });
-      }
-      return crown;
-    }
-    // Set off perpendicular to the upper edge: normal cross tangent lies in the
-    // tangent plane and square to the curve, by construction.
-    const eps = 1e-4;
-    const tangent = (() => {
-      const s0 = Math.max(0, sStart - eps), s1 = Math.min(topLength, sStart + eps);
-      const A = atArc(s0), B = atArc(s1);
-      return fu.surfaceAt(B.z, B.th).sub(fu.surfaceAt(A.z, A.th)).normalize();
-    })();
-    let dir = new THREE.Vector3().crossVectors(fu.normalAt(z, th), tangent).normalize();
-    if (dir.y > 0) dir.negate();                 // downward, across the band
-
-    const path = [{ z, th }];
-    const step = 0.012;
-    for (let i = 0; i < 400; i++) {
-      const p = fu.surfaceAt(z, th);
-      if (p.y <= yLo) break;
-      // Move `step` along `dir`, expressed in the surface's own coordinates.
-      const dz = 1e-4, dth = 1e-4;
-      const Pz = fu.surfaceAt(z + dz, th).sub(p).divideScalar(dz);
-      const Pt = fu.surfaceAt(z, th + dth).sub(p).divideScalar(dth);
-      // Least squares for (u, v) in u*Pz + v*Pt = dir*step.
-      const a11 = Pz.dot(Pz), a12 = Pz.dot(Pt), a22 = Pt.dot(Pt);
-      const b1 = Pz.dot(dir) * step, b2 = Pt.dot(dir) * step;
-      const det = a11 * a22 - a12 * a12;
-      if (Math.abs(det) < 1e-18) break;
-      z += (b1 * a22 - b2 * a12) / det;
-      th += (a11 * b2 - a12 * b1) / det;
-      // Carry the direction forward, pushed back into the new tangent plane.
-      const n2 = fu.normalAt(z, th);
-      dir.addScaledVector(n2, -dir.dot(n2)).normalize();
-      path.push({ z, th });
-    }
-    // Deliberately NOT snapped onto the lower edge. Snapping meant holding the
-    // station and moving the angle, and near the nose the lower contour turns
-    // hard towards the crown -- it threw the last point from 83.7 degrees to
-    // 88.8 and dragged the centre post in from 91 mm to 17 mm. The march simply
-    // runs one step past the edge and the rows, taken by height, land on it.
-    return path;
+  /** A point a given distance along the line at a given height. */
+  const pointAt = (arc, f) => {
+    const u = Math.min(Math.max(f, 0), 1) * (nLevels - 1);
+    const i = Math.min(nLevels - 2, Math.floor(u));
+    const g = u - i;
+    const a = atArc(levels[i].c, arc), b = atArc(levels[i + 1].c, arc);
+    return { z: a.z + (b.z - a.z) * g, th: a.th + (b.th - a.th) * g };
   };
 
   /**
-   * Move a point on the surface by a vector lying in its tangent plane.
+   * Where a post starting at `sUp` on the upper edge lands on the lower one.
    *
-   * The same least squares the march uses, pulled out because the posts need it
-   * too: a post of constant thickness is the divider's own line offset
-   * sideways by half a post, and sideways is a direction in the tangent plane.
+   * The post has to cross the upper edge square, so its far end is the point
+   * on the lower edge that lies square to that edge's tangent -- one root of
+   * one scalar equation, found by bisection. Nothing is integrated and nothing
+   * is carried forward, so nothing can drift: this is exact wherever it is
+   * asked, and comes out at 90.0 degrees rather than the 0.3 the marched
+   * version left.
+   *
+   * Pairing the two edges any other way does not work. Equal distance along
+   * them leans the outer posts to 49 degrees, because the lower edge is 3.13 m
+   * long against the upper's 2.39; equal FRACTION of each gets to 77.
    */
-  const stepOn = (z, th, vec) => {
-    const p = fu.surfaceAt(z, th);
-    const dz = 1e-4, dt = 1e-4;
-    const Pz = fu.surfaceAt(z + dz, th).sub(p).divideScalar(dz);
-    const Pt = fu.surfaceAt(z, th + dt).sub(p).divideScalar(dt);
-    const a11 = Pz.dot(Pz), a12 = Pz.dot(Pt), a22 = Pt.dot(Pt);
-    const b1 = Pz.dot(vec), b2 = Pt.dot(vec);
-    const det = a11 * a22 - a12 * a12;
-    if (Math.abs(det) < 1e-18) return { z, th };
-    return { z: z + (b1 * a22 - b2 * a12) / det,
-             th: th + (a11 * b2 - a12 * b1) / det };
-  };
-
-  /**
-   * A divider's line offset sideways by a constant distance.
-   *
-   * This is what makes a post the same thickness top to bottom. Marching two
-   * posts from anchors half a post apart does NOT: the two walks diverge across
-   * the nose, so the gap between them opens out towards the bottom. One walk,
-   * offset either way by half a post at every step, cannot.
-   *
-   * Sideways is normal cross tangent -- perpendicular to the walk and in the
-   * surface -- so the offset is measured on the skin, not through it.
-   */
-  const offsetPath = (path, d) => {
-    const out = [];
-    for (let i = 0; i < path.length; i++) {
-      const a2 = path[Math.max(0, i - 1)], b2 = path[Math.min(path.length - 1, i + 1)];
-      const tan = fu.surfaceAt(b2.z, b2.th).sub(fu.surfaceAt(a2.z, a2.th));
-      if (tan.lengthSq() < 1e-18) { out.push(path[i]); continue; }
-      tan.normalize();
-      const sideways = new THREE.Vector3()
-        .crossVectors(fu.normalAt(path[i].z, path[i].th), tan).normalize();
-      if (sideways.x < 0) sideways.negate();     // outboard, on the +x side
-      out.push(stepOn(path[i].z, path[i].th, sideways.multiplyScalar(d)));
+  const footOf = (sUp) => {
+    // Arc zero is the centreline on BOTH edges -- each starts where the crown
+    // drops to its own height -- so the centre divider pairs zero with zero by
+    // symmetry. Worth saying rather than solving: the tangent at that end can
+    // only be estimated one-sided, and the root find put the foot 21 mm off,
+    // which the port mirror would have doubled into the centre post.
+    if (sUp <= 0) return 0;
+    const a = atArc(upper, sUp).p, t = tangentAt(upper, sUp);
+    const f = (sLo) => atArc(lower, sLo).p.sub(a).dot(t);
+    let lo = 0, hi = lowerLength;
+    if (f(lo) * f(hi) > 0) return f(lo) < 0 ? lo : hi;
+    for (let i = 0; i < 60; i++) {
+      const m = (lo + hi) / 2;
+      if (f(lo) * f(m) <= 0) hi = m; else lo = m;
     }
-    return out;
+    return (lo + hi) / 2;
   };
 
   /* ---- where the posts stand ------------------------------------------ */
   // Shares of the upper edge, centre first. The centre post spends half its
-  // width on this side; the two dividers spend a whole one each; the outer end
-  // is an edge, not a joint, and spends nothing.
+  // width on this side; each divider spends a whole one; the outer end is an
+  // edge, not a joint, and spends nothing.
   const weight = paneWidths.reduce((x, y) => x + y, 0);
-  const usable = topLength - post / 2 - post * (paneWidths.length - 1);
-  const dividers = [0];                          // the centreline
-  const edges = [];
+  const usable = upperLength - post / 2 - post * (paneWidths.length - 1);
+  const dividers = [0];
   {
     let s = post / 2;
     paneWidths.forEach((share, k) => {
-      const w = (usable * share) / weight;
-      edges.push([s, s + w]);
-      s += w;
+      s += (usable * share) / weight;
       if (k < paneWidths.length - 1) { dividers.push(s + post / 2); s += post; }
     });
+  }
+
+  /**
+   * Each pane's two boundaries, as a pair of distances: one along the upper
+   * edge and one along the lower.
+   *
+   * Both are set from the DIVIDER's foot, half a post either side of it, which
+   * is what holds a post to one width. Letting each boundary find its own foot
+   * does not: the lower edge is 3.13 m long against the upper's 2.39, so two
+   * columns half a post apart at the top come out 90 mm apart at the bottom.
+   */
+  const feet = dividers.map(footOf);
+  const outerFoot = footOf(upperLength);
+  const edges = [];
+  for (let k = 0; k < paneWidths.length; k++) {
+    const inner = [dividers[k] + post / 2, feet[k] + post / 2];
+    const outer = k < dividers.length - 1
+      ? [dividers[k + 1] - post / 2, feet[k + 1] - post / 2]
+      : [upperLength, outerFoot];
+    edges.push([inner, outer]);
   }
 
   const group = new THREE.Group();
@@ -1015,77 +967,30 @@ export function windscreen(fuselage, {
   const material = glazingMaterial(colour);
   const built = [];
 
-  // One walk per divider, plus the outer edge, marched once and shared.
-  const dividerPaths = dividers.map((s) => marchPost(s));
-  const outerPath = marchPost(topLength);
-
   for (const side of [1, -1]) {
-    edges.forEach(([s0, s1], k) => {
-      /**
-       * A march for EVERY column, not just the two edges.
-       *
-       * Ruling between the edge posts alone would chord across the upper edge
-       * -- it is a curve, and a straight run between two points on it in the
-       * surface's coordinates cuts above it, by 61 mm on the widest pane. The
-       * top of the glass has to BE that curve, so every column starts on it.
-       */
-      const paths = [];
-      for (let j = 0; j < nv; j++) {
-        if (j === 0) {
-          // The pane's inner edge: the divider's own walk, offset out by half
-          // a post. Constant thickness follows from there being ONE walk.
-          paths.push(offsetPath(dividerPaths[k], post / 2));
-        } else if (j === nv - 1) {
-          paths.push(k < dividers.length - 1
-            ? offsetPath(dividerPaths[k + 1], -post / 2)
-            : outerPath);
-        } else {
-          const sj = s0 + (s1 - s0) * (j / (nv - 1));
-          const path = marchPost(sj);
-          if (path.length < 2) return;
-          paths.push(path);
-        }
-      }
-      const M = Math.max(...paths.map((q) => q.length));
-      /**
-       * Rows taken by HEIGHT, not by index along the march.
-       *
-       * Every post starts on the upper edge, which is the upper line all along,
-       * and ends on the lower one -- so height is a measure the columns share.
-       * Index is not: the marches are different lengths, and ruling row i of a
-       * short one to row i of a long one twists the quads between them. It left
-       * two folded slivers at the bottom edge, facing into the body.
-       */
-      const yOf = (q) => fu.surfaceAt(q.z, q.th).y;
-      const sample = (path, t) => {
-        const want = yHi + (yLo - yHi) * t;
-        let i = 0;
-        while (i < path.length - 2 && yOf(path[i + 1]) > want) i++;
-        const y0 = yOf(path[i]), y1 = yOf(path[i + 1]);
-        const f = Math.abs(y0 - y1) > 1e-12
-          ? Math.min(1, Math.max(0, (y0 - want) / (y0 - y1))) : 0;
-        return { z: path[i].z + (path[i + 1].z - path[i].z) * f,
-                 th: path[i].th + (path[i + 1].th - path[i].th) * f };
-      };
-
-      // How far this pane's lower edge is lifted, across its width. Applied by
-      // scaling how far DOWN each column is walked, so the top of the glass --
-      // the cut line -- is untouched.
+    edges.forEach(([[a0, b0], [a1, b1]], k) => {
+      // How far this pane's lower edge is lifted, across its width. Applied to
+      // how far DOWN each column runs, so the upper edge -- the cut line -- is
+      // untouched.
       const [rIn, rOut] = lowerRaise[k] ?? [0, 0];
 
       const pos = [], idx = [];
-      for (let i = 0; i < M; i++) {
-        const t = i / (M - 1);
+      for (let i = 0; i < nRows; i++) {
+        const t = i / (nRows - 1);
         for (let j = 0; j < nv; j++) {
           const g = j / (nv - 1);
-          const raise = rIn + (rOut - rIn) * g;
-          const q = sample(paths[j], t * (1 - raise));
-          const tt = side > 0 ? q.th : Math.PI - q.th;
-          const p = fu.surfaceAt(q.z, tt), n = fu.normalAt(q.z, tt);
-          pos.push(p.x + n.x * lift, p.y + n.y * lift, p.z + n.z * lift);
+          // A column runs from its distance along the upper line to its
+          // distance along the lower one, taken together with the height, so
+          // the posts either side of it keep their width all the way down.
+          const f = t * (1 - (rIn + (rOut - rIn) * g));
+          const arcTop = a0 + (a1 - a0) * g, arcBot = b0 + (b1 - b0) * g;
+          const { z, th } = pointAt(arcTop + (arcBot - arcTop) * f, f);
+          const tt = side > 0 ? th : Math.PI - th;
+          const q = fu.surfaceAt(z, tt), n = fu.normalAt(z, tt);
+          pos.push(q.x + n.x * lift, q.y + n.y * lift, q.z + n.z * lift);
         }
       }
-      for (let i = 0; i < M - 1; i++) {
+      for (let i = 0; i < nRows - 1; i++) {
         for (let j = 0; j < nv - 1; j++) {
           const p0 = i * nv + j, p1 = p0 + 1, p2 = p0 + nv, p3 = p2 + 1;
           idx.push(p0, p2, p1, p1, p2, p3);
@@ -1101,20 +1006,20 @@ export function windscreen(fuselage, {
       });
       const mesh = new THREE.Mesh(g, material);
       mesh.name = `${name}${side > 0 ? 'Starboard' : 'Port'}${k + 1}`;
-      mesh.userData = { pane: k + 1, side, nv, rows: M, arc: [s0, s1] };
+      mesh.userData = { pane: k + 1, side, nv, rows: nRows, arc: [a0, a1] };
       group.add(mesh);
-      if (side > 0) built.push({ pane: k + 1, arc: [s0, s1], width: s1 - s0, rows: M });
+      if (side > 0) built.push({ pane: k + 1, arc: [a0, a1], width: a1 - a0 });
     });
   }
 
   Object.assign(group.userData, {
     isArt: true, low, high, yLow: yLo, yHigh: yHi, lift,
     bodyHeight: H, keel, crown, zRange: [zBack, null],
-    zInner, topLength, paneWidths, lowerRaise, post, edges, dividers,
-    dividerPaths, outerPath, offsetPath,
+    topLength: upperLength, lowerLength,
+    paneWidths, lowerRaise, post, edges, dividers, feet,
     panesPerSide: paneWidths.length, paneCount: 2 * paneWidths.length,
     panes: built, nv,
-    marchPost, atArc, thHiAt, thAtHeight,
+    upper, lower, levels, atArc, tangentAt, footOf, pointAt,
   });
   return group;
 }
