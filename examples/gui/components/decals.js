@@ -747,6 +747,26 @@ export const WINDSCREEN = {
    */
   edgeHeight: 0.12,
   /**
+   * How far the posts lean back, in degrees from vertical, seen from the side.
+   *
+   * `null` takes whatever the nose gives -- a post at a fixed distance off the
+   * centreline follows the crown profile, which on this body runs 34 degrees
+   * low down to 72 high up and averages 48 through the glazing. A number
+   * overrides that: the posts are sheared fore and aft so they stand at the
+   * angle asked for, anchored at the top of the band.
+   *
+   * It is a trade, not a free choice, and on this nose it is a bad one. The
+   * surface ties the two views together: near the centreline the contour moves
+   * 2.9 m of x for every metre of z, so shearing the posts upright in side view
+   * leans them 0.74 m in FRONT view at 36 degrees -- as much as a pane is wide,
+   * which destroys the one thing the head-on view shows plainly. Measured
+   * across the range: 44 deg costs 508 mm, 36 costs 738, 28 costs 887.
+   *
+   * So the default is null and the knob is kept only for experimenting.
+   * `frontLean` in the userData reports what any setting costs.
+   */
+  rake: null,
+  /**
    * How tall the glass still is where it stops at the front.
    *
    * The band tapers to nothing on the nose, and running the glass all the way
@@ -763,7 +783,7 @@ export function windscreen(fuselage, {
   backFraction = WINDSCREEN.backFraction, lift = WINDSCREEN.lift,
   colour = WINDSCREEN.colour, paneWidths = WINDSCREEN.paneWidths,
   post = WINDSCREEN.post, edgeHeight = WINDSCREEN.edgeHeight,
-  nx = 14, ny = 10, name = 'windscreen',
+  rake = WINDSCREEN.rake, nx = 14, ny = 10, name = 'windscreen',
 } = {}) {
   const fu = fuselage.userData;
 
@@ -854,10 +874,31 @@ export function windscreen(fuselage, {
     }
   }
 
+  /**
+   * Where a post stands at height `y`.
+   *
+   * With no rake it is simply the x it was given: a vertical line head on,
+   * raking at whatever the crown profile does. With a rake it is sheared fore
+   * and aft to stand at that angle instead, anchored at the TOP of the band --
+   * the top is where the glazing runs out of nose, so it is the end that
+   * cannot move, and the shear pulls the bottom aft rather than pushing the
+   * top forward into a body that is not there.
+   */
+  const tanRake = rake == null ? null : Math.tan((rake * Math.PI) / 180);
+  const postAt = (X0, y) => {
+    if (tanRake == null) return X0;
+    const zTop = zAtXY(X0, yHi);
+    if (zTop == null) return X0;
+    const z = zTop + tanRake * (yHi - y);
+    const x = xOnContour(z, y);
+    return x > 0 ? x : X0;
+  };
+
   const group = new THREE.Group();
   group.name = name;
   const material = glazingMaterial(colour);
   const built = [];
+  let frontLean = 0;                       // how far a post wanders in x
 
   for (const side of [1, -1]) {
     columns.forEach(([X0, X1], k) => {
@@ -874,7 +915,11 @@ export function windscreen(fuselage, {
       for (const [X, yT] of cols) {
         for (let j = 0; j < ny; j++) {
           const y = yLo + (yT - yLo) * (j / (ny - 1));
-          const z = zAtXY(X, y);
+          const Xy = postAt(X, y);
+          if (side > 0 && (X === X0 || X === X1)) {
+            frontLean = Math.max(frontLean, Math.abs(Xy - X));
+          }
+          const z = zAtXY(Xy, y);
           if (z == null) { pos.push(0, 0, 0); continue; }
           const th = angleAtHeight(fu, z, y) ?? Math.PI / 2;
           const t = side > 0 ? th : Math.PI - th;
@@ -912,6 +957,9 @@ export function windscreen(fuselage, {
     zRange: [zBack, null],
     /** Where the glass stands off the centreline, and how wide each pane is. */
     xRange: [xIn, xMax], xLimit, edgeHeight, paneWidths, columns,
+    rake,
+    /** How far a post wanders off vertical in FRONT view, in metres of x. */
+    frontLean, postAt,
     post, panesPerSide, paneCount: 2 * panesPerSide, panes: built, ny,
     yTopAt, zAtXY,
   });
