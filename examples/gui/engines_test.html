@@ -70,8 +70,6 @@
   <div class="row"><label for="cylinders">piston cylinders</label><output id="oCyl"></output></div>
   <input type="range" id="cylinders" min="2" max="8" step="2" value="4">
 
-  <div class="row"><label for="rotors">wankel rotors</label><output id="oRot"></output></div>
-  <input type="range" id="rotors" min="1" max="3" step="1" value="2">
 
   <button id="reset">reset</button>
   <p class="hint">drag to orbit &middot; scroll to zoom &middot; right-drag to pan</p>
@@ -151,7 +149,6 @@ function specs() {
     ['turboprop',      '',               () => E.turboprop({ blades: N('propBlades') })],
     ['electric motor', 'outrunner',      () => E.electricMotor({})],
     ['piston',         `${N('cylinders')}-cyl opposed`, () => E.pistonEngine({ cylinders: N('cylinders') })],
-    ['rotary',         `${N('rotors')}-rotor wankel`,   () => E.rotaryEngine({ rotors: N('rotors') })],
   ];
 }
 
@@ -221,16 +218,15 @@ function build() {
   el('oFan').textContent = N('fanBlades');
   el('oProp').textContent = N('propBlades');
   el('oCyl').textContent = N('cylinders');
-  el('oRot').textContent = N('rotors');
 }
 
-for (const id of ['fanBlades', 'propBlades', 'cylinders', 'rotors'])
+for (const id of ['fanBlades', 'propBlades', 'cylinders'])
   el(id).addEventListener('input', build);
 for (const id of ['normalize', 'wire'])
   el(id).addEventListener('change', build);
 el('reset').addEventListener('click', () => {
   el('fanBlades').value = 20; el('propBlades').value = 4;
-  el('cylinders').value = 4; el('rotors').value = 2;
+  el('cylinders').value = 4;
   el('normalize').checked = true; el('wire').checked = false;
   el('spin').checked = false;
   build();

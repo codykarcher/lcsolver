@@ -36,13 +36,8 @@ export function rod(a, b, radius, material, segments = 16) {
  * looks like an empty shell you can see straight through.
  *
  * Rather than make each caller order its profile to suit three.js, fix it
- * here: find the triangle whose centroid is furthest from the axis -- on any
- * body of revolution that triangle is on the outermost surface, so its normal
- * must point away from the axis -- and if it does not, reverse every winding.
- *
- * Picking the outermost triangle rather than an arbitrary one is what makes
- * this work for hollow tubes as well as solid bodies: the inner wall of a tube
- * legitimately faces inward, so testing a face there would flip it wrongly.
+ * here, by signed volume -- see the comment in the body for why that and not
+ * something simpler.
  */
 function orientOutward(geo) {
   const idx = geo.getIndex();
@@ -195,26 +190,6 @@ export function bladeRow({ count, material, hubMaterial, hubLength, ...blade }) 
   }
   g.userData.sharedGeometry = geo;
   return g;
-}
-
-/**
- * The two-lobed epitrochoid that is a Wankel housing bore, as a closed shape.
- *
- * x = R cos t + e cos 3t,  y = R sin t + e sin 3t
- *
- * Worth generating properly rather than approximating with a rounded
- * rectangle: the shape is the one thing that says "rotary" at a glance.
- */
-export function epitrochoid(R, e, points = 128) {
-  const s = new THREE.Shape();
-  for (let i = 0; i <= points; i++) {
-    const t = (i / points) * Math.PI * 2;
-    const x = R * Math.cos(t) + e * Math.cos(3 * t);
-    const y = R * Math.sin(t) + e * Math.sin(3 * t);
-    if (i === 0) s.moveTo(x, y); else s.lineTo(x, y);
-  }
-  s.closePath();
-  return s;
 }
 
 /** Dispose every geometry under `obj`, including shared blade buffers. */

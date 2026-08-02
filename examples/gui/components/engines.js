@@ -14,7 +14,6 @@
  *     turboprop      propeller, gearbox snout, core, exhaust stack
  *     electricMotor  finned outrunner can and shaft
  *     pistonEngine   horizontally opposed, air cooled
- *     rotaryEngine   Wankel, one or two rotors
  *
  * Detail is deliberately low. No internal machinery is modelled: a turbofan is
  * a fan, a body and a nozzle, and the compressor a turbojet appears to have is
@@ -38,7 +37,7 @@
  */
 import * as THREE from 'three';
 import * as M from './materials.js';
-import { latheZ, tubeZ, bladeRow, epitrochoid, rod } from './geom.js';
+import { latheZ, tubeZ, bladeRow, rod } from './geom.js';
 
 const SEG = 48;
 
@@ -460,20 +459,24 @@ export function turbojet({ rCase = 0.42, blades = 26 } = {}) {
 
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
+  rotor.userData.spin = -1;
   rotor.add(spinner(0.25 * R, 0.55 * R, M.casing, 0.05 * R));
+  // Angle from the axis grows outboard -- coarse root, fine tip. This row was
+  // built the other way round, the same inversion the fan had.
   rotor.add(bladeRow({
     count: blades, material: M.blade, hubMaterial: M.casing,
     hubLength: 0.3 * R,
     rHub: 0.27 * R, rTip: 0.95 * R,
     chordRoot: 0.24 * R, chordTip: 0.20 * R,
-    twistRoot: 1.15, twistTip: 0.45, thickness: 0.09,
+    twistRoot: 0.45, twistTip: 0.95, thickness: 0.09,
   }));
   g.add(rotor);
 
   g.add(tubeZ(0.94 * R, R, 0.10 * R, -2.70 * R, M.casing, SEG));
 
+  // Looking down the inlet should end in darkness, not in a lit disc.
   const blank = new THREE.Mesh(
-    new THREE.CircleGeometry(0.95 * R, SEG), M.hot);
+    new THREE.CircleGeometry(0.95 * R, SEG), M.cavity);
   blank.position.z = -0.75 * R;
   blank.rotation.y = Math.PI;                 // face the inlet
   g.add(blank);
@@ -494,6 +497,13 @@ export function turbojet({ rCase = 0.42, blades = 26 } = {}) {
     [-2.60 * R, 0], [-2.60 * R, 0.34 * R], [-3.10 * R, 0.26 * R],
     [-3.50 * R, 0],
   ], M.hot, SEG));
+
+  // ...and so should looking up the nozzle.
+  const mouth = new THREE.Mesh(
+    new THREE.RingGeometry(0.05 * R, 0.56 * R, SEG), M.cavity);
+  mouth.rotation.y = Math.PI;
+  mouth.position.z = -3.33 * R;
+  g.add(mouth);
 
   return finish(g, 3.50 * R, 1.06 * R, 'turbojet');
 }
@@ -516,13 +526,17 @@ export function turboprop({ rProp = 1.25, blades = 4 } = {}) {
 
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
+  rotor.userData.spin = -1;
   rotor.add(spinner(0.115 * R, 0.30 * R, M.painted, 0.03 * R));
+  // A propeller is coarse at the root and fine at the tip, so the angle from
+  // the axis grows outboard -- and a prop turns a long way, so the spread is
+  // wider than the fan's.
   rotor.add(bladeRow({
     count: blades, material: M.painted, hubMaterial: M.accessory,
     hubLength: 0.13 * R,
     rHub: 0.10 * R, rTip: R,
     chordRoot: 0.15 * R, chordTip: 0.085 * R,
-    twistRoot: 1.20, twistTip: 0.22, thickness: 0.11,
+    twistRoot: 0.42, twistTip: 1.20, thickness: 0.11,
   }));
   g.add(rotor);
 
@@ -550,6 +564,12 @@ export function turboprop({ rProp = 1.25, blades = 4 } = {}) {
     [-1.45 * R, 0], [-1.45 * R, 0.20 * R], [-1.58 * R, 0.16 * R], [-1.58 * R, 0],
   ], M.hot, SEG));
 
+  const mouth = new THREE.Mesh(
+    new THREE.CircleGeometry(0.145 * R, SEG), M.cavity);
+  mouth.rotation.y = Math.PI;
+  mouth.position.z = -1.578 * R;
+  g.add(mouth);
+
   return finish(g, 1.58 * R, R, 'turboprop');
 }
 
@@ -568,7 +588,14 @@ export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) 
   const g = new THREE.Group();
   const R = rMotor, L = lMotor;
 
-  g.add(latheZ([
+  // On an outrunner the case turns, so the can, its fins and the shaft are
+  // one rotor and the mount is what stays still.
+  const rotor = new THREE.Group();
+  rotor.userData.rotating = true;
+  rotor.userData.spin = -1;
+  g.add(rotor);
+
+  rotor.add(latheZ([
     [0, 0], [0, 0.96 * R], [-0.06 * L, R], [-0.94 * L, R],
     [-L, 0.96 * R], [-L, 0],
   ], M.casing, SEG));
@@ -580,7 +607,7 @@ export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) 
     const f = new THREE.Mesh(finGeo, M.casing);
     f.position.set(Math.cos(a) * R * 1.05, Math.sin(a) * R * 1.05, -0.5 * L);
     f.rotation.z = a;
-    g.add(f);
+    rotor.add(f);
   }
 
   // Windings glimpsed through the gap between can and rear bell.
@@ -590,7 +617,7 @@ export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) 
     new THREE.CylinderGeometry(0.16 * R, 0.16 * R, 0.55 * R, 20), M.hardware);
   shaft.rotation.x = Math.PI / 2;
   shaft.position.z = 0.22 * R;
-  g.add(shaft);
+  rotor.add(shaft);
 
   // Rear mount flange with bolt bosses.
   g.add(tubeZ(0.30 * R, 1.16 * R, -L, -L - 0.07 * R, M.accessory, SEG));
@@ -679,67 +706,7 @@ export function pistonEngine({ cylinders = 4, size = 0.34, finsPer = 7 } = {}) {
   return finish(g, caseLen + 0.62 * S, xOut + 0.32 * S, 'pistonEngine');
 }
 
-/* ==================================================================== *
- * Rotary (Wankel)
- * ==================================================================== */
-
-/**
- * Wankel rotary, one or two rotors.
- *
- * The housing outline is the real two-lobed epitrochoid rather than a rounded
- * rectangle, because that silhouette is the only thing that identifies the
- * type at a glance -- get it wrong and this is just a lump with a shaft.
- */
-export function rotaryEngine({ rotors = 2, size = 0.20, e = null } = {}) {
-  const g = new THREE.Group();
-  const R = size;
-  const ecc = e ?? 0.145 * R;
-
-  const housing = epitrochoid(R, ecc, 128);
-  const plate = epitrochoid(R * 1.13, ecc, 96);
-  const wRotor = 0.72 * R;
-  const wPlate = 0.16 * R;
-
-  const extrude = (shape, depth, mat, z0) => {
-    const m = new THREE.Mesh(
-      new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false }), mat);
-    m.position.z = z0;
-    return m;
-  };
-
-  let z = -wPlate;
-  g.add(extrude(plate, wPlate, M.accessory, z));       // front plate
-
-  for (let i = 0; i < rotors; i++) {
-    g.add(extrude(housing, wRotor, M.finned, z - wRotor));
-    z -= wRotor;
-    g.add(extrude(plate, wPlate, M.accessory, z - wPlate));
-    z -= wPlate;
-  }
-
-  // Eccentric output shaft, right through and proud at both ends.
-  const zFront = 0.30 * R, zBack = z - 0.25 * R;
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.17 * R, 0.17 * R, zFront - zBack, 20),
-    M.hardware);
-  shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = (zFront + zBack) / 2;
-  g.add(shaft);
-
-  // Intake and exhaust stubs on opposite lobes.
-  for (const [x, y, mat] of [[1.02 * R, 0.42 * R, M.accessory],
-                             [-1.02 * R, -0.42 * R, M.hot]]) {
-    const s = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.17 * R, 0.17 * R, 0.42 * R, 16), mat);
-    s.rotation.z = Math.PI / 2;
-    s.position.set(x * 1.12, y, z / 2);
-    g.add(s);
-  }
-
-  return finish(g, -z, R * 1.3, 'rotaryEngine');
-}
-
 export const ENGINES = {
-  turbofan, turbojet, turboprop, electricMotor, pistonEngine, rotaryEngine,
+  turbofan, turbojet, turboprop, electricMotor, pistonEngine,
 };
 export default ENGINES;
