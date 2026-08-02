@@ -9,8 +9,18 @@
  * twist. Anything that wants to extend or bend a surface adds frames rather
  * than adding a code path.
  *
- * **Parameterised the standard way.** Reference area, aspect ratio, taper,
- * leading-edge sweep, dihedral, twist -- the numbers on a three-view.
+ * **Defined geometrically, and measured afterwards.** Span, chords, sweep,
+ * dihedral, twist -- the numbers you can read off a drawing with a ruler --
+ * rather than reference area and aspect ratio. Those two are DERIVED and
+ * reported, because they are results: a wing has an area because of its shape,
+ * not the other way round, and a sizing loop that hands you an area has already
+ * decided a planform to go with it.
+ *
+ * Nothing here is solved for and nothing can contradict anything else. The
+ * earlier version took the area as an input and back-solved a chord to make it
+ * come out, which works but means one of the chords is not yours, and without a
+ * crank there is no spare chord to give up -- the planform was over-determined
+ * and quietly came out 5% off.
  *
  * Axis convention, as everywhere else here: **+X starboard, +Y up, -Z aft**.
  * The origin is the ROOT LEADING EDGE on the centreline.
@@ -25,25 +35,21 @@ const smooth = (s) => s * s * (3 - 2 * s);
 /**
  * Standard planform parameters.
  *
- * Three things about how the chords are pinned down, because they are the part
- * that is easy to get into a state where two numbers disagree:
+ * Two things worth stating about the planform:
  *
  *   - the leading edge is ONE straight line from root to tip. Sweep is quoted
  *     at the leading edge and there is only one of it, so the crank is a break
  *     in the trailing edge alone -- which is what it is on a real airliner,
  *     where the inboard trailing edge is carrying the gear and the wing box;
- *   - `taperRatio` is tip chord over CRANK chord, not over root chord. On a
- *     cranked wing the outboard panel is the one that has a taper ratio in any
- *     useful sense; the inboard panel is a fairing;
- *   - `rootChord` is an INPUT. The crank chord is then solved for so that the
- *     reference area comes out. One of the three chords has to be derived or
- *     the area is a wish rather than a constraint, and the crank is the one
- *     nobody has an independent opinion about.
+ *   - the two chord ratios are measured off DIFFERENT chords. `kinkTaper` is
+ *     the crank over the root, `taperRatio` the tip over the CRANK -- because
+ *     on a cranked wing the outboard panel is the one with a taper ratio in any
+ *     useful sense, and the inboard panel is a fairing around a wing box.
  */
 const WING = {
-  area:        124.0,  // reference area, both halves
-  aspectRatio:   9.4,  // b^2 / S
-  rootChord:     6.0,  // INPUT; null derives it from the area instead
+  span:         34.1,  // tip to tip
+  rootChord:     6.0,  // at the centreline
+  kinkTaper:    0.73,  // crank chord / root chord
   taperRatio:   0.27,  // tip chord / CRANK chord
   sweep:        27.0,  // degrees, at the LEADING EDGE
   dihedral:      6.0,  // degrees
@@ -63,46 +69,18 @@ const WING = {
 /** A plain swept trapezoid: no crank, symmetric sections. */
 const TAIL = {
   ...WING,
-  area:         32.8, aspectRatio: 5.0, rootChord: null, taperRatio: 0.30,
+  span:         12.8, rootChord: 3.94, taperRatio: 0.30,
   sweep:        32.0, dihedral: 5.0,
   twistTip:      0.0, kink: null,
   root: '0010', tip: '0010',
   nInner:          2, nOuter: 20,
 };
 
-/**
- * Solve the chords so that the reference area comes out.
- *
- * With a straight leading edge the planform is still two trapezoids, so
- * S = (b/2)[(c_root + c_k) eta + (c_k + c_t)(1 - eta)] and, with the tip taper
- * measured off the crank, c_t = L c_k. Everything else follows:
- *
- *     c_k = (2S/b - c_root eta) / (1 + L (1 - eta))
- *
- * If the root chord is not given it is the root that gets derived instead, from
- * the plain trapezoid relation. Either way exactly one chord is solved for and
- * the area is exact.
- */
-function chords({ area, span, rootChord, taperRatio, kink }) {
-  // Without a crank there are only two chords and the taper ties them, so the
-  // area fixes both. A root chord supplied here would over-determine the
-  // planform -- three numbers, two degrees of freedom -- and the area would
-  // silently come out as something else, which is how a tail ends up 5% too
-  // big. So it is derived, and `rootChordDerived` says so rather than the input
-  // being quietly dropped.
-  if (kink == null) {
-    const cRoot = 2 * area / (span * (1 + taperRatio));
-    return { cRoot, cKink: null, cTip: cRoot * taperRatio, derived: 'root' };
-  }
-  if (rootChord == null) {
-    // No opinion about the root: run the inboard panel at constant chord and
-    // let the crank carry the area. Two panels, one of them untapered:
-    //   S = (b/2) c_k [2 eta + (1 + L)(1 - eta)]
-    const cKink = 2 * area / (span * (2 * kink + (1 + taperRatio) * (1 - kink)));
-    return { cRoot: cKink, cKink, cTip: cKink * taperRatio, derived: 'root' };
-  }
-  const cKink = (2 * area / span - rootChord * kink) / (1 + taperRatio * (1 - kink));
-  return { cRoot: rootChord, cKink, cTip: cKink * taperRatio, derived: 'crank' };
+/** The three chords, straight from the ratios. Nothing is solved for. */
+function chords({ rootChord, kinkTaper, taperRatio, kink }) {
+  if (kink == null) return { cRoot: rootChord, cKink: null, cTip: rootChord * taperRatio };
+  const cKink = rootChord * kinkTaper;
+  return { cRoot: rootChord, cKink, cTip: cKink * taperRatio };
 }
 
 /** Linear interpolation between root, crank and tip values of something. */
@@ -120,9 +98,8 @@ function alongSpan(t, kink, root, mid, tip) {
  */
 export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const p = { ...WING, ...overrides };
-  const span = Math.sqrt(p.aspectRatio * p.area);
-  const semi = span / 2;
-  const { cRoot, cKink, cTip, derived } = chords({ ...p, span });
+  const span = p.span, semi = span / 2;
+  const { cRoot, cKink, cTip } = chords(p);
 
   const rootFoil = asSection(p.root, p.nChord);
   const tipFoil = asSection(p.tip, p.nChord);
@@ -224,16 +201,18 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     yNum += (a.x * a.chord + b.x * b.chord) / 2 * dy;
     xNum += (a.zLE * a.chord + b.zLE * b.chord) / 2 * dy;
   }
+  // Area and aspect ratio are RESULTS. Integrated from the frames, so they are
+  // a measurement of the surface that was built.
   const area = mirror ? 2 * S : S;
+  const refArea = 2 * S;                      // both halves, whatever was built
   const mac = macNum / S;
 
   Object.assign(g.userData, {
-    span, semiSpan: semi, area, referenceArea: p.area, mirror,
-    aspectRatio: span * span / p.area,
-    taperRatio: cTip / (cKink ?? cRoot),
+    span, semiSpan: semi, area, referenceArea: refArea, mirror,
+    /** Derived, both of them: b^2 / S on the full reference area. */
+    aspectRatio: span * span / refArea,
+    taperRatio: cTip / (cKink ?? cRoot), kinkTaper: cKink ? cKink / cRoot : null,
     rootChord: cRoot, kinkChord: cKink, tipChord: cTip,
-    /** Which chord was solved for so the area came out. The other two are inputs. */
-    derivedChord: derived,
     sweep: p.sweep, dihedral: p.dihedral,
     mac, yMac: yNum / S, xMacLE: xNum / S, xMacQuarter: xNum / S + 0.25 * mac,
     rootThickness: thicknessOf(rootFoil), tipThickness: thicknessOf(tipFoil),

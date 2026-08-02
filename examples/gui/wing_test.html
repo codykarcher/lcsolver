@@ -49,20 +49,20 @@
 
 <div id="panel">
   <h1>Lifting surface</h1>
-  <p class="sub">aerofoils lofted along a span &mdash; root LE at the origin</p>
+  <p class="sub">given geometrically &mdash; area and AR come out</p>
 
   <div class="check"><input type="radio" name="kind" id="kWing" checked><label for="kWing">wing (cranked)</label></div>
   <div class="check"><input type="radio" name="kind" id="kTail"><label for="kTail">horizontal tail</label></div>
 
   <h2>planform</h2>
-  <div class="row"><label for="area">reference area</label><output id="oArea"></output></div>
-  <input type="range" id="area" min="10" max="400" step="0.5" value="124">
-
-  <div class="row"><label for="aspectRatio">aspect ratio</label><output id="oAspectRatio"></output></div>
-  <input type="range" id="aspectRatio" min="2.0" max="16.0" step="0.05" value="9.4">
+  <div class="row"><label for="span">span</label><output id="oSpan"></output></div>
+  <input type="range" id="span" min="4" max="80" step="0.1" value="34.1">
 
   <div class="row"><label for="rootChord">root chord</label><output id="oRootChord"></output></div>
-  <input type="range" id="rootChord" min="1.0" max="14.0" step="0.05" value="6.0">
+  <input type="range" id="rootChord" min="0.5" max="14.0" step="0.05" value="6.0">
+
+  <div class="row"><label for="kinkTaper">crank / root chord</label><output id="oKinkTaper"></output></div>
+  <input type="range" id="kinkTaper" min="0.20" max="1.00" step="0.005" value="0.73">
 
   <div class="row"><label for="taperRatio">taper &middot; tip / crank</label><output id="oTaperRatio"></output></div>
   <input type="range" id="taperRatio" min="0.05" max="1.00" step="0.005" value="0.27">
@@ -178,7 +178,7 @@ scene.add(grid);
 const el = (id) => document.getElementById(id);
 const num = (id) => parseFloat(el(id).value);
 
-const NUMS = ['area', 'aspectRatio', 'rootChord', 'taperRatio', 'sweep', 'dihedral',
+const NUMS = ['span', 'rootChord', 'kinkTaper', 'taperRatio', 'sweep', 'dihedral',
               'kink', 'twistRoot', 'twistTip'];
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...NUMS, ...FOILS].map((k) => [k, el(k).value]));
@@ -258,15 +258,14 @@ function build() {
   grid.scale.setScalar(u.semiSpan / 17);
 
   for (const k of NUMS) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
-    num(k).toFixed(k === 'area' ? 1 : 2);
+    num(k).toFixed(2);
 
   el('readout').innerHTML =
-    `S <span>${u.area.toFixed(2)}</span> &middot; b <span>${u.span.toFixed(2)}</span> ` +
-    `&middot; AR <span>${u.aspectRatio.toFixed(2)}</span><br>` +
     `chords: root <span>${u.rootChord.toFixed(3)}</span>` +
     (u.kinkChord ? ` &middot; crank <span>${u.kinkChord.toFixed(3)}</span>` : '') +
-    ` &middot; tip <span>${u.tipChord.toFixed(3)}</span> ` +
-    `(<span>${u.derivedChord}</span> solved for the area)<br>` +
+    ` &middot; tip <span>${u.tipChord.toFixed(3)}</span><br>` +
+    `derived: S <span>${u.referenceArea.toFixed(2)}</span> ` +
+    `&middot; AR <span>${u.aspectRatio.toFixed(2)}</span><br>` +
     `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
     `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
     `MAC c/4 <span>${u.xMacQuarter.toFixed(3)}</span> aft of the root LE<br>` +

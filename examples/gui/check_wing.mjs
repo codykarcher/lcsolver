@@ -3,8 +3,8 @@
  *
  *     node check_wing.mjs
  *
- * A wing is parameterised by numbers that have textbook definitions, so unlike
- * the fuselage most of this can be checked against a CLOSED FORM rather than
+ * A wing is defined by numbers with textbook definitions, so unlike the
+ * fuselage most of this can be checked against a CLOSED FORM rather than
  * against my own arithmetic restated. For an untwisted trapezoid,
  *
  *     MAC   = (2/3) c_root (1 + L + L^2) / (1 + L)
@@ -65,7 +65,8 @@ const CASES = [
   { name: 'htail',       build: () => horizontalTail() },
   { name: 'no crank',    build: () => wing({ kink: null }) },
   { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
-  { name: 'derived root', build: () => wing({ rootChord: null }) },
+  { name: 'tight taper', build: () => wing({ taperRatio: 0.08, kinkTaper: 0.55 }) },
+  { name: 'long span',   build: () => wing({ span: 52, rootChord: 5.2 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
 ];
@@ -75,15 +76,37 @@ for (const c of CASES) {
   const geo = g.children[0].geometry;
   let panelJump = 1;
   const pos = geo.getAttribute('position'), idx = geo.getIndex().array;
-  console.log(`\n${c.name}: S ${u.area.toFixed(2)}, b ${u.span.toFixed(2)}, ` +
-              `AR ${u.aspectRatio.toFixed(2)}, taper ${u.taperRatio.toFixed(3)}`);
+  console.log(`\n${c.name}: b ${u.span.toFixed(2)} in, chords ` +
+              `${u.rootChord.toFixed(2)}` + (u.kinkChord ? `/${u.kinkChord.toFixed(2)}` : '') +
+              `/${u.tipChord.toFixed(2)} in  ->  S ${u.area.toFixed(2)}, ` +
+              `AR ${u.aspectRatio.toFixed(2)} out`);
 
-  /* the planform is what was asked for --------------------------------- */
-  const wantArea = u.mirror ? p.area : p.area / 2;
-  if (Math.abs(u.area - wantArea) / wantArea > 2e-3)
-    bad(`area ${u.area.toFixed(3)}, asked ${wantArea.toFixed(3)}`);
+  /* the chords are what was asked for ----------------------------------- */
+  if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
+  if (Math.abs(u.rootChord - p.rootChord) > 1e-12)
+    bad(`root chord ${u.rootChord}, asked ${p.rootChord}`);
   if (Math.abs(u.taperRatio - p.taperRatio) > 1e-9)
     bad(`taper ${u.taperRatio.toFixed(4)}, asked ${p.taperRatio}`);
+  if (p.kink != null && Math.abs(u.kinkTaper - p.kinkTaper) > 1e-9)
+    bad(`crank taper ${u.kinkTaper.toFixed(4)}, asked ${p.kinkTaper}`);
+
+  /* area and aspect ratio are RESULTS, and must be the right ones --------- */
+  // Against the two-trapezoid formula worked straight off the inputs, which the
+  // component does not use -- it integrates the frames instead. Two independent
+  // routes to the same number is the only way this is worth checking at all.
+  {
+    const semi = p.span / 2, cR = p.rootChord;
+    const cK = p.kink == null ? null : cR * p.kinkTaper;
+    const cT = (cK ?? cR) * p.taperRatio;
+    const full = p.kink == null
+      ? semi * cR * (1 + p.taperRatio)
+      : semi * ((cR + cK) * p.kink + (cK + cT) * (1 - p.kink));
+    if (Math.abs(u.referenceArea - full) / full > 1e-6)
+      bad(`reference area ${u.referenceArea.toFixed(4)}, by hand ${full.toFixed(4)}`);
+    if (Math.abs(u.aspectRatio - p.span * p.span / full) > 1e-6)
+      bad(`aspect ratio ${u.aspectRatio.toFixed(4)}, by hand ` +
+          `${(p.span * p.span / full).toFixed(4)}`);
+  }
 
   /* closed, outward ------------------------------------------------------ */
   const wi = new Int32Array(pos.count), w = new Map();
@@ -160,8 +183,7 @@ for (const c of CASES) {
     console.log(`  MAC ${u.mac.toFixed(4)} vs ${macWant.toFixed(4)} closed form, ` +
                 `y_MAC ${u.yMac.toFixed(4)} vs ${yWant.toFixed(4)}`);
   } else {
-      console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} ` +
-                `(cranked -- integrated), ${u.derivedChord} chord derived`);
+      console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} (cranked -- integrated)`);
   }
 
   /* sweep, dihedral and twist come out as asked -------------------------- */
@@ -191,15 +213,6 @@ for (const c of CASES) {
   if (Math.abs(gotDihedral - p.dihedral) > 0.05)
     bad(`dihedral measures ${gotDihedral.toFixed(2)} deg, asked ${p.dihedral}`);
 
-  // Taper is tip over CRANK, and the crank chord is what carries the area.
-  if (p.kink != null && p.rootChord != null) {
-    if (u.derivedChord !== 'crank')
-      bad(`root chord was given but ${u.derivedChord} was derived`);
-    if (Math.abs(u.rootChord - p.rootChord) > 1e-9)
-      bad(`root chord ${u.rootChord.toFixed(4)}, asked ${p.rootChord}`);
-    if (Math.abs(u.tipChord / u.kinkChord - p.taperRatio) > 1e-9)
-      bad(`tip/crank ${(u.tipChord / u.kinkChord).toFixed(4)}, asked ${p.taperRatio}`);
-  }
 
 
   // Twist, off the geometry rather than off the parameter: the angle of the tip
