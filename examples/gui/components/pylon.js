@@ -49,6 +49,7 @@ const P = {
   below:     5,     // stations below the kink
   above:     6,     // ... and above it
   nSide:     22,    // section points per side
+  fillet:    0.14,  // corner radius on the over-mount outline
 };
 
 /** Half-thickness of the streamwise section at chord fraction `s`. */
@@ -184,6 +185,42 @@ function volumeOf(geo) {
 }
 
 /**
+ * Replace sharp corners of a polygon with quadratic fillets.
+ *
+ * Only where there is actually a corner: the cowl and core runs arrive here as
+ * dense polylines of nearly-collinear points, and filleting every vertex would
+ * spend arcs on straight sections while doing nothing about the joints that
+ * look blocky. The turn angle decides.
+ *
+ * Radius is clamped to under half of each adjacent edge, so a fillet can never
+ * eat past the neighbouring corner however short the segment.
+ */
+function roundCorners(pts, radius, minTurn = 0.30, seg = 7) {
+  const out = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    const a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+    const v1 = new THREE.Vector2().subVectors(a, p);
+    const v2 = new THREE.Vector2().subVectors(b, p);
+    const l1 = v1.length(), l2 = v2.length();
+    if (l1 < 1e-9 || l2 < 1e-9) { out.push(p); continue; }
+    v1.divideScalar(l1); v2.divideScalar(l2);
+    const turn = Math.PI - Math.acos(Math.max(-1, Math.min(1, v1.dot(v2))));
+    if (turn < minTurn) { out.push(p); continue; }
+    const r = Math.min(radius, l1 * 0.45, l2 * 0.45);
+    const p1 = p.clone().addScaledVector(v1, r);
+    const p2 = p.clone().addScaledVector(v2, r);
+    for (let k = 0; k <= seg; k++) {
+      const t = k / seg, m = 1 - t;
+      out.push(new THREE.Vector2(m * m * p1.x + 2 * m * t * p.x + t * t * p2.x,
+                                 m * m * p1.y + 2 * m * t * p.y + t * t * p2.y));
+    }
+  }
+  return out;
+}
+
+/**
  * Over-mount pylon: the engine sits above the wing and the pylon hangs down.
  *
  * ONE closed outline, extruded. Built as a strut plus a separate fairing it
@@ -245,11 +282,11 @@ export function overMountPylon(engine, opts = {}) {
     V(zz, -r * 0.995);
   }
   V(rootZ0, -interp(cowl, rootZ0) * 0.995);             // back of fan case, cowl
-  V(rootZ0, -interp(core, rootZ0) * 1.02);              // ... and at the core
+  V(rootZ0, -interp(core, rootZ0) * 0.995);             // ... and at the core
   for (const [z, r] of core) {                          // aft along the core
     const zz = z + engineZ;
     if (zz > rootZ0) continue;
-    V(zz, -r * 1.02);
+    V(zz, -r * 0.995);                                  // just inside the skin
   }
   V(zAt(cowl, cowl.length - 1), -cowl[cowl.length - 1][1] * 0.995);  // cowl TE
   V(topZ1, -attachY);                                   // wing, aft
@@ -264,8 +301,10 @@ export function overMountPylon(engine, opts = {}) {
   }
   if (area < 0) pts.reverse();
 
+  const rounded = roundCorners(pts, P.fillet * R);
+
   const th = P.rootT * 2 * R;
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), {
+  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(rounded), {
     depth: th, bevelEnabled: false, curveSegments: 1,
   });
   geo.translate(0, 0, -th / 2);
@@ -285,7 +324,7 @@ export function overMountPylon(engine, opts = {}) {
   g.userData.attachY = -attachY - P.plateT * R;
   g.userData.attachZ = [topZ0, topZ1];
   g.userData.rootZ = [rootZ0, zAt(core, core.length - 1)];
-  g.userData.outline = pts.length;
+  g.userData.outline = rounded.length;
   g.userData.volumes = g.children.map((c) => volumeOf(c.geometry));
   g.name = 'overMountPylon';
   return g;
