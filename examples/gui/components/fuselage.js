@@ -5,7 +5,8 @@
  * a curved centreline. Three functions define one completely --
  *
  *   r(z)     the size of the section at station z
- *   yc(z)    where the section's centre sits (droop at the nose, upsweep aft)
+ *   yc(z)    where the section's centre sits, so that a chosen profile line
+ *            -- keel forward, crown aft -- stays straight through the taper
  *   sec(th)  the SHAPE of the section, as a radius multiplier by angle
  *
  * -- and everything else in this file is either one of those three for a
@@ -59,49 +60,50 @@ const JET = {
   noseA: 2.2, noseB: 0.55,
   tailA: 1.6, tailB: 0.75,
   tipR:       0.10,  // tailcone tip radius, in radii -- the APU exhaust
-  droop:      0.30,  // drop of the nose TIP, in radii
-  droopPow:   2.00,  // how fast the drop dies away from the tip
-  crownHold:  1.00,  // fraction of the tailcone taper taken off the BELLY
+  keelHold:   0.85,  // fraction of the NOSE taper taken off the crown
+  crownHold:  1.00,  // fraction of the TAILCONE taper taken off the belly
 };
 
 /**
  * Build the r(z) and yc(z) pair for a three-part body: taper, barrel, taper.
  *
- * The centreline law is where a lofted body most easily goes wrong, and the two
- * ends want opposite things.
+ * Both ends obey the same law, mirrored. A taper has to be spent somewhere --
+ * as the section shrinks, one of the two profile lines has to come to meet the
+ * other -- and the only question is which line moves:
  *
- * **Aft**, the crown stays level and the belly sweeps up to meet it. That is
- * not a stylistic choice: the cabin ceiling and the fin root both run along the
+ *     tailcone   yc = +crownHold * (radius - r)     crown level, belly rises
+ *     nose       yc = -keelHold  * (radius - r)     keel level, crown falls
+ *
+ * At hold = 1 the named line is held exactly straight and the whole taper goes
+ * into the other one; at 0 the section stays centred and both lines close in
+ * symmetrically. Nothing else changes between the two ends.
+ *
+ * Aft that is structural. The cabin ceiling and the fin root both run along the
  * top of the tube, so nothing up there is free to move, while the space under
- * the aft floor is exactly what gets given up for rotation clearance. A
- * centreline that simply rose would carry the crown up with it and put a hump
- * in the roof. So yc = crownHold * (radius - r), which holds the top at
- * +radius for the whole tailcone by construction, under any taper law, and
- * spends the taper entirely on the underside.
+ * the aft floor is exactly what gets given up for rotation clearance.
  *
- * **Forward**, the TIP drops -- and only the tip. The flight deck sits over the
- * nose and the crew have to see the ground short of the aeroplane over the
- * glareshield, which is bought by lowering the point of the nose, not by
- * bending the whole forebody down.
+ * Forward it is what a nose actually looks like. The keel runs on essentially
+ * straight from under the wing and the crown comes down over the flight deck to
+ * meet it, putting the point of the nose low -- which is also what gives the
+ * crew their over-the-nose sight line. It is emphatically NOT the whole
+ * forebody bending downward, which is what a centreline offset applied
+ * independently of the taper produces.
  *
- * The distinction matters, and the obvious law gets it wrong. A drop that dies
- * away with distance from the tip -- droop * (1 - t)^2, say -- still has a
- * quarter of itself left halfway along the nose, and the result reads as a nose
- * hanging below the barrel rather than a tip lowered. So the drop is tied to
- * how far the SECTION has shrunk instead: yc = -droop * (1 - r/radius)^p. Where
- * the body is at full section there is nothing to drop and the offset is
- * exactly zero; it only appears as the section closes down toward the point.
+ * Keeping hold at or below 1 makes it impossible for either end to bulge past
+ * the barrel: yc -/+ r is monotonic in r over [0, radius], running from
+ * -/+ hold*radius at the point to -/+ radius at the join, so the nose cannot
+ * hang below the belly nor the tailcone rise above the roof.
  *
- * That also makes the centreline C1 at the nose join for free, whatever the
- * blend exponents are set to, because dr/dz already vanishes there -- so no
- * setting of the nose sliders can put a kink in the parallel part of the body.
+ * Both are C1 at their join for free, whatever the blend exponents are set to,
+ * because dr/dz already vanishes there -- so no setting of the sliders can put
+ * a kink into the parallel part of the body.
  *
  * Returned as one object carrying `at(z)` and the stations it was cut at, so
  * that everything downstream -- skin, windows, doors, and later whatever mounts
  * to the side of it -- asks the same question of the same object and cannot
  * disagree about where the surface is.
  */
-function jetShape({ length, radius, p = JET, droop = p.droop }) {
+function jetShape({ length, radius, p = JET }) {
   const lNose = p.noseD * 2 * radius;
   const lTail = p.tailD * 2 * radius;
   const zNose = -lNose;                    // nose taper ends here
@@ -111,8 +113,11 @@ function jetShape({ length, radius, p = JET, droop = p.droop }) {
   function at(z) {
     if (z > zNose) {                                     // nose
       const t = Math.min(1, Math.max(0, -z / lNose));
+      // Closes to a POINT, not to an area -- but noseB < 1 gives r a vertical
+      // tangent there, so crown and keel both arrive at the tip vertically and
+      // the profile is round rather than pointed.
       const r = radius * Math.pow(1 - Math.pow(1 - t, p.noseA), p.noseB);
-      return { r, yc: -droop * radius * Math.pow(1 - r / radius, p.droopPow) };
+      return { r, yc: -p.keelHold * (radius - r) };
     }
     if (z > zTail) return { r: radius, yc: 0 };          // barrel
     const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone
@@ -120,7 +125,7 @@ function jetShape({ length, radius, p = JET, droop = p.droop }) {
     return { r, yc: p.crownHold * (radius - r) };
   }
 
-  return { at, length, radius, lNose, lTail, zNose, zTail, rTip, droop };
+  return { at, length, radius, lNose, lTail, zNose, zTail, rTip };
 }
 
 /* ---- lofting ----------------------------------------------------------- */
@@ -492,7 +497,8 @@ export function jetlinerFuselage({
   }
 
   Object.assign(g.userData, {
-    length: L, radius, section, shapeParams: p, droop: p.droop,
+    length: L, radius, section, shapeParams: p,
+    keelHold: p.keelHold, crownHold: p.crownHold,
     noseLength: shape.lNose, tailLength: shape.lTail,
     cabinZ: [shape.zNose, shape.zTail],
     fineness: L / (2 * radius),

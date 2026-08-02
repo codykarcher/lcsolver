@@ -140,23 +140,33 @@ for (const c of CASES) {
   if (crownDrift > 1e-9) bad(`crown moves ${crownDrift.toFixed(4)} over the tailcone`);
   if (keelRise < u.radius) bad(`belly only rises ${keelRise.toFixed(2)} -- taper is not on the underside`);
 
-  /* 5b. the nose lowers its tip, it does not hang ------------------------ */
-  // Two separate claims. Nothing forward of the barrel may sit below the
-  // barrel's own keel -- if it does, the nose is hanging under the tube rather
-  // than tapering to a lowered point. And the centreline must be back on the
-  // axis by the time it reaches the join, or the parallel part starts bent.
-  let hang = 0, worstHang = 0;
+  /* 5b. the nose is the tailcone, mirrored ------------------------------- */
+  // Same three claims as aft, with crown and keel swapped: the keel holds its
+  // line, the crown spends the taper, and neither profile bulges past the
+  // barrel on the way. The last one is what "the nose hangs below the tube"
+  // was, stated as a measurement.
+  let keelDrift = 0, crownFall = 0, hang = 0, bulge = 0;
+  let prevC = null, prevK = null;
   for (let i = 0; i <= 80; i++) {
-    const z = -u.noseLength * (i / 80);
-    const under = -u.radius - u.keelAt(z);
-    if (under > 1e-6) { hang++; worstHang = Math.max(worstHang, under); }
+    const z = -u.noseLength * (i / 80);          // TIP (i=0) -> barrel join
+    keelDrift = Math.max(keelDrift, Math.abs(u.keelAt(z) - u.keelAt(u.cabinZ[0])));
+    crownFall = Math.max(crownFall, u.crownAt(u.cabinZ[0]) - u.crownAt(z));
+    if (u.keelAt(z) < -u.radius - 1e-6) hang++;
+    if (u.crownAt(z) > u.radius + 1e-6) hang++;
+    // Both lines must open out monotonically going aft from the point. A bulge
+    // is a profile that turns back on itself on the way, which no amount of
+    // staring at a shaded three-quarter view reliably catches.
+    if (prevC !== null && (u.crownAt(z) < prevC - 1e-9 || u.keelAt(z) > prevK + 1e-9)) bulge++;
+    prevC = u.crownAt(z); prevK = u.keelAt(z);
   }
-  if (hang) bad(`nose hangs up to ${worstHang.toFixed(3)} below the barrel keel`);
+  const keelBudget = (1 - u.keelHold) * u.radius + 1e-6;
+  if (hang) bad(`nose profile leaves the barrel envelope at ${hang} stations`);
+  if (bulge) bad(`nose profile is not monotonic at ${bulge} stations`);
+  if (keelDrift > keelBudget)
+    bad(`keel moves ${keelDrift.toFixed(3)}, budget ${keelBudget.toFixed(3)} at keelHold ${u.keelHold}`);
+  if (crownFall < u.radius) bad(`crown only falls ${crownFall.toFixed(2)} -- taper is not on the crown`);
   const joinYc = Math.abs(u.shapeAt(u.cabinZ[0]).yc);
   if (joinYc > 1e-6) bad(`centreline is ${joinYc.toFixed(4)} off axis at the nose join`);
-  // And the drop should be spent near the tip, not spread over the forebody.
-  const half = Math.abs(u.shapeAt(-u.noseLength / 2).yc / u.shapeAt(0).yc);
-  if (half > 0.15) bad(`${(half * 100).toFixed(0)}% of the droop survives to mid-nose`);
 
   /* 6. no degenerate triangles ------------------------------------------ */
   // Slivers of near-zero area are what a collapsed grid row leaves behind, and
@@ -212,8 +222,8 @@ for (const c of CASES) {
               `${slivers} slivers, ${overlaps} overlaps`);
   console.log(`  crown level to ${crownDrift.toExponential(1)}, ` +
               `belly rises ${keelRise.toFixed(2)} of ${u.radius.toFixed(2)}, ` +
-              `tip drop ${(u.droop * u.radius).toFixed(2)} ` +
-              `(${(half * 100).toFixed(1)}% left at mid-nose, hangs ${hang ? 'YES' : 'no'})`);
+              `nose: keel moves ${keelDrift.toFixed(3)}/${keelBudget.toFixed(3)}, ` +
+              `crown falls ${crownFall.toFixed(2)}, tip y ${u.shapeAt(0).yc.toFixed(2)}`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nPASS: bodies are closed, outward and clean at the joins');
