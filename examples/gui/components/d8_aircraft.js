@@ -284,9 +284,19 @@ export function d8Aircraft(deck, opts = {}) {
     wheels: 2, rTire: mainTyre, rWheel: mainTyre * 0.55,
     lStrut: d.mainStrut, rStrut: 0.10,
   });
-  // The main legs hang from the BODY, not the wing: a D8 stows them in the
-  // fuselage, which is why the deck's y_m sits inboard of the wing's root.
-  const mainAttachY = u.keelAt(-d.mainX);
+  /**
+   * The main legs hang from the WING, as the conventional aeroplane's do.
+   *
+   * Hung from the body's keel instead -- on the reasoning that a D8 stows them
+   * in the fuselage -- the aeroplane sat 3.22 degrees nose-up with its nose
+   * wheel 901 mm clear of the ground, and that is the deck telling us the
+   * attachment is wrong rather than the struts being. The solve's main leg
+   * reaches 0.881 m further down than its nose leg, and the keel rises only
+   * 0.020 m between the two stations, so a main leg hung level with the nose
+   * one cannot possibly put both wheels on the same plane. The wing sits 0.73 m
+   * above the keel at that station, which is very nearly the difference.
+   */
+  const mainAttachY = wingY + d.mainY * Math.tan(d.wingDihedral * DEG);
   const mainContact = mainAttachY + mkMain().userData.contactY;
   parts.gear = [];
   for (const side of [1, -1]) {
