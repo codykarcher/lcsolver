@@ -52,6 +52,19 @@ const LENGTH_OVER_DIAMETER = 2.0;
 const R_OUTLET = 0.78;
 const EXHAUST_GAP = 0.24;
 
+/**
+ * Exhaust plug, as fractions of core length: where its base sits aft of the
+ * core, and how far it runs from there.
+ *
+ * Shortening the plug does NOT shorten the engine -- overall length is held to
+ * LENGTH_OVER_DIAMETER -- it lengthens the core to compensate, which in turn
+ * scales the plug. So a plug 70% of its drawn length is not 70% of the
+ * fraction. Solving f/(1 + PLUG_BASE + f) for the ratio, 0.385 -> 0.242, and
+ * because the size cancels that holds at every fan radius and bypass ratio.
+ */
+const PLUG_BASE = 0.015;
+const PLUG_LEN = 0.242;
+
 /** Tag a finished engine with its extent so callers need not measure it. */
 function finish(g, length, rMax, name) {
   g.name = name;
@@ -230,7 +243,8 @@ export function turbofan({
   const lSpin = 2.05 * rHub;
   const zNose = 0.02 * R + lSpin;         // spinner tip, ahead of the origin
   const z0 = -0.30 * R;                   // core front, just behind the fan
-  const NOSE = -z0, TAIL = 1.40;          // aft extent = NOSE + TAIL * Lc
+  const NOSE = -z0;                       // aft extent = NOSE + TAIL * Lc
+  const TAIL = 1 + PLUG_BASE + PLUG_LEN;  // core, then the plug beyond it
   const L = length ?? LENGTH_OVER_DIAMETER * 2 * R;
   // A core shorter than about a diameter stops looking like a core, so a very
   // short request is clamped and the reported lengths then describe what was
@@ -324,8 +338,8 @@ export function turbofan({
 
   // Exhaust plug.
   g.add(latheZ([
-    [zAft - 0.015 * Lc, 0], [zAft - 0.015 * Lc, rPlug],
-    [zAft - 0.40 * Lc, 0],
+    [zAft - PLUG_BASE * Lc, 0], [zAft - PLUG_BASE * Lc, rPlug],
+    [zAft - (PLUG_BASE + PLUG_LEN) * Lc, 0],
   ], M.hot, SEG));
 
   g.userData.rCore = rCore;
