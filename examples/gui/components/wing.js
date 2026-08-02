@@ -274,7 +274,9 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     // Declared on every surface, not only on fins. A field that exists only
     // sometimes is a field every caller has to guard, and the guard is easy to
     // get subtly wrong -- the same lesson as the fuselage's vessel factor.
-    isFin: false, height: null,
+    // Every fin-specific field belongs here, not just the first one I thought
+    // of: adding cant meant adding three more, and check_pages caught all three.
+    isFin: false, height: null, cant: 0, tipRise: null, tipOffset: null,
     /** Derived, both of them: b^2 / S on the full reference area. */
     aspectRatio: span * span / refArea,
     rootChord: cRoot, kinkChord: cKink, tipChord: cTip,
