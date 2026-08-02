@@ -61,13 +61,18 @@ JET_VEXP = 7.5
 #: quarter -- tfnoise does not print the split, so the shares are an
 #: assumption the calibration absorbs. Re-run the calibration in the
 #: commit message's script against any deck that needs its own.
-K_SIDELINE_CORE = 1.58426e6
-K_SIDELINE_FAN = 1.58426e6
-K_SIDELINE_MECH = 7.78803e4
+#: (K_core, K_fan, K_mech) per calibration basis. "d8": matched to
+#: d82.out's sideline 84.46 dBA at the D8.2's solved takeoff state.
+#: "737": matched to 737.out's sideline 88.91 dBA at the 737's solved
+#: state (its CFM56-class engine is genuinely louder: u6 higher, BPR 5.1).
+NOISE_CAL = {
+    "d8":  (1.58426e6, 1.58426e6, 7.78803e4),
+    "737": (6.405e7, 6.405e7, 2.745e5),
+}
 
 
 def add_noise(f, N, eng, state, *, n_eng, prefix="Noise_",
-              noise_limit_dBA=None, seg=0):
+              noise_limit_dBA=None, seg=0, cal="737"):
     """Sideline-noise bookkeeping and (optionally) a certification cap.
 
     ``eng`` is the engine group (needs ``u_6``, ``u_8``, ``A_5``, ``A_7``,
@@ -86,9 +91,10 @@ def add_noise(f, N, eng, state, *, n_eng, prefix="Noise_",
     p2m = V("p2_fan_mech", 7e7, "-", "fan turbomachinery m.s. pressure / p2ref")
     p2tot = V("p2_total", 2.8e8, "-", "total mean-square pressure / p2ref")
 
-    Kc = C("K_core", K_SIDELINE_CORE, "-", "core-jet calibration, sideline")
-    Kf = C("K_fan", K_SIDELINE_FAN, "-", "fan-jet calibration, sideline")
-    Km = C("K_mech", K_SIDELINE_MECH, "s/kg",
+    _kc, _kf, _km = NOISE_CAL[cal]
+    Kc = C("K_core", _kc, "-", "core-jet calibration, sideline")
+    Kf = C("K_fan", _kf, "-", "fan-jet calibration, sideline")
+    Km = C("K_mech", _km, "s/kg",
            "fan-mech calibration, sideline (absorbs the mass-flow norm)")
     ne = C("n_eng_noise", float(n_eng), "-", "engines heard together")
     A_norm = C("A_noise_norm", 1.0, "m^2", "unit area, keeps the rows clean")

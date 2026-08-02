@@ -323,6 +323,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # components/noise.py). Reported, not constrained, exactly as TASOPT
         # treats noise; pass noise_limit_dBA to make the cap bind.
         _nzv, c = add_noise(f, N, eng, st,
+                            cal="d8" if arch.double_bubble else "737",
                             n_eng=(float(size_class.n_fans) if electric
                                    else 2.0)); cons += c
 
