@@ -64,8 +64,10 @@ const CASES = [
   { name: 'wing',        build: () => wing() },
   { name: 'htail',       build: () => horizontalTail() },
   { name: 'no crank',    build: () => wing({ kink: null }) },
-  { name: 'unswept',     build: () => wing({ sweep: 0, sweepOuter: 0, dihedral: 0 }) },
-  { name: 'cranked out', build: () => wing({ sweepOuter: 35 }) },
+  { name: 'unswept',     build: () => wing({ sweep: 0, dihedral: 0 }) },
+  { name: 'no winglet',  build: () => wing({ winglet: false }) },
+  { name: 'big winglet', build: () => wing({ wingletHeight: 0.20, wingletCant: 85 }) },
+  { name: 'derived root', build: () => wing({ rootChord: null }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
 ];
@@ -160,28 +162,59 @@ for (const c of CASES) {
     console.log(`  MAC ${u.mac.toFixed(4)} vs ${macWant.toFixed(4)} closed form, ` +
                 `y_MAC ${u.yMac.toFixed(4)} vs ${yWant.toFixed(4)}`);
   } else {
-    console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} (cranked -- integrated)`);
+      console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} ` +
+                `(cranked -- integrated), ${u.derivedChord} chord derived`);
   }
 
   /* sweep, dihedral and twist come out as asked -------------------------- */
   // Measured off the built surface: the sweep of the reference line between two
   // stations, the rise of the same line, and the rotation of the tip section.
-  const t0 = p.kink == null ? 0.30 : p.kink * 0.5, t1 = p.kink == null ? 0.70 : p.kink * 0.9;
-  const s0 = u.at(t0), s1 = u.at(t1);
-  const ref = (s) => s.xLE + p.sweepAt * s.chord;
-  const gotSweep = Math.atan2(ref(s1) - ref(s0), (t1 - t0) * u.semiSpan) / DEG;
-  if (Math.abs(gotSweep - p.sweep) > 0.05)
-    bad(`inboard sweep measures ${gotSweep.toFixed(2)} deg, asked ${p.sweep}`);
-  const gotDihedral = Math.atan2(s1.y - s0.y, (t1 - t0) * u.semiSpan) / DEG;
+  // ONE straight leading edge. Measured across every pair of stations rather
+  // than once, because a single sample cannot tell a straight line from a line
+  // that happens to pass through two points -- and the crank is now supposed to
+  // be entirely in the trailing edge.
+  let gotSweep = 0, sweepSpread = 0;
+  {
+    const ts = [0.05, 0.20, 0.34, 0.36, 0.50, 0.75, 1.00];
+    const angles = [];
+    for (let i = 0; i < ts.length - 1; i++) {
+      const a0 = u.at(ts[i]), a1 = u.at(ts[i + 1]);
+      angles.push(Math.atan2(a1.xLE - a0.xLE, (ts[i + 1] - ts[i]) * u.semiSpan) / DEG);
+    }
+    gotSweep = angles[0];
+    sweepSpread = Math.max(...angles) - Math.min(...angles);
+    if (Math.abs(gotSweep - p.sweep) > 0.05)
+      bad(`leading-edge sweep measures ${gotSweep.toFixed(2)} deg, asked ${p.sweep}`);
+    if (sweepSpread > 0.01)
+      bad(`leading edge is not straight: sweep varies ${sweepSpread.toFixed(3)} deg`);
+  }
+  const s0 = u.at(0.2), s1 = u.at(0.8);
+  const gotDihedral = Math.atan2(s1.y - s0.y, 0.6 * u.semiSpan) / DEG;
   if (Math.abs(gotDihedral - p.dihedral) > 0.05)
     bad(`dihedral measures ${gotDihedral.toFixed(2)} deg, asked ${p.dihedral}`);
 
-  if (p.sweepOuter != null && p.kink != null) {
-    const o0 = u.at(p.kink + 0.1 * (1 - p.kink)), o1 = u.at(1);
-    const gotOuter = Math.atan2(ref(o1) - ref(o0),
-      (1 - p.kink * 1.1 + p.kink * 0.1) * 0 + (1 - (p.kink + 0.1 * (1 - p.kink))) * u.semiSpan) / DEG;
-    if (Math.abs(gotOuter - p.sweepOuter) > 0.05)
-      bad(`outboard sweep measures ${gotOuter.toFixed(2)} deg, asked ${p.sweepOuter}`);
+  // Taper is tip over CRANK, and the crank chord is what carries the area.
+  if (p.kink != null && p.rootChord != null) {
+    if (u.derivedChord !== 'crank')
+      bad(`root chord was given but ${u.derivedChord} was derived`);
+    if (Math.abs(u.rootChord - p.rootChord) > 1e-9)
+      bad(`root chord ${u.rootChord.toFixed(4)}, asked ${p.rootChord}`);
+    if (Math.abs(u.tipChord / u.kinkChord - p.taperRatio) > 1e-9)
+      bad(`tip/crank ${(u.tipChord / u.kinkChord).toFixed(4)}, asked ${p.taperRatio}`);
+  }
+
+  // A winglet is decoration and must not change the numbers on the three-view.
+  if (p.winglet) {
+    // Same surface in every other respect, INCLUDING which halves are built --
+    // comparing a single side against a mirrored one measures the mirror, not
+    // the winglet, and reports a 65 unit discrepancy that is not there.
+    const plain = liftingSurface({ ...p, winglet: false, mirror: u.mirror });
+    if (Math.abs(u.area - plain.userData.area) > 1e-9)
+      bad(`winglet changed the reference area by ` +
+          `${(u.area - plain.userData.area).toExponential(2)}`);
+    if (Math.abs(u.mac - plain.userData.mac) > 1e-9)
+      bad(`winglet changed the MAC by ${(u.mac - plain.userData.mac).toExponential(2)}`);
+    if (!(u.winglet.height > 0)) bad(`winglet has no height`);
   }
 
   // Twist, off the geometry rather than off the parameter: the angle of the tip
@@ -198,8 +231,10 @@ for (const c of CASES) {
     bad(`tip twist measures ${gotTwist.toFixed(2)} deg, asked ` +
         `${(p.twistTip - p.twistRoot).toFixed(2)}`);
 
-  console.log(`  sweep ${gotSweep.toFixed(2)} deg, dihedral ${gotDihedral.toFixed(2)} deg, ` +
-              `tip twist ${gotTwist.toFixed(2)} deg`);
+  console.log(`  LE sweep ${gotSweep.toFixed(2)} deg (varies ${sweepSpread.toExponential(1)}), ` +
+              `dihedral ${gotDihedral.toFixed(2)} deg, tip twist ${gotTwist.toFixed(2)} deg` +
+              (u.winglet ? `, winglet ${u.winglet.height.toFixed(2)} up / ` +
+                           `${u.winglet.outboard.toFixed(2)} out` : ''));
   console.log(`  ${nRing} stations x ${M} points, volume ${vol.toFixed(3)}, ` +
               `${open} open edges, ${degenerate} degenerate, ` +
               `panel jump ${panelJump.toFixed(2)}x`);
