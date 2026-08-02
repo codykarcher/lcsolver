@@ -97,6 +97,14 @@ def s0_molar(sp, T):
     return SR * R_UNIV
 
 
+def cp_molar(sp, T):
+    """Standard-state molar cp, J/(mol K)."""
+    a = _coeffs(sp, T)
+    CR = (a[0] / T**2 + a[1] / T + a[2] + a[3] * T
+          + a[4] * T**2 + a[5] * T**3 + a[6] * T**4)
+    return CR * R_UNIV
+
+
 def g0_molar(sp, T):
     return h_molar(sp, T) - T * s0_molar(sp, T)
 
@@ -218,9 +226,54 @@ def psi_ln(n, T):
     return sum((nj / ntot) * s0_molar(sp, T) for sp, nj in n.items()) / R_UNIV
 
 
+def psi_ln_shift(n, T):
+    """ln(psi) INCLUDING the mixing entropy -R sum x_j ln x_j.
+
+    For a frozen composition the mixing term is a constant and cancels in
+    psi ratios, so the air-side fits do not need it. Along a SHIFTING
+    equilibrium expansion it does not cancel -- recombination (NO, OH ->
+    N2, O2, H2O) changes both S0 content and the mixing term as T falls --
+    and building the vitiated psi grid without it left the SP turbine
+    expanding frozen: 3.0 K low on the HPT ideal exit at cruise T4 (0.5% of
+    the work), against a pycycle truth that re-equilibrates every station.
+    With the mixing term, P2/P1 == psi(T2)/psi(T1) tracks the shifting
+    isentrope up to the (tiny) drift of total moles.
+    """
+    ntot = sum(n.values())
+    out = 0.0
+    for sp, nj in n.items():
+        x = nj / ntot
+        if x <= 0:
+            continue
+        out += x * (s0_molar(sp, T) / R_UNIV - np.log(x))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Fitting
 # ---------------------------------------------------------------------------
+
+def fit_h_via_cp(Ts, cp_exact, h_anchor_T, h_anchor, T_ref, order=4):
+    """Fit cp as a degree-``order`` polynomial in t = T/T_ref (LSQ), then
+    integrate analytically and anchor at ``h_anchor_T``. Returns the h(T)
+    coefficient array [A0..A_{order+1}] in powers of t, plus max relative cp
+    residual. Fitting cp FIRST is the point: enthalpy rows consume h
+    DIFFERENCES, and a cubic fit of h itself carried a 1.4% cp error at the
+    cold end that put 0.4 K on Tt0 and 0.57% on every compressor Pt.
+    """
+    t = Ts / T_ref
+    Acp = np.vstack([t**k for k in range(order + 1)]).T
+    c_cp, *_ = np.linalg.lstsq(Acp * (1.0 / cp_exact)[:, None],
+                               np.ones_like(cp_exact), rcond=None)
+    res_cp = float(np.max(np.abs((Acp @ c_cp - cp_exact) / cp_exact)))
+    # integrate: h(T) = A0 + sum_{k>=1} (c_cp[k-1]/k) * T_ref * t^k
+    A = np.zeros(order + 2)
+    for k in range(1, order + 2):
+        A[k] = c_cp[k - 1] / k * T_ref
+    t_a = h_anchor_T / T_ref
+    A[0] = h_anchor - sum(A[k] * t_a**k for k in range(1, order + 2))
+    return [float(x) for x in A], res_cp
+
 
 def fit_cubic(Ts, ys):
     """y ~= c0 + c1 T + c2 T^2 + c3 T^3, max |rel residual| reported."""
@@ -311,15 +364,18 @@ def generate(path=None):
     Ts_hot = np.linspace(800.0, 2400.0, 161)
     out['SPECIES_H'] = {}
     for sp in SPECIES:
-        ys = np.array([h_molar(sp, T) for T in Ts_hot])
-        c, r = fit_cubic(Ts_hot, ys)
-        # relative residual is meaningless when h crosses zero; report vs the
-        # enthalpy SPAN instead
-        span = ys.max() - ys.min()
-        res = float(np.max(np.abs(np.polyval(c[::-1], Ts_hot) - ys))) / span
-        out['SPECIES_H'][sp] = {'c': [float(x) for x in c],
+        cps = np.array([cp_molar(sp, T) for T in Ts_hot])
+        A, res_cp = fit_h_via_cp(Ts_hot, cps, 1200.0, h_molar(sp, 1200.0),
+                                 1200.0, order=3)
+        hs = np.array([h_molar(sp, T) for T in Ts_hot])
+        t = Ts_hot / 1200.0
+        hfit = sum(A[k] * t**k for k in range(len(A)))
+        span = hs.max() - hs.min()
+        res_h = float(np.max(np.abs(hfit - hs))) / max(span, 1.0)
+        out['SPECIES_H'][sp] = {'c': A, 'T_ref_K': 1200.0,
                                 'range_K': [800.0, 2400.0]}
-        report.append(f"h {sp:4s} cubic 800-2400K  max|res|/span {res:.2e}")
+        report.append(f"h {sp:4s} cp-first 800-2400K  cp res {res_cp:.2e} "
+                      f"h res/span {res_h:.2e}")
 
     out['SPECIES_WT'] = {sp: float(WT[sp]) for sp in SPECIES}
     out['SPECIES_ELEM'] = {sp: {k: float(v) for k, v in ELEM[sp].items()}
@@ -328,17 +384,17 @@ def generate(path=None):
     # -- air: enthalpy + psi over the compressor range ---------------------
     air = air_moles_per_kg()
     Ts_cold = np.linspace(200.0, 1150.0, 191)
-    h_air = np.array([h_mix_per_kg(air, T) for T in Ts_cold])
-    # shift so the fitted quantity is positive (posynomial-friendly h is not
-    # needed on the air side -- the rows use dh -- but a stable zero helps
-    # the cubic's conditioning): reference to 200 K.
-    h0 = h_air[0]
-    c, _ = fit_cubic(Ts_cold, h_air - h0)
-    res = float(np.max(np.abs(np.polyval(c[::-1], Ts_cold) - (h_air - h0)))
-                / (h_air.max() - h_air.min()))
-    out['AIR_H'] = {'c': [float(x) for x in c], 'h_ref_J_kg': float(h0),
-                    'T_ref_K': 200.0, 'range_K': [200.0, 1150.0]}
-    report.append(f"h air  cubic 200-1150K  max|res|/span {res:.2e}")
+    cp_airs = np.array([sum(nj * cp_molar(sp, T) for sp, nj in air.items())
+                        * 1000.0 for T in Ts_cold])
+    A, res_cp = fit_h_via_cp(Ts_cold, cp_airs, 600.0,
+                             h_mix_per_kg(air, 600.0), 600.0, order=4)
+    h_airs = np.array([h_mix_per_kg(air, T) for T in Ts_cold])
+    t = Ts_cold / 600.0
+    hfit = sum(A[k] * t**k for k in range(len(A)))
+    res_h = float(np.max(np.abs(hfit - h_airs))) / (h_airs.max() - h_airs.min())
+    out['AIR_H'] = {'c': A, 'T_ref_K': 600.0, 'range_K': [200.0, 1150.0]}
+    report.append(f"h air  cp-first 200-1150K  cp res {res_cp:.2e} "
+                  f"h res/span {res_h:.2e}")
 
     lnpsi = np.array([psi_ln(air, T) for T in Ts_cold])
     lnpsi0 = psi_ln(air, 288.15)
@@ -357,28 +413,44 @@ def generate(path=None):
     # evaluating it ON the turbine line rather than at 1 bar keeps the
     # dissociation content honest.
     fars = np.linspace(0.012, 0.042, 7)
-    Ts_vit = np.linspace(900.0, 2100.0, 41)
+    Ts_vit = np.linspace(600.0, 2100.0, 51)
     Hgrid, PSIgrid, X1, X2 = [], [], [], []
     for far in fars:
         for T in Ts_vit:
             P = 30.0 * (T / 1900.0) ** 4.0
             n = equilibrium(T, P, far)
             Hgrid.append(h_mix_per_kg(n, T))
-            PSIgrid.append(psi_ln(n, T))
+            PSIgrid.append(psi_ln_shift(n, T))
             X1.append(T)
             X2.append(1.0 + far)
     Hgrid = np.array(Hgrid); PSIgrid = np.array(PSIgrid)
     X1 = np.array(X1); X2 = np.array(X2)
 
-    lnpsi0 = psi_ln(equilibrium(1200.0, 10.0, 0.027), 1200.0)
+    lnpsi0 = psi_ln_shift(equilibrium(1200.0, 10.0, 0.027), 1200.0)
     psi_v = np.exp(PSIgrid - lnpsi0)
-    terms, res = fit_signomial_2d(X1 / 1200.0, X2, psi_v,
-                                  exps1=[3.4, 3.8, 4.2, 4.6, 5.0],
-                                  exps2=[0.0, 4.0, 8.0])
+    # far enters DIRECTLY (basis far^{0,1,2}), not as (1+far)^{0,4,8}: those
+    # powers are nearly collinear over far in [0.012, 0.042] (values 1..1.21)
+    # and LSQ balanced huge cancelling coefficients that oscillated BETWEEN
+    # far grid nodes -- 3.3e-4 residual at the nodes, 0.85% at FAR=0.0249,
+    # which put 2.4 K on the HPT ideal exit and 0.8% on HPT PR.
+    FARgrid = X2 - 1.0
+    terms, res = fit_signomial_2d(X1 / 1200.0, FARgrid, psi_v,
+                                  exps1=[3.2, 3.6, 4.0, 4.4, 4.8, 5.2],
+                                  exps2=[0.0, 1.0, 2.0])
+    # off-grid residual: midpoints in both directions, computed exactly.
+    Tmid = 0.5 * (Ts_vit[:-1] + Ts_vit[1:])[::5]
+    fmid = 0.5 * (fars[:-1] + fars[1:])
+    worst = 0.0
+    for farm in fmid:
+        for Tm in Tmid:
+            Pm = 30.0 * (Tm / 1900.0) ** 4.0
+            ex = np.exp(psi_ln_shift(equilibrium(Tm, Pm, farm), Tm) - lnpsi0)
+            ft = sum(c * (Tm / 1200.0)**a * farm**b for c, a, b in terms)
+            worst = max(worst, abs(ft / ex - 1.0))
     out['VIT_PSI'] = {'terms': terms, 'T_ref_K': 1200.0,
-                      'range_K': [900.0, 2100.0], 'far_range': [0.012, 0.042]}
-    report.append(f"psi vit signomial({len(terms)} terms) 900-2100K  "
-                  f"max|res| {res:.2e}")
+                      'range_K': [600.0, 2100.0], 'far_range': [0.012, 0.042]}
+    report.append(f"psi vit signomial({len(terms)} terms) 600-2100K  "
+                  f"max|res| {res:.2e} (off-grid {worst:.2e})")
 
     # h_vit: h(T, far) = (A(t) + far*B(t) + far^2*C(t))/(1+far), A/B/C
     # quartics in t = T/1200 (normalized -- at T^4 ~ 2e13 raw-T lstsq loses
@@ -399,7 +471,7 @@ def generate(path=None):
                     'cB': [float(x) for x in cAB[5:10]],
                     'cC': [float(x) for x in cAB[10:]],
                     'T_ref_K': 1200.0,
-                    'range_K': [900.0, 2100.0], 'far_range': [0.012, 0.042]}
+                    'range_K': [600.0, 2100.0], 'far_range': [0.012, 0.042]}
     report.append(f"h vit  (A+far*B+far^2*C)/(1+far) quartics  "
                   f"max|res|/span {res:.2e}")
 

@@ -22,11 +22,19 @@ sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
 
 warnings.filterwarnings("ignore")
 
-GATES = {  # HANDOFF_ENGINE.md regression gates, lbf (Mach-locked twins)
-    "b737/conventional_M": {"W_total": 166406.8, "W_f_total": 47162.5},
+# Regression gates, lbf. HANDOFF_ENGINE.md's original numbers (737
+# 166,406.8 / 47,162.5; D8 137,024.9 / 26,907.9) were superseded when the
+# descent model landed (eebb46e "descent exists now") -- cruise no longer
+# over-burns to cover a missing descent leg. The 737 gate below is
+# bit-identical to the baseline documented in 502d139 (strut-braced wing:
+# "b737 mission, conventional 165,495 / 46,170 bit-identical"); the D8 gate
+# is this runner's own post-descent solve at the same commit, bit-stable
+# across repeated runs.
+GATES = {
+    "b737/conventional_M": {"W_total": 165494.9, "W_f_total": 46170.0},
     # Free-Mach d8: the double-bubble build pins cruise near M 0.72 itself;
     # d8_M would wrongly lock it to the 737 class's 0.785.
-    "b737/d8": {"W_total": 137024.9, "W_f_total": 26907.9},
+    "b737/d8": {"W_total": 136540.2, "W_f_total": 26337.4},
 }
 
 # Per-case environment: the D8 gate needs its own tech level and knobs.
