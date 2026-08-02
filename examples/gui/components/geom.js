@@ -111,6 +111,49 @@ export function tubeZ(rInner, rOuter, z0, z1, material, segments = 48) {
 }
 
 /**
+ * A box with rounded edges, centred on the origin, depth along +Z.
+ *
+ * Plain BoxGeometry is the wrong primitive for cast parts. A crankcase or a
+ * cylinder head has no sharp arrises anywhere -- it was poured into sand --
+ * and a hard 90-degree edge reads as a cardboard carton at any size. Rounding
+ * costs a bevel and fixes it.
+ *
+ * Built as a rounded rectangle extruded with a bevel, so the corners are
+ * rounded in plan AND the ends are eased.
+ */
+export function roundedBox(w, h, d, r, material) {
+  r = Math.min(r, w / 2 - 1e-4, h / 2 - 1e-4);
+  const b = Math.min(r * 0.6, d * 0.24, w / 4, h / 4);
+  // bevelSize pushes the profile OUTWARD, so a shape built at full size comes
+  // out 2b too wide and too tall. Shrink it by the bevel and the finished
+  // solid is exactly w x h x d, which is what every caller assumes.
+  const iw = w - 2 * b, ih = h - 2 * b;
+  const ir = Math.max(1e-4, Math.min(r - b, iw / 2 - 1e-4, ih / 2 - 1e-4));
+  const x = iw / 2 - ir, y = ih / 2 - ir;
+  r = ir;
+
+  const sh = new THREE.Shape();
+  sh.moveTo(-x - r, -y);
+  sh.lineTo(-x - r, y);
+  sh.quadraticCurveTo(-x - r, y + r, -x, y + r);
+  sh.lineTo(x, y + r);
+  sh.quadraticCurveTo(x + r, y + r, x + r, y);
+  sh.lineTo(x + r, -y);
+  sh.quadraticCurveTo(x + r, -y - r, x, -y - r);
+  sh.lineTo(-x, -y - r);
+  sh.quadraticCurveTo(-x - r, -y - r, -x - r, -y);
+  sh.closePath();
+
+  const geo = new THREE.ExtrudeGeometry(sh, {
+    depth: Math.max(1e-4, d - 2 * b), bevelEnabled: true,
+    bevelThickness: b, bevelSize: b, bevelSegments: 3, curveSegments: 6,
+  });
+  geo.translate(0, 0, -(d - 2 * b) / 2);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, material);
+}
+
+/**
  * One twisted, tapered blade, lofted from a stack of elliptical sections.
  *
  * Built with the span along +Y, chord along Z and thickness along X, so a row

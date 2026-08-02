@@ -37,7 +37,7 @@
  */
 import * as THREE from 'three';
 import * as M from './materials.js';
-import { latheZ, tubeZ, bladeRow, rod } from './geom.js';
+import { latheZ, tubeZ, bladeRow, rod, roundedBox } from './geom.js';
 
 const SEG = 48;
 
@@ -746,8 +746,11 @@ const PE = {
   stagger:  0.20,   // fore-aft offset between the two banks
   head:     0.95,   // head block, across
   shaft:    0.17,   // propeller shaft radius
+  shaftLen: 1.35,   // origin (shaft nose) back to the crankcase front
   flange:   0.46,   // propeller flange radius
   sump:     0.55,   // sump depth below the case
+  collectorX: 1.55, // exhaust collector, outboard of centreline
+  collectorY: 1.30, // ... and below it
 };
 
 /**
@@ -817,57 +820,65 @@ export function pistonEngine({
   const perSide = cylinders / 2;
 
   const caseLen = (perSide - 1) * PE.spacing * B + 2.0 * B;
-  const zCaseFront = -0.30 * B;
+  const zCaseFront = -PE.shaftLen * B;
   const zCaseBack = zCaseFront - caseLen;
 
-  // Propeller shaft and flange. Tagged as the rotor so a viewer has something
-  // to turn even with no propeller fitted.
+  // ---- propeller shaft ---------------------------------------------------
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
   const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(PE.shaft * B, PE.shaft * B, 0.62 * B, 20),
+    new THREE.CylinderGeometry(PE.shaft * B, PE.shaft * B,
+                               PE.shaftLen * B + 0.30 * B, 24),
     M.hardware);
   shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = zCaseFront + 0.31 * B;
+  shaft.position.z = -(PE.shaftLen * B + 0.30 * B) / 2;
   rotor.add(shaft);
+
+  const zCollar = -0.52 * PE.shaftLen * B;
   rotor.add(tubeZ(PE.shaft * B, PE.flange * B,
-                  -0.02 * B, -0.13 * B, M.hardware, 28));
+                  zCollar + 0.07 * B, zCollar - 0.07 * B, M.hardware, 28));
+  // A witness mark on the collar. Without it a body of revolution turning
+  // about its own axis is completely still to look at.
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055 * B, 12, 10), M.marking);
+  dot.position.set(0, PE.flange * B * 0.72, zCollar + 0.055 * B);
+  rotor.add(dot);
   g.add(rotor);
 
-  // Crankcase, with a nose that tapers to the shaft.
-  const crank = new THREE.Mesh(
-    new THREE.BoxGeometry(2 * PE.caseHalf * B, PE.caseHigh * B, caseLen),
-    M.accessory);
+  // ---- crankcase ---------------------------------------------------------
+  const crank = roundedBox(2 * PE.caseHalf * B, PE.caseHigh * B, caseLen,
+                           0.26 * B, M.accessory);
   crank.position.z = zCaseFront - caseLen / 2;
   g.add(crank);
 
-  const nose = latheZ([
-    [zCaseFront + 0.16 * B, 0], [zCaseFront + 0.16 * B, PE.flange * B],
-    [zCaseFront - 0.10 * B, 0.78 * B], [zCaseFront - 0.10 * B, 0],
-  ], M.accessory, 28);
-  g.add(nose);
+  // Nose bowl, kept inside the case width -- at 0.78 B it stood proud of the
+  // crankcase sides and read as a disc stuck on the front.
+  g.add(latheZ([
+    [zCaseFront + 0.34 * B, 0], [zCaseFront + 0.34 * B, PE.flange * B],
+    [zCaseFront + 0.02 * B, 0.68 * B], [zCaseFront + 0.02 * B, 0],
+  ], M.accessory, 28));
 
-  // Sump slung under the case.
-  const sump = new THREE.Mesh(
-    new THREE.BoxGeometry(1.15 * PE.caseHalf * B, PE.sump * B, caseLen * 0.78),
-    M.accessory);
-  sump.position.set(0, -(PE.caseHigh * 0.5 + PE.sump * 0.45) * B,
+  const sump = roundedBox(1.15 * PE.caseHalf * B, PE.sump * B, caseLen * 0.78,
+                          0.16 * B, M.accessory);
+  sump.position.set(0, -(PE.caseHigh * 0.5 + PE.sump * 0.42) * B,
                     zCaseFront - caseLen / 2);
   g.add(sump);
 
+  // ---- cylinders ---------------------------------------------------------
   const xIn = PE.caseHalf * B;
   const xOut = xIn + PE.cylLen * B;
   const finGeo = new THREE.CylinderGeometry(PE.fin * B, PE.fin * B,
                                             PE.finThick * B, 20);
   const barGeo = new THREE.CylinderGeometry(PE.barrel * B, PE.barrel * B,
                                             xOut - xIn, 20);
-  const headGeo = new THREE.BoxGeometry(0.42 * B, PE.head * B, PE.head * B);
+
+  const zOf = (i, side) => zCaseFront - 0.95 * B - i * PE.spacing * B
+                           - (side < 0 ? PE.stagger * B : 0);
 
   for (let i = 0; i < perSide; i++) {
-    const z = zCaseFront - 0.95 * B - i * PE.spacing * B;
     for (const side of [-1, 1]) {
-      const zs = z - (side < 0 ? PE.stagger * B : 0);
+      const zs = zOf(i, side);
 
       const bar = new THREE.Mesh(barGeo, M.finned);
       bar.rotation.z = Math.PI / 2;
@@ -882,43 +893,70 @@ export function pistonEngine({
         g.add(fin);
       }
 
-      const head = new THREE.Mesh(headGeo, M.accessory);
-      head.position.set(side * (xOut + 0.19 * B), 0, zs);
+      // Head, and the rocker cover on top of it. Rounded, and the cover is
+      // what makes a head look like a head rather than a brick.
+      const head = roundedBox(PE.head * B, PE.head * B, 0.46 * B,
+                              0.13 * B, M.accessory);
+      head.rotation.y = Math.PI / 2;
+      head.position.set(side * (xOut + 0.21 * B), 0, zs);
       g.add(head);
 
-      // Exhaust stub down and aft, and an intake riser up and forward. Two
-      // small pipes, but they are most of what stops a finned cylinder
-      // looking like a stack of washers.
-      const ex = rod(new THREE.Vector3(side * xOut, -0.15 * B, zs),
-                     new THREE.Vector3(side * (xOut + 0.10 * B),
-                                       -0.85 * B, zs - 0.30 * B),
-                     0.13 * B, M.hot, 14);
-      if (ex) g.add(ex);
-      const inl = rod(new THREE.Vector3(side * (xOut - 0.15 * B), 0.30 * B, zs),
-                      new THREE.Vector3(side * (xIn + 0.15 * B),
-                                        0.92 * B, zs + 0.10 * B),
-                      0.11 * B, M.accessory, 14);
-      if (inl) g.add(inl);
+      const rocker = roundedBox(0.60 * B, 0.62 * B, 0.34 * B,
+                                0.11 * B, M.accessory);
+      rocker.rotation.y = Math.PI / 2;
+      rocker.position.set(side * (xOut + 0.34 * B), 0.52 * B, zs);
+      g.add(rocker);
+
+      // Exhaust down from the head into the collector below.
+      const stub = rod(new THREE.Vector3(side * (xOut - 0.05 * B), -0.30 * B, zs),
+                       new THREE.Vector3(side * PE.collectorX * B,
+                                         -PE.collectorY * B, zs),
+                       0.115 * B, M.hot, 14);
+      if (stub) g.add(stub);
     }
   }
 
-  // Accessory case on the back.
-  const acc = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5 * PE.caseHalf * B, PE.caseHigh * 0.85 * B,
-                          0.55 * B),
-    M.accessory);
-  acc.position.z = zCaseBack - 0.27 * B;
+  // ---- exhaust collector -------------------------------------------------
+  // A Lycoming runs a collector under each bank gathering every cylinder into
+  // one pipe. It is a large part of the engine's silhouette from below, and
+  // without it the stubs end in mid air.
+  for (const side of [-1, 1]) {
+    const zFront = zOf(0, side) + 0.45 * B;
+    const zBack = zOf(perSide - 1, side) - 0.55 * B;
+    const pipe = rod(new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zFront),
+                     new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zBack),
+                     0.19 * B, M.hot, 18);
+    if (pipe) g.add(pipe);
+    // Rounded ends, so the collector is closed rather than a cut tube.
+    for (const z of [zFront, zBack]) {
+      const capm = new THREE.Mesh(
+        new THREE.SphereGeometry(0.19 * B, 14, 10), M.hot);
+      capm.position.set(side * PE.collectorX * B, -PE.collectorY * B, z);
+      g.add(capm);
+    }
+    // Tailpipe, aft and outboard.
+    const tail = rod(new THREE.Vector3(side * PE.collectorX * B, -PE.collectorY * B, zBack),
+                     new THREE.Vector3(side * (PE.collectorX + 0.30) * B,
+                                       -(PE.collectorY + 0.18) * B, zBack - 0.85 * B),
+                     0.155 * B, M.hot, 14);
+    if (tail) g.add(tail);
+  }
+
+  // ---- accessory case ----------------------------------------------------
+  const acc = roundedBox(1.5 * PE.caseHalf * B, PE.caseHigh * 0.85 * B,
+                         0.58 * B, 0.16 * B, M.accessory);
+  acc.position.z = zCaseBack - 0.29 * B;
   g.add(acc);
 
-  const length = -(zCaseBack - 0.55 * B);
+  const length = -(zCaseBack - 0.58 * B);
   g.userData.power = power;
   g.userData.bore = B;
   g.userData.boreInches = B / 0.0254;
   g.userData.cylinders = cylinders;
   g.userData.displacement = sized.displacement;
-  g.userData.width = 2 * (xOut + 0.40 * B);
-  g.userData.height = (PE.caseHigh + PE.sump) * B + 0.92 * B;
-  return finish(g, length, xOut + 0.40 * B, 'pistonEngine');
+  g.userData.width = 2 * (xOut + 0.55 * B);
+  g.userData.height = (PE.caseHigh + PE.sump) * B + 1.05 * B;
+  return finish(g, length, xOut + 0.55 * B, 'pistonEngine');
 }
 
 export const ENGINES = {
