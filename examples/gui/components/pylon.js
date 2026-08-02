@@ -51,6 +51,8 @@ const P = {
   nSide:     22,    // section points per side
   fillet:    0.14,  // corner radius on the over-mount outline
   reach:     1.85,  // side-mount: out to the fuselage side
+  sideSweep: 0.10,  // ... and how far the trailing edge runs aft at the wall,
+                    //     as a fraction of NACELLE length
   sideStations: 10,
 };
 
@@ -362,11 +364,14 @@ export function overMountPylon(engine, opts = {}) {
  *
  *   LEADING EDGE  leaves the front of the core case -- which is the back of
  *                 the fan case -- and runs STRAIGHT OUT, unswept.
- *   TRAILING EDGE leaves the rear of the core case and tapers to a point.
+ *   TRAILING EDGE leaves the rear of the core case and sweeps AFT, so the
+ *                 aft attachment on the fuselage wall lands sideSweep nacelle
+ *                 lengths behind the case. The section still closes to a thin
+ *                 edge; it is the planform that grows.
  *
- * So in plan it is a triangle: full core-case chord at the engine, closing to
- * nothing outboard. `reach` is where the fuselage is; on an installation that
- * comes from the fuselage geometry, not from here.
+ * So the chord is longer at the wall than at the engine. `reach` is where the
+ * fuselage is; on an installation both that and the sweep come from fuselage
+ * geometry, not from here.
  *
  * The root is buried inside the core rather than started on its skin, for the
  * same reason as the other two: the load goes into the core's structure, and a
@@ -381,6 +386,7 @@ export function sideMountPylon(engine, opts = {}) {
   const side = opts.side ?? 1;
   const reach = (opts.reach ?? P.reach) * R;          // fuselage side
   const w = u.coreWall;
+  const nacLen = u.cowlLength ?? 3.13 * R;
   const zLE = (u.caseAft ?? -0.70 * R) + engineZ;     // front of the core case
   const zTErt = (w ? w[w.length - 1][0] : -2.90 * R) + engineZ;
 
@@ -404,9 +410,9 @@ export function sideMountPylon(engine, opts = {}) {
   for (let i = 0; i < nS; i++) {
     const t = i / (nS - 1);
     const x = side * (xRoot + (reach - xRoot) * t);
-    // Trailing edge closing on the leading edge; a sliver rather than a true
-    // apex, so the last ring is not a pile of coincident vertices.
-    const zTE = zTErt + (zLE - zTErt) * (t * (1 - 0.02));
+    // Trailing edge sweeping aft: at the wall it sits sideSweep nacelle
+    // lengths behind the rear of the core case.
+    const zTE = zTErt - P.sideSweep * nacLen * t;
     const c = zLE - zTE;
     const tMax = P.rootT * R * (1 - 0.55 * t);
 
@@ -445,6 +451,7 @@ export function sideMountPylon(engine, opts = {}) {
 
   g.userData.attachX = side * reach;
   g.userData.rootZ = [zLE, zTErt];
+  g.userData.wallZ = [zLE, zTErt - P.sideSweep * nacLen];
   g.userData.volumes = [volumeOf(geo)];
   g.name = 'sideMountPylon';
   return g;

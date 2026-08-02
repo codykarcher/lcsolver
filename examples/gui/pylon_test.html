@@ -180,10 +180,12 @@ function build() {
   }
   if (el('wing').checked && el('mSide').checked) {
     // A slab of fuselage side for the stub to land on.
+    const wz = py.userData.wallZ;
     const wall = new THREE.Mesh(
-      new THREE.BoxGeometry(rFan * 0.30, rFan * 3.4, rFan * 4.2), structure);
+      new THREE.BoxGeometry(rFan * 0.30, rFan * 3.4,
+                            (wz[0] - wz[1]) * 1.5), structure);
     wall.position.set(py.userData.attachX + rFan * 0.15, 0,
-                      (py.userData.rootZ[0] + py.userData.rootZ[1]) / 2);
+                      (wz[0] + wz[1]) / 2);
     scene.add(wall);
     extra.push(wall);
   }
@@ -216,7 +218,8 @@ function build() {
     `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span><br>` +
     `pylon root <span>${py.userData.rootZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span>` +
     (py.userData.attachX !== undefined
-      ? ` &middot; reach <span>${py.userData.attachX.toFixed(2)}</span>`
+      ? ` &middot; reach <span>${py.userData.attachX.toFixed(2)}</span><br>` +
+        `wall chord <span>${py.userData.wallZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span>`
       : ` &middot; kink y <span>${py.userData.kinkY.toFixed(2)}</span>`);
 }
 

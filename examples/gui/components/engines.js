@@ -644,6 +644,7 @@ export function turbofan(opts = {}) {
   // not a guess at it.
   g.userData.cowlOuter = outer;
   g.userData.cowlLE = [zLE, meanAt(0)];
+  g.userData.cowlLength = zLE - zTE;
   g.userData.rFan = R;
   g.userData.nacelleMaxRadius = Math.max(...outer.map((q) => q[1]));
   g.userData.highlightRadius = hi;
