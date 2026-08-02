@@ -158,25 +158,60 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
    * And the underside SWEEPS up to it rather than necking in.
    *
    * The rise is fixed -- it is wherever the engines were put -- so the only
-   * question is how much length it is given to do it in, and the answer is
-   * every metre from where the run starts to the body's own trailing edge.
-   * Over the tailcone alone the keel came up at 48 degrees.
+   * question is how much length it is given, and the answer is every metre from
+   * where the run starts to the body's own trailing edge. Over the tailcone
+   * alone the keel came up at 48 degrees.
+   *
+   * It is NOT asked to arrive level. The run is eased in only, so the underside
+   * leaves the cabin gently and is still climbing when it reaches the trailing
+   * edge, which is what the shape does; a curve that flattened at both ends
+   * would have to be steeper in the middle to cover the same rise.
    */
   const L2 = fu.length;
-  let prev = null, steepest = 0, dropped = 0;
+  let prev = null, steepest = 0, dropped = 0, atTE = 0;
   for (let i = 650; i <= 1000; i++) {
     const q = i / 1000, ke = fu.keelAt(-L2 * q);
     if (prev !== null) {
       const slope = Math.atan2(ke - prev[1], (q - prev[0]) * L2) * 180 / Math.PI;
       steepest = Math.max(steepest, Math.abs(slope));
+      atTE = slope;
       if (slope < -0.2) dropped++;              // going back DOWN, going aft
     }
     prev = [q, ke];
   }
   console.log(`     the underside sweeps up at no more than ${steepest.toFixed(1)} deg, ` +
-              `arriving level`);
+              `still rising at ${atTE.toFixed(1)} deg where it meets the trailing edge`);
   if (steepest > 30) bad(`the underside necks in at ${steepest.toFixed(1)} deg`);
   if (dropped) bad(`the underside falls again at ${dropped} stations -- it is not one sweep`);
+  if (atTE < 2) bad(`the underside flattens to ${atTE.toFixed(1)} deg at the trailing edge`);
+
+  /**
+   * Every section's lower surface is CONVEX -- a U, not a pinch.
+   *
+   * This is what interpolating two radius functions angle by angle destroyed:
+   * the cabin's shape and the channel's disagree most at the bottom corners, so
+   * the blend waisted in there for most of the run while the keel and the
+   * width, measured on their own, both looked fine. Walking the lower boundary
+   * and checking it never turns the wrong way is the test that sees it.
+   */
+  {
+    let worst = 0, worstAt = 0;
+    for (let i = 60; i <= 100; i++) {
+      const q = i / 100, zq = -L2 * q;
+      const pts = [];
+      for (let k = 0; k <= 180; k++) pts.push(fu.surfaceAt(zq, Math.PI + (k / 180) * Math.PI));
+      let turns = 0;
+      for (let k = 1; k < pts.length - 1; k++) {
+        const ax = pts[k].x - pts[k - 1].x, ay = pts[k].y - pts[k - 1].y;
+        const bx = pts[k + 1].x - pts[k].x, by = pts[k + 1].y - pts[k].y;
+        if (ax * by - ay * bx < -1e-9) turns++;
+      }
+      if (turns > worst) { worst = turns; worstAt = q; }
+    }
+    console.log(`     lower surface convex at every station` +
+                (worst ? ` EXCEPT x/L ${worstAt.toFixed(2)}` : ''));
+    if (worst) bad(`the lower surface pinches at x/L ${worstAt.toFixed(2)} -- ${worst} reversals`);
+  }
 
   // Seated: the engines stand proud of the channel and are not hanging below it.
   const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);

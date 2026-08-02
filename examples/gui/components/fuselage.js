@@ -180,9 +180,9 @@ export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0
  *
  * Everything is in units of the local HALF-HEIGHT, about the section's centre.
  */
-export function channelSection({ halfSpacing, radius, axisY, capped = true }) {
+export function channelSection({ halfSpacing, radius, axisY, cap = Infinity }) {
   const inside = (x, y) => {
-    if (capped && y > axisY) return false;
+    if (y > cap) return false;
     const dy = y - axisY, ax = Math.abs(x);
     return ax <= halfSpacing
       ? Math.abs(dy) <= radius
@@ -994,6 +994,12 @@ const D8 = {
    */
   channelFromX: 0,
   channelToX:   0,
+  /**
+   * How the run is eased. One is linear; above one it leaves the cabin gently
+   * and is STILL CLIMBING at the far end, which is wanted -- the underside
+   * comes in at an angle rather than flattening off to meet it.
+   */
+  channelEase:  2.0,
 };
 
 /**
@@ -1082,19 +1088,44 @@ export function d8Fuselage({
       const x = -z;
       const t = (x - p.channelFromX) / Math.max(p.channelToX - p.channelFromX, 1e-6);
       const f = Math.min(1, Math.max(0, t));
-      return f * f * (3 - 2 * f);
+      // Eased IN only. A smoothstep flattens at both ends, so the underside
+      // arrives at the trailing edge horizontal; this one leaves the cabin
+      // gently and is still climbing when it gets there, which is what the
+      // shape actually does.
+      return Math.pow(f, p.channelEase);
     };
+    /**
+     * The section along the run, as a channel whose PARAMETERS travel.
+     *
+     * Not a blend between the cabin's shape and the channel's. Interpolating
+     * two radius functions angle by angle does not keep a shape convex: the
+     * two disagree most at the bottom corners, and the sections came out
+     * pinched there for most of the run. Interpolating the channel's own
+     * parameters instead means every station IS a channel -- the hull of two
+     * circles, cut by a half-plane, both convex operations -- so the underside
+     * is a proper U the whole way and cannot be anything else.
+     *
+     * At the start of the run the parameters ARE the cabin: two circles of the
+     * body's own half-height, spaced so their hull is its width, with the cut
+     * up at the crown where it does nothing.
+     */
+    const cabinHalfW = radius * p.cabinWidth;
     const asChannel = (th, z, base) => {
-      const open = openAt(z);
-      if (open <= 0) return base;
+      const f = openAt(z);
+      if (f <= 0) return base;
       const sh = shape.at(z);
       if (!(sh.r > 1e-6)) return base;
-      const ch = channelSection({
-        halfSpacing: p.channel.x / sh.r,
-        radius: (p.channel.r + p.channelGap) / sh.r,
-        axisY: (p.channel.y - sh.yc) / sh.r,
+      const lerp = (a, b) => a + (b - a) * f;
+      const sp = lerp(Math.max(cabinHalfW - radius, 0), p.channel.x);
+      const rr = lerp(radius, p.channel.r + p.channelGap);
+      const ax = lerp(0, p.channel.y);
+      const cp = lerp(radius, p.channel.y);
+      return channelSection({
+        halfSpacing: sp / sh.r,
+        radius: rr / sh.r,
+        axisY: (ax - sh.yc) / sh.r,
+        cap: (cp - sh.yc) / sh.r,
       })(th);
-      return base + (ch - base) * open;
     };
 
     return (th, z) => {
