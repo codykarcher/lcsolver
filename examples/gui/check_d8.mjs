@@ -18,6 +18,8 @@ import { d8Fuselage } from './components/fuselage.js';
 
 const CASES = [
   { name: 'D8 default', radius: 1.90 },
+  { name: 'edge low',   radius: 1.90, shape: { tailEdgeHeight: 0.15 } },
+  { name: 'edge high',  radius: 1.90, shape: { tailEdgeHeight: 0.80 } },
   { name: 'wider',      radius: 1.90, shape: { cabinWidth: 1.85 } },
   { name: 'narrow',     radius: 1.90, shape: { cabinWidth: 1.15 } },
   { name: 'flat roof',  radius: 1.90, shape: { cabinCrown: 0.00 } },
@@ -178,15 +180,20 @@ for (const c of CASES) {
   // shoulders. Over the cabin it does not.
 
   /* 4a. the tail closes on a HORIZONTAL LINE ------------------------------- */
-  // Not on a point, and not on a channel. The height goes almost to nothing
-  // while the width does not, which is a wide thin edge -- and it is only
+  // Not on a point, not on a face, and not on a channel. The height goes to
+  // nothing while the width does not, which is a line -- and it is only
   // expressible because the section is allowed to ask the size distribution how
   // tall the body is, rather than being a fixed multiple of it.
   const tailEdge = u.tailEdge;
   const edgeRatio = tailEdge.halfWidth / tailEdge.halfHeight;
-  if (Math.abs(tailEdge.heightFraction - p.tipR) > 2e-3)
-    bad(`trailing edge is ${(100 * tailEdge.heightFraction).toFixed(1)}% of ` +
-        `body height, tipR asks ${(100 * p.tipR).toFixed(1)}%`);
+  if (edgeRatio < 20)
+    bad(`trailing edge is ${edgeRatio.toFixed(1)} wide per unit thick -- a face, not a line`);
+  // And it sits where it was asked to, measured up from the KEEL. The residual
+  // thickness has to be accounted for in the hold or the line lands tipR short,
+  // which is small enough to go unnoticed and wrong every time.
+  if (Math.abs(tailEdge.heightFraction - p.tailEdgeHeight) > 1e-4)
+    bad(`trailing edge sits at ${tailEdge.heightFraction.toFixed(4)} of the height, ` +
+        `asked ${p.tailEdgeHeight}`);
   // No taper in plan: the top view is a constant-width slab from the cabin to
   // the trailing edge, so the half-width may not move over the whole aft body.
   let planDrift = 0;
@@ -219,6 +226,38 @@ for (const c of CASES) {
     if (u.crownAt(z) > R + 1e-6 || u.keelAt(z) < -R - 1e-6) outside++;
   }
   if (outside) bad(`nose leaves the +/-R envelope at ${outside} stations`);
+
+  /* 4c. no sliver triangles at the closing line --------------------------- */
+  // A ring thin enough to read as a line is a ring thin enough for its cap fan
+  // to collapse. The nose apex is excluded: there the ring really does close on
+  // a point and the fan is degenerate by construction, as it is on a tube.
+  //
+  // Measured by SHAPE, not by size. A sliver is a triangle that is THIN, and
+  // thinness is its area against its own longest edge squared -- about 0.43 for
+  // an equilateral one, near zero for a splinter. Comparing area to the body's
+  // bounding box instead condemns any small triangle, and on a body that closes
+  // to a line every triangle at the trailing edge is small: that version failed
+  // 10 faces whose areas were 1.1e-5 against a 1.4e-5 threshold derived from a
+  // 36 m diagonal, which is not a statement about anything.
+  let slivers = 0, thinnest = 1;
+  {
+    const pos2 = geo.getAttribute('position'), ix = geo.getIndex().array;
+    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vcc = new THREE.Vector3();
+    const vn = new THREE.Vector3();
+    for (let t = 0; t + 2 < ix.length; t += 3) {
+      va.fromBufferAttribute(pos2, ix[t]);
+      vb.fromBufferAttribute(pos2, ix[t + 1]);
+      vcc.fromBufferAttribute(pos2, ix[t + 2]);
+      if ((va.z + vb.z + vcc.z) / 3 > -0.02 * L) continue;      // the nose apex
+      const area = vn.crossVectors(vb.clone().sub(va), vcc.clone().sub(va)).length() / 2;
+      const longest = Math.max(va.distanceTo(vb), vb.distanceTo(vcc), vcc.distanceTo(va));
+      if (longest < 1e-12) { slivers++; continue; }
+      const q = area / (longest * longest);
+      thinnest = Math.min(thinnest, q);
+      if (q < 2e-3) slivers++;
+    }
+  }
+  if (slivers) bad(`${slivers} sliver triangles aft of the nose apex`);
 
   /* 5. the morph leaves no ring ------------------------------------------- */
   // A jump in the SECTION is a crease running all the way round the body, which
@@ -271,15 +310,15 @@ for (const c of CASES) {
   console.log(`  nose-to-cabin section change ${secDiff.toFixed(3)}`);
   console.log(`  roof drops ${(100 * midDrop).toFixed(3)}% across the flat; ` +
               `shoulder ${gotShoulder.toFixed(3)}R vs semicircle ${wantShoulder.toFixed(3)}R`);
-  console.log(`  trailing edge ${(2 * tailEdge.halfWidth).toFixed(2)} x ` +
-              `${(2 * tailEdge.halfHeight).toFixed(2)} = ` +
-              `${(100 * tailEdge.heightFraction).toFixed(1)}% of height, ` +
-              `W/H ${edgeRatio.toFixed(1)}`);
+  console.log(`  trailing edge ${(2 * tailEdge.halfWidth).toFixed(2)} wide x ` +
+              `${(2 * tailEdge.halfHeight).toFixed(3)} thick (W/T ${edgeRatio.toFixed(0)}), ` +
+              `at ${(100 * tailEdge.heightFraction).toFixed(1)}% of height from the keel`);
   console.log(`  plan taper ${u.planTaper.toFixed(3)}, ` +
               `half-width drifts ${planDrift.toFixed(5)} aft, ${dished} dished stations`);
   console.log(`  point at y ${tipY.toFixed(3)} (${p.tipRise} half-heights up), ` +
               `${outside} stations outside the envelope`);
-  console.log(`  worst section spike ${spike.toFixed(2)}x its neighbours`);
+  console.log(`  worst section spike ${spike.toFixed(2)}x its neighbours, ` +
+              `thinnest face ${thinnest.toFixed(4)} (equilateral is 0.43)`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)`

@@ -74,8 +74,10 @@
 
 
   <h2>tail</h2>
-  <div class="row"><label for="tipR">edge height &middot; H</label><output id="oTipR"></output></div>
-  <input type="range" id="tipR" min="0.05" max="0.70" step="0.01" value="0.35">
+  <div class="row"><label for="tailEdgeHeight">edge height from keel</label><output id="oTailEdgeHeight"></output></div>
+  <input type="range" id="tailEdgeHeight" min="0.00" max="1.00" step="0.01" value="0.35">
+  <div class="row"><label for="tipR">edge thickness</label><output id="oTipR"></output></div>
+  <input type="range" id="tipR" min="0.012" max="0.30" step="0.002" value="0.02">
 
   <h2>where the section changes</h2>
   <div class="row"><label for="uBubble">bubble by</label><output id="oUBubble"></output></div>
@@ -186,7 +188,7 @@ const num = (id) => parseFloat(el(id).value);
 
 const DECK = ['rad', 'fineness', 'noseD'];
 const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinCrown',
-               'tipR', 'uBubble'];
+               'tailEdgeHeight', 'tipR', 'uBubble'];
 const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
 
 let body = null, extra = [];
@@ -328,8 +330,9 @@ function build() {
     `(<span>${u.tipRise.toFixed(2)}</span> half-heights ` +
     `${u.tipRise >= 0 ? 'above' : 'below'} the axis)<br>` +
     `trailing edge <span>${(2 * u.tailEdge.halfWidth).toFixed(2)}</span> wide by ` +
-    `<span>${(2 * u.tailEdge.halfHeight).toFixed(2)}</span> tall &mdash; ` +
-    `<span>${(100 * u.tailEdge.heightFraction).toFixed(0)}%</span> of body height<br>` +
+    `<span>${(2 * u.tailEdge.halfHeight).toFixed(3)}</span> thick, at ` +
+    `<span>${(100 * u.tailEdge.heightFraction).toFixed(1)}%</span> of the height ` +
+    `up from the keel<br>` +
     `plan taper <span>${u.planTaper.toFixed(2)}</span> ` +
     `(1.00 = constant width in top view)`;
 

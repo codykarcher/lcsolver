@@ -325,19 +325,29 @@ function faceOutward(geo, shape) {
 /**
  * Skin the body: a grid of quads over (station, angle), closed at both ends.
  *
- * Stations are placed on a cosine spacing rather than evenly. The body is
- * nearly straight down the middle and turns hard at both tips, so uniform
+ * Stations are clustered toward both ends rather than spaced evenly. The body
+ * is nearly straight down the middle and turns hard at the tips, so uniform
  * spacing spends most of its triangles where nothing is happening and then
- * facets the nose. Cosine clustering puts them where the curvature is.
+ * facets the nose.
+ *
+ * PARTLY clustered, though, not fully. A pure cosine puts the last two stations
+ * 4.7 mm apart on a 36 m body, and on a section that is still 5.9 m wide at the
+ * trailing edge -- which is a row of splinters, thinner than 0.001 on
+ * area-over-longest-edge-squared where a good triangle is 0.43. Blending the
+ * cosine with a uniform spacing keeps threefold clustering at the ends and
+ * takes the last gap to 92 mm. A body that closes on a POINT hides this,
+ * because its last row is tiny in both directions; one that closes on a LINE
+ * does not.
  */
-function skinBody(shape, sec, { nStation = 140, nSeg = 64 } = {}) {
+function skinBody(shape, sec, { nStation = 140, nSeg = 64, cluster = 0.65 } = {}) {
   const pos = [], idx = [];
   const v = new THREE.Vector3();
   const L = shape.length;
 
   const zs = [];
   for (let i = 0; i < nStation; i++) {
-    zs.push(-L * (1 - Math.cos((i / (nStation - 1)) * Math.PI)) / 2);
+    const t = i / (nStation - 1);
+    zs.push(-L * ((1 - cluster) * t + cluster * (1 - Math.cos(t * Math.PI)) / 2));
   }
 
   for (const z of zs) {
@@ -353,14 +363,48 @@ function skinBody(shape, sec, { nStation = 140, nSeg = 64 } = {}) {
     }
   }
 
-  // Close both ends onto a centre vertex. At the nose the ring has collapsed to
-  // a point already and these triangles are near-degenerate, which is harmless;
-  // at the tail the ring is the APU exhaust and the cap is real.
+  // Close both ends. HOW to close depends on the shape of the ring, and getting
+  // that wrong is what puts splinters on a trailing edge.
+  //
+  // A fan to a centre vertex is right for a ring that is roughly as tall as it
+  // is wide -- and it is what an end that closes on a POINT wants, where the
+  // triangles are degenerate either way and it does not matter.
+  //
+  // It is quite wrong for a ring that is much wider than it is tall, which is
+  // what a body closing on a LINE ends with. Every fan triangle then has a base
+  // of one segment and a length of half the width, and the worst of them come
+  // out at 0.001 on area-over-longest-edge-squared where a well-shaped triangle
+  // is 0.43. Zipping the ring's upper half to its lower half instead gives
+  // triangles a segment wide and the full thickness tall -- 0.2 rather than
+  // 0.001. Valid for any convex section, which every section here is.
   for (const [ring, z] of [[0, zs[0]], [nStation - 1, zs[nStation - 1]]]) {
-    const c = pos.length / 3;
-    pos.push(0, shape.at(z).yc, z);
+    const base = ring * nSeg;
+    let wide = 0, tall = 0;
     for (let j = 0; j < nSeg; j++) {
-      idx.push(c, ring * nSeg + j, ring * nSeg + ((j + 1) % nSeg));
+      const k = (base + j) * 3;
+      wide = Math.max(wide, Math.abs(pos[k]));
+      tall = Math.max(tall, Math.abs(pos[k + 1] - shape.at(z).yc));
+    }
+    if (wide < 4 * tall) {
+      const c = pos.length / 3;
+      pos.push(0, shape.at(z).yc, z);
+      for (let j = 0; j < nSeg; j++) {
+        idx.push(c, base + j, base + ((j + 1) % nSeg));
+      }
+    } else {
+      // The two chains MEET at the ring's two ends -- point 0 on the right and
+      // point nSeg/2 on the left are on both -- so the first and last rungs of
+      // the ladder are triangles, not quads. Emitting quads there pairs a point
+      // with itself and puts a zero-area face at each tip, which is the thing
+      // this whole branch exists to avoid.
+      const half = nSeg / 2;
+      for (let j = 0; j < half; j++) {
+        const uA = base + j, uB = base + j + 1;
+        const lA = base + ((nSeg - j) % nSeg), lB = base + nSeg - j - 1;
+        if (uA === lA) idx.push(uA, uB, lB);             // right-hand tip
+        else if (uB === lB) idx.push(uA, uB, lA);        // left-hand tip
+        else idx.push(uA, uB, lA, uB, lB, lA);
+      }
     }
   }
 
@@ -765,11 +809,17 @@ const D8 = {
   tailD:      2.30,  // aft body length, in full heights
   noseA: 2.4, noseB: 0.50,
   tailA: 1.5, tailB: 0.70,
-  // The aft body closes on a BLUNT EDGE, not on a point: the height tapers to
-  // about a third while the width does not taper at all. So the two are
-  // separate, and one of them is simply switched off.
-  tipR:       0.35,  // half-height at the trailing edge, in half-heights
+  // The aft body closes on a LINE: the height goes to nothing while the width
+  // does not taper at all, so the back of the aeroplane is a horizontal edge
+  // the full width of the cabin. Two tapers, and one of them switched off.
+  tipR:       0.02,  // residual half-height at the edge -- as near a line as a
+                     // mesh can get without degenerate triangles
   tailWidth:  null,  // half-width there; null means "the same as the cabin"
+  // Where that line sits, as a fraction of the body's HEIGHT measured up from
+  // the keel. 0.5 would close it on the axis, 1.0 along the roof. Stored as a
+  // signed crown hold -- the same law, with the sign saying which of the two
+  // profile lines is held and which comes to meet it.
+  tailEdgeHeight: 0.35,
   crownHold:  1.00,
 
   // The point sits ABOVE the axis, which is the opposite of a tube and is the
@@ -805,11 +855,12 @@ const D8 = {
  * top and bottom joined by semicircular sides. Semicircular because they are
  * arcs of the lobes themselves; the fairing is their convex hull.
  *
- * The aft body closes on a BLUNT EDGE rather than on a point: the height tapers
- * to about a third of the body's while the width does not taper at all, so the
- * planform is a constant-width slab and the back of the aeroplane is a wide
- * flat face. That is why the tail has two tapers and not one -- and why one of
- * them is switched off.
+ * The aft body closes on a LINE rather than on a point: the height tapers to
+ * nothing while the width does not taper at all, so the planform is a
+ * constant-width slab and the back of the aeroplane is a horizontal edge the
+ * full width of the cabin. That is why the tail has two tapers and not one --
+ * and why one of them is switched off. The line sits at a chosen fraction of
+ * the body's height up from the keel, not on the axis and not on the roof.
  */
 export function d8Fuselage({
   radius = 1.90,            // HALF-HEIGHT, not a radius -- see the section note
@@ -827,6 +878,19 @@ export function d8Fuselage({
   // Stated as a rise and stored as a hold, so the shape law stays one law and
   // the parameter still reads the way the aeroplane does.
   if (shapeOverrides.keelHold === undefined) p.keelHold = -p.tipRise;
+  // Same trick at the other end. yc at the tail is crownHold * (radius - r), so
+  // to land the closing line at a chosen height the hold has to account for the
+  // residual thickness -- otherwise the line sits tipR short of where it was
+  // asked for, which is small but is exactly the kind of quiet offset that
+  // nobody finds later.
+  // A closing line still has to be built out of triangles. Below about 0.01 the
+  // last ring is so thin that the cap fan across it collapses -- 84 degenerate
+  // faces at 0.005, 132 at 0.001 -- and degenerate faces are what render as
+  // shards. 0.02 is visually a line and measures clean, so that is the floor.
+  p.tipR = Math.max(0.012, p.tipR);
+  if (shapeOverrides.crownHold === undefined) {
+    p.crownHold = (2 * p.tailEdgeHeight - 1) / (1 - p.tipR);
+  }
   const L = length ?? p.fineness * 2 * radius;
 
   // The section, given the finished size distribution.
@@ -868,12 +932,15 @@ export function d8Fuselage({
     /** Section width over height at the cabin -- what makes it look like a D8. */
     cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
       / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
-    /** The blunt trailing edge: how wide and how deep the back of the body is. */
+    /** The trailing edge: how wide, how thin, and how high it sits. */
     tailEdge: {
       halfWidth: u.halfWidthAt(-L),
       halfHeight: (u.crownAt(-L) - u.keelAt(-L)) / 2,
-      /** As a fraction of the body's own height -- the number that was asked for. */
-      heightFraction: (u.crownAt(-L) - u.keelAt(-L)) / (2 * radius),
+      /** Thickness as a fraction of the body's height -- near zero is a line. */
+      thicknessFraction: (u.crownAt(-L) - u.keelAt(-L)) / (2 * radius),
+      /** Height of the line above the keel, as a fraction of the body height. */
+      heightFraction: ((u.crownAt(-L) + u.keelAt(-L)) / 2 + radius) / (2 * radius),
+      y: (u.crownAt(-L) + u.keelAt(-L)) / 2,
     },
     /** Planform taper: 1.00 means the top view is a constant-width slab. */
     planTaper: tailW / p.cabinWidth,
