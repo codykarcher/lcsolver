@@ -20,6 +20,7 @@ import { fileURLToPath } from 'url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const E = await import(join(HERE, 'components/engines.js'));
 const F = await import(join(HERE, 'components/fuselage.js'));
+const W = await import(join(HERE, 'components/wing.js'));
 
 /**
  * page -> { build: the variants it can build, vars: what it calls the object }
@@ -38,6 +39,9 @@ const PAGES = {
   'turboshaft_test.html': { build: [() => E.turboshaft({})], vars: ['engine.userData', 'd'] },
   'piston_test.html':   { build: [() => E.pistonEngine({})], vars: ['engine.userData', 'd'] },
   'motor_test.html':    { build: [() => E.electricMotor({})], vars: ['engine.userData', 'd'] },
+  'wing_test.html':     { build: [() => W.wing(), () => W.horizontalTail(),
+                                  () => W.liftingSurface({ kink: null, mirror: false })],
+                          vars: ['surface.userData', 'u'] },
   'd8_test.html':       { build: [() => F.d8Fuselage({}),
                                   () => F.d8Fuselage({ detail: true }),
                                   () => F.d8Fuselage({ radius: 1.1, fineness: 8,

@@ -20,11 +20,16 @@ import { fileURLToPath } from 'url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const F = await import(join(HERE, 'components/fuselage.js'));
+const W = await import(join(HERE, 'components/wing.js'));
 
 /** page -> the builder it drives, and what it calls the body-size slider. */
 const PAGES = {
   'fuselage_test.html': { build: F.jetlinerFuselage, size: 'rad' },
   'd8_test.html': { build: F.d8Fuselage, size: 'rad' },
+  // A lifting surface has no single size slider and no `shape` object -- its
+  // parameters are the planform itself -- so it is compared through its own
+  // list rather than through the fuselage convention.
+  'wing_test.html': { build: W.liftingSurface, flat: 'NUMS' },
 };
 
 /** Pull `const NAME = [ 'a', 'b' ]` out of a page's script. */
@@ -43,8 +48,9 @@ for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
     [...src.matchAll(/<input type="range" id="(\w+)"[^>]*value="([-\d.]+)"/g)]
       .map((m) => [m[1], parseFloat(m[2])]));
 
-  const deck = listOf(src, 'DECK'), shapeKeys = listOf(src, 'SHAPE');
-  const args = { shape: {} };
+  const deck = listOf(src, page.flat ?? 'DECK');
+  const shapeKeys = page.flat ? [] : listOf(src, 'SHAPE');
+  const args = page.flat ? {} : { shape: {} };
   for (const k of deck) {
     if (sliders[k] === undefined) continue;
     if (k === page.size) args.radius = sliders[k]; else args[k] = sliders[k];
@@ -55,6 +61,31 @@ for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
 
   const fromPage = page.build(args).userData;
   const fromDefaults = page.build({}).userData;
+  if (page.flat) {
+    // Compared on the geometry, same as the bodies: sample the built surface at
+    // a spread of spanwise stations and require the two to agree.
+    let worstF = 0, whatF = '';
+    for (let i = 0; i <= 40; i++) {
+      const t = i / 40;
+      const a = fromPage.at(t), b = fromDefaults.at(t);
+      for (const k of ['chord', 'xLE', 'y', 'twist']) {
+        if (Math.abs(a[k] - b[k]) > worstF) { worstF = Math.abs(a[k] - b[k]); whatF = `${k} at eta ${t.toFixed(2)}`; }
+      }
+    }
+    if (worstF > 1e-9) {
+      bad++;
+      console.log(`  ${file}: page defaults differ from the component's ` +
+                  `by ${worstF.toExponential(2)} (${whatF})`);
+      for (const k of deck) {
+        const mine = fromDefaults.planform?.[k];
+        if (mine != null && sliders[k] !== undefined && Math.abs(mine - sliders[k]) > 1e-12) {
+          console.log(`      ${k}: slider ${sliders[k]}, component ${mine}`);
+        }
+      }
+    }
+    console.log(`${file.padEnd(24)} ${String(deck.length).padStart(2)} defaults checked`);
+    continue;
+  }
 
   // Compared on the geometry rather than on the parameter lists, because that
   // is what actually differs -- a page can name a parameter the component has
