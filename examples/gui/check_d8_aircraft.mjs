@@ -97,6 +97,32 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   console.log(`     and inboard of the fins, which stand at x ${finX.toFixed(2)}`);
 }
 
+/* ---- the afterbody carries the engines --------------------------------- */
+// The plan taper and the engine size are both read from the deck rather than
+// styled, so both are checkable. What they buy is that the back of the
+// aeroplane ends where the engines do instead of running past them as a slab.
+{
+  const L = fu.length;
+  const edge = fu.halfWidthAt(-L);
+  const reach = d.engineY + d.nacelleDia / 2;
+  console.log(`\nafterbody: plan taper ${fu.planTaper.toFixed(3)}, trailing edge ` +
+              `${edge.toFixed(3)} half-wide against engines reaching ${reach.toFixed(3)}`);
+  if (fu.planTaper >= 1) bad('the afterbody does not taper in plan -- it is a constant-width slab');
+  if (edge < reach) bad(`the trailing edge is ${edge.toFixed(3)} but the engines reach ${reach.toFixed(3)}`);
+  if (edge > 1.35 * reach) bad(`the trailing edge runs ${(edge / reach).toFixed(2)} times past the engines`);
+
+  // The engine is the deck's, not the component's own proportions.
+  const b = new THREE.Box3().setFromObject(u.parts.engines[0]);
+  const len = b.max.z - b.min.z, dia = b.max.x - b.min.x;
+  console.log(`     engine ${len.toFixed(3)} long by ${dia.toFixed(3)} across ` +
+              `(deck: ${d.nacelleLength.toFixed(3)} by ${d.nacelleDia.toFixed(3)}, ` +
+              `aspect ${(d.nacelleLength / d.nacelleDia).toFixed(2)})`);
+  if (Math.abs(len - d.nacelleLength) > 2e-3) bad(`engine is ${len} long, deck says ${d.nacelleLength}`);
+  if (Math.abs(dia - d.nacelleDia) > 2e-3) bad(`engine is ${dia} across, deck says ${d.nacelleDia}`);
+  // And it sits ON the body rather than hanging off the back of it.
+  if (b.min.z < -L - 1e-6) bad(`the engine overhangs the tail by ${((-L) - b.min.z).toFixed(3)} m`);
+}
+
 /* ---- how it sits ------------------------------------------------------- */
 {
   const sat = d8Aircraft(deck, { sitOnGround: true });

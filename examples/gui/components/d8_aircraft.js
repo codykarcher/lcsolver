@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
-import { turbofan } from './engines.js';
+import { bareTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
 
 const DEG = Math.PI / 180;
@@ -32,7 +32,8 @@ export const D8_CHOICES = {
   wingRootY:     -0.55,   // wing root chord height, in body half-heights
   finY:           0.62,   // fin root, as a fraction of the body's half-width
   finCant:       14.0,    // degrees outboard from vertical
-  engineSink:     0.45,   // nacelle radius let into the upper skin
+  engineSink:     0.45,   // engine radius let into the upper skin
+  tailSpan:       1.06,   // trailing edge half-width, in engine outer extents
   htOnFins:       true,   // tailplane carried on the fin tips, not the body
   wingDihedral:   2.0,
   wingSweepC4:   20.0,
@@ -64,6 +65,20 @@ export function d8Aircraft(deck, opts = {}) {
       cabinWidth: halfW / halfH,
       noseWidth: halfW / halfH,
       tailD: d.coneLength / (2 * halfH),
+      /**
+       * The afterbody narrows in plan until its trailing edge just spans the
+       * engines.
+       *
+       * Left at the cabin's width -- which is what the standalone body does,
+       * and is right for a body with nothing on the back of it -- the planform
+       * is a constant-width slab and the engines sit on a shelf that runs on
+       * past them to either side. Taking the width from the engines instead
+       * makes the back of the aeroplane end where they do, so the afterbody
+       * reads as the thing carrying them rather than as a slab they happen to
+       * be on. Derived from the deck, not chosen: it is the engine's outer
+       * extent, in the half-heights this parameter is measured in.
+       */
+      tailWidth: (d.tailSpan * (d.engineY + d.nacelleDia / 2)) / halfH,
     },
     detail: opts.detail ?? false,
   });
@@ -147,13 +162,22 @@ export function d8Aircraft(deck, opts = {}) {
   /* ---- engines, on top of the body between the fins ------------------- */
   // Let into the upper skin rather than hung under a wing: a D8's nacelles sit
   // on the afterbody, which is the whole point of the configuration.
-  const probe = turbofan({ rFan: 1, bypassRatio: 9 });
+  // BARE, not podded. On a D8 the nacelle is not a separate body slung under a
+  // wing -- the afterbody is the fairing, and the engine is let into it. A
+  // podded turbofan brings its own cowl and reads as an engine parked on the
+  // fuselage rather than built into it.
+  const probe = bareTurbofan({ rFan: 1, bypassRatio: 9 });
   const rFan = (d.nacelleDia / 2) / probe.userData.rMax;
+  // Length from the deck too, not left to the component's own proportions. A
+  // D8's propulsor is short and fat -- 1.24 m long on a 1.68 m diameter, an
+  // aspect of 0.74 where a podded engine is nearer 1.8 -- because the duct is
+  // short when the fan is fed off the body. Letting the component choose gives
+  // a 3.2 m engine that hangs a metre and a half past the tail.
   const rNac = d.nacelleDia / 2;
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
-    pod.add(turbofan({ rFan, bypassRatio: 9 }));
+    pod.add(bareTurbofan({ rFan, bypassRatio: 9, length: d.nacelleLength }));
     pod.position.set(side * d.engineY,
                      u.crownAt(-d.engineX) + rNac * (1 - d.engineSink),
                      -d.engineX);
