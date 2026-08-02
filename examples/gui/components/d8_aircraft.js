@@ -39,7 +39,7 @@ export const D8_CHOICES = {
    * closing where the engines sit, and a fraction of a collapsing number is not
    * a place. Set against the arrangement drawing, not derived.
    */
-  engineHeight:   0.55,
+  engineHeight:   0.70,
   /**
    * The afterbody's trailing-edge half-width, in engine outer extents.
    *
@@ -52,7 +52,17 @@ export const D8_CHOICES = {
   planTaperA:     1.0,    // the plan narrows EARLY -- the depth does not
   planTaperB:     2.0,
   cradleStart:    0.00,   // the channel opens as the cabin ends
-  cradleFull:     0.45,   // and is fully open before the engines at 0.75
+  /**
+   * And is fully open by here, along the tailcone.
+   *
+   * Late on purpose. The underside has to climb 1.78 m to reach a channel
+   * floored at the engines' height, and how gently it can do that is only a
+   * question of how much length it is given: formed by 0.45 the keel sweeps up
+   * at 48 degrees, by 0.80 at 33. The cost is that the engine's nose sits in a
+   * channel not yet fully open and is more buried for it, which is what a
+   * fan fed off the body looks like anyway.
+   */
+  cradleFull:     0.80,
   tailHold:       4.0,    // how squarely the afterbody holds its depth aft
   tailTrough:     0.30,   // valley between the lobes, in local half-heights
   troughWidth:    0.55,   // angular half-width of that valley, radians
@@ -114,6 +124,18 @@ export function d8Aircraft(deck, opts = {}) {
        * in the last fifth instead.
        */
       tailLaw: 'power', tailA: d.tailHold, tailB: 0.70,
+      /**
+       * Where the afterbody's centreline ends up: in the CHANNEL.
+       *
+       * A section is one radius per angle about that centreline, so the
+       * centreline has to be inside the shape it describes. Left at its own
+       * default the body closes at 0.35 of its height while the channel, with
+       * the engines at 0.70, floors at 0.47 -- the origin ends up below the
+       * floor, outside the section, and the whole afterbody collapses to
+       * nothing. Aiming it at the middle of the channel is not a tuning
+       * choice; it is what keeps the description valid.
+       */
+      tailEdgeHeight: ((engineAxisY - (d.nacelleDia / 2 + 0.02) / 2) + halfH) / (2 * halfH),
       // The plan narrows on its own law, and earlier than the depth, so the
       // afterbody is no wider than the engines by the time it has to hold them.
       tailWidthA: d.planTaperA, tailWidthB: d.planTaperB,
