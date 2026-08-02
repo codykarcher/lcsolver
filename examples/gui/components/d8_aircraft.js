@@ -202,6 +202,22 @@ export function d8Aircraft(deck, opts = {}) {
   // reference this file would have to guess at.
   const vtRootLE = d.vtLE ?? (d.wingQuarterX + d.vtArm - 0.25 * fin.rootChord);
   const vtQuarterX = vtRootLE + 0.25 * fin.rootChord;
+  /**
+   * The fins are hung by their root TRAILING EDGE, on the body's back upper
+   * corners.
+   *
+   * Which is where the two actually meet: the solve puts the fin's trailing
+   * edge on the body's own trailing edge, and the channel puts the body's upper
+   * corners there too, so the corner is a single point both of them already
+   * own. Hanging them at the crown over their QUARTER chord instead -- which is
+   * a station a good way forward, where the afterbody is still much deeper --
+   * floated them well above it.
+   *
+   * The root's leading edge ends up inside the body, which is correct: the fin
+   * is faired in forward and emerges aft.
+   */
+  const teCornerY = u.crownAt(-d.fuseLength);
+  const teCornerX = u.halfWidthAt(-d.fuseLength);
   parts.verticalTails = [];
   // Placed symmetrically about the centreline, whatever the count.
   const sides = d.finCount >= 2 ? [1, -1] : [0];
@@ -214,8 +230,7 @@ export function d8Aircraft(deck, opts = {}) {
       // of it and the pair splay outboard rather than both leaning one way.
       cant: side * d.finCant,
     });
-    const y = side * d.finY * halfW;
-    vt.position.set(y, u.crownAt(-vtQuarterX), -vtRootLE);
+    vt.position.set(side * teCornerX, teCornerY, -vtRootLE);
     vt.name = side > 0 ? 'starboardFin' : 'portFin';
     vt.userData.side = side;
     g.add(vt); parts.verticalTails.push(vt);
@@ -232,7 +247,7 @@ export function d8Aircraft(deck, opts = {}) {
   const htQuarterX = htRootLE + 0.25 * d.htRootChord;
   // Level with the fin tips when it rides on them, which is what makes the
   // empennage a pi rather than a cross.
-  const finTipY = u.crownAt(-vtQuarterX) + fin.height * Math.cos(d.finCant * DEG);
+  const finTipY = teCornerY + fin.height * Math.cos(d.finCant * DEG);
   const htY = d.htOnFins ? finTipY : u.crownAt(-htQuarterX);
   ht.position.set(0, htY, -htRootLE);
   g.add(ht); parts.horizontalTail = ht;

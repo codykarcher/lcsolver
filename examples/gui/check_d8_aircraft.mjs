@@ -236,10 +236,27 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     bad(`the tailplane sits at y ${ht.min.y.toFixed(2)}..${ht.max.y.toFixed(2)}, ` +
         `fins top out at ${fin.max.y.toFixed(2)}`);
   }
-  // The fin's trailing edge lands on the body's own tail, which is what the
-  // solve's station gives and is worth noticing if it ever stops being true.
-  console.log(`     fin trailing edge ${(d.vtLE + d.vtRootChord).toFixed(3)}, ` +
-              `body ends ${d.fuseLength.toFixed(3)}`);
+  /**
+   * The fins hang by their root TRAILING EDGE, on the body's back upper
+   * corners -- all three coordinates, not just the station.
+   *
+   * The station is the solve's doing: it puts the fin's trailing edge on the
+   * body's own. The other two are the channel's: it puts the body's upper
+   * corners there. So the corner is one point that both already own, and the
+   * fin either sits on it or does not.
+   */
+  const vt = u.parts.verticalTails.find((f) => f.position.x > 0) ?? u.parts.verticalTails[0];
+  const corner = {
+    x: fu.halfWidthAt(-d.fuseLength),
+    y: fu.crownAt(-d.fuseLength),
+    z: -d.fuseLength,
+  };
+  const rootTE = { x: vt.position.x, y: vt.position.y, z: vt.position.z - u.fin.rootChord };
+  const off = Math.hypot(rootTE.x - corner.x, rootTE.y - corner.y, rootTE.z - corner.z);
+  console.log(`     fin root trailing edge (${rootTE.x.toFixed(3)}, ${rootTE.y.toFixed(3)}, ` +
+              `${rootTE.z.toFixed(3)}) against the body's back upper corner ` +
+              `(${corner.x.toFixed(3)}, ${corner.y.toFixed(3)}, ${corner.z.toFixed(3)})`);
+  if (off > 2e-3) bad(`the fin root trailing edge is ${(1000 * off).toFixed(0)} mm off the corner`);
 }
 
 /* ---- how it sits ------------------------------------------------------- */
