@@ -447,65 +447,134 @@ export function turbofan({
  * Turbojet
  * ==================================================================== */
 
+/** Turbojet slenderness: nose-to-tail over CASE diameter. */
+const JET_LENGTH_OVER_DIAMETER = 4.5;
+
+/** Plug tip, as a fraction of body length aft of the nozzle exit. */
+const JET_PLUG_TIP = 0.10;
+
+/** Case wall thickness, x rCase. */
+const JET_WALL = 0.035;
+
 /**
- * Turbojet: a case with a compressor face at the inlet and a nozzle aft.
+ * Case profile stations between the inlet lip and the nozzle exit.
  *
- * The case is a shell so the inlet is genuinely open and you see the blades
- * down it; a blanking disc a little way behind stops you seeing out the back.
+ *     z   fraction of body length aft of the lip
+ *     r   radius as a multiple of rCase
+ *
+ * Defaults hold the case parallel and let it converge only at the end, which
+ * is what a plain turbojet looks like.
  */
-export function turbojet({ rCase = 0.42, blades = 26 } = {}) {
+const JET_SECTIONS = [{ z: 0.35, r: 1.0 }, { z: 0.70, r: 1.0 }];
+
+/**
+ * Turbojet: an annular casing with a compressor face at the inlet and a
+ * converging nozzle aft.
+ *
+ * The casing is one CLOSED ANNULUS -- outer wall aft, inner wall forward,
+ * joined round the lip -- rather than a single-sided shell. That makes the
+ * bore genuinely open, so you see the compressor down it, while the part
+ * itself is still a solid with no boundary edge anywhere.
+ *
+ * A dark liner just inside the bore does the rest: an inlet should read as a
+ * hole, and bare metal all the way down reads as a pipe.
+ */
+export function turbojet({
+  rCase = 0.42, length = null, nozzleExit = 0.62,
+  sections = JET_SECTIONS, blades = 26,
+} = {}) {
   const g = new THREE.Group();
   const R = rCase;
+  const t = JET_WALL * R;
 
+  // Nose is the inlet lip at z = 0, tail is the plug tip, so overall length is
+  // simply the extent aft -- the spinner sits inside the inlet and never
+  // reaches forward of the lip.
+  const L = length ?? JET_LENGTH_OVER_DIAMETER * 2 * R;
+  const Lb = L / (1 + JET_PLUG_TIP);            // lip to nozzle exit
+  const zExit = -Lb;
+
+  const secs = sections
+    .map((sec) => ({ z: Math.min(0.97, Math.max(0.03, sec.z)),
+                     r: Math.max(0.05, sec.r) }))
+    .sort((a, b) => a.z - b.z);
+
+  const rExit = Math.max(0.1, nozzleExit) * R;
+  const ctrl = [
+    new THREE.Vector2(0, R),
+    ...secs.map((sec) => new THREE.Vector2(-sec.z * Lb, sec.r * R)),
+    new THREE.Vector2(zExit, rExit),
+  ];
+  const wall = new THREE.SplineCurve(ctrl).getPoints(40);
+
+  // Closed annulus: down the outside, back up the inside, shut at the lip.
+  const prof = [
+    ...wall.map((p) => [p.x, p.y]),
+    ...[...wall].reverse().map((p) => [p.x, Math.max(0.02 * R, p.y - t)]),
+  ];
+  prof.push(prof[0]);
+  const casing = latheZ(prof, M.casing, SEG);
+  casing.name = 'casing';
+  g.add(casing);
+
+  // Dark liner inside the bore.
+  g.add(latheZ([
+    ...wall.map((p) => [p.x, Math.max(0.02 * R, p.y - t)]),
+    ...[...wall].reverse().map((p) => [p.x, Math.max(0.01 * R, p.y - 1.8 * t)]),
+    [0, R - t],
+  ], M.cavity, SEG));
+
+  // Compressor face, set back inside the lip.
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
-  rotor.add(spinner(0.25 * R, 0.55 * R, M.casing, 0.05 * R));
-  // Angle from the axis grows outboard -- coarse root, fine tip. This row was
-  // built the other way round, the same inversion the fan had.
+  // Set back so the spinner tip stays inside the lip. Referenced to the
+  // spinner's own length, not to body length: tied to the body it crept out
+  // through the inlet as the engine got shorter, and nose-to-tail then
+  // measured from the spinner rather than from the lip.
+  const lSpin = 0.62 * R;
+  rotor.position.z = -(lSpin + 0.06 * R);
+  rotor.add(spinner(0.26 * R, lSpin, M.casing, 0));
   rotor.add(bladeRow({
     count: blades, material: M.blade, hubMaterial: M.casing,
-    hubLength: 0.3 * R,
-    rHub: 0.27 * R, rTip: 0.95 * R,
+    hubLength: 0.30 * R,
+    rHub: 0.27 * R, rTip: 0.93 * R,
     chordRoot: 0.24 * R, chordTip: 0.20 * R,
     twistRoot: 0.45, twistTip: 0.95, thickness: 0.09,
   }));
   g.add(rotor);
 
-  g.add(tubeZ(0.94 * R, R, 0.10 * R, -2.70 * R, M.casing, SEG));
-
-  // Looking down the inlet should end in darkness, not in a lit disc.
+  // Blanking disc a little way behind the compressor, so the inlet ends in
+  // darkness rather than a view straight through the engine.
   const blank = new THREE.Mesh(
-    new THREE.CircleGeometry(0.95 * R, SEG), M.cavity);
-  blank.position.z = -0.75 * R;
-  blank.rotation.y = Math.PI;                 // face the inlet
+    new THREE.CircleGeometry(0.94 * R, SEG), M.cavity);
+  blank.position.z = -0.22 * Lb;
+  blank.rotation.y = Math.PI;
   g.add(blank);
 
-  // A pair of banding rings, which is most of what stops a plain cylinder
-  // looking like a plain cylinder.
-  for (const z of [-0.95 * R, -1.85 * R]) {
-    g.add(tubeZ(R, 1.06 * R, z + 0.05 * R, z - 0.05 * R, M.accessory, SEG));
-  }
-
+  // Exhaust plug, base buried inside the nozzle so it grows out of the body.
+  const rPlugExit = rExit * (1 - EXHAUST_GAP_FRAC);
+  const zPlugTip = zExit - JET_PLUG_TIP * Lb;
+  const embed = 0.06 * Lb;
   g.add(latheZ([
-    [-2.65 * R, R], [-3.05 * R, 0.78 * R], [-3.35 * R, 0.62 * R],
-    [-3.35 * R, 0.55 * R], [-3.05 * R, 0.71 * R], [-2.65 * R, 0.93 * R],
-    [-2.65 * R, R],
+    [zExit + embed, 0],
+    [zExit + embed, rPlugExit * (1 + embed / (JET_PLUG_TIP * Lb))],
+    [zPlugTip, 0],
   ], M.hot, SEG));
 
-  g.add(latheZ([
-    [-2.60 * R, 0], [-2.60 * R, 0.34 * R], [-3.10 * R, 0.26 * R],
-    [-3.50 * R, 0],
-  ], M.hot, SEG));
-
-  // ...and so should looking up the nozzle.
   const mouth = new THREE.Mesh(
-    new THREE.RingGeometry(0.05 * R, 0.56 * R, SEG), M.cavity);
+    new THREE.RingGeometry(rPlugExit * 0.9, rExit - t * 0.5, SEG), M.cavity);
   mouth.rotation.y = Math.PI;
-  mouth.position.z = -3.33 * R;
+  mouth.position.z = zExit + 0.004 * Lb;
   g.add(mouth);
 
-  return finish(g, 3.50 * R, 1.06 * R, 'turbojet');
+  g.userData.bodyLength = Lb;
+  g.userData.exitRadius = rExit;
+  g.userData.plugExitRadius = rPlugExit;
+  g.userData.sections = secs;
+  g.userData.overallLength = L;
+  g.userData.lengthOverDiameter = L / (2 * R);
+  return finish(g, L, R, 'turbojet');
 }
 
 /* ==================================================================== *
