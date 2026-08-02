@@ -809,61 +809,146 @@ export function turboshaft({
  * Electric motor
  * ==================================================================== */
 
-/**
- * Outrunner electric motor: finned can, end bells, output shaft, mount flange.
- *
- * Drawn as an outrunner (the case itself is the rotor) because that is what
- * an electric aircraft propulsor almost always is, and because the fins
- * running the length of the can are the feature that says "motor" instantly.
- */
-export function electricMotor({ rMotor = 0.20, lMotor = 0.34, fins = 24 } = {}) {
-  const g = new THREE.Group();
-  const R = rMotor, L = lMotor;
+/** Visual proportions. Radii x diameter D, stations x axial length L. */
+const EM = {
+  shaftR:   0.055,
+  shaftFwd: 0.42,   // shaft protrudes this much of L ahead of the housing
+  boreR:    0.115,  // hub around the shaft
+  hubR:     0.30,   // raised hub face
+  rimR:     0.50,
+  bandZ0:   0.18,   // exposed winding band, along the rim
+  bandZ1:   0.82,
+  bolts:    8,
+  boltR:    0.38,   // bolt circle radius
+};
 
-  // On an outrunner the case turns, so the can, its fins and the shaft are
-  // one rotor and the mount is what stays still.
+/**
+ * Crude electric motor sizing: shaft power in, diameter and length out.
+ *
+ * Fitted to the EMRAX axial-flux family (208/228/268/348), which is what
+ * electric aviation mostly flies. The shape is the point: these are PANCAKES,
+ * L/D between 0.3 and 0.4 across the whole range, because an axial-flux
+ * machine makes torque at a big radius rather than over a long rotor.
+ *
+ * Diameter goes as the cube root of power and length barely moves at all --
+ * 80 kW to 380 kW takes the diameter from 208 to 348 mm but the length only
+ * from 85 to 107.
+ *
+ *      80 kW -> 197 mm dia,  81 mm long   (208: real 208 / 85)
+ *     124 kW -> 228 mm dia,  86 mm long   (228, the anchor)
+ *     230 kW -> 280 mm dia,  94 mm long   (268: real 268 / 91)
+ *     380 kW -> 331 mm dia, 102 mm long   (348: real 348 / 107)
+ *
+ * @param {number} power  kilowatts
+ */
+export function motorSizing(power) {
+  const kw = Math.max(2, power);
+  return {
+    diameter: 0.228 * Math.pow(kw / 124, 1 / 3),
+    length: 0.086 * Math.pow(kw / 124, 0.15),
+    kw,
+  };
+}
+
+/**
+ * Axial-flux electric motor, EMRAX-like: a pancake housing with the winding
+ * ends showing round the rim and the shaft through the middle.
+ *
+ * Not the finned outrunner this used to be. An outrunner is what a model
+ * aircraft uses; an aircraft propulsor of this size is an axial-flux machine,
+ * and the two look nothing alike -- one is a long finned can, the other a
+ * short wide disc.
+ */
+export function electricMotor({ power = 124, diameter = null, length = null } = {}) {
+  const sized = motorSizing(power);
+  const D = diameter ?? sized.diameter;
+  const L = length ?? sized.length;
+  const g = new THREE.Group();
+
+  const zF = -EM.shaftFwd * L;          // housing front face
+  const zB = zF - L;                    // and back
+
+  // ---- shaft --------------------------------------------------------------
   const rotor = new THREE.Group();
   rotor.userData.rotating = true;
   rotor.userData.spin = -1;
+  const shLen = EM.shaftFwd * L + L + 0.25 * L;    // through and proud aft
+  const sh = new THREE.Mesh(
+    new THREE.CylinderGeometry(EM.shaftR * D, EM.shaftR * D, shLen, 24),
+    M.hardware);
+  sh.rotation.x = Math.PI / 2;
+  sh.position.z = -shLen / 2;
+  rotor.add(sh);
   g.add(rotor);
 
-  rotor.add(latheZ([
-    [0, 0], [0, 0.96 * R], [-0.06 * L, R], [-0.94 * L, R],
-    [-L, 0.96 * R], [-L, 0],
+  // ---- housing ------------------------------------------------------------
+  // Closed ring: out across the front face, along the rim, back across the
+  // rear, then home along the bore -- so the shaft passes through a hole
+  // rather than through solid metal.
+  g.add(latheZ([
+    [zF, EM.boreR * D],
+    [zF, EM.hubR * D],
+    [zF - 0.10 * L, EM.hubR * D],
+    [zF - 0.16 * L, 0.44 * D],
+    [zF - 0.22 * L, EM.rimR * D],
+    [zB + 0.22 * L, EM.rimR * D],
+    [zB + 0.16 * L, 0.44 * D],
+    [zB + 0.10 * L, EM.hubR * D],
+    [zB, EM.hubR * D],
+    [zB, EM.boreR * D],
+    [zF, EM.boreR * D],
   ], M.casing, SEG));
 
-  // Axial cooling fins.
-  const finGeo = new THREE.BoxGeometry(0.055 * R, 0.16 * R, 0.80 * L);
-  for (let i = 0; i < fins; i++) {
-    const a = (i / fins) * Math.PI * 2;
-    const f = new THREE.Mesh(finGeo, M.casing);
-    f.position.set(Math.cos(a) * R * 1.05, Math.sin(a) * R * 1.05, -0.5 * L);
-    f.rotation.z = a;
-    rotor.add(f);
+  // Exposed winding ends round the rim -- the copper band is the single cue
+  // that says electric machine rather than pump housing.
+  g.add(tubeZ(EM.rimR * 0.985 * D, EM.rimR * 1.012 * D,
+              zF - EM.bandZ0 * L, zF - EM.bandZ1 * L, M.winding, SEG));
+
+  // Slot shadows in the band, so it reads as wound rather than turned.
+  const nSlot = 30;
+  const slotGeo = new THREE.BoxGeometry(0.012 * D, 0.03 * D,
+                                        (EM.bandZ1 - EM.bandZ0) * L * 0.92);
+  for (let i = 0; i < nSlot; i++) {
+    const a = (i / nSlot) * Math.PI * 2;
+    const sl = new THREE.Mesh(slotGeo, M.cavity);
+    sl.position.set(Math.cos(a) * EM.rimR * 1.008 * D,
+                    Math.sin(a) * EM.rimR * 1.008 * D,
+                    zF - (EM.bandZ0 + EM.bandZ1) / 2 * L);
+    sl.rotation.z = a;
+    g.add(sl);
   }
 
-  // Windings glimpsed through the gap between can and rear bell.
-  g.add(tubeZ(0.72 * R, 0.9 * R, -0.90 * L, -0.98 * L, M.winding, SEG));
-
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16 * R, 0.16 * R, 0.55 * R, 20), M.hardware);
-  shaft.rotation.x = Math.PI / 2;
-  shaft.position.z = 0.22 * R;
-  rotor.add(shaft);
-
-  // Rear mount flange with bolt bosses.
-  g.add(tubeZ(0.30 * R, 1.16 * R, -L, -L - 0.07 * R, M.accessory, SEG));
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    const b = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.10 * R, 0.10 * R, 0.10 * R, 12), M.hardware);
-    b.rotation.x = Math.PI / 2;
-    b.position.set(Math.cos(a) * 0.95 * R, Math.sin(a) * 0.95 * R,
-                   -L - 0.08 * R);
-    g.add(b);
+  // ---- mounting bolt circle ----------------------------------------------
+  for (let i = 0; i < EM.bolts; i++) {
+    const a = (i / EM.bolts) * Math.PI * 2 + Math.PI / EM.bolts;
+    const bolt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026 * D, 0.026 * D, 0.06 * L, 12),
+      M.hardware);
+    bolt.rotation.x = Math.PI / 2;
+    bolt.position.set(Math.cos(a) * EM.boltR * D, Math.sin(a) * EM.boltR * D,
+                      zF - 0.03 * L);
+    g.add(bolt);
   }
 
-  return finish(g, L + 0.15 * R, 1.16 * R, 'electricMotor');
+  // ---- phase leads --------------------------------------------------------
+  const gland = roundedBox(0.16 * D, 0.10 * D, 0.30 * L, 0.03 * D, M.accessory);
+  gland.position.set(0, -EM.rimR * 1.02 * D, zF - 0.5 * L);
+  g.add(gland);
+  for (let i = -1; i <= 1; i++) {
+    const y0 = -EM.rimR * 1.06 * D;
+    g.add(pipe([
+      new THREE.Vector3(i * 0.05 * D, y0, zF - 0.5 * L),
+      new THREE.Vector3(i * 0.07 * D, y0 - 0.14 * D, zF - 0.62 * L),
+      new THREE.Vector3(i * 0.08 * D, y0 - 0.26 * D, zF - 0.85 * L),
+    ], 0.020 * D, M.painted, 20));
+  }
+
+  g.userData.power = power;
+  g.userData.diameter = D;
+  g.userData.axialLength = L;
+  g.userData.diameterMm = D * 1000;
+  g.userData.lengthMm = L * 1000;
+  return finish(g, -(zB - 0.25 * L), EM.rimR * 1.06 * D, 'electricMotor');
 }
 
 /* ==================================================================== *
