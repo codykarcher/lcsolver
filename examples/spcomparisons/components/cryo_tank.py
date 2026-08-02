@@ -84,7 +84,8 @@ LH2_LHV = 1.20e8
 LH2_LATENT_HEAT = 4.46e5
 
 
-def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
+def add_cryo_tank(f, N=None, state=None, *, prefix: str = "Tank_",
+                  R_fuse_guess: float = 1.9,
                   pvent: float = 1.3e5, qfac: float = 1.0,
                   ftankadd: float = 0.0):
     """Add an LH2 fuselage tank. Returns ``(vars, constraints)``.
@@ -151,8 +152,27 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
     W_fuel = V("W_fuel", 1.41e4, "N", "usable fuel weight in tank")
 
     # ---- thermal ----------------------------------------------------------
-    Q_leak = Vb("Q_leak", 1.6e3, "W", "steady heat leak into the tank", (1.0, 1e6))
-    m_boil = Vb("m_boil", 3.5e-3, "kg/s", "boil-off mass flow", (1e-9, 1.0))
+    # PER-SEGMENT when the caller supplies the mission state: the heat leak
+    # tracks the recovery temperature the skin actually sees, which falls
+    # from ~288 K on the runway to ~236 K at cruise (static 217 plus ram
+    # heating) -- a 20-30% swing the single-constant model flattened. This
+    # is the SP absorption of tanktools.jl's mission_heat_rates: the piece
+    # of the transient walk that changes the DESIGN. (The other piece --
+    # pressure evolution and the no-vent condition -- needs the ullage
+    # energy capacity from cryo/pressure.py and is the documented follow-on;
+    # it matters for ground hold and low-demand fuel-cell phases, not for
+    # h2burn, whose boiloff the engine simply drinks.)
+    if N is not None and state is not None:
+        Q_leak = tank.Variable("Q_leak", 1.6e3, "W",
+                               "heat leak into the tank", size=N)
+        m_boil = tank.Variable("m_boil", 3.5e-3, "kg/s",
+                               "boil-off mass flow", size=N)
+        dT_seg = tank.Variable("dT_seg", 250.0, "K",
+                               "skin recovery temperature minus LH2",
+                               size=N)
+    else:
+        Q_leak = Vb("Q_leak", 1.6e3, "W", "steady heat leak into the tank", (1.0, 1e6))
+        m_boil = Vb("m_boil", 3.5e-3, "kg/s", "boil-off mass flow", (1e-9, 1.0))
 
     # ---- constants --------------------------------------------------------
     g = C("g", 9.81, "m/s^2", "gravitational acceleration")
@@ -225,8 +245,26 @@ def add_cryo_tank(f, *, prefix: str = "Tank_", R_fuse_guess: float = 1.9,
         # against W_insul above.
         # qfac > 1 charges for heat leaking through supports and piping
         # (TASOPT's heat_leak_factor); 1.0 leaves pure conduction.
-        Q_leak * t_insul == qfac * k_insul * S_tank * dT,
-        m_boil * h_lat == Q_leak,
     ]
+    if N is not None and state is not None:
+        T_lh2 = tank.Constant("T_LH2", 20.3, "K", "saturated LH2 temperature")
+        for i in range(N):
+            cons += [
+                # Recovery temperature: T_atm*(1 + 0.178 M^2), the r=0.89
+                # turbulent recovery factor on the compressible rise. The
+                # difference against T_LH2 is expanded all-positive (T_atm
+                # is a state variable; the inline difference is the
+                # detector-hostile shape).
+                dT_seg[i] + T_lh2
+                    == state.T_atm[i]
+                     + 0.178 * state.T_atm[i] * state.M[i] ** 2,  # [SP] SigEq
+                Q_leak[i] * t_insul == qfac * k_insul * S_tank * dT_seg[i],
+                m_boil[i] * h_lat == Q_leak[i],
+            ]
+    else:
+        cons += [
+            Q_leak * t_insul == qfac * k_insul * S_tank * dT,
+            m_boil * h_lat == Q_leak,
+        ]
 
     return tank, cons

@@ -283,7 +283,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # weight and no boil-off, which is exactly a zero term, not a missing row.
     tank = None
     if arch.cryo_tank:
-        tank, c = add_cryo_tank(f, prefix="Tank_", pvent=2.0265e5, qfac=1.3,
+        tank, c = add_cryo_tank(f, N, st, prefix="Tank_", pvent=2.0265e5, qfac=1.3,
                                 ftankadd=0.35)
         cons += c
     # Gear dimensions scale against the 180-passenger reference (R_fuse 1.88 m)
@@ -976,9 +976,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         """
         if not electric:
             row = numeng * eng.TSFC * thr * eng.F
+            # m_boil is per-segment now; array-by-array elementwise.
             return row + g * tank.m_boil * thr if tank else row
         if fc is not None:
             row = g * fc.mdot_H2 * thr
+            # m_boil is per-segment now; array-by-array elementwise.
             return row + g * tank.m_boil * thr if tank else row
         # Battery: nothing is consumed and the aircraft never gets lighter.
         # W_burn is left to its own lower bound and the decrement row
