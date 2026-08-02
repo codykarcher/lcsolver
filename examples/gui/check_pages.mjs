@@ -40,6 +40,7 @@ const PAGES = {
   'piston_test.html':   { build: [() => E.pistonEngine({})], vars: ['engine.userData', 'd'] },
   'motor_test.html':    { build: [() => E.electricMotor({})], vars: ['engine.userData', 'd'] },
   'wing_test.html':     { build: [() => W.wing(), () => W.horizontalTail(),
+                                  () => W.verticalTail(),
                                   () => W.liftingSurface({ kink: null, mirror: false })],
                           vars: ['surface.userData', 'u'] },
   'd8_test.html':       { build: [() => F.d8Fuselage({}),

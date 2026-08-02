@@ -15,7 +15,7 @@
  * with the planform they claim to be.
  */
 import * as THREE from 'three';
-import { wing, horizontalTail, liftingSurface } from './components/wing.js';
+import { wing, horizontalTail, verticalTail, liftingSurface } from './components/wing.js';
 import { naca4, sectionPoints, thicknessOf } from './components/airfoil.js';
 
 const DEG = Math.PI / 180;
@@ -82,6 +82,8 @@ const CASES = [
                                              crankRatio: 0.73, tipRatio: 0.27 }) },
   { name: 'one side',    build: () => liftingSurface({ mirror: false, kink: null,
                                                        dihedral: 0, twistTip: 0 }) },
+  { name: 'fin',         build: () => verticalTail() },
+  { name: 'tall fin',    build: () => verticalTail({ height: 9, taperRatio: 0.45 }) },
 ];
 
 for (const c of CASES) {
@@ -95,7 +97,21 @@ for (const c of CASES) {
               `AR ${u.aspectRatio.toFixed(2)} out`);
 
   /* the chords are what was asked for ----------------------------------- */
-  if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
+  // A fin's own conventions: height root to tip, area ONE surface, aspect ratio
+  // on both of those. Mirror the same shape and read it as a wing and the
+  // aspect ratio comes out twice as large, which is the error this separates.
+  if (u.isFin) {
+    if (Math.abs(u.height - p.height) > 1e-12)
+      bad(`fin height ${u.height}, asked ${p.height}`);
+    const byHand = u.height * (u.rootChord + u.tipChord) / 2;
+    if (Math.abs(u.area - byHand) / byHand > 1e-6)
+      bad(`fin area ${u.area.toFixed(4)}, by hand ${byHand.toFixed(4)}`);
+    if (Math.abs(u.aspectRatio - u.height ** 2 / byHand) > 1e-6)
+      bad(`fin AR ${u.aspectRatio.toFixed(4)}, h^2/S is ` +
+          `${(u.height ** 2 / byHand).toFixed(4)}`);
+    if (u.referenceArea !== u.area)
+      bad(`fin reference area ${u.referenceArea} is not its own area ${u.area}`);
+  } else if (Math.abs(u.span - p.span) > 1e-12) bad(`span ${u.span}, asked ${p.span}`);
   // The chords follow from the root and the two ratios, each measured off the
   // chord inboard of it. Checked as a chain, because that is the failure mode:
   // a tip ratio applied to the root instead of the crank looks plausible and is
@@ -115,6 +131,7 @@ for (const c of CASES) {
         `${p.kink == null ? 'taperRatio' : 'tipRatio'} is ${wantTip}`);
 
   /* area and aspect ratio are RESULTS, and must be the right ones --------- */
+  if (!u.isFin)
   // Against the two-trapezoid formula worked straight off the inputs, which the
   // component does not use -- it integrates the frames instead. Two independent
   // routes to the same number is the only way this is worth checking at all.
@@ -207,6 +224,24 @@ for (const c of CASES) {
                 `y_MAC ${u.yMac.toFixed(4)} vs ${yWant.toFixed(4)}`);
   } else {
       console.log(`  MAC ${u.mac.toFixed(4)} at y ${u.yMac.toFixed(4)} (cranked -- integrated)`);
+  }
+
+  // The symmetry convention: a tail or fin is NACA 00xx however it was asked
+  // for, and named for the thickness ACTUALLY built rather than the base
+  // section the camber was stripped off.
+  if (p.symmetric) {
+    const pct = String(Math.round(u.rootThickness * 100)).padStart(2, '0');
+    if (u.sections.root !== `NACA 00${pct}`)
+      bad(`symmetric surface reports ${u.sections.root}, expected NACA 00${pct}`);
+    // Measured: upper and lower must mirror about y = 0 at the root.
+    const M2 = 2 * p.nChord - 2, base = (u.mirror ? (pos.count / M2 - 1) / 2 : 0) * M2;
+    let worstSym = 0;
+    for (let i = 1; i < p.nChord - 1; i++) {
+      const yu = pos.getY(base + i), yl = pos.getY(base + M2 - i);
+      worstSym = Math.max(worstSym, Math.abs(yu + yl - 2 * pos.getY(base)));
+    }
+    if (worstSym > 1e-6 * u.rootChord)
+      bad(`symmetric surface is ${worstSym.toExponential(2)} off symmetric at the root`);
   }
 
   /* sweep, dihedral and twist come out as asked -------------------------- */

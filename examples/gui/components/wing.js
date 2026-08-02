@@ -64,6 +64,7 @@ const WING = {
   twistAxis:    0.25,  // chord fraction the sections are twisted about
   kink:         0.35,  // fraction of semispan, or null for a plain trapezoid
   root: '2412', kinkFoil: null, tip: '2410',   // kinkFoil null means blended
+  symmetric:   false,  // force zero camber, whatever section was named
   // Thickness at the three stations, as a fraction of the local chord. Null
   // takes whatever the named aerofoil already is. Held apart from the aerofoil
   // because it is a structural number as much as an aerodynamic one -- the
@@ -92,6 +93,11 @@ const TAIL = {
   taperRatio:   0.30, thickness: 0.10,
   sweep:        32.0, dihedral: 5.0,
   twistTip:      0.0, kink: null,
+  // Symmetric by convention. A tail that has to work both ways up has no
+  // business being cambered, so the section is NACA 00xx and the thickness
+  // above sets the xx -- which is exact, because the 4-digit thickness
+  // distribution scales linearly with t.
+  symmetric:    true,
   root: '0010', tip: '0010',
   nInner:          2, nOuter: 20,
 };
@@ -130,9 +136,16 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
   const span = p.span, semi = span / 2;
   const { cRoot, cKink, cTip } = chords(p);
 
-  const rootFoil = asSection(p.root, p.nChord);
-  const tipFoil = asSection(p.tip, p.nChord);
-  const kinkFoil = p.kinkFoil == null ? null : asSection(p.kinkFoil, p.nChord);
+  // `symmetric` zeroes the camber of whatever was named rather than swapping in
+  // a different aerofoil, so the thickness distribution is preserved and the
+  // convention cannot be defeated by naming a cambered section.
+  const flat = (f) => (p.symmetric
+    ? { ...f, camber: f.camber.map(() => 0), camberMax: 0,
+        name: `NACA 00${String(Math.round(thicknessOf(f) * 100)).padStart(2, '0')}` }
+    : f);
+  const rootFoil = flat(asSection(p.root, p.nChord));
+  const tipFoil = flat(asSection(p.tip, p.nChord));
+  const kinkFoil = p.kinkFoil == null ? null : flat(asSection(p.kinkFoil, p.nChord));
   // Thickness runs as its own spanwise distribution, independent of which
   // aerofoil is where. So a t/c at the crank does not require a crank aerofoil,
   // and changing an aerofoil does not silently change the thickness.
@@ -258,6 +271,10 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
 
   Object.assign(g.userData, {
     span, semiSpan: semi, area, referenceArea: refArea, mirror,
+    // Declared on every surface, not only on fins. A field that exists only
+    // sometimes is a field every caller has to guard, and the guard is easy to
+    // get subtly wrong -- the same lesson as the fuselage's vessel factor.
+    isFin: false, height: null,
     /** Derived, both of them: b^2 / S on the full reference area. */
     aspectRatio: span * span / refArea,
     rootChord: cRoot, kinkChord: cKink, tipChord: cTip,
@@ -274,7 +291,15 @@ export function liftingSurface({ mirror = true, ...overrides } = {}) {
     /** Thickness as built, at the three stations. */
     rootThickness: tRoot, crankThickness: tKink, tipThickness: tTip,
     thicknessAt: thickAt,
-    sections: { root: rootFoil.name, kink: kinkFoil?.name ?? null, tip: tipFoil.name },
+    symmetric: p.symmetric,
+    sections: p.symmetric
+      // Named from the thickness actually built, not from whatever base section
+      // the camber was stripped off.
+      ? (() => {
+          const nm = (t) => `NACA 00${String(Math.round(t * 100)).padStart(2, '0')}`;
+          return { root: nm(tRoot), kink: tKink == null ? null : nm(tKink), tip: nm(tTip) };
+        })()
+      : { root: rootFoil.name, kink: kinkFoil?.name ?? null, tip: tipFoil.name },
     frames: half, planform: p, skinMesh: mesh,
     /** Chord, leading edge and twist at any fraction of semispan. */
     at: (t) => ({ chord: chordAt(t), xLE: leAt(t),
@@ -289,16 +314,69 @@ export function wing(o = {}) { return liftingSurface({ ...WING, ...o }); }
 /** A horizontal tail: the same loft with no crank and symmetric sections. */
 export function horizontalTail(o = {}) { return liftingSurface({ ...TAIL, ...o }); }
 
-// No fin here yet on purpose. A vertical tail's span is a height, its area is
-// one surface not two, and its aspect ratio is defined on those -- so it is a
-// different set of conventions rather than a wing with mirror off, and
-// pretending otherwise would put three numbers in userData that quietly mean
-// something else. `liftingSurface({ mirror: false })` builds the geometry.
-/**
- * The two default sets, so a caller can start from either without restating
- * them. A page that hard-codes its own copy is a second source of truth for the
- * same numbers, which is the failure check_defaults exists to catch.
- */
-export const defaults = { wing: WING, tail: TAIL };
+/** A fin: one surface, standing up, symmetric. */
+const FIN = {
+  ...TAIL,
+  height:        6.2,  // ROOT to tip, not a span -- there is only one of it
+  rootChord:     5.0,
+  taperRatio:   0.32,
+  sweep:        42.0,
+  thickness:    0.10,
+  dihedral:      0.0, twistRoot: 0.0, twistTip: 0.0,
+  kink:         null, symmetric: true,
+  nInner:          2, nOuter: 20,
+};
 
-export const surfaces = { wing, horizontalTail };
+/**
+ * A vertical tail.
+ *
+ * Held apart from the other two because its CONVENTIONS differ, not because the
+ * loft does. A fin's span is a HEIGHT measured root to tip; its area is ONE
+ * surface, not two; and its aspect ratio is height squared over that area.
+ * Mirror the same shape and read it as a wing -- span 2h, area 2S -- and the
+ * aspect ratio comes out at 2h^2/S, TWICE the fin's 1.879 against 3.758 on the
+ * default. Building it as `liftingSurface({ mirror: false })` and reading the
+ * wing's userData off it would put three numbers there that quietly mean
+ * something else, and an aspect ratio out by a factor of two is exactly the
+ * sort of error that survives a review, because it still looks like a number.
+ *
+ * So the loft runs unchanged and the two things that differ are handled here:
+ * the span passed down is twice the height, so the half-surface the loft builds
+ * runs root to tip, and the group is turned a quarter turn about the axis so
+ * that span runs UP rather than outboard.
+ *
+ * The geometry accessors in userData -- `at`, `frames` -- are in the loft's own
+ * frame, before that quarter turn. The mesh carries the rotation.
+ */
+export function verticalTail({ height, ...o } = {}) {
+  const p = { ...FIN, ...o };
+  // Written back, not just used. `height` is destructured out of the argument
+  // list, so without this the planform records the DEFAULT while the surface is
+  // built to the override -- and anything reading planform.height afterwards
+  // gets a number that was never used.
+  const h = height ?? p.height;
+  p.height = h;
+  const g = liftingSurface({ ...p, span: 2 * h, mirror: false });
+  g.rotation.z = Math.PI / 2;
+
+  const u = g.userData;
+  const area = u.area;                       // one surface: mirror was off
+  Object.assign(u, {
+    isFin: true, height: h, area, referenceArea: area,
+    /** h^2 / S on ONE surface -- a fin's definition, not a wing's. */
+    aspectRatio: h * h / area,
+    /** Height above the root at which the MAC sits. */
+    heightMac: u.yMac,
+  });
+  return g;
+}
+
+/**
+ * The three default sets, so a caller can start from any of them without
+ * restating them. A page that hard-codes its own copy is a second source of
+ * truth for the same numbers, which is the failure check_defaults exists to
+ * catch.
+ */
+export const defaults = { wing: WING, tail: TAIL, fin: FIN };
+
+export const surfaces = { wing, horizontalTail, verticalTail };

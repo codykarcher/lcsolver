@@ -26,9 +26,11 @@
   input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
   input:disabled { opacity: .3; }
   .off { opacity: .35; }
-  .tailOnly { display: none; }
-  body.tail .tailOnly { display: block; }
-  body.tail .wingOnly { display: none; }
+  .tailOnly, .finOnly { display: none; }
+  body.tail .tailOnly, body.fin .finOnly { display: block; }
+  body.tail .wingOnly, body.fin .wingOnly { display: none; }
+  body.fin .notFin { display: none; }
+  body.fin .foils { display: none; }
   input[type=text] { width: 100%; margin: 1px 0 9px; padding: 3px 6px; font: inherit;
     font-size: 11.5px; color: #e6a34a; background: #14161a;
     border: 1px solid #363d47; border-radius: 4px; font-variant-numeric: tabular-nums; }
@@ -61,10 +63,17 @@
 
   <div class="check"><input type="radio" name="kind" id="kWing" checked><label for="kWing">wing (cranked)</label></div>
   <div class="check"><input type="radio" name="kind" id="kTail"><label for="kTail">horizontal tail</label></div>
+  <div class="check"><input type="radio" name="kind" id="kFin"><label for="kFin">vertical tail</label></div>
 
   <h2>planform</h2>
-  <div class="row"><label for="span">span</label><output id="oSpan"></output></div>
-  <input type="range" id="span" min="4" max="80" step="0.1" value="34.1">
+  <div class="notFin">
+    <div class="row"><label for="span">span</label><output id="oSpan"></output></div>
+    <input type="range" id="span" min="4" max="80" step="0.1" value="34.1">
+  </div>
+  <div class="finOnly">
+    <div class="row"><label for="height">height &middot; root to tip</label><output id="oHeight"></output></div>
+    <input type="range" id="height" min="1" max="20" step="0.05" value="6.2">
+  </div>
 
   <div class="row"><label for="rootChord">root chord</label><output id="oRootChord"></output></div>
   <input type="range" id="rootChord" min="0.5" max="14.0" step="0.05" value="6.0">
@@ -77,7 +86,7 @@
     <input type="range" id="tipRatio" min="0.05" max="1.00" step="0.005" value="0.27">
   </div>
 
-  <div class="tailOnly">
+  <div class="tailOnly finOnly">
     <div class="row"><label for="taperRatio">taper &middot; tip / root</label><output id="oTaperRatio"></output></div>
     <input type="range" id="taperRatio" min="0.05" max="1.00" step="0.005" value="0.30">
   </div>
@@ -104,18 +113,18 @@
     <div class="row"><label for="tipThickness">tip</label><output id="oTipThickness"></output></div>
     <input type="range" id="tipThickness" min="0.04" max="0.24" step="0.002" value="0.10">
   </div>
-  <div class="tailOnly">
+  <div class="tailOnly finOnly">
     <div class="row"><label for="thickness">constant</label><output id="oThickness"></output></div>
     <input type="range" id="thickness" min="0.04" max="0.24" step="0.002" value="0.10">
   </div>
 
-  <h2>sections</h2>
-  <div class="row"><label for="root">root NACA</label><output></output></div>
+  <h2 class="foils">sections</h2>
+  <div class="foils"><div class="row"><label for="root">root NACA</label><output></output></div>
   <input type="text" id="root" value="2412" spellcheck="false">
   <div class="row"><label for="kinkFoil">crank NACA (blank = blend)</label><output></output></div>
   <input type="text" id="kinkFoil" value="" spellcheck="false">
   <div class="row"><label for="tip">tip NACA</label><output></output></div>
-  <input type="text" id="tip" value="2410" spellcheck="false">
+  <input type="text" id="tip" value="2410" spellcheck="false"></div>
 
   <h2>locked</h2>
   <div id="locked"></div>
@@ -153,7 +162,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { liftingSurface, defaults } from './components/wing.js';
+import { liftingSurface, verticalTail, defaults } from './components/wing.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
 
@@ -206,11 +215,13 @@ const num = (id) => parseFloat(el(id).value);
 // greyed out -- it is described differently: a plain taper ratio instead of two
 // chained ones, and one thickness instead of a distribution. Passing a wing's
 // set to a tail would apply parameters it does not have.
-const NUMS = ['span', 'rootChord', 'sweep'];
-const WING_NUMS = ['crankRatio', 'tipRatio', 'kink',
+const NUMS = ['rootChord', 'sweep'];
+const WING_NUMS = ['span', 'crankRatio', 'tipRatio', 'kink',
                    'rootThickness', 'crankThickness', 'tipThickness'];
-const TAIL_NUMS = ['taperRatio', 'thickness'];
-const ALL = [...NUMS, ...WING_NUMS, ...TAIL_NUMS];
+const TAIL_NUMS = ['span', 'taperRatio', 'thickness'];
+const FIN_NUMS = ['height', 'taperRatio', 'thickness'];
+const KIND_NUMS = { wing: WING_NUMS, tail: TAIL_NUMS, fin: FIN_NUMS };
+const ALL = [...new Set([...NUMS, ...WING_NUMS, ...TAIL_NUMS, ...FIN_NUMS])];
 const FOILS = ['root', 'kinkFoil', 'tip'];
 const DEFAULTS = Object.fromEntries([...ALL, ...FOILS].map((k) => [k, el(k).value]));
 
@@ -228,8 +239,8 @@ function loadDefaults(which) {
   for (const k of FOILS) el(k).value = d[k] ?? '';
   // The two kinds' own controls swap rather than grey out, because they are
   // alternative descriptions and not one description with parts switched off.
-  document.body.classList.toggle('tail', which === 'tail');
-  el('kinkFoil').disabled = which === 'tail';
+  document.body.classList.remove('wing', 'tail', 'fin');
+  document.body.classList.add(which);
 }
 
 let surface = null, extra = [];
@@ -248,13 +259,13 @@ function build() {
 
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
-  const tail = el('kTail').checked;
+  const kind = el('kFin').checked ? 'fin' : el('kTail').checked ? 'tail' : 'wing';
   // Start from the COMPONENT's own default set for whichever kind is selected,
   // then override with the sliders. The locked values -- dihedral, twist -- are
   // not sliders and differ between the two, so a page that only passed slider
   // values would build a tail with the wing's dihedral and washout.
-  const keys = [...NUMS, ...(tail ? TAIL_NUMS : WING_NUMS)];
-  const p = { ...defaults[tail ? 'tail' : 'wing'],
+  const keys = [...NUMS, ...KIND_NUMS[kind]];
+  const p = { ...defaults[kind],
               ...Object.fromEntries(keys.map((k) => [k, num(k)])) };
   for (const k of FOILS) {
     const v = el(k).value.trim();
@@ -263,7 +274,10 @@ function build() {
   if (p.root == null) p.root = '0012';
   if (p.tip == null) p.tip = p.root;
 
-  surface = liftingSurface(p);
+  // A fin is not liftingSurface with a flag: its span is a height, its area is
+  // one surface, and its aspect ratio is defined on those. verticalTail owns
+  // that translation so nothing here has to know about it.
+  surface = kind === 'fin' ? verticalTail(p) : liftingSurface(p);
   scene.add(surface);
   const u = surface.userData;
 
@@ -319,11 +333,17 @@ function build() {
   ].map(([k, v]) => `<div>${k}<b>${(+v).toFixed(2)}</b></div>`).join('');
 
   el('readout').innerHTML =
+    (u.isFin
+      ? `height <span>${u.height.toFixed(2)}</span> &middot; ` +
+        `S <span>${u.area.toFixed(2)}</span> (one surface) &middot; ` +
+        `AR <span>${u.aspectRatio.toFixed(3)}</span> = h&sup2;/S<br>`
+      : '') +
     `chords: root <span>${u.rootChord.toFixed(3)}</span>` +
     (u.kinkChord ? ` &middot; crank <span>${u.kinkChord.toFixed(3)}</span>` : '') +
     ` &middot; tip <span>${u.tipChord.toFixed(3)}</span><br>` +
-    `derived: S <span>${u.referenceArea.toFixed(2)}</span> ` +
-    `&middot; AR <span>${u.aspectRatio.toFixed(2)}</span> &middot; ` +
+    (u.isFin ? '' :
+      `derived: S <span>${u.referenceArea.toFixed(2)}</span> ` +
+      `&middot; AR <span>${u.aspectRatio.toFixed(2)}</span> &middot; `) +
     `tip/root <span>${u.taperRatio.toFixed(3)}</span><br>` +
     `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
     `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
@@ -368,13 +388,13 @@ for (const id of ALL) el(id).addEventListener('input', build);
 for (const id of FOILS) el(id).addEventListener('input', build);
 for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid'])
   el(id).addEventListener('change', build);
-for (const [id, which] of [['kWing', 'wing'], ['kTail', 'tail']]) {
+for (const [id, which] of [['kWing', 'wing'], ['kTail', 'tail'], ['kFin', 'fin']]) {
   el(id).addEventListener('change', () => { loadDefaults(which); build(); });
 }
 for (const v of ['plan', 'front', 'side']) el(v).addEventListener('click', () => ortho(v));
 el('frame').addEventListener('click', frameSurface);
 el('reset').addEventListener('click', () => {
-  loadDefaults(el('kTail').checked ? 'tail' : 'wing');
+  loadDefaults(el('kFin').checked ? 'fin' : el('kTail').checked ? 'tail' : 'wing');
   build();
 });
 
