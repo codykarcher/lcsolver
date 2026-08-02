@@ -63,7 +63,7 @@ function halfT(s, tMax) {
  * @param {number} [opts.topZ0]    forward end of the wing attachment
  * @param {number} [opts.topZ1]    aft end
  */
-export function pylon(engine, opts = {}) {
+export function underMountPylon(engine, opts = {}) {
   const u = engine.userData;
   const R = u.rFan ?? (u.rMax ? u.rMax / 1.037 : 1);
   const g = new THREE.Group();
@@ -154,8 +154,102 @@ export function pylon(engine, opts = {}) {
   g.userData.attachZ = [topZ0, topZ1];
   g.userData.rootZ = [rootZ0, rootZ1];
   g.userData.kinkY = yKink;
-  g.name = 'pylon';
+  g.name = 'underMountPylon';
   return g;
 }
 
-export default pylon;
+/**
+ * Over-mount pylon: the engine sits above the wing and the strut hangs down.
+ *
+ * Geometrically the under-mount inverted, with two differences that are not
+ * cosmetic.
+ *
+ * The forward fairing runs all the way to the NACELLE'S LEADING EDGE, along
+ * the outside of the cowl. On an over-wing installation that fairing is what
+ * you see; it is the reason the pylon reads as part of the nacelle rather than
+ * as a post under it.
+ *
+ * And nothing may cut the fan or the stator row. The strut therefore keeps its
+ * root aft of the fan case, exactly as the under-mount does, and the forward
+ * reach to the nacelle nose is carried by a fin that sits ON the cowl instead
+ * of by the strut passing through it. Extending the strut itself forward would
+ * take it straight through the fan.
+ */
+export function overMountPylon(engine, opts = {}) {
+  const u = engine.userData;
+  const R = u.rFan ?? (u.rMax ? u.rMax / 1.037 : 1);
+  const g = new THREE.Group();
+
+  // The strut is the under-mount, mirrored. Building it that way rather than
+  // writing a second loft keeps the two in step: a change to the section or
+  // the kink shows up in both.
+  const under = underMountPylon(engine, opts);
+  const strut = under.getObjectByName('pylonStrut');
+  under.remove(strut);
+  strut.scale.y = -1;
+  strut.name = 'pylonStrut';
+  g.add(strut);
+
+  const plate = under.getObjectByName('pylonPlate');
+  under.remove(plate);
+  plate.position.y = -plate.position.y;
+  g.add(plate);
+
+  // ---- forward fairing on the cowl ---------------------------------------
+  const cowl = u.cowlOuter;
+  const engineZ = opts.engineZ ?? 0;
+  const rootZ0 = under.userData.rootZ[0];
+  const yKink = under.userData.kinkY;
+
+  if (cowl) {
+    const zNose = cowl[0][0] + engineZ;
+    const finT = P.rootT * R * 0.55;
+    const pos = [], idx = [], ring = [];
+    const N = 22;
+
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const z = zNose + (rootZ0 - zNose) * t;
+      // Nacelle skin at this station, from the engine's own cowl line.
+      let rN = cowl[0][1];
+      for (let k = 0; k < cowl.length - 1; k++) {
+        const [z0, r0] = cowl[k], [z1, r1] = cowl[k + 1];
+        const a = z0 + engineZ, b = z1 + engineZ;
+        if (z <= a && z >= b) { rN = r0 + (r1 - r0) * ((a - z) / ((a - b) || 1)); break; }
+      }
+      const yIn = -rN * 0.985;                       // just inside the skin
+      const yOut = -(rN + (yKink - rN) * t * t);     // sweeping down to the kink
+      const th = finT * Math.pow(t, 0.6);            // grows from a point
+      ring.push(pos.length / 3);
+      pos.push(th, yIn, z,  th, yOut, z,  -th, yOut, z,  -th, yIn, z);
+    }
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < 4; j++) {
+        const a = ring[i] + j, b = ring[i] + ((j + 1) % 4);
+        const a2 = ring[i + 1] + j, b2 = ring[i + 1] + ((j + 1) % 4);
+        idx.push(a, b, a2, b, b2, a2);
+      }
+    }
+    idx.push(ring[0], ring[0] + 2, ring[0] + 1, ring[0], ring[0] + 3, ring[0] + 2);
+    const e = ring[N];
+    idx.push(e, e + 1, e + 2, e, e + 2, e + 3);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const fin = new THREE.Mesh(geo, M.structure);
+    fin.name = 'pylonFairing';
+    g.add(fin);
+  }
+
+  g.userData.attachY = -under.userData.attachY;
+  g.userData.attachZ = under.userData.attachZ;
+  g.userData.rootZ = under.userData.rootZ;
+  g.userData.kinkY = -yKink;
+  g.name = 'overMountPylon';
+  return g;
+}
+
+export { underMountPylon as pylon };
+export default underMountPylon;

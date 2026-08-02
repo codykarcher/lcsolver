@@ -40,7 +40,7 @@
 
 <div id="panel">
   <h1>Pylon</h1>
-  <p class="sub">engine to wing &mdash; no parameters of its own</p>
+  <p class="sub">under- or over-mount &mdash; driven by the two ends</p>
 
   <div class="row"><label for="rFan">fan radius</label><output id="oR"></output></div>
   <input type="range" id="rFan" min="0.20" max="2.00" step="0.01" value="0.90">
@@ -55,6 +55,7 @@
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="nacelle" checked><label for="nacelle">nacelle</label></div>
   <div class="check"><input type="checkbox" id="wing" checked><label for="wing">wing stub</label></div>
+  <div class="check"><input type="checkbox" id="over"><label for="over">over-mount</label></div>
   <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
   <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
@@ -78,7 +79,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { turbofan, bareTurbofan } from './components/engines.js';
-import { pylon } from './components/pylon.js';
+import { underMountPylon, overMountPylon } from './components/pylon.js';
 import { structure } from './components/materials.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -155,7 +156,8 @@ function build() {
   engine.position.set(0, 0, engineZ);
   scene.add(engine);
 
-  const py = pylon(engine, { engineZ });
+  const mount = el('over').checked ? overMountPylon : underMountPylon;
+  const py = mount(engine, { engineZ });
   scene.add(py);
   extra.push(py);
 
@@ -166,7 +168,8 @@ function build() {
     const stub = new THREE.Mesh(
       new THREE.BoxGeometry(rFan * 3.2, rFan * 0.34, (c[0] - c[1]) * 1.35),
       structure);
-    stub.position.set(0, py.userData.attachY + rFan * 0.17,
+    const sign = el('over').checked ? -1 : 1;
+    stub.position.set(0, py.userData.attachY + sign * rFan * 0.17,
                       (c[0] + c[1]) / 2 - rFan * 0.1);
     scene.add(stub);
     extra.push(stub);
@@ -222,7 +225,7 @@ function lookAtOrigin() {
 }
 
 for (const id of ['rFan', 'bpr', 'ez']) el(id).addEventListener('input', build);
-for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing']) el(id).addEventListener('change', build);
+for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing', 'over']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);
 

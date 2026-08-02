@@ -639,6 +639,11 @@ export function turbofan(opts = {}) {
   // userData off the podded one gets undefined.
   Object.assign(g.userData, core.userData);
 
+  // Published for the same reason as the core line: anything that has to sit
+  // ON the nacelle -- an over-mount pylon's forward fairing -- needs the skin,
+  // not a guess at it.
+  g.userData.cowlOuter = outer;
+  g.userData.cowlLE = [zLE, meanAt(0)];
   g.userData.rFan = R;
   g.userData.nacelleMaxRadius = Math.max(...outer.map((q) => q[1]));
   g.userData.highlightRadius = hi;
