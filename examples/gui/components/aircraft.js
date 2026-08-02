@@ -234,12 +234,41 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
   // The deck's wing is a plain trapezoid, so `kink: null` and the taper is the
   // ordinary tip-over-root. A real 737's cranked trailing edge is not in the
   // solve and is not invented here.
+  /**
+   * The inboard planform: one straight taper, not a carry-through and a break.
+   *
+   * The solve puts the wing-box break at eta_root, which works out at the
+   * fuselage's full RADIUS -- and that is only where a wing leaves the body if
+   * it is mounted at mid height. This one is low, as a 737's is, so it emerges
+   * where the section is narrower: 1.392 m against the break's 1.855. That left
+   * 0.46 m of constant-chord carry-through in the open, ending in a 26 degree
+   * corner in the trailing edge that read as the wing clipping into the body.
+   *
+   * So the mould line runs a single taper from the centreline to the crank,
+   * with a root chord chosen to enclose exactly the area the carry-through and
+   * taper enclosed between them. Everything outboard of the crank is untouched,
+   * the wing sits where it sat -- placement below still uses the solve's
+   * c_root, which is what x_w is quoted against -- and the areas still
+   * reproduce the solve.
+   *
+   * What it costs is that the built root chord is no longer Wing_c_root. That
+   * is deliberate and worth being plain about: c_root is a structural number
+   * about the wing box, this is the outer mould line, and the two only have to
+   * agree where the box is actually inside the aerofoil. The area, which is the
+   * aerodynamic quantity, is preserved exactly.
+   */
+  const cKinkSolve = d.wingRootChord * d.wingCrankRatio;
+  const inboardArea = d.wingRootChord * d.wingEtaRoot
+    + 0.5 * (d.wingRootChord + cKinkSolve) * (d.wingKink - d.wingEtaRoot);
+  const straightRoot = 2 * inboardArea / d.wingKink - cKinkSolve;
+
   const wing = liftingSurface({
     span: d.wingSpan,
-    rootChord: d.wingRootChord,
-    etaRoot: d.wingEtaRoot,
+    rootChord: straightRoot,
+    etaRoot: 0,
     kink: d.wingKink,
-    crankRatio: d.wingCrankRatio,
+    // Restated against the new root so the crank chord itself does not move.
+    crankRatio: cKinkSolve / straightRoot,
     tipRatio: d.wingTipRatio,
     taperRatio: d.wingKink == null ? d.wingTipRatio : null,
     sweep: d.wingSweepLE,

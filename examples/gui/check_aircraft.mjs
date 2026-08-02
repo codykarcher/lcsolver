@@ -99,6 +99,35 @@ console.log(`static attitude ${u.groundAttitude.toFixed(3)} deg nose-up ` +
             `over ${u.wheelbase.toFixed(2)})`);
 console.log(`sat down, wheels land within ${((hi - lo) * 1000).toFixed(1)} mm of one plane`);
 
+/* ---- the inboard trailing edge is straight ----------------------------- */
+// The mould line runs one taper from the centreline to the crank instead of the
+// solve's carry-through and break, because that break sits at the fuselage
+// RADIUS and a low-mounted wing leaves the body inboard of it -- putting a 26
+// degree corner in the trailing edge out in the open. What has to hold is that
+// the substitution changed the SHAPE and not the AREA.
+{
+  const w = u.parts.wing.userData;
+  const semi = w.semiSpan, kink = w.planform.kink;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < 40; i++) {
+    const e1 = (i / 40) * kink, e2 = ((i + 1) / 40) * kink;
+    const a = w.at(e1), b = w.at(e2);
+    const sw = Math.atan2((b.xLE + b.chord) - (a.xLE + a.chord),
+                          (e2 - e1) * semi) * 180 / Math.PI;
+    lo = Math.min(lo, sw); hi = Math.max(hi, sw);
+  }
+  console.log(`\ninboard trailing edge: sweep ${lo.toFixed(3)} to ${hi.toFixed(3)} deg ` +
+              `from the centreline to the crank`);
+  if (hi - lo > 1e-6) bad(`the inboard trailing edge kinks by ${(hi - lo).toFixed(3)} deg`);
+  // The crank and tip chords are the solve's, untouched -- only the root moved.
+  const same = (a, b) => Math.abs(a - b) < 1e-9;
+  if (!same(w.kinkChord, sol.Wing_c_break) || !same(w.tipChord, sol.Wing_c_tip)) {
+    bad('the crank or tip chord no longer matches the solve');
+  }
+  console.log(`  root chord built ${w.rootChord.toFixed(4)} against the solve's ` +
+              `c_root ${sol.Wing_c_root.toFixed(4)} -- deliberate, area preserved above`);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)`
                      : '\nPASS: the assembly reproduces the solve it came from');
 process.exit(failures ? 1 : 0);
