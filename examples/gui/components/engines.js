@@ -464,12 +464,12 @@ const JET_WALL = 0.035;
  *     z   fraction of body length aft of the lip
  *     r   radius as a multiple of rCase
  *
- * Default is a single contraction at three quarters of the way aft, down to
+ * Default is a single contraction at 70% of the way aft, down to
  * 0.80 of case radius, from which the wall opens back out to the 0.90 exit.
  * The case is still held parallel through the compressor regardless -- see
  * the hold point in the body.
  */
-const JET_SECTIONS = [{ z: 0.75, r: 0.80 }];
+const JET_SECTIONS = [{ z: 0.70, r: 0.80 }];
 
 /** Nozzle exit radius, x rCase. */
 const JET_EXIT = 0.90;
@@ -597,6 +597,9 @@ export function turbojet({
   mouth.position.z = zExit + 0.004 * Lb;
   g.add(mouth);
 
+  // Published so anything bolted to the outside -- a gearbox mount, a
+  // bleed pipe -- can find the skin instead of guessing at it.
+  g.userData.wall = wall.map((q) => [q.x, q.y]);
   g.userData.bodyLength = Lb;
   g.userData.exitRadius = rExit;
   g.userData.plugExitRadius = rPlugExit;
@@ -679,7 +682,7 @@ export function turboprop({ rProp = 1.25, blades = 4 } = {}) {
 /** Gearbox proportions. Radii x core diameter, stations x overall length. */
 const TS = {
   gearR:   0.19,    // gearbox drum radius
-  gearY:   0.66,    // its axis height above the engine centreline
+  gearY:   0.75,    // axis height: drum must clear the case, see below
   gearZ0:  0.02,    // front of the drum, just aft of the case leading edge
   gearZ1:  0.52,    // back of it
   outR:    0.062,   // output shaft radius
@@ -745,12 +748,29 @@ export function turboshaft({
   drum.position.set(0, TS.gearY * D, z((TS.gearZ0 + TS.gearZ1) / 2));
   g.add(drum);
 
-  // Carried on two saddles, so it sits on the engine rather than above it.
+  // Carried on two pylons. Each is cut to the case radius AT ITS OWN STATION,
+  // read off the wall curve the turbojet publishes: the case is not parallel,
+  // so a fixed height either buries the pylon in the skin -- which is what it
+  // did -- or leaves it hanging above a contracted section.
+  const wall = jet.userData.wall;
+  const caseRadiusAt = (zPos) => {
+    for (let i = 0; i < wall.length - 1; i++) {
+      const [z0, r0] = wall[i], [z1, r1] = wall[i + 1];
+      if (zPos <= z0 && zPos >= z1) {
+        return r0 + (r1 - r0) * ((z0 - zPos) / ((z0 - z1) || 1));
+      }
+    }
+    return wall[wall.length - 1][1];
+  };
+
   for (const f of [TS.gearZ0 + 0.09, TS.gearZ1 - 0.09]) {
-    const saddle = roundedBox(0.30 * D, 0.30 * D, 0.10 * L, 0.05 * D,
-                              M.accessory);
-    saddle.position.set(0, (TS.gearY - TS.gearR * 0.95) * D, z(f));
-    g.add(saddle);
+    const zs = z(f);
+    const yBot = caseRadiusAt(zs) - 0.01 * D;        // just into the skin
+    const yTop = (TS.gearY - TS.gearR * 0.85) * D;   // just into the drum
+    const h = Math.max(0.02 * D, yTop - yBot);
+    const pylon = roundedBox(0.26 * D, h, 0.10 * L, 0.045 * D, M.accessory);
+    pylon.position.set(0, (yBot + yTop) / 2, zs);
+    g.add(pylon);
   }
 
   // ---- output shaft -------------------------------------------------------
