@@ -1,11 +1,4 @@
-"""Three-stage warm solve of the SP-engined 737 (milestone 4/5 runner).
-
-Run from anywhere; paths are absolute. Stage C is the OPEN item: it runs
-without structural blowups but wanders to an unphysical basin by dragging
-the free flight-state variables -- the next step is a coupling
-continuation (pin FS_h/FS_T_atm to the stage-A profile for a first pass,
-then release). See the 9ff2807 commit message for the full story.
-
+"""Three-stage warm solve of the SP-engined 737.
 
 A: solve the baseline (deck-engine) aircraft -- airframe + thrusts.
 B: solve the rubber engine STANDALONE, multipoint, at stage-A conditions
@@ -239,6 +232,23 @@ for v in cm.component_data_objects(pyo.Var):
 print(f"  built + warmed: A-values {n_set_A}, B-values {n_set_B} "
       f"({time.time()-t0:.0f}s)", flush=True)
 
+# coupling continuation, pass 1: PIN the flight state at the stage-A
+# profile with ROWS (var.fix() is ignored by the detector, exactly like
+# variable bounds -- measured: the "frozen" pass reproduced the free
+# pass byte for byte, moving fixed variables to 371 K). Rows are the only
+# thing every layer of this stack respects.
+from pyomo.environ import units as _u
+n_pin = 0
+pin_rows = []
+for v in cm.component_data_objects(pyo.Var):
+    if v.name.startswith("FS_") and v.value and v.value > 0:
+        vu = _u.get_units(v)
+        pin_rows.append(v == float(pyo.value(v)) * (vu if vu is not None
+                                                    else 1.0))
+        n_pin += 1
+cm.ConstraintList(pin_rows)
+print(f"  pass 1: {n_pin} flight-state variables pinned by rows",
+      flush=True)
 st = structure_detector(cm)
 opts = SIAOptions(max_iterations=400)
 opts.stationarity_tolerance = 1e-5
@@ -246,6 +256,22 @@ opts.condense_numerator = True
 opts.ipopt_options = dict(opts.ipopt_options, tol=1e-9,
                           constr_viol_tol=1e-9)
 res = solve_sia(st, options=opts, presolve=False)
+print(f"  pass 1: converged={res.converged} it={res.iterations}", flush=True)
+if res.converged:
+    pass1_vals = {}
+    for v, val in zip(st["variables"], res.x):
+        v.set_value(float(val))
+    for v in cm.component_data_objects(pyo.Var):
+        pass1_vals[v.name] = float(pyo.value(v))
+    print("  pass 2: rebuilding without pins, warm from pass 1",
+          flush=True)
+    cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
+                                       seed="reference"))
+    for v in cm.component_data_objects(pyo.Var):
+        if v.name in pass1_vals and pass1_vals[v.name] > 0:
+            v.set_value(pass1_vals[v.name])
+    st = structure_detector(cm)
+    res = solve_sia(st, options=opts, presolve=False)
 print(f"  converged={res.converged} it={res.iterations} "
       f"({time.time()-t0:.0f}s total {time.time()-t_all:.0f}s)")
 print(f"  status: {str(res.status)[:200]}")
