@@ -109,7 +109,10 @@ export function paintRoles(aircraft) {
   collect(p.fuselage, 'body');
   collect(p.wing, 'wing');
   collect(p.horizontalTail, 'stabiliser');
+  // One fin or two: a D8 carries a pair, and a scheme should not have to know
+  // which configuration it is painting.
   collect(p.verticalTail, 'fin');
+  for (const f of p.verticalTails ?? []) collect(f, 'fin');
   for (const pod of p.engines ?? []) {
     for (const child of pod.children) {
       // A pod holds an engine and a pylon. The pylon is one mesh named for

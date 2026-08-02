@@ -100,6 +100,15 @@ export function deckFromSolve(sol, overrides = {}) {
      * lands on a round number in the units seats are actually specified in is
      * the check that this is the right reading of the two.
      */
+    /**
+     * The section. A tube has w = R and no web; a double bubble has both a
+     * lobe radius and a web, and is wider than it is tall. Carried for every
+     * solve because both files hold all of them, and reading them is what tells
+     * one configuration from the other.
+     */
+    fuseHalfWidth: g('Fuse_w_fuse'), fuseHalfHeight: g('Fuse_h_fuse'),
+    lobeRadius: g('Fuse_R_fuse'), webHalfWidth: g('Fuse_w_db'),
+
     cabinStart: g('Fuse_x_shell1'), cabinEnd: g('Fuse_x_shell2'),
     cabinRows: g('Fuse_n_rows'), passengers: g('Fuse_n_pass'),
     seatsAbreast: g('Fuse_n_pass') / g('Fuse_n_rows'),

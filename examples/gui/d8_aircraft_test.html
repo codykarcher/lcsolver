@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D8 &mdash; assembled from the sizing deck</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #14161a; color: #d7dbe0;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #view { position: fixed; inset: 0; }
+
+  #panel { position: fixed; top: 14px; left: 14px; width: 250px;
+    max-height: calc(100vh - 28px); overflow-y: auto; padding: 14px 16px;
+    background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
+    backdrop-filter: blur(6px); }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; }
+  #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
+  #panel h2 { margin: 13px 0 7px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: #6f7884;
+    border-top: 1px solid #2e343d; padding-top: 10px; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
+    font-size: 11.5px; color: #aab3bf; }
+  button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
+    font-size: 11.5px; color: #d7dbe0; background: #262b33;
+    border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2f353f; }
+  select { width: 100%; padding: 5px 7px; font: inherit; font-size: 11.5px;
+    color: #d7dbe0; background: #262b33; border: 1px solid #363d47;
+    border-radius: 6px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair.three { grid-template-columns: 1fr 1fr 1fr; }
+  .pair button { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px;
+    font-variant-numeric: tabular-nums; }
+  td { padding: 1px 0; color: #6f7884; }
+  td.n { text-align: right; color: #98a2ae; }
+  td.ok { text-align: right; color: #74c46a; }
+  #readout { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2e343d;
+    font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #readout span { color: #98a2ae; }
+  .hint { margin-top: 9px; font-size: 10.5px; color: #565e69; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>D8 twin-aisle</h1>
+  <p class="sub">assembled from the SPaircraft D8 solve</p>
+
+  <h2>against the solve</h2>
+  <table id="compare"></table>
+
+  <h2>paint</h2>
+  <select id="scheme"></select>
+  <p class="hint" id="schemeNote" style="margin-top:5px"></p>
+
+  <h2>tail art</h2>
+  <select id="art"></select>
+  <p class="hint" id="artNote" style="margin-top:5px"></p>
+  <div class="check"><input type="checkbox" id="titles" checked><label for="titles">fuselage titles</label></div>
+  <p class="hint" id="titleNote"></p>
+  <div class="check"><input type="checkbox" id="windows" checked><label for="windows">cabin windows</label></div>
+  <p class="hint" id="windowNote"></p>
+
+  <h2>view</h2>
+  <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
+  <div class="check"><input type="checkbox" id="sit" checked><label for="sit">sit on the gear</label></div>
+  <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
+  <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
+
+  <h2>moving parts</h2>
+  <button id="spin">spin the engines</button>
+  <button id="gear">raise the gear</button>
+  <button id="hidegear">hide the gear</button>
+  <p class="hint" style="margin-top:6px">or click either engine on its own</p>
+
+  <h2>view from</h2>
+  <div class="pair three">
+    <button id="side">side</button>
+    <button id="plan">plan</button>
+    <button id="front">front</button>
+  </div>
+  <div class="pair">
+    <button id="three">three-quarter</button>
+    <button id="frame">frame</button>
+  </div>
+
+  <div id="readout"></div>
+  <p class="hint">drag orbit &middot; scroll zoom &middot; right-drag pan</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { deckFromSolve } from './components/aircraft.js';
+import { d8Aircraft } from './components/d8_aircraft.js';
+import { paintRoles, paint, schemeNames, SCHEMES, painted }
+  from './components/paint.js';
+import { surfaceArt, fuselageTitles, cabinWindows, windscreen, WINDSCREEN_D8,
+         TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
+import { disposeTree } from './components/geom.js';
+import { all as MATERIALS } from './components/materials.js';
+
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({
+  canvas, antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0x9fb4cc, 0x191c21, 1.4));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.1);
+key.position.set(6, 9, 7);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x93b6ff, 0.7);
+fill.position.set(-7, 4, -6);
+scene.add(fill);
+// Weak from below: an aeroplane on the ground is lit from under by the apron,
+// and without it the whole underside -- gear, engines, wing lower surface --
+// reads as one black shape.
+const bounce = new THREE.DirectionalLight(0xc9d6e4, 0.40);
+bounce.position.set(0, -8, 3);
+scene.add(bounce);
+
+const el = (id) => document.getElementById(id);
+
+const axes = new THREE.Group();
+scene.add(axes);
+for (const [v, colour] of [[[4, 0, 0], 0xd8544f], [[0, 4, 0], 0x74c46a], [[0, 0, 4], 0x5b8ff5]]) {
+  const p = new THREE.Vector3(...v);
+  axes.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([p.clone().negate(), p]),
+    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity: 0.85 })));
+}
+
+let plane = null, craft = null;
+// Kept outside the aircraft so that rebuilding it -- which every checkbox does
+// -- does not stop the engines.
+let spinning = [false, false];
+
+/* ---- spin an engine by clicking it ----------------------------------- *
+ * The rotor carries its own direction and rate -- which way a fan has to turn
+ * to push air aft is set by the pitch its blades were built with -- so this
+ * only decides WHETHER, never which way.                                    */
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = null;
+
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  // Orbiting ends in a pointerup too, so a click has to be told from a drag.
+  // By DISTANCE, though, not by whether the pointer moved at all: a real click
+  // moves a pixel or two, and rejecting any movement rejects nearly every
+  // click -- which is what the first version of this did.
+  if (!craft || !downAt) return;
+  const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+  downAt = null;
+  if (moved > 5) return;
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  for (const hit of raycaster.intersectObject(craft, true)) {
+    let o = hit.object;
+    while (o && !o.userData.isEnginePod) o = o.parent;
+    if (o) {
+      o.userData.spinning = !o.userData.spinning;
+      spinning = craft.userData.parts.engines.map((p) => !!p.userData.spinning);
+      syncSpinButton();
+      return;
+    }
+  }
+});
+
+/** Both engines at once, and the label says which way the button will go. */
+function syncSpinButton() {
+  const on = craft && craft.userData.parts.engines.some((p) => p.userData.spinning);
+  el('spin').textContent = on ? 'stop the engines' : 'spin the engines';
+}
+
+/* ---- gear retraction -------------------------------------------------- *
+ * Each leg knows its own axis and angle -- recorded where it was placed, since
+ * which way a leg folds is a property of where it is -- so this only drives one
+ * number from 0 to 1 and back.                                              */
+let gearT = 0, gearTarget = 0;
+const GEAR_SECONDS = 2.4;
+const ease = (t) => t * t * (3 - 2 * t);
+
+// Kept outside the aircraft, like the engine spin, because every checkbox
+// rebuilds it and the gear would otherwise reappear each time.
+let gearHidden = false;
+
+/**
+ * Hiding is not retracting.
+ *
+ * The legs stay where they are and stop being drawn, so the aeroplane keeps
+ * sitting at the attitude its two strut lengths give it -- which is a RESULT
+ * worth preserving, and the one thing that would be lost by removing the gear
+ * from the assembly instead. It also means nothing has to be rebuilt to bring
+ * them back.
+ *
+ * The retract button is disabled meanwhile rather than left to animate
+ * something invisible.
+ */
+function applyGearVisible() {
+  if (!craft) return;
+  for (const lg of craft.userData.parts.gear) lg.visible = !gearHidden;
+  el('hidegear').textContent = gearHidden ? 'show the gear' : 'hide the gear';
+  el('gear').disabled = gearHidden;
+  el('gear').style.opacity = gearHidden ? 0.45 : 1;
+}
+
+function applyGear() {
+  if (!craft) return;
+  const k = ease(gearT);
+  for (const lg of craft.userData.parts.gear) {
+    const r = lg.userData.retract;
+    lg.rotation[r.axis] = r.angle * k;
+  }
+}
+
+// The deck is READ, not written here. Nothing between the solve and the drawing
+// is retyped, which is why the areas below agree to machine precision rather
+// than to however carefully I copied them.
+const SOLVE_FILE = './decks/b737_d8_solve.json';
+let deck = null;
+
+/**
+ * Textures, loaded once and kept for the life of the page.
+ *
+ * `build()` runs on every toggle, and `disposeTree` throws away geometries
+ * rather than materials, so a loader called from inside the build would fetch
+ * the same image again on each rebuild and leak a texture every time. The cache
+ * is keyed on the file name because the artwork is chosen by name.
+ *
+ * sRGB is not optional. A logo is authored in sRGB, and a texture left in
+ * linear comes out visibly washed -- the crimson reads pink and the gold reads
+ * cream, which looks like a colour mistake in the artwork rather than in the
+ * pipeline.
+ */
+const loader = new THREE.TextureLoader();
+const textures = new Map();
+function textureFor(file) {
+  if (!textures.has(file)) {
+    const t = loader.load(`./textures/${file}`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    // The fin is seen at a grazing angle from most of the orbit, which is
+    // exactly where a logo without anisotropic filtering smears into a band.
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    t.name = file;
+    textures.set(file, t);
+  }
+  return textures.get(file);
+}
+
+function build() {
+  if (craft) { disposeTree(craft); scene.remove(craft); }
+  if (plane) { plane.geometry.dispose(); scene.remove(plane); plane = null; }
+
+  // The painted materials are not in the shared palette, so they need telling
+  // about the wireframe too -- otherwise half the aeroplane ignores it.
+  for (const m of [...Object.values(MATERIALS), ...Object.values(painted)]) {
+    m.wireframe = el('wire').checked;
+  }
+
+  // No fuselage detail: windows, doors and the rest come later, and a bare
+  // skin is the right thing to judge the shape against meanwhile.
+  craft = d8Aircraft(deck, {
+    detail: false,
+    sitOnGround: el('sit').checked,
+  });
+  scene.add(craft);
+  const u = craft.userData;
+  u.parts.engines.forEach((p, i) => { p.userData.spinning = spinning[i]; });
+  applyGear();
+  applyGearVisible();
+  syncSpinButton();
+  // Collected on the FRESH aircraft, before anything is repainted: the lookup
+  // works by finding parts that still carry the base skin, so it has to happen
+  // before they stop carrying it.
+  const roles = paintRoles(craft);
+  const scheme = paint(roles, el('scheme').value);
+  el('schemeNote').textContent = scheme.note ?? '';
+  for (const m of Object.values(painted)) m.wireframe = el('wire').checked;
+
+  // Artwork goes on AFTER the paint, and onto the fin itself rather than the
+  // aircraft, so it inherits the cant and moves with the tail. It carries its
+  // own material, so `paintRoles` never sees it and no scheme can paint over
+  // a logo.
+  const artName = el('art').value;
+  const spec = TAIL_ART[artName];
+  if (spec) {
+    const art = surfaceArt(u.parts.verticalTails[0], {
+      ...spec, texture: textureFor(spec.file), name: artName,
+    });
+    u.parts.verticalTails[0].add(art);
+    u.parts.tailArt = art;
+    const a = art.userData;
+    el('artNote').textContent =
+      `${a.widthMetres.toFixed(2)} × ${a.heightMetres.toFixed(2)} m on the fin` +
+      (a.shrunk ? ', scaled down to fit the chord' : '');
+  } else {
+    el('artNote').textContent = '';
+  }
+
+  // The row along the body. Onto the fuselage rather than the aircraft, so it
+  // travels with the body if that ever moves relative to the rest.
+  if (el('titles').checked) {
+    const row = fuselageTitles(u.parts.fuselage, { textureFor, deck });
+    u.parts.fuselage.add(row);
+    u.parts.titles = row;
+    const [aft, fwd] = row.userData.zRange;
+    el('titleNote').textContent =
+      `${row.children.length} marks, ${(fwd - aft).toFixed(1)} m of body, ` +
+      `from the front of the window line`;
+  } else {
+    el('titleNote').textContent = '';
+  }
+
+  // Windows: where they go is the solve's answer, not a styling choice, so the
+  // note says which numbers produced them.
+  if (el('windows').checked) {
+    const win = cabinWindows(u.parts.fuselage, {
+      texture: textureFor('window.png'), deck,
+    });
+    u.parts.fuselage.add(win);
+    u.parts.windows = win;
+    const w = win.userData;
+    el('windowNote').textContent =
+      `${w.rows} per side at ${(w.pitch / 0.0254).toFixed(0)} in seat pitch ` +
+      `\u2014 ${w.passengers} pax, ${w.seatsAbreast.toFixed(0)} abreast`;
+    // The windscreen rides with the windows: it is the same decision about
+    // whether the aeroplane is glazed at all. No texture -- its shape is where
+    // the two cut planes meet the nose.
+    const scr = windscreen(u.parts.fuselage, WINDSCREEN_D8);
+    u.parts.fuselage.add(scr);
+    u.parts.windscreen = scr;
+  } else {
+    el('windowNote').textContent = '';
+  }
+
+  if (el('ground').checked) {
+    plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(120, 120),
+      new THREE.MeshStandardMaterial({ color: 0x1b1f26, roughness: 0.95 }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set(0, u.ground, -u.deck.fuseLength * 0.45);
+    scene.add(plane);
+  }
+  axes.visible = el('axes').checked;
+
+  // Areas are the check that the whole conversion is right: they are not
+  // inputs anywhere, they fall out of the chords and spans, and the solve
+  // computed them independently.
+  el('compare').innerHTML = Object.entries(deck.solvedAreas).map(([key, want]) => {
+    const got = u.areas[key];
+    const rel = Math.abs(got - want) / Math.abs(want);
+    const label = { wing: 'wing area', horizontalTail: 'h tail area',
+                    verticalTail: 'v tail area' }[key];
+    return `<tr><td>${label}</td><td class="n">${got.toFixed(3)}</td>` +
+           `<td class="n">${want.toFixed(3)}</td>` +
+           `<td class="${rel < 1e-3 ? 'ok' : 'n'}">${rel.toExponential(0)}</td></tr>`;
+  }).join('');
+
+  const d = u.deck;
+  el('readout').innerHTML =
+    `fuselage <span>${d.fuseLength.toFixed(2)}</span> long, ` +
+    `<span>${(2 * d.fuseRadius).toFixed(2)}</span> across<br>` +
+    `wing <span>${d.wingSpan.toFixed(2)}</span> span, LE sweep ` +
+    `<span>${u.leadingEdgeSweeps.wing.toFixed(2)}&deg;</span>` +
+    (d.wingKink != null
+      ? `, crank at <span>${(100 * d.wingKink).toFixed(1)}%</span>, ` +
+        `carry-through to <span>${(100 * d.wingEtaRoot).toFixed(1)}%</span>`
+      : '') + `<br>` +
+    `tails: LE <span>${u.leadingEdgeSweeps.horizontalTail.toFixed(1)}&deg;</span> / ` +
+    `<span>${u.leadingEdgeSweeps.verticalTail.toFixed(1)}&deg;</span><br>` +
+    `arms from the wing: HT <span>${d.htArm.toFixed(2)}</span>, ` +
+    `VT <span>${d.vtArm.toFixed(2)}</span><br>` +
+    `nacelle <span>${d.nacelleDia.toFixed(2)}</span> across at y ` +
+    `<span>&plusmn;${d.engineY.toFixed(2)}</span><br>` +
+    // The one number here that is neither an input nor a placement choice.
+    `static attitude <span>${u.groundAttitude.toFixed(2)}&deg;</span> nose-up ` +
+    `&mdash; the two strut lengths disagree by ` +
+    `<span>${(u.noseContact - u.mainContact).toFixed(3)}</span> over a ` +
+    `<span>${u.wheelbase.toFixed(2)}</span> wheelbase`;
+}
+
+function frameAll() {
+  const b = new THREE.Box3().setFromObject(craft);
+  const c = b.getCenter(new THREE.Vector3());
+  const r = b.getSize(new THREE.Vector3()).length() / 2;
+  controls.target.copy(c);
+  const dd = r / Math.sin((camera.fov * Math.PI / 180) / 2) * 0.95;
+  camera.position.set(c.x + dd * 0.45, c.y + dd * 0.28, c.z + dd * 0.85);
+  camera.near = r / 500; camera.far = r * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function ortho(which) {
+  const u = craft.userData, L = u.deck.fuseLength;
+  const c = new THREE.Vector3(0, u.ground + 3, -L / 2);
+  const d = L * 1.5;
+  controls.target.copy(c);
+  if (which === 'side') camera.position.set(c.x + d, c.y, c.z);
+  else if (which === 'plan') camera.position.set(c.x, c.y + d, c.z + 0.001);
+  else if (which === 'front') camera.position.set(c.x, c.y, c.z + d);
+  else camera.position.set(c.x + d * 0.55, c.y + d * 0.34, c.z + d * 0.72);
+  camera.near = d / 500; camera.far = d * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'windows'])
+  el(id).addEventListener('change', build);
+
+for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {
+  for (const name of names) {
+    const o = document.createElement('option');
+    o.value = name;
+    o.textContent = name;
+    el(id).appendChild(o);
+  }
+}
+for (const v of ['side', 'plan', 'front']) el(v).addEventListener('click', () => ortho(v));
+el('three').addEventListener('click', () => ortho('three'));
+el('frame').addEventListener('click', frameAll);
+el('spin').addEventListener('click', () => {
+  const pods = craft.userData.parts.engines;
+  const on = pods.some((p) => p.userData.spinning);
+  for (const p of pods) p.userData.spinning = !on;
+  spinning = pods.map((p) => !!p.userData.spinning);
+  syncSpinButton();
+});
+el('gear').addEventListener('click', () => {
+  gearTarget = gearTarget > 0.5 ? 0 : 1;
+  el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+});
+el('hidegear').addEventListener('click', () => {
+  gearHidden = !gearHidden;
+  applyGearVisible();
+});
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+const clock = new THREE.Clock();
+function tick() {
+  const dt = clock.getDelta();
+  if (craft) {
+    for (const pod of craft.userData.parts.engines) {
+      if (!pod.userData.spinning) continue;
+      pod.traverse((o) => {
+        if (o.userData.rotating) {
+          o.rotation.z += dt * 4.2 * (o.userData.spin ?? 1) * (o.userData.rate ?? 1);
+        }
+      });
+    }
+    if (gearT !== gearTarget) {
+      const step = dt / GEAR_SECONDS;
+      gearT += Math.sign(gearTarget - gearT) * Math.min(step, Math.abs(gearTarget - gearT));
+      applyGear();
+      if (!gearHidden) {
+        el('gear').textContent = gearTarget > 0.5 ? 'lower the gear' : 'raise the gear';
+      }
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+resize();
+tick();
+
+// The deck arrives before anything is drawn: there is no aeroplane to show
+// until the solve has been read, and inventing one to fill the gap would put a
+// second set of numbers in the page.
+fetch(SOLVE_FILE)
+  .then((r) => { if (!r.ok) throw new Error(`${SOLVE_FILE}: ${r.status}`); return r.json(); })
+  .then((sol) => {
+    deck = deckFromSolve(sol);
+    el('panel').querySelector('.sub').textContent =
+      `${SOLVE_FILE.split('/').pop()} \u2014 ${sol._status ?? 'no status'}`;
+    build();
+    ortho('three');
+  })
+  .catch((e) => {
+    el('readout').innerHTML = `<span style="color:#d8544f">could not load the deck</span><br>${e.message}`;
+  });
+</script>
+</body>
+</html>
