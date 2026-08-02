@@ -49,6 +49,9 @@
   <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
 
 
+  <div class="row"><label for="ez">engine position</label><output id="oEZ"></output></div>
+  <input type="range" id="ez" min="-1.20" max="1.20" step="0.01" value="0">
+
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="nacelle" checked><label for="nacelle">nacelle</label></div>
   <div class="check"><input type="checkbox" id="wing" checked><label for="wing">wing stub</label></div>
@@ -130,8 +133,12 @@ const num = (id) => parseFloat(el(id).value);
 
 let engine = null;
 
+let extra = [];
+
 function build() {
   if (engine) { disposeTree(engine); scene.remove(engine); }
+  for (const o of extra) { disposeTree(o); scene.remove(o); }
+  extra = [];
 
   for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
 
@@ -141,12 +148,16 @@ function build() {
     rFan,
     bypassRatio: num('bpr'),
   });
-  engine.position.set(0, 0, 0);           // at the origin, unshifted
+  // The engine slides along the axis; the wing does not move. The pylon spans
+  // the two, so it is built in the SCENE frame and told where the engine is --
+  // parented to the engine it would just travel with it and never lean.
+  const engineZ = num('ez') * rFan;
+  engine.position.set(0, 0, engineZ);
   scene.add(engine);
 
-  // The pylon is built in the engine's own frame, so it goes in beside it.
-  const py = pylon(engine);
-  engine.add(py);
+  const py = pylon(engine, { engineZ });
+  scene.add(py);
+  extra.push(py);
 
   // A stub of wing at the attachment, purely so the top face has something to
   // meet. Not a wing model -- that is a component of its own.
@@ -157,8 +168,8 @@ function build() {
       structure);
     stub.position.set(0, py.userData.attachY + rFan * 0.17,
                       (c[0] + c[1]) / 2 - rFan * 0.1);
-    stub.material = structure;
-    engine.add(stub);
+    scene.add(stub);
+    extra.push(stub);
   }
 
   rebuildAxes(rFan * 1.55);
@@ -169,6 +180,7 @@ function build() {
 
   el('oR').textContent = rFan.toFixed(2);
   el('oBPR').textContent = num('bpr').toFixed(1);
+  el('oEZ').textContent = num('ez').toFixed(2);
 
   const b = new THREE.Box3().setFromObject(engine);
   el('readout').innerHTML =
@@ -185,7 +197,9 @@ function build() {
     `plug <span>${engine.userData.plugExitRadius.toFixed(3)}</span><br>` +
     `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
     `r core <span>${engine.userData.rCore.toFixed(3)}</span><br>` +
-    `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span>`;
+    `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span><br>` +
+    `pylon root <span>${py.userData.rootZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span> &middot; ` +
+    `kink y <span>${py.userData.kinkY.toFixed(2)}</span>`;
 }
 
 function frameEngine() {
@@ -207,7 +221,7 @@ function lookAtOrigin() {
   controls.update();
 }
 
-for (const id of ['rFan', 'bpr']) el(id).addEventListener('input', build);
+for (const id of ['rFan', 'bpr', 'ez']) el(id).addEventListener('input', build);
 for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing']) el(id).addEventListener('change', build);
 el('frame').addEventListener('click', frameEngine);
 el('origin').addEventListener('click', lookAtOrigin);

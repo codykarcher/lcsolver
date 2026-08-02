@@ -13,7 +13,9 @@
  *             case end to end, so the strut breaks the core surface just
  *             behind the fan and again at the back of the case -- those two
  *             places being the mounts
- *   strut     a streamwise section lofted upward, PIERCING the nacelle
+ *   strut     a streamwise section lofted upward, PIERCING the nacelle. Its
+ *             leading edge is vertical until clear of the cowl and only rakes
+ *             forward above it.
  *   flat top  the face that meets the wing underside
  *
  * The strut passing through the nacelle is deliberate and not a clash. On a
@@ -43,7 +45,9 @@ const P = {
   plateX:    0.34,  // ... and its half-width
   noseA:     0.010, // section nose bluntness
   teFrac:    0.45,  // trailing-edge thickness, fraction of maximum
-  stations:  9,     // loft stations from root to top
+  kink:      1.02,  // leading-edge kink height, x nacelle max radius
+  below:     5,     // stations below the kink
+  above:     6,     // ... and above it
   nSide:     22,    // section points per side
 };
 
@@ -60,57 +64,62 @@ function halfT(s, tMax) {
  * @param {number} [opts.topZ1]    aft end
  */
 export function pylon(engine, opts = {}) {
-  const R = engine.userData.rFan
-    ?? (engine.userData.rMax ? engine.userData.rMax / 1.037 : 1);
+  const u = engine.userData;
+  const R = u.rFan ?? (u.rMax ? u.rMax / 1.037 : 1);
   const g = new THREE.Group();
 
+  const engineZ = opts.engineZ ?? 0;
   const attachY = (opts.attachY ?? P.attachY) * R;
   const topZ0 = (opts.topZ0 ?? P.topZ0) * R;
   const topZ1 = (opts.topZ1 ?? P.topZ1) * R;
 
-  // The root chord spans the CORE CASE end to end, taken from the engine's own
-  // published core line: forward at the core front, just behind the fan, and
-  // aft at the outlet. So the two places the strut breaks the core surface are
-  // the two places the engine is actually picked up.
-  const w = engine.userData.coreWall;
-  const rootZ0 = w ? w[0][0] : P.rootZ0 * R;
-  const rootZ1 = w ? w[w.length - 1][0] : P.rootZ1 * R;
+  // Root chord, in the PARENT frame: the engine's own core stations shifted by
+  // wherever the engine has been put. Forward mount just behind the fan case
+  // -- the fan's outer shell, not the fan itself -- and aft at the core
+  // outlet.
+  const w = u.coreWall;
+  const rootZ0 = (u.caseAft ?? P.rootZ0 * R) + engineZ;
+  const rootZ1 = (w ? w[w.length - 1][0] : P.rootZ1 * R) + engineZ;
 
-  // Carried down to the CENTRELINE rather than stopped on the skin. A pylon
-  // does not hang off a cowl; the load goes into the core's structure, and a
-  // strut that stops at the surface reads as bolted to the fairing. The part
-  // inside the core is hidden by it, so the only thing on show is where it
-  // emerges -- which is the mount.
-  const rootY = 0;
+  // Leading edge runs VERTICALLY from the root up through the nacelle, and
+  // only changes angle once clear of it. A pylon that starts raking the moment
+  // it leaves the core would be cutting across the cowl at a slant; in life it
+  // goes straight up through the fairing and sweeps forward above it.
+  const yKink = (u.nacelleMaxRadius ?? 1.22 * R) * P.kink;
 
-  // ---- loft ---------------------------------------------------------------
-  const nS = P.stations, nP = P.nSide;
-  const pos = [], idx = [];
-  const ring = [];                       // vertex index of each station's ring
+  // Stations: closely spaced up to the kink so it stays a crease rather than
+  // being rounded off by the loft, then out to the wing.
+  const ys = [];
+  for (let i = 0; i < P.below; i++) ys.push((i / P.below) * yKink);
+  for (let i = 0; i <= P.above; i++) {
+    ys.push(yKink + (i / P.above) * (attachY - yKink));
+  }
 
-  for (let i = 0; i < nS; i++) {
-    const t = i / (nS - 1);
-    const e = t * t * (3 - 2 * t);       // smoothstep, so the loft eases in
-    const y = rootY + (attachY - rootY) * t;
-    const zLE = rootZ0 + (topZ0 - rootZ0) * e;
+  const nP = P.nSide;
+  const pos = [], idx = [], ring = [];
+
+  for (const y of ys) {
+    const tAll = y / attachY;                      // 0 at the root, 1 at the wing
+    const e = tAll * tAll * (3 - 2 * tAll);
+    // Leading edge: held at the root station until the kink, then straight to
+    // the wing. Trailing edge sweeps the whole way.
+    const zLE = y <= yKink ? rootZ0
+      : rootZ0 + (topZ0 - rootZ0) * ((y - yKink) / (attachY - yKink));
     const zTE = rootZ1 + (topZ1 - rootZ1) * e;
     const c = zLE - zTE;
     const tMax = (P.rootT + (P.topT - P.rootT) * e) * R;
 
-    const base = pos.length / 3;
-    ring.push(base);
-    // Down the +X side from the leading edge, then back up the -X side. The
-    // segment across the aft end is the blunt trailing edge.
+    ring.push(pos.length / 3);
     for (let side = 0; side < 2; side++) {
       for (let j = 0; j <= nP; j++) {
-        if (side === 1 && (j === 0 || j === nP)) continue;   // shared points
-        const s = side === 0 ? j / nP : 1 - j / nP;
-        const x = (side === 0 ? 1 : -1) * halfT(s, tMax);
-        pos.push(x, y, zLE - s * c);
+        if (side === 1 && (j === 0 || j === nP)) continue;
+        const sv = side === 0 ? j / nP : 1 - j / nP;
+        pos.push((side === 0 ? 1 : -1) * halfT(sv, tMax), y, zLE - sv * c);
       }
     }
   }
   const perRing = 2 * (nP + 1) - 2;
+  const nS = ys.length;
 
   for (let i = 0; i < nS - 1; i++) {
     for (let j = 0; j < perRing; j++) {
@@ -119,7 +128,6 @@ export function pylon(engine, opts = {}) {
       idx.push(a, b, a2, b, b2, a2);
     }
   }
-  // Cap both ends with fans so the strut is a closed solid.
   for (const [base, flip] of [[ring[0], true], [ring[nS - 1], false]]) {
     for (let j = 1; j < perRing - 1; j++) {
       if (flip) idx.push(base, base + j + 1, base + j);
@@ -135,7 +143,6 @@ export function pylon(engine, opts = {}) {
   strut.name = 'pylonStrut';
   g.add(strut);
 
-  // ---- flat attachment plate ---------------------------------------------
   const plate = new THREE.Mesh(
     new THREE.BoxGeometry(P.plateX * 2 * R, P.plateT * R, topZ0 - topZ1),
     M.structure);
@@ -145,7 +152,8 @@ export function pylon(engine, opts = {}) {
 
   g.userData.attachY = attachY + P.plateT * R;
   g.userData.attachZ = [topZ0, topZ1];
-  g.userData.rootY = rootY;
+  g.userData.rootZ = [rootZ0, rootZ1];
+  g.userData.kinkY = yKink;
   g.name = 'pylon';
   return g;
 }
