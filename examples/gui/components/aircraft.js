@@ -94,6 +94,24 @@ export function deckFromSolve(sol, overrides = {}) {
      * this file was guessing at. Null when absent, and the arms are used.
      */
     htLE: typeof sol.x_ht_le === 'number' ? sol.x_ht_le : null,
+    /**
+     * Tail sweeps, about the SPAR BOX AXIS at 0.40 chord -- TASOPT's `Xaxis` --
+     * which is what `tan_Lambda` means and is not the quarter chord.
+     *
+     * Converted to a leading-edge sweep here, since that is what a lofted
+     * surface is drawn from. For a straight taper the axis at chord fraction p
+     * runs at tan(L_p) = tan(L_LE) + p (c_tip - c_root) / s, so inverting it is
+     * one term. On this deck the fin comes out at 34.28 degrees LE where the
+     * axis is at 25.0, and using the axis figure as though it were a
+     * quarter-chord sweep -- which is what a hard-coded choice was standing in
+     * for -- put the fin tip 0.26 m out and the tailplane it carries with it.
+     *
+     * Checked against the solve's own alignment: the fin tip's 0.40c lands at
+     * 30.2843, which is the station the solve says the tailplane's spar meets.
+     */
+    htSweepAxisTan: g('HT_tan_Lambda'),
+    vtSweepAxisTan: g('VT_tan_Lambda'),
+    sparAxisFraction: 0.40,
     vtLE: typeof sol.x_vt_le === 'number' ? sol.x_vt_le : null,
 
     engineX: g('x_eng'), engineY: g('y_eng'),
@@ -235,6 +253,17 @@ export const B737_TASOPT = {
  * whose span is a height. Getting that factor wrong on the fin moves its
  * leading edge by most of a metre and looks entirely plausible.
  */
+/**
+ * Leading-edge sweep from the SPAR AXIS sweep the solve publishes.
+ *
+ * `tan_Lambda` is about the box axis at 0.40 chord -- TASOPT's `Xaxis` -- not
+ * the quarter chord. `span` is the semi-span for a mirrored surface and the
+ * full height for a fin.
+ */
+function leadingEdgeFromAxis(tanAxis, rootChord, taper, span, p = 0.40) {
+  return Math.atan(tanAxis + (p * rootChord * (1 - taper)) / span) / DEG;
+}
+
 function leadingEdgeSweep(sweepC4, rootChord, taper, span, mirrored = true) {
   const k = mirrored ? 0.5 : 0.25;
   return Math.atan(Math.tan(sweepC4 * DEG) + k * rootChord * (1 - taper) / span) / DEG;
@@ -318,13 +347,27 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
     span: d.htSpan,
     rootChord: d.htRootChord,
     taperRatio: d.htTaper,
-    sweep: leadingEdgeSweep(d.htSweepC4, d.htRootChord, d.htTaper, d.htSpan),
+    sweep: d.htSweepAxisTan != null
+      ? leadingEdgeFromAxis(d.htSweepAxisTan, d.htRootChord, d.htTaper, d.htSpan / 2)
+      : leadingEdgeSweep(d.htSweepC4, d.htRootChord, d.htTaper, d.htSpan),
     dihedral: d.htDihedral,
     twistRoot: 0, twistTip: 0,
     thickness: d.tcTail, symmetric: true,
   });
-  const htQuarterX = d.wingQuarterX + d.htArm;
-  const htRootLE = htQuarterX - 0.25 * d.htRootChord;
+  /**
+   * Anchored on the LE STATION, not on the tail arm.
+   *
+   * `l_ht` is the trim arm -- CG to aerodynamic centre -- and a moment length
+   * is not a station. Drawing a chord from it put the root trailing edge 1.8 m
+   * past the end of the hull, which is what showed up as a tailplane hanging
+   * off the back. `x_ht_le` is the anchor the solve publishes for exactly this,
+   * and against it the root trailing edge lands flush with the hull.
+   *
+   * The arm is still the fallback for a deck that predates the station, which
+   * is what `B737_TASOPT` is.
+   */
+  const htRootLE = d.htLE ?? (d.wingQuarterX + d.htArm - 0.25 * d.htRootChord);
+  const htQuarterX = htRootLE + 0.25 * d.htRootChord;
   // Vertically: above the body's own section centre on the tailcone. The deck
   // has no opinion -- a tail arm is a longitudinal number -- so the raise is a
   // choice like the wing height, and marked as one.
@@ -337,12 +380,15 @@ export function conventionalAircraft(deck = B737_TASOPT, opts = {}) {
     height: d.vtHeight,
     rootChord: d.vtRootChord,
     taperRatio: d.vtTaper,
-    sweep: leadingEdgeSweep(d.vtSweepC4, d.vtRootChord, d.vtTaper, d.vtHeight, false),
+    sweep: d.vtSweepAxisTan != null
+      ? leadingEdgeFromAxis(d.vtSweepAxisTan, d.vtRootChord, d.vtTaper, d.vtHeight)
+      : leadingEdgeSweep(d.vtSweepC4, d.vtRootChord, d.vtTaper, d.vtHeight, false),
     thickness: d.tcTail,
     cant: 0,
   });
-  const vtQuarterX = d.wingQuarterX + d.vtArm;
-  const vtRootLE = vtQuarterX - 0.25 * d.vtRootChord;
+  // Same anchor for the fin: the LE station, with the arm as the fallback.
+  const vtRootLE = d.vtLE ?? (d.wingQuarterX + d.vtArm - 0.25 * d.vtRootChord);
+  const vtQuarterX = vtRootLE + 0.25 * d.vtRootChord;
   vt.position.set(0, u.crownAt(-vtQuarterX), -vtRootLE);
   g.add(vt); parts.verticalTail = vt;
 

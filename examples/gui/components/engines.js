@@ -545,6 +545,7 @@ const NAC = {
  * what you see on an installation anyway.
  */
 export function turbofan(opts = {}) {
+  const { embedded = false } = opts;
   const core = bareTurbofan(opts);
   const R = core.userData.rMax / 1.037;        // recover rFan
   const g = new THREE.Group();
@@ -656,8 +657,13 @@ export function turbofan(opts = {}) {
     return m;
   };
   const lipEnd = NAC.lipFraction;
-  g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
-  g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
+  if (embedded) {
+    // One piece, one colour: see `embeddedTurbofan` for why.
+    g.add(segment(0, 1, M.skin, 'fanCowl'));
+  } else {
+    g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
+    g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
+  }
 
   /**
    * The inlet duct, lined in metal.
@@ -675,6 +681,7 @@ export function turbofan(opts = {}) {
    * which is where `lipZ` is measured from and so sits at z = 0.
    */
   const sFan = zLE / c;                   // chord fraction at the fan plane
+  if (!embedded) {
   const linerAt = (sv) => {
     const ro = outerAt(sv);
     return ro - 2 * halfT(sv);
@@ -693,6 +700,7 @@ export function turbofan(opts = {}) {
   const lining = latheZ(liner, M.casing, SEG);
   lining.name = 'inletLiner';
   g.add(lining);
+  }
 
   const hi = meanAt(0);
   const zAft = zTE;
@@ -719,6 +727,23 @@ export function turbofan(opts = {}) {
   return finish(g, core.userData.length,
                 Math.max(...outer.map((q) => q[1])), 'turbofan');
 }
+
+/**
+ * A nacelle for an engine that is let INTO something, rather than hung under a
+ * wing in the open.
+ *
+ * The same cowl, built as one piece in one colour. The standard nacelle is two
+ * closed solids meeting at a station -- a painted fairing with a bare metal lip
+ * -- plus a metal liner down the inlet, and all three of those are right for a
+ * pod you walk past on a ramp. Half-buried in a fuselage they read as clutter:
+ * the seam lands wherever the body happens to cut it, and the metal ring and
+ * duct catch the eye at the exact place the eye should be reading one
+ * continuous surface running out of the body.
+ *
+ * So: no seam, no liner, all of it the airframe skin, which also means the
+ * paint schemes take it as one piece.
+ */
+export const embeddedTurbofan = (opts = {}) => turbofan({ ...opts, embedded: true });
 
 /* ==================================================================== *
  * Turbojet

@@ -232,6 +232,7 @@ export function carveOut(geometry, fields) {
  */
 export function ductVolume({
   floor, halfWidth, cornerR, fromX, toX, deepFrom, crown,
+  noseFrom = null, noseAt = null,
   blend = 0, depthInside = null,
 }) {
   const flat = Math.max(halfWidth - cornerR, 0);
@@ -265,12 +266,49 @@ export function ductVolume({
    * Cubic, with that slope at the start and level at the end, so the join into
    * the deep part -- where smoothness is actually visible -- is still smooth.
    */
-  const span = Math.max(deep - fromX, 1e-9);
-  const drop = floor - crown;
+  /**
+   * Between the fan face and the inlet lip the floor follows the NACELLE.
+   *
+   * Level aft of `deepFrom`, as before -- that stretch cradles the engine and
+   * is what the afterbody was shaped against. Forward of it the trough used to
+   * start climbing immediately on its own curve, which cut across the inlet:
+   * the cowl is at its widest just ahead of the fan, and the ramp was already
+   * rising there, so the carve sliced the very part of the nacelle that ought
+   * to have been sitting in it.
+   *
+   * Over that stretch the floor IS the nacelle's own outer line, offset by the
+   * clearance. Ahead of the lip there is nothing left to follow and it sweeps
+   * out to the cabin as it always did -- but starting from the lip's height
+   * rather than the engine's, so the two meet without a step.
+   */
+  const hasNose = noseFrom != null && typeof noseAt === 'function';
+  const noseX = hasNose ? noseFrom : deep;
+  const yNose = hasNose ? noseAt(noseX) : floor;
+  const span = Math.max(noseX - fromX, 1e-9);
+  const drop = yNose - crown;
   const k = 1;                          // initial slope, in units of drop/span
+  /**
+   * The two run into each other over a short window rather than meeting at a
+   * step.
+   *
+   * The level floor is set by the ENGINE's radius and the following one by the
+   * NACELLE's, which is 18 per cent larger, so at the fan face they differ by
+   * 126 mm. Left as a switch that is a ledge across the trough -- and worse
+   * than cosmetic: a nacelle triangle spanning it can have every corner clear
+   * of solid body while its middle is not, so the clipper leaves it, and 64 mm
+   * of cowl stayed buried.
+   */
+  const knit = 0.30;
   const floorAt = (x) => {
+    if (x >= deep + knit) return floor;
+    if (hasNose && x >= deep) {
+      const f = (x - deep) / knit;
+      const e = f * f * (3 - 2 * f);
+      return noseAt(x) + (floor - noseAt(x)) * e;
+    }
+    if (x >= deep) return floor;
+    if (hasNose && x >= noseX) return noseAt(x);
     const f = (x - fromX) / span;
-    if (f >= 1) return floor;
     if (f <= 0) return crown + drop * k * f;      // climbing out through the roof
     return crown + drop * ((k - 2) * f ** 3 + (3 - 2 * k) * f ** 2 + k * f);
   };
@@ -312,8 +350,8 @@ export function ductVolume({
   const lip = depthInside ? (p) => flare(depthInside(p.x, p.y, p.z)) : () => 0;
 
   return {
-    fromX, toX, deepFrom: deep, floor, halfWidth, cornerR, crown, blend, flat,
-    lift, floorAt, flare, lip, eSkin,
+    fromX, toX, deepFrom: deep, noseFrom: noseX, floor, halfWidth, cornerR,
+    crown, blend, flat, lift, floorAt, flare, lip, eSkin,
     /**
      * The two surfaces that bound the duct, each on its own and each smooth.
      * Kept separate because anything cutting geometry has to cut on one at a

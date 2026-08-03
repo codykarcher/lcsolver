@@ -15,8 +15,7 @@
 import * as THREE from 'three';
 import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
-import { bareTurbofan, turbofan } from './engines.js';
-import { skin } from './materials.js';
+import { bareTurbofan, turbofan, embeddedTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
 import { carveDuct, carveInto, wouldCarve } from './carve.js';
 
@@ -143,6 +142,20 @@ export const D8_CHOICES = {
 function leadingEdgeSweep(sweepC4, rootChord, taper, span, mirrored = true) {
   const k = mirrored ? 0.5 : 0.25;
   return Math.atan(Math.tan(sweepC4 * DEG) + (k * rootChord * (1 - taper)) / span) / DEG;
+}
+
+/**
+ * Leading-edge sweep from the SPAR AXIS sweep the solve publishes.
+ *
+ * `tan_Lambda` is measured about the box axis at 0.40 chord, so the conversion
+ * is the same one term as above with p in place of the quarter: for a straight
+ * taper, tan(L_axis) = tan(L_LE) + p (c_tip - c_root) / s.
+ *
+ * `span` is the SEMI-span for a mirrored surface and the full height for a fin,
+ * because that is the length the chord actually tapers over in each case.
+ */
+function leadingEdgeFromAxis(tanAxis, rootChord, taper, span, p = 0.40) {
+  return Math.atan(tanAxis + (p * rootChord * (1 - taper)) / span) / DEG;
 }
 
 export function d8Aircraft(deck, opts = {}) {
@@ -325,7 +338,11 @@ export function d8Aircraft(deck, opts = {}) {
   for (const side of sides) {
     const vt = verticalTail({
       height: fin.height, rootChord: fin.rootChord, taperRatio: fin.taper,
-      sweep: leadingEdgeSweep(d.vtSweepC4, fin.rootChord, fin.taper, fin.height, false),
+      // The solve's own spar-axis sweep when it publishes one; the hard-coded
+      // quarter-chord choice only as a fallback for a deck that does not.
+      sweep: d.vtSweepAxisTan != null
+        ? leadingEdgeFromAxis(d.vtSweepAxisTan, fin.rootChord, fin.taper, fin.height)
+        : leadingEdgeSweep(d.vtSweepC4, fin.rootChord, fin.taper, fin.height, false),
       thickness: d.tcTail,
       // Positive cant leans the tip to +x, so the port fin takes the negative
       // of it and the pair splay outboard rather than both leaning one way.
@@ -340,7 +357,9 @@ export function d8Aircraft(deck, opts = {}) {
   /* ---- tailplane, carried on the fin tips ----------------------------- */
   const ht = liftingSurface({
     kink: null, span: d.htSpan, rootChord: d.htRootChord, taperRatio: d.htTaper,
-    sweep: leadingEdgeSweep(d.htSweepC4, d.htRootChord, d.htTaper, d.htSpan),
+    sweep: d.htSweepAxisTan != null
+      ? leadingEdgeFromAxis(d.htSweepAxisTan, d.htRootChord, d.htTaper, d.htSpan / 2)
+      : leadingEdgeSweep(d.htSweepC4, d.htRootChord, d.htTaper, d.htSpan),
     dihedral: 0, twistRoot: 0, twistTip: 0,
     thickness: d.tcTail, symmetric: true,
   });
@@ -389,20 +408,8 @@ export function d8Aircraft(deck, opts = {}) {
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
-    const eng = podded ? turbofan({ rFan, bypassRatio: 9 })
+    const eng = podded ? embeddedTurbofan({ rFan, bypassRatio: 9 })
                        : bareTurbofan({ rFan, bypassRatio: 9 });
-    /**
-     * The whole nacelle white, lip included.
-     *
-     * The cowl already carries the airframe skin, so the paint schemes pick it
-     * up as `nacelle` and it follows the body. The inlet lip does not -- it is
-     * bare metal, which is what a real one often is and is not what this wants.
-     * Giving it the skin material puts it in the same role, so the nacelle
-     * paints as one piece instead of a white barrel with a chrome ring.
-     */
-    if (podded) {
-      eng.traverse((o) => { if (o.isMesh && o.name === 'nacelleLip') o.material = skin; });
-    }
     pod.add(eng);
     pod.position.set(side * d.engineY, engineAxisY, -d.engineX);
     pod.userData.isEnginePod = true;
@@ -410,6 +417,37 @@ export function d8Aircraft(deck, opts = {}) {
     pod.name = side > 0 ? 'starboardPod' : 'portPod';
     g.add(pod); parts.engines.push(pod);
   }
+
+  /**
+   * The cowl's outer line, as a floor for the trough to follow.
+   *
+   * Read off the nacelle that was actually built rather than recomputed, so the
+   * trough cannot drift from the thing it is cradling. `cowlOuter` is published
+   * in the engine's own frame, running from the lip forward to the tail aft;
+   * the pod sits at `engineX`, so a station converts straight across.
+   */
+  const nacelleTrough = (() => {
+    if (!podded) return {};
+    const cowl = parts.engines[0]?.children[0]?.userData?.cowlOuter;
+    if (!cowl?.length) return {};
+    const zOf = (x) => d.engineX - x;
+    const rAt = (x) => {
+      const z = zOf(x);
+      if (z >= cowl[0][0]) return cowl[0][1];
+      for (let i = 0; i < cowl.length - 1; i++) {
+        const a = cowl[i], b = cowl[i + 1];
+        if (z <= a[0] && z >= b[0]) {
+          const t = (z - a[0]) / ((b[0] - a[0]) || 1);
+          return a[1] + (b[1] - a[1]) * t;
+        }
+      }
+      return cowl[cowl.length - 1][1];
+    };
+    return {
+      noseFrom: d.engineX - cowl[0][0],          // the inlet lip's station
+      noseAt: (x) => engineAxisY - rAt(x) - d.ductGap,
+    };
+  })();
 
   /* ---- the duct the engines sit in ------------------------------------ */
   /**
@@ -453,7 +491,15 @@ export function d8Aircraft(deck, opts = {}) {
        * the engine's own station it stood 270 mm above the bottom of the fan,
        * and a third of the nacelle stayed buried.
        */
-      deepFrom: engineNoseX - d.ductGap,
+      /**
+       * Level from the FAN FACE aft, and following the cowl forward of it.
+       *
+       * The fan face is the engine's own origin, so it is `engineX` exactly.
+       * Aft of there the trough is what the afterbody was built around; ahead
+       * of it the floor traces the cowl's outer line out to the inlet lip.
+       */
+      deepFrom: d.engineX,
+      ...(podded ? nacelleTrough : { deepFrom: engineNoseX - d.ductGap }),
       crown: u.crownAt(u.cabinZ[1]),
       blend: blendR,
       // The sheet's triangles, as a target EDGE rather than a count, so they
