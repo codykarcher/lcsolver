@@ -250,13 +250,17 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
         `fins top out at ${fin.max.y.toFixed(2)}`);
   }
   /**
-   * The fins hang by their root TRAILING EDGE, on the body's back upper
-   * corners -- all three coordinates, not just the station.
+   * The fins stand where the SOLVE puts them, laterally and longitudinally.
    *
-   * The station is the solve's doing: it puts the fin's trailing edge on the
-   * body's own. The other two are the channel's: it puts the body's upper
-   * corners there. So the corner is one point that both already own, and the
-   * fin either sits on it or does not.
+   * `y_vt` is the lateral station and it is the number that matters, because
+   * the tailplane rides on the fin tips and the solve aligns its 0.40c spar
+   * with the tip's at one spanwise station. Anywhere else and the tailplane
+   * slides along its own sweep -- 140 mm out when the fins sat on the body's
+   * back corner, which is where this used to require them.
+   *
+   * The corner is still reported, because a fin standing well clear of the body
+   * would be hanging in the air, but it is no longer the thing being asserted:
+   * the solve owns the station and it is 87 mm outboard of the corner here.
    */
   const vt = u.parts.verticalTails.find((f) => f.position.x > 0) ?? u.parts.verticalTails[0];
   const corner = {
@@ -265,11 +269,22 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     z: -d.fuseLength,
   };
   const rootTE = { x: vt.position.x, y: vt.position.y, z: vt.position.z - u.fin.rootChord };
-  const off = Math.hypot(rootTE.x - corner.x, rootTE.y - corner.y, rootTE.z - corner.z);
   console.log(`     fin root trailing edge (${rootTE.x.toFixed(3)}, ${rootTE.y.toFixed(3)}, ` +
-              `${rootTE.z.toFixed(3)}) against the body's back upper corner ` +
+              `${rootTE.z.toFixed(3)}); the body's back upper corner is at ` +
               `(${corner.x.toFixed(3)}, ${corner.y.toFixed(3)}, ${corner.z.toFixed(3)})`);
-  if (off > 2e-3) bad(`the fin root trailing edge is ${(1000 * off).toFixed(0)} mm off the corner`);
+  if (d.finY != null && Math.abs(rootTE.x - d.finY) > 1e-6) {
+    bad(`the fin stands at ${rootTE.x.toFixed(4)} where the solve's y_vt is ${d.finY.toFixed(4)}`);
+  }
+  if (Math.abs(rootTE.z - corner.z) > 2e-3) {
+    bad(`the fin root trailing edge is at ${rootTE.z.toFixed(3)}, not the body's own ${corner.z.toFixed(3)}`);
+  }
+  if (Math.abs(rootTE.y - corner.y) > 2e-3) {
+    bad(`the fin root sits at ${rootTE.y.toFixed(3)}, not on the body's crown ${corner.y.toFixed(3)}`);
+  }
+  // Outboard of the body it would be hanging in the air rather than mounted.
+  if (rootTE.x > corner.x + 0.25) {
+    bad(`the fin stands ${(rootTE.x - corner.x).toFixed(3)} m outboard of the body's corner`);
+  }
 }
 
 /* ---- how it sits ------------------------------------------------------- */

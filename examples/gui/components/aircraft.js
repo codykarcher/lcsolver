@@ -109,6 +109,13 @@ export function deckFromSolve(sol, overrides = {}) {
      * Checked against the solve's own alignment: the fin tip's 0.40c lands at
      * 30.2843, which is the station the solve says the tailplane's spar meets.
      */
+    /**
+     * Where the fins stand, laterally. The solve names it now, and it is not
+     * the same thing as `y_cbar_vt`, which is the MAC's station UP the fin --
+     * the two were briefly equal and reading one for the other would put the
+     * fins at 1.35, straight through nacelles that span 0.17 to 1.85.
+     */
+    finY: typeof sol.y_vt === 'number' ? sol.y_vt : null,
     htSweepAxisTan: g('HT_tan_Lambda'),
     vtSweepAxisTan: g('VT_tan_Lambda'),
     sparAxisFraction: 0.40,

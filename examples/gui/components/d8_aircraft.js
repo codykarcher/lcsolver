@@ -31,7 +31,6 @@ const IN = 0.0254;
  */
 export const D8_CHOICES = {
   wingRootY:     -0.55,   // wing root chord height, in body half-heights
-  finY:           0.62,   // fin root, as a fraction of the body's half-width
   /**
    * Fin cant, degrees outboard from vertical.
    *
@@ -342,7 +341,22 @@ export function d8Aircraft(deck, opts = {}) {
    * is faired in forward and emerges aft.
    */
   const teCornerY = u.crownAt(-d.fuseLength);
-  const teCornerX = u.halfWidthAt(-d.fuseLength);
+  /**
+   * Laterally, where the solve puts them -- `y_vt` -- and not the body's own
+   * corner.
+   *
+   * The corner was the reading while the deck was silent, and it is 1.87 here
+   * against the solve's 1.952. That 85 mm is not cosmetic: the tailplane sits
+   * on the fin tips, and the solve aligns its 0.40c spar with the fin tip's at
+   * one spanwise station. Standing the fins anywhere else slides the tailplane
+   * along its own sweep -- at the corner the join was open by 140 mm.
+   */
+  // The name used to belong to a CHOICE here -- 0.62, a fraction of the body's
+  // half-width -- which nothing read. Left in place it would have shadowed the
+  // deck's metres with a fraction and stood the fins at 0.62 m, inside the
+  // nacelles, on any deck that predates `y_vt`. Deleted rather than renamed:
+  // the solve owns this number now.
+  const teCornerX = d.finY ?? u.halfWidthAt(-d.fuseLength);
   parts.verticalTails = [];
   // Placed symmetrically about the centreline, whatever the count.
   const sides = d.finCount >= 2 ? [1, -1] : [0];
