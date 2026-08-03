@@ -1063,37 +1063,23 @@ export function nacelleDuct({
    */
   const climb = Math.max(0, (crown + rT + 0.06) - axisY);
   const span = Math.max(throatX - fromX, 1e-9);
-  /**
-   * The floor does NOT climb. It is the throat's own, held to the cabin.
-   *
-   * It used to rise over the run, so the cut faded out before it got there and
-   * the U shallowed the whole way forward. But the U is the smallest section
-   * that passes through the nacelle, and a section that is being LOCKED to that
-   * cannot also be moving: its flat, its arcs and its half-width all come off
-   * the throat, and holding the floor is what makes the other three mean
-   * anything.
-   */
-  const loAt = () => axisY;
-  /**
-   * The roof lifts almost at once, and only so the sides can be vertical.
-   *
-   * It is above the body's crown before it starts -- the nacelles stand proud
-   * of the aft crown by a good half metre, so the closed hull's own roof is
-   * already outside the skin at the throat -- which means the whole of this
-   * rise happens where there is nothing to cut and nothing to see. It is short
-   * for the same reason it is smooth: long enough that the swept sheet is not
-   * torn between two rows, short enough that the sides are straight from the
-   * front face of the nacelle rather than a metre later.
-   */
-  const roofSpan = Math.min(span, 0.5 * rT);
+  const riseFloor = (x) => {
+    if (x >= throatX) return 0;
+    const f = Math.max(0, (x - fromX) / span);       // 0 at the cabin, 1 at the throat
+    const k = 1;                                     // slope leaving the cabin
+    return climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
+  };
+  /** The roof is up and out of the body within this much of the run. */
+  const roofSpan = Math.max(span * 0.35, 1e-9);
   const riseRoof = (x) => {
     if (x >= throatX) return 0;
     const f = Math.min(1, Math.max(0, (x - (throatX - roofSpan)) / roofSpan));
     return climb * (1 - f * f * (3 - 2 * f));        // eased at both ends
   };
+  const loAt = (x) => axisY + riseFloor(x);
   const hiAt = (x) => axisY + riseRoof(x);
   /** The middle of the lifted rectangle -- what the section is star-shaped about. */
-  const centreY = (x) => (loAt() + hiAt(x)) / 2;
+  const centreY = (x) => (loAt(x) + hiAt(x)) / 2;
 
   /**
    * Distance from a point to the RECTANGLE the four circle centres span.
@@ -1106,7 +1092,7 @@ export function nacelleDuct({
     const x = -p.z;
     return Math.hypot(
       Math.max(Math.abs(p.x) - spacing, 0),
-      Math.max(loAt() - p.y, 0, p.y - hiAt(x)));
+      Math.max(loAt(x) - p.y, 0, p.y - hiAt(x)));
   };
   const hull = (p) => radiusAt(Math.max(-p.z, throatX)) - toAxis(p);
 
@@ -1128,7 +1114,7 @@ export function nacelleDuct({
   /** The outline at a station, as a closed 2-D loop, sampled by arc length. */
   const outlineAt = (x, n = 160) => {
     const r = radiusAt(Math.max(x, throatX));
-    const lo = loAt(), hi = hiAt(x), h = Math.max(hi - lo, 0);
+    const lo = loAt(x), hi = hiAt(x), h = Math.max(hi - lo, 0);
     const flat = 2 * spacing, quarter = (Math.PI * r) / 2;
     /**
      * The eight pieces, in order, anticlockwise from the bottom-left corner.
@@ -1172,7 +1158,7 @@ export function nacelleDuct({
    */
   const toInward = (px, py, x) => [
     Math.max(-spacing, Math.min(spacing, px)) - px,
-    Math.max(loAt(), Math.min(hiAt(x), py)) - py,
+    Math.max(loAt(x), Math.min(hiAt(x), py)) - py,
   ];
 
   /**
