@@ -150,8 +150,22 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   if (Math.abs(roof - u.engineAxisY) > 0.02) {
     bad(`the channel is open at ${roof.toFixed(3)}, the engine axis is ${u.engineAxisY.toFixed(3)}`);
   }
-  if (Math.abs(wall - (d.engineY + rN + gap)) > 0.03) {
-    bad(`the walls reach ${wall.toFixed(3)}, the engines reach ${(d.engineY + rN).toFixed(3)}`);
+  /**
+   * The walls reach the FINS, not the engines.
+   *
+   * They used to be the same test, because the fins were placed by the model
+   * at the body's own corner and the corner was sized to the engines -- both
+   * ends of the comparison came from one guess. The solve names `y_vt` now, and
+   * the body has to end where the fins stand: they sit on that corner, and a
+   * body sized to the engines instead ends 87 mm inboard of its own fins.
+   *
+   * The engines are then inboard of the trailing edge rather than flush with
+   * it, which is the right way round -- the carved trough holds them, the
+   * corner holds the fins.
+   */
+  const wantWall = d.finY ?? (d.engineY + rN + gap);
+  if (Math.abs(wall - wantWall) > 0.03) {
+    bad(`the walls reach ${wall.toFixed(3)} where the fins stand at ${wantWall.toFixed(3)}`);
   }
 
   /**

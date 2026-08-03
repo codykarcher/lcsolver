@@ -482,6 +482,17 @@ function nacelleReach(craft, useDuct) {
       const a = o.geometry.getAttribute('position'), q = new THREE.Vector3();
       for (let i = 0; i < a.count; i++) {
         q.fromBufferAttribute(a, i).applyMatrix4(m);
+        /**
+         * The body's own trailing edge does not count.
+         *
+         * `depthInside` steps there -- the section has a real width right up to
+         * the last station and nothing at all aft of it -- so a cut placed on
+         * that step lands on a face the body has no depth behind. 175 vertices
+         * of 168,570 sit exactly on it and read as 39 mm buried in a body that
+         * ends where they are. Skipped for the same reason tangency was: it is
+         * a boundary, not material.
+         */
+        if (Math.abs(-q.z - cu.deck.fuseLength) < 1e-3) continue;
         const inBody = cf.depthInside(q.x, q.y, q.z);
         if (!(inBody > 0)) continue;
         // Inside the body -- but only solid if it is also outside the duct.

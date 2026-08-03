@@ -23,6 +23,15 @@ const DEG = Math.PI / 180;
 const IN = 0.0254;
 
 /**
+ * Clearance the fuselage's own channel section leaves round what it holds.
+ *
+ * `fuselage.js` owns the default; it is repeated here because the afterbody's
+ * width is worked back from where the fins stand, and that arithmetic has to
+ * know the same number.
+ */
+const CHANNEL_GAP = 0.02;
+
+/**
  * The numbers a sizing solve is two-dimensional about.
  *
  * Read against the general arrangement rather than invented: the fins stand
@@ -226,19 +235,27 @@ export function d8Aircraft(deck, opts = {}) {
       noseWidth: halfW / halfH,
       tailD: d.coneLength / (2 * halfH),
       /**
-       * The afterbody narrows in plan until its trailing edge just spans the
-       * engines.
+       * The afterbody narrows in plan until its trailing edge reaches the FINS.
        *
        * Left at the cabin's width -- which is what the standalone body does,
        * and is right for a body with nothing on the back of it -- the planform
        * is a constant-width slab and the engines sit on a shelf that runs on
-       * past them to either side. Taking the width from the engines instead
-       * makes the back of the aeroplane end where they do, so the afterbody
-       * reads as the thing carrying them rather than as a slab they happen to
-       * be on. Derived from the deck, not chosen: it is the engine's outer
-       * extent, in the half-heights this parameter is measured in.
+       * past them to either side. So it is taken from something on the back of
+       * the aeroplane, and the right something is the fin station.
+       *
+       * It used to be the engines' outer extent, which was the best available
+       * while the fins were placed by this file too -- the two agreed because
+       * both came from the same guess. Now the solve names `y_vt` and they do
+       * not: the fins stand at 1.952 and the engines reach 1.847, so a body
+       * sized to the engines ends 87 mm inboard of its own fins and they hang
+       * off the corner in mid-air.
+       *
+       * The fins are what the body has to carry, so the body ends where they
+       * stand. The engines then sit inboard of the trailing edge rather than
+       * flush with it, which is the correct way round: the trough holds them
+       * and the corner holds the fins.
        */
-      tailWidth: (d.tailSpan * (d.engineY + d.nacelleDia / 2)) / halfH,
+      tailWidth: (d.finY ?? d.tailSpan * (d.engineY + d.nacelleDia / 2)) / halfH,
       /**
        * The afterbody holds its DEPTH back to the engines, then closes.
        *
@@ -265,9 +282,25 @@ export function d8Aircraft(deck, opts = {}) {
       // The plan narrows on its own law, and earlier than the depth, so the
       // afterbody is no wider than the engines by the time it has to hold them.
       tailWidthA: d.planTaperA, tailWidthB: d.planTaperB,
-      // And the afterbody closes into the channel that holds the engines: a
-      // flat floor with sides rounding up at their own radius.
-      channel: { x: d.engineY, y: engineAxisY, r: d.nacelleDia / 2 },
+      /**
+       * And the afterbody closes into a channel: a flat floor with sides
+       * rounding up at the engines' own radius.
+       *
+       * The SPACING is set so the hull reaches the fins, not so the rounds sit
+       * on the engines. This is the section that decides the body's width at
+       * the trailing edge -- `tailWidth` above is overridden here, since a
+       * station this far aft is all channel -- and the width it has to make is
+       * the fin station, because that is what the corner carries.
+       *
+       * The rounds no longer sitting exactly on the engines costs nothing now:
+       * the trough the engines lie in is CARVED and follows the nacelle's own
+       * inner line. This section only has to be the outer shape.
+       */
+      channel: {
+        x: d.finY != null ? d.finY - (d.nacelleDia / 2 + CHANNEL_GAP) : d.engineY,
+        y: engineAxisY,
+        r: d.nacelleDia / 2,
+      },
       /**
        * The run starts 1.5 tailcone-lengths off the tail -- so it begins well
        * forward of the cone, where there is length to climb in -- and runs
