@@ -753,6 +753,41 @@ function snapRim(geometry, edges, tol = 0.15) {
  * aeroplane is still being assembled and nothing has been through a render yet,
  * so the world matrices are whatever they were left at.
  */
+/**
+ * Would `carveInto` remove anything? One pass over the vertices, not the
+ * triangles.
+ *
+ * Worth asking first because the answer is often no and the carve is not cheap.
+ * The nacelles are the case in point: the duct's cradle was built to hold a
+ * cylinder of exactly their diameter, so with the duct carved they clear it
+ * entirely and the carve is a no-op -- but it still costs 0.8 s to establish
+ * that by cutting 35,840 triangles against three surfaces. Testing the vertices
+ * first is about ten times cheaper.
+ *
+ * A triangle whose corners are all outside can still bulge through, so this can
+ * say "nothing" when a sliver would have gone. That sliver is inside the body
+ * either way, where the body's own skin hides it.
+ */
+export function wouldCarve(root, fields, base = new THREE.Matrix4()) {
+  let hit = false;
+  const walk = (o, parent) => {
+    if (hit) return;
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    const a = o.isMesh && o.geometry?.getAttribute('position');
+    if (a) {
+      const q = new THREE.Vector3();
+      for (let i = 0; i < a.count; i++) {
+        q.fromBufferAttribute(a, i).applyMatrix4(m);
+        if (fields.every((f) => f(q) > 0)) { hit = true; return; }
+      }
+    }
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return hit;
+}
+
 export function carveInto(root, fields, base = new THREE.Matrix4()) {
   const out = [];
   const walk = (o, parent) => {

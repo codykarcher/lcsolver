@@ -15,9 +15,9 @@
 import * as THREE from 'three';
 import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
-import { bareTurbofan } from './engines.js';
+import { bareTurbofan, turbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
-import { carveDuct, carveInto } from './carve.js';
+import { carveDuct, carveInto, wouldCarve } from './carve.js';
 
 const DEG = Math.PI / 180;
 const IN = 0.0254;
@@ -90,6 +90,13 @@ export const D8_CHOICES = {
    * open up and the worst gap goes from 18 to 45 mm.
    */
   ductBlend:      0.08,
+  /**
+   * Put the engines in nacelles, and cut away the part the body already fills.
+   *
+   * A toggle because the bare engine is what the afterbody was shaped against,
+   * and it is worth being able to see the two side by side.
+   */
+  nacelles:       true,
   /**
    * Target triangle edge, in metres, for the body and the duct together.
    *
@@ -346,14 +353,29 @@ export function d8Aircraft(deck, opts = {}) {
   g.add(ht); parts.horizontalTail = ht;
 
   /* ---- engines, on top of the body between the fins ------------------- */
-  // Let into the upper skin rather than hung under a wing: a D8's nacelles sit
-  // on the afterbody, which is the whole point of the configuration.
-  // BARE, not podded. On a D8 the nacelle is not a separate body slung under a
-  // wing -- the afterbody is the fairing, and the engine is let into it. A
-  // podded turbofan brings its own cowl and reads as an engine parked on the
-  // fuselage rather than built into it.
-  const probe = bareTurbofan({ rFan: 1, bypassRatio: 9 });
-  const rFan = (d.nacelleDia / 2) / probe.userData.rMax;
+  /**
+   * Nacelled, and then cut back to whatever the body does not already contain.
+   *
+   * Bare was the earlier reading, and the reasoning was that on a D8 the
+   * afterbody IS the fairing, so a cowl would read as an engine parked on the
+   * fuselage. That is right about the buried part and wrong about the rest: the
+   * half standing proud of the trough is a nacelle like any other, and without
+   * one the fan case simply ends in mid-air.
+   *
+   * So the whole nacelle is built and the part inside solid body is removed --
+   * which is the same carve the duct uses, run the other way round.
+   *
+   * Sized on the NACELLE, not the fan. `nacelleDia` is what the solve calls it,
+   * and it is also what the duct's cradle was built to hold: floor a clearance
+   * below it, walls on its outer extent, corners rounding at its radius. With
+   * the cowl outside the fan the fan comes out smaller, which is correct -- the
+   * bare engine had been standing in for the whole installation.
+   */
+  const podded = opts.nacelles ?? d.nacelles;
+  const probe = podded ? turbofan({ rFan: 1, bypassRatio: 9 })
+                       : bareTurbofan({ rFan: 1, bypassRatio: 9 });
+  const rFan = (d.nacelleDia / 2)
+    / (podded ? probe.userData.nacelleMaxRadius : probe.userData.rMax);
   // Length from the deck too, not left to the component's own proportions. A
   // D8's propulsor is short and fat -- 1.24 m long on a 1.68 m diameter, an
   // aspect of 0.74 where a podded engine is nearer 1.8 -- because the duct is
@@ -363,7 +385,8 @@ export function d8Aircraft(deck, opts = {}) {
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
-    pod.add(bareTurbofan({ rFan, bypassRatio: 9 }));
+    pod.add(podded ? turbofan({ rFan, bypassRatio: 9 })
+                   : bareTurbofan({ rFan, bypassRatio: 9 }));
     pod.position.set(side * d.engineY, engineAxisY, -d.engineX);
     pod.userData.isEnginePod = true;
     pod.userData.side = side;
@@ -458,6 +481,36 @@ export function d8Aircraft(deck, opts = {}) {
     // faces first spent nine on the same answer.
     for (const vt of parts.verticalTails) {
       carveInto(vt, [(p) => u.depthInside(p.x, p.y, p.z), ...duct.faces]);
+    }
+
+    /**
+     * And the nacelles lose whatever the body already fills.
+     *
+     * TWO passes, not one, and the reason is what "solid body" means here. The
+     * body's own field says nothing about the duct, so a point sitting in the
+     * trough reads as inside the body even though that material was carved
+     * away. Cutting the nacelle on that field alone would delete exactly the
+     * half that is supposed to show.
+     *
+     * What has to go is inside the body AND outside the duct. Outside the duct
+     * is `floor <= 0 OR wall <= 0` -- a union, which one pass cannot express,
+     * since a pass removes where every field is positive at once. Run as two
+     * passes the removals add up to the union: inside-and-below-the-floor, then
+     * inside-and-outboard-of-the-walls.
+     */
+    const body = (p) => u.depthInside(p.x, p.y, p.z);
+    for (const pod of parts.engines) {
+      for (const face of duct.faces) {
+        const fields = [body, (p) => -face(p)];
+        if (wouldCarve(pod, fields)) carveInto(pod, fields);
+      }
+    }
+  } else {
+    // No duct, so nothing has been carved out of the body and everything inside
+    // it is solid. One pass does it.
+    const body = (p) => u.depthInside(p.x, p.y, p.z);
+    for (const pod of parts.engines) {
+      if (wouldCarve(pod, [body])) carveInto(pod, [body]);
     }
   }
 

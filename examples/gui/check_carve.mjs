@@ -17,6 +17,7 @@ import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { deckFromSolve } from './components/aircraft.js';
 import { d8Aircraft } from './components/d8_aircraft.js';
+import { turbofan } from './components/engines.js';
 import { ductVolume, clipTriangles } from './components/carve.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_d8_solve.json', import.meta.url), 'utf8'));
@@ -133,10 +134,19 @@ function deepestBurial(volume) {
   }
   return worst === -Infinity ? 0 : worst;
 }
-const wasBuried = deepestBurial(null), nowBuried = deepestBurial(duct);
-console.log(`nacelle reaches ${(1000 * wasBuried).toFixed(0)} mm into solid material before, ` +
-            `${(1000 * nowBuried).toFixed(2)} mm after`);
-if (nowBuried > 1e-3) bad(`the nacelle is still ${(1000 * nowBuried).toFixed(0)} mm inside the body`);
+/**
+ * The engine as a CYLINDER of its widest radius, over its whole length.
+ *
+ * Fair for the bare engine this was written against, and wrong for a nacelle:
+ * a cowl is that wide only at one station and tapers away from it, so the
+ * cylinder pokes 7 mm through a duct wall the nacelle itself clears by 0. The
+ * cylinder is kept for the BEFORE reading, where it says something true and
+ * useful -- how much body there was to get out of the way -- and the AFTER
+ * reading is taken from the engine's own geometry, in check 8.
+ */
+const wasBuried = deepestBurial(null);
+console.log(`a cylinder of the engine's widest radius sat ${(1000 * wasBuried).toFixed(0)} mm ` +
+            `into the body before the carve`);
 if (wasBuried < 0.1) bad('nothing was buried to begin with -- the test proves nothing');
 
 /* ---- 3. the shell is closed along the cut ------------------------------- */
@@ -430,6 +440,54 @@ if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBle
 // a degree or two either side of 90 depending on where the rows fall.
 if (turnSquare < 80) bad('the unblended lip was not square -- the test proves nothing');
 
+/* ---- 8. the nacelles keep only what the body does not already fill ------- */
+/**
+ * The engines are nacelled now, and the nacelle is cut back to whatever is not
+ * inside solid body -- solid meaning inside the body AND outside the duct,
+ * since the trough is not body any more.
+ *
+ * With the duct carved this turns out to remove nothing, and that is the right
+ * answer rather than a broken test: the duct's cradle was built to hold a
+ * cylinder of exactly `nacelleDia`, so a nacelle of that diameter clears it.
+ * The control below is therefore run with the duct OFF, where the same nacelle
+ * is 69 per cent buried and there is plenty to take away.
+ */
+function nacelleReach(craft, useDuct) {
+  const cu = craft.userData, cf = cu.parts.fuselage.userData;
+  const vol = useDuct && cf.duct
+    ? ductVolume({ ...cf.duct, depthInside: cf.depthInside }) : null;
+  craft.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(craft.matrixWorld).invert();
+  let worst = 0;
+  for (const pod of cu.parts.engines) {
+    pod.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+      const a = o.geometry.getAttribute('position'), q = new THREE.Vector3();
+      for (let i = 0; i < a.count; i++) {
+        q.fromBufferAttribute(a, i).applyMatrix4(m);
+        const inBody = cf.depthInside(q.x, q.y, q.z);
+        if (!(inBody > 0)) continue;
+        // Inside the body -- but only solid if it is also outside the duct.
+        const outOfDuct = vol ? -vol.depth(q) : inBody;
+        worst = Math.max(worst, Math.min(inBody, outOfDuct));
+      }
+    });
+  }
+  return worst;
+}
+{
+  const nac = cut.userData.parts.engines[0];
+  const box = new THREE.Box3().setFromObject(nac);
+  const r = Math.max(Math.abs(box.max.x - d.engineY), Math.abs(box.min.x - d.engineY));
+  console.log(`nacelle radius ${r.toFixed(3)} m, deck says ${(d.nacelleDia / 2).toFixed(3)}; ` +
+              `reaches ${(1000 * nacelleReach(cut, true)).toFixed(1)} mm into solid body`);
+  if (Math.abs(r - d.nacelleDia / 2) > 0.02) {
+    bad(`the nacelle is ${r.toFixed(3)} m where the deck says ${(d.nacelleDia / 2).toFixed(3)}`);
+  }
+  if (nacelleReach(cut, true) > 1e-3) bad('the nacelle is still inside solid body');
+}
+
 /* ---- negative controls -------------------------------------------------- */
 /**
  * Each check, run against geometry it is supposed to reject. A check that has
@@ -508,6 +566,64 @@ console.log('\nnegative controls');
   console.log(`  recomputed normals leave ${(100 * f).toFixed(0)}% flat-shaded` +
               (f > 0.10 ? '  ok' : '  NOT DETECTED'));
   if (!(f > 0.10)) bad('control: face-normal shading was not detected');
+}
+
+{
+  // With no duct the body is whole, the nacelle is deep inside it, and the
+  // carve has real work to do. Both halves are checked: that it WAS buried,
+  // and that afterwards it is not.
+  const whole = d8Aircraft(deck, { sitOnGround: false, ductCarve: false, nacelles: false });
+  const wf = whole.userData.parts.fuselage.userData;
+  const probe = turbofan({ rFan: 1, bypassRatio: 9 });
+  const rf = (d.nacelleDia / 2) / probe.userData.nacelleMaxRadius;
+  const raw = new THREE.Group();
+  raw.add(turbofan({ rFan: rf, bypassRatio: 9 }));
+  raw.position.set(d.engineY, whole.userData.engineAxisY, -d.engineX);
+  raw.updateMatrixWorld(true);
+  let tot = 0, inside = 0;
+  raw.traverse((o) => {
+    if (!o.isMesh) return;
+    const a = o.geometry.getAttribute('position'), q = new THREE.Vector3();
+    for (let i = 0; i < a.count; i++) {
+      q.fromBufferAttribute(a, i).applyMatrix4(o.matrixWorld);
+      tot++;
+      if (wf.depthInside(q.x, q.y, q.z) > 0) inside++;
+    }
+  });
+  drop(whole);
+  const cutWhole = d8Aircraft(deck, { sitOnGround: false, ductCarve: false, nacelles: true });
+  const cf = cutWhole.userData.parts.fuselage.userData;
+  cutWhole.updateMatrixWorld(true);
+  const inv2 = new THREE.Matrix4().copy(cutWhole.matrixWorld).invert();
+  let tot2 = 0, in2 = 0;
+  for (const pod of cutWhole.userData.parts.engines) {
+    pod.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = new THREE.Matrix4().multiplyMatrices(inv2, o.matrixWorld);
+      const a = o.geometry.getAttribute('position'), q = new THREE.Vector3();
+      for (let i = 0; i < a.count; i++) {
+        q.fromBufferAttribute(a, i).applyMatrix4(m);
+        tot2++;
+        if (cf.depthInside(q.x, q.y, q.z) > 1e-3) in2++;
+      }
+    });
+  }
+  drop(cutWhole);
+  /**
+   * Measured as the FRACTION left inside, not the depth of the deepest scrap.
+   *
+   * The clipper decides on vertex signs, so a triangle whose corners are both
+   * outside can still bulge through the skin between them, and a handful of
+   * those survive -- under one per cent of the cowl, and every one of them
+   * inside the body, where the body's own skin hides it. Asking for zero depth
+   * fails a carve that has done its job.
+   */
+  const before = 100 * inside / tot, after = 100 * in2 / tot2;
+  console.log(`  with no duct a nacelle is ${before.toFixed(0)}% buried, ` +
+              `and carves back to ${after.toFixed(1)}%` +
+              (before > 20 && after < 2 ? '  ok' : '  NOT DETECTED'));
+  if (!(before > 20)) bad('control: the nacelle was never buried -- the test proves nothing');
+  if (!(after < 2)) bad(`control: the carve left ${after.toFixed(1)}% of the nacelle inside the body`);
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall checks passed');

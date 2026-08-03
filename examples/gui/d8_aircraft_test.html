@@ -68,6 +68,7 @@
 
   <h2>view</h2>
   <div class="check"><input type="checkbox" id="duct" checked><label for="duct">carve the engine duct</label></div>
+  <div class="check"><input type="checkbox" id="nac" checked><label for="nac">nacelles round the engines</label></div>
   <p class="hint" id="ductNote"></p>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
   <div class="check"><input type="checkbox" id="sit" checked><label for="sit">sit on the gear</label></div>
@@ -286,6 +287,7 @@ function build() {
     detail: false,
     sitOnGround: el('sit').checked,
     ductCarve: el('duct').checked,
+    nacelles: el('nac').checked,
   });
   scene.add(craft);
   const u = craft.userData;
@@ -442,7 +444,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'duct'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'duct', 'nac'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {
