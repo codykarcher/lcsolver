@@ -946,6 +946,190 @@ export function carveInto(root, fields, base = new THREE.Matrix4()) {
 }
 
 /**
+ * Close the hole a carve leaves in a shell.
+ *
+ * `carveOut` trims triangles; it does not know the difference between a surface
+ * and a solid. On the body that is fine, because the duct's own sheet is built
+ * to stand in the opening. On a fin it is not: the fin is a closed shell, the
+ * cut takes a bite out of its root, and what is left is open along the bite --
+ * 147 edges over a metre and a half of it -- so you see straight into the
+ * inside of the fin.
+ *
+ * The hole is filled from the LOOP, not from the surfaces that made it. The
+ * first attempt triangulated it in the duct's own coordinates, which is exact
+ * where the boundary is the duct -- but a fin loses what is inside the body AND
+ * inside the cut, so most of that boundary is the body's skin and only the rest
+ * is the duct's. A chart belonging to one of them cannot describe a loop that
+ * runs along both. Its own smallest extent can: the bite is 1.5 m long, half a
+ * metre deep and 110 mm thick, so dropping the thin axis flattens it into a
+ * simple polygon, and an ear clip on that gives triangles whose corners are the
+ * boundary's own, still exactly where the clipper solved for them.
+ *
+ * Winding comes from the shell, not from a vote. A boundary edge is walked once
+ * by the one triangle that owns it, so the patch that closes the surface has to
+ * walk it the other way -- fill the loop reversed and the normals come out
+ * right by construction.
+ *
+ * ONLY FOR SHELLS THAT WERE CLOSED BEFORE THE CARVE. Every loop gets filled,
+ * because a filter that asked whether a loop lay on the cut is what failed
+ * above. A nacelle has 1491 open edges before anything touches it -- it is
+ * built from rings and discs, and the biggest of those holes is the intake --
+ * so calling this on one would weld the engine shut.
+ */
+export function capCut(root, base = new THREE.Matrix4()) {
+  let added = 0;
+  const walk = (o, parent) => {
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    if (o.isMesh && o.geometry?.getAttribute('position')) added += capMesh(o.geometry);
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return added;
+}
+
+function capMesh(geometry) {
+  const pos = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  const n = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const key = (p) => `${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)}`;
+  const V = (i) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+
+  // Edges used by exactly one triangle, kept in the direction that triangle
+  // walks them -- which is what lets the loops chain without a search, and what
+  // says which way round the patch goes.
+  const once = new Map();
+  for (let t = 0; t + 2 < n; t += 3) {
+    const v = [V(at(t)), V(at(t + 1)), V(at(t + 2))];
+    for (let e = 0; e < 3; e++) {
+      const a = v[e], b = v[(e + 1) % 3];
+      const ka = key(a), kb = key(b);
+      if (ka === kb) continue;                          // a degenerate edge
+      const k = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      if (once.has(k)) once.delete(k); else once.set(k, [a, b, ka, kb]);
+    }
+  }
+  if (once.size < 3) return 0;
+
+  /**
+   * Chained by consuming EDGES, not by marking vertices off.
+   *
+   * Two loops can meet at a single vertex -- the bite is pinched in the middle
+   * where the body's skin and the duct's wall cross -- and a walk that retires
+   * the vertex on first use strands the second loop. It left three edges open,
+   * a 20 mm hole, out of the 147 this closes.
+   */
+  const edges = [...once.values()];
+  const byStart = new Map();
+  edges.forEach((e, i) => {
+    if (!byStart.has(e[2])) byStart.set(e[2], []);
+    byStart.get(e[2]).push(i);
+  });
+  const used = new Array(edges.length).fill(false);
+  const take = (k) => {
+    const list = byStart.get(k);
+    if (!list) return -1;
+    while (list.length) { const i = list.pop(); if (!used[i]) return i; }
+    return -1;
+  };
+
+  const tris = [];
+  for (let s0 = 0; s0 < edges.length; s0++) {
+    if (used[s0]) continue;
+    const loop = [];
+    let i = s0;
+    const startKey = edges[s0][2];
+    while (i >= 0) {
+      used[i] = true;
+      loop.push(edges[i][0]);
+      const k = edges[i][3];
+      if (k === startKey) break;
+      i = take(k);
+    }
+    if (loop.length < 3) continue;
+    loop.reverse();                                     // the way the patch goes
+    earClip(loop, tris);
+  }
+  if (!tris.length) return 0;
+
+  const oldN = geometry.getAttribute('normal');
+  const flat = [], flatN = [];
+  for (let t = 0; t < n; t++) {
+    const i = at(t);
+    flat.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+    if (oldN) flatN.push(oldN.getX(i), oldN.getY(i), oldN.getZ(i));
+  }
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
+  for (const t of tris) {
+    // Flat, and the triangle's own: a cut face is a cut face, and averaging it
+    // into the fin's aerofoil would smear the two into each other.
+    e1.subVectors(t[1], t[0]); e2.subVectors(t[2], t[0]);
+    nrm.crossVectors(e1, e2);
+    // A sliver with no area still gets written. It draws nothing -- that is
+    // what no area means -- but leaving it out leaves its three edges open, and
+    // the whole point of the patch is that nothing is open. One of them was:
+    // three collinear points, 27 mm long, the last hole of 147.
+    if (nrm.lengthSq() < 1e-20) nrm.set(0, 0, 1); else nrm.normalize();
+    for (const q of t) { flat.push(q.x, q.y, q.z); flatN.push(nrm.x, nrm.y, nrm.z); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+  if (oldN) g.setAttribute('normal', new THREE.Float32BufferAttribute(flatN, 3));
+  const keep = geometry.userData;
+  geometry.copy(g);
+  geometry.userData = keep;
+  g.dispose();
+  return tris.length;
+}
+
+/** Ear clip, flattened down the loop's own thinnest direction. */
+function earClip(loop, out) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of loop) {
+    const c = [p.x, p.y, p.z];
+    for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], c[i]); hi[i] = Math.max(hi[i], c[i]); }
+  }
+  let drop = 0;
+  for (let i = 1; i < 3; i++) if (hi[i] - lo[i] < hi[drop] - lo[drop]) drop = i;
+  const ax = [0, 1, 2].filter((i) => i !== drop);
+  const uv = loop.map((p) => {
+    const c = [p.x, p.y, p.z];
+    return [c[ax[0]], c[ax[1]]];
+  });
+  const idx = loop.map((_, i) => i);
+  const area2 = (a, b, c) => (uv[b][0] - uv[a][0]) * (uv[c][1] - uv[a][1])
+                           - (uv[b][1] - uv[a][1]) * (uv[c][0] - uv[a][0]);
+  let sign = 0;
+  for (let i = 1; i + 1 < idx.length; i++) sign += area2(idx[0], idx[i], idx[i + 1]);
+  const ccw = sign >= 0 ? 1 : -1;
+  const inside = (a, b, c, q) =>
+    ccw * area2(a, b, q) >= 0 && ccw * area2(b, c, q) >= 0 && ccw * area2(c, a, q) >= 0;
+  let guard = idx.length * idx.length + 8;
+  while (idx.length > 3 && guard-- > 0) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = idx[(i + idx.length - 1) % idx.length];
+      const b = idx[i];
+      const c = idx[(i + 1) % idx.length];
+      if (ccw * area2(a, b, c) <= 0) continue;                 // reflex or flat
+      let clean = true;
+      for (const q of idx) {
+        if (q === a || q === b || q === c) continue;
+        if (inside(a, b, c, q)) { clean = false; break; }
+      }
+      if (!clean) continue;
+      out.push([loop[a], loop[b], loop[c]]);
+      idx.splice(i, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) return;                        // self-intersecting once flattened
+  }
+  if (idx.length === 3) out.push([loop[idx[0]], loop[idx[1]], loop[idx[2]]]);
+}
+
+/**
  * Give the sheet the body's own normal where the two meet.
  *
  * The blend is in the geometry, but shading is what the eye reads as an edge,

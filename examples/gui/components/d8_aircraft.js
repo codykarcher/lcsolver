@@ -17,7 +17,7 @@ import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
 import { bareTurbofan, turbofan, embeddedTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
-import { carveInto, wouldCarve, carveOut,
+import { carveInto, capCut, wouldCarve, carveOut,
          nacelleDuct, nacelleDuctSurface } from './carve.js';
 
 const DEG = Math.PI / 180;
@@ -618,6 +618,10 @@ export function d8Aircraft(deck, opts = {}) {
        */
       for (const vt of parts.verticalTails) {
         for (const fields of duct.passes) carveInto(vt, [body, ...fields]);
+        // And close what that opened. A fin is a shell, so the bite the cut
+        // takes out of its root leaves it open along the bite and you see
+        // straight into it; the face that belongs there is the cut surface.
+        capCut(vt);
       }
       for (const pod of parts.engines) {
         for (let round = 0; round < 2; round++) {

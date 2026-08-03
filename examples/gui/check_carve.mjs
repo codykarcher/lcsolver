@@ -275,6 +275,31 @@ const floorEdge = [
   ...(fu.duct.front ? boundary(fu.duct.front.geometry) : []),
 ];
 console.log(`cut edge: ${skinEdge.length} open edges on the skin, ${floorEdge.length} on the floor`);
+
+/**
+ * The FINS come out of it closed.
+ *
+ * A fin is a shell and the cut takes a bite out of its root, so trimming it
+ * leaves it open along the bite -- 147 edges over a metre and a half, and you
+ * see straight into the inside of the fin. Measured against the uncut fin,
+ * which is watertight, so any open edge at all is the carve's.
+ *
+ * Not asked of the nacelle: that one has 1491 open edges before anything
+ * touches it, the intake among them, and it is meant to.
+ */
+{
+  const openEdges = (root) => {
+    let total = 0;
+    root.traverse((o) => { if (o.isMesh) total += boundary(o.geometry).length; });
+    return total;
+  };
+  const before = openEdges(plain.userData.parts.verticalTails[0]);
+  const after = openEdges(fu.parts ? fu.parts.verticalTails[0]
+                                   : cut.userData.parts.verticalTails[0]);
+  console.log(`fin: ${before} open edges uncut, ${after} carved`);
+  if (before) bad(`the uncut fin is already open at ${before} edges -- nothing to compare against`);
+  if (after) bad(`the carve left the fin open at ${after} edges`);
+}
 const nearest = (q, set) => set.reduce((m, s) => Math.min(m, toSegment(q, s)), Infinity);
 const TOL = 0.01;                                // 10 mm on a 30 m aeroplane
 const cutPoints = new Map();
