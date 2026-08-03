@@ -736,7 +736,7 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
     }
   }
   const row = nu + 1;
-  for (let i = 0; i < nx; i++) {
+  for (let i = 0; i < rows.length - 1; i++) {
     for (let j = 0; j < nu; j++) {
       const a = i * row + j, b = a + 1, c = a + row, e = c + 1;
       idx.push(a, c, b, b, c, e);
@@ -1069,8 +1069,21 @@ export function nacelleDuct({
     const k = 1;                                     // slope leaving the cabin
     return climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
   };
-  /** The roof is up and out of the body within this much of the run. */
-  const roofSpan = Math.max(span * 0.35, 1e-9);
+  /**
+   * The roof is up and out of the body within this much of the run.
+   *
+   * Short, and measured off the throat rather than off the run, because what it
+   * has to beat is the arc: until the roof is above the crown the section is
+   * still circling back over the widest point, and what shows in the upper
+   * surface is the top of a circle rather than two straight lines. Over a third
+   * of the run that took 400 mm to establish. Four tenths of the throat radius
+   * has it done by the first station past the nacelle's front face.
+   *
+   * It can be this abrupt because none of it happens in the skin: the nacelles
+   * stand proud of the aft crown, so the closed hull's own roof is already
+   * outside the body at the throat and the entire rise is in open air.
+   */
+  const roofSpan = Math.min(span, Math.max(0.4 * rT, 1e-9));
   const riseRoof = (x) => {
     if (x >= throatX) return 0;
     const f = Math.min(1, Math.max(0, (x - (throatX - roofSpan)) / roofSpan));
@@ -1169,7 +1182,7 @@ export function nacelleDuct({
    * one surface at a time through `passes`; this is for asking about a point.
    */
   const depth = (p) => Math.min(hull(p), -p.z - fromX);
-  return { axisY, spacing, rT, throatX, fromX, toX, crown, climb,
+  return { axisY, spacing, rT, throatX, fromX, toX, crown, climb, roofSpan,
            radiusAt, centreY, loAt, hiAt, toInward,
            passes, inside, depth, outlineAt, hull };
 }
@@ -1193,16 +1206,63 @@ function arcPt(cx, cy, r, th0, f) {
  * surface. Built as a ring: both outlines are star-shaped about the middle of
  * the flat, so one ray finds a point on each.
  */
-export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = 160 } = {}) {
+export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = null } = {}) {
   const pos = [], idx = [];
   const x0 = duct.fromX, x1 = duct.toX + 0.2;
   const nx = 2 * Math.max(8, Math.round((x1 - x0) / edge / 2));
+  /**
+   * Samples around the section, from the LONGEST section there is.
+   *
+   * It was a fixed 160, set when every station was two circles and a flat. The
+   * verticals put another three and a half metres into the perimeter without
+   * putting anything into the count, so the sheet went from 50 mm chords to
+   * 76 mm while the body around it stayed at 50. This is for that and nothing
+   * else: it does not close the seam, which was measured before and after and
+   * did not move. The wall is visible down the whole slot and it should be
+   * tessellated like everything else that is.
+   *
+   * One count for all the rows, because the sweep joins sample j of one row to
+   * sample j of the next; sizing it per row would shear the sheet.
+   */
+  if (nu == null) {
+    let perim = 0;
+    for (let i = 0; i <= 24; i++) {
+      const loop = duct.outlineAt(x0 + (x1 - x0) * (i / 24), 96);
+      let p = 0;
+      for (let j = 0; j < loop.length; j++) {
+        const a = loop[j], b = loop[(j + 1) % loop.length];
+        p += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      perim = Math.max(perim, p);
+    }
+    nu = 2 * Math.max(8, Math.round(perim / edge / 2));
+  }
+  /**
+   * Stations: even, but crowded where the roof goes up.
+   *
+   * Everywhere else the outline changes slowly enough that rows a skin
+   * triangle apart describe it. Across the roof's rise it does not: the
+   * section goes from closed to a metre and a half of vertical wall in a
+   * third of a metre, and evenly spaced rows there give a sheet whose rim is a
+   * coarse polygon where the skin was cut on the exact curve. Worth four of
+   * the seam's unclosed vertices, 26 down to 22 -- not the whole of it, but
+   * the part that was the drawing of the cut rather than the cut.
+   */
+  const stations = [];
+  for (let i = 0; i <= nx; i++) stations.push(x0 + (x1 - x0) * (i / nx));
+  if (duct.roofSpan > 0) {
+    const a = duct.throatX - duct.roofSpan, b = duct.throatX;
+    const fine = Math.max(6, Math.round((b - a) / (edge / 6)));
+    for (let i = 0; i <= fine; i++) stations.push(a + (b - a) * (i / fine));
+  }
+  stations.sort((p, q) => p - q);
   const rows = [];
-  for (let i = 0; i <= nx; i++) {
+  for (let i = 0; i < stations.length; i++) {
     // A station is nudged off the join so a row never lands exactly on the
     // step, where the outline is two different loops depending on the side.
-    let x = x0 + (x1 - x0) * (i / nx);
+    let x = stations[i];
     if (Math.abs(x - duct.throatX) < 1e-6) x += 1e-6;
+    if (i && Math.abs(x - stations[i - 1]) < 1e-9) continue;   // no zero-height band
     rows.push(duct.outlineAt(x, nu).map(([px, py]) => new THREE.Vector3(px, py, -x)));
   }
   const vid = new Map();
@@ -1215,7 +1275,7 @@ export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = 160 } 
     vid.set(k, n);
     return n;
   };
-  for (let i = 0; i < nx; i++) {
+  for (let i = 0; i < rows.length - 1; i++) {
     for (let j = 0; j < nu; j++) {
       const j2 = (j + 1) % nu;
       const a = id(i, j), b = id(i, j2), c = id(i + 1, j), e = id(i + 1, j2);
