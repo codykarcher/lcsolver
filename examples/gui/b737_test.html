@@ -236,7 +236,11 @@ function applyGear() {
 // The deck is READ, not written here. Nothing between the solve and the drawing
 // is retyped, which is why the areas below agree to machine precision rather
 // than to however carefully I copied them.
-const SOLVE_FILE = './decks/b737_conventional_solve.json';
+// `?deck=<url>` overrides it, which is how the show_* scripts point the page
+// at a solve that lives anywhere on disk: they serve it at a fixed URL rather
+// than copying it in here, so the file being drawn is the file you named.
+const SOLVE_FILE = new URLSearchParams(location.search).get('deck')
+  ?? './decks/b737_conventional_solve.json';
 let deck = null;
 
 /**
