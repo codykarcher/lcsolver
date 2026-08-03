@@ -2061,16 +2061,18 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           [x_vt_le + vt.c_root_vt == fu.l_fuse,             # [SP] SigEq
            xCG + vt.dx_lead_vt <= x_vt_le,
            xCG + vt.dx_trail_vt <= x_vt_le + vt.c_root_vt,
-           # The fin stands on the cone corner: half-width from the linear
-           # radius taper (w_fuse at x_shell2 down to lambda_cone*w_fuse at
-           # the cone end), evaluated at the fin's 0.40c spar station --
-           # written all-positive.
-           y_vt * fu.l_cone
-               + fu.w_fuse * (1.0 - fu.lambda_cone) * x_vt_le
-               + fu.w_fuse * (1.0 - fu.lambda_cone) * 0.40 * vt.c_root_vt
-               == fu.w_fuse * fu.l_cone
-                + fu.w_fuse * (1.0 - fu.lambda_cone) * fu.x_shell2,
-                                                            # [SP] SigEq
+           # The fin stands just OUTBOARD OF THE ENGINES, not on a radius
+           # cone: tying y_vt to the axisymmetric taper put the fin plane
+           # 0.61 m INSIDE the nacelle skin, because two nacelles need ~4 m
+           # of deck and the cone offered 2.7. The D8's aft body keeps its
+           # width and tapers in height precisely to hold this layout, so
+           # the WIDTH law here is the engines + clearance, capped by the
+           # cabin width. Priced: a wider fin station pushes x_ht_le
+           # forward through the join and grows the tail, so the optimiser
+           # hugs the fins to the nacelles and the floor binds.
+           y_vt >= y_eng + k_eng_clear * lg.d_nacelle / 2.0
+                 + 0.5 * vt.tau_vt * vt.c_root_vt,
+           y_vt <= fu.w_fuse,
            # SPAR CENTRES coincide AT THE FIN STATION y_vt -- the box axis
            # rides at 0.40c (TASOPT's Xaxis). Outboard of y_vt the
            # horizontal legitimately overhangs the fins.
@@ -3246,7 +3248,11 @@ _SEED_SKIP = ("HT_", "Fuse_w_db")
 #: "architecture-switched" case above. The SP engine SELF-SEEDS at build
 #: (sp_engine.py): importing deck values over that seed re-creates the
 #: inconsistent-interface start the self-seed exists to prevent.
-if _SP_ENGINE:
+# (Eng_ gating REVERTED: measured, every working coupled solve predates
+# it and every broken one postdates it -- the reference supplies warm
+# values for interface variables nothing else covers. The cold-path
+# problem it addressed is handled by the case-reference pipeline.)
+if False and _SP_ENGINE:
     _SEED_SKIP = _SEED_SKIP + ("Eng_",)
 
 
