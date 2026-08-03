@@ -233,8 +233,16 @@ def add_landing_gear(f, *, prefix="LG_"):
     N, inch, lbf, m = units.N, units.inch, units.lbf, units.m
 
     cons = [
-        # Track and base geometry
-        l_n + zwing + y_m * tan_gam >= l_m,                          # [SP]
+        # Track and base geometry.
+        # EQUALITY -- the aircraft SITS LEVEL. The main leg hangs from the
+        # wing (z_wing above the belly, plus the dihedral rise at the track);
+        # the nose leg hangs from the belly. On flat ground the two reach the
+        # same plane, so this is geometry, not a freedom: as a one-sided
+        # floor the nose leg could be arbitrarily long, and the bay rule
+        # (x_n <= k l_n) promptly paid strut weight for aft station -- the
+        # D8 solved with a nose leg 1.15x its MAIN leg, nose-high on the
+        # ramp.
+        l_n + zwing + y_m * tan_gam == l_m,                  # [SP] SigEq
         T == 2 * y_m,
         # EQUALITY: B is the wheelbase, which IS the distance from the nose gear
         # to the main gear. Written as <= it may be shorter than the gear
