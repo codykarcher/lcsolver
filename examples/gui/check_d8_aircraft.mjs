@@ -213,8 +213,21 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     if (worst) bad(`the lower surface pinches at x/L ${worstAt.toFixed(2)} -- ${worst} reversals`);
   }
 
-  // Seated: the engines stand proud of the channel and are not hanging below it.
-  const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);
+  /**
+   * Seated: the engine stands proud of the channel and does not hang below it.
+   *
+   * Measured on the ENGINE, not on the whole pod. A pod may carry a nacelle
+   * wrapped round the engine, and that cowl is deliberately wider than the
+   * channel was cut for -- the channel holds the engine, the cowl wraps it, and
+   * whatever of the cowl ends up inside the body is carved away. Measuring the
+   * pod's bounding box called that a fault: the nacelle's underside sits 68 mm
+   * below the floor before the carve takes it.
+   */
+  const core = [];
+  u.parts.engines[0].traverse((o) => { if (o.isMesh && o.name === 'core') core.push(o); });
+  const b2 = new THREE.Box3();
+  for (const c of core) b2.expandByObject(c);
+  if (b2.isEmpty()) b2.setFromObject(u.parts.engines[0]);
   if (b2.max.y <= roof) bad('the engines do not stand above the channel -- they are buried');
   if (b2.min.y < floor - 1e-6) bad('the engines hang below the channel floor');
   console.log(`     engines stand ${(b2.max.y - roof).toFixed(3)} m above the open top`);

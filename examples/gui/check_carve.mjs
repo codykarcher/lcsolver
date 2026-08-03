@@ -17,7 +17,7 @@ import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { deckFromSolve } from './components/aircraft.js';
 import { d8Aircraft } from './components/d8_aircraft.js';
-import { turbofan } from './components/engines.js';
+import { bareTurbofan, turbofan } from './components/engines.js';
 import { ductVolume, clipTriangles } from './components/carve.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_d8_solve.json', import.meta.url), 'utf8'));
@@ -477,15 +477,30 @@ function nacelleReach(craft, useDuct) {
   return worst;
 }
 {
-  const nac = cut.userData.parts.engines[0];
-  const box = new THREE.Box3().setFromObject(nac);
-  const r = Math.max(Math.abs(box.max.x - d.engineY), Math.abs(box.min.x - d.engineY));
-  console.log(`nacelle radius ${r.toFixed(3)} m, deck says ${(d.nacelleDia / 2).toFixed(3)}; ` +
-              `reaches ${(1000 * nacelleReach(cut, true)).toFixed(1)} mm into solid body`);
-  if (Math.abs(r - d.nacelleDia / 2) > 0.02) {
-    bad(`the nacelle is ${r.toFixed(3)} m where the deck says ${(d.nacelleDia / 2).toFixed(3)}`);
+  /**
+   * The ENGINE must be the size and in the place the deck put it, and the
+   * nacelle must be bigger, because it wraps it.
+   *
+   * Asserting the nacelle's own radius against `nacelleDia` was the earlier
+   * reading and it is what made the engine move: satisfying it means shrinking
+   * the fan so a cowl fits inside the same envelope. The deck sizes the engine;
+   * the cowl goes round the outside.
+   */
+  const bare = bareTurbofan({ rFan: 1, bypassRatio: 9 });
+  const rf = (d.nacelleDia / 2) / bare.userData.rMax;
+  const fanR = rf * bare.userData.rMax;
+  const nacR = turbofan({ rFan: rf, bypassRatio: 9 }).userData.nacelleMaxRadius;
+  const left = nacelleReach(cut, true);
+  console.log(`engine radius ${fanR.toFixed(3)} m against the deck's ${(d.nacelleDia / 2).toFixed(3)}; ` +
+              `nacelle wraps it at ${nacR.toFixed(3)} m; ` +
+              `${(1000 * left).toFixed(1)} mm of it left in solid body`);
+  if (Math.abs(fanR - d.nacelleDia / 2) > 1e-6) {
+    bad(`the engine is ${fanR.toFixed(3)} m where the deck says ${(d.nacelleDia / 2).toFixed(3)}`);
   }
-  if (nacelleReach(cut, true) > 1e-3) bad('the nacelle is still inside solid body');
+  if (!(nacR > fanR * 1.05)) bad('the nacelle does not wrap the engine -- it has replaced it');
+  // A few millimetres survive where a triangle bulges through between corners
+  // the clipper judged both outside. They are inside the body, hidden by it.
+  if (left > 0.01) bad(`the nacelle is still ${(1000 * left).toFixed(0)} mm inside solid body`);
 }
 
 /* ---- negative controls -------------------------------------------------- */

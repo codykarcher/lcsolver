@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
 import { bareTurbofan, turbofan } from './engines.js';
+import { skin } from './materials.js';
 import { landingGear } from './landing_gear.js';
 import { carveDuct, carveInto, wouldCarve } from './carve.js';
 
@@ -365,17 +366,20 @@ export function d8Aircraft(deck, opts = {}) {
    * So the whole nacelle is built and the part inside solid body is removed --
    * which is the same carve the duct uses, run the other way round.
    *
-   * Sized on the NACELLE, not the fan. `nacelleDia` is what the solve calls it,
-   * and it is also what the duct's cradle was built to hold: floor a clearance
-   * below it, walls on its outer extent, corners rounding at its radius. With
-   * the cowl outside the fan the fan comes out smaller, which is correct -- the
-   * bare engine had been standing in for the whole installation.
+   * Sized on the BARE engine either way, so the cowl WRAPS what is already
+   * there rather than replacing it.
+   *
+   * Sizing the nacelle to `nacelleDia` instead looks defensible -- that is what
+   * the solve calls the number, and it is what the duct's cradle holds -- but
+   * it shrinks the fan to fit a cowl inside the same envelope, which moves the
+   * engine. The engine's position and size are the deck's, and the duct was
+   * shaped around them; the cowl is an addition. So the fan stays exactly where
+   * it was and the nacelle stands 1.177 times its radius, 0.99 m against 0.84,
+   * which is why a good deal of it ends up inside the body.
    */
   const podded = opts.nacelles ?? d.nacelles;
-  const probe = podded ? turbofan({ rFan: 1, bypassRatio: 9 })
-                       : bareTurbofan({ rFan: 1, bypassRatio: 9 });
-  const rFan = (d.nacelleDia / 2)
-    / (podded ? probe.userData.nacelleMaxRadius : probe.userData.rMax);
+  const probe = bareTurbofan({ rFan: 1, bypassRatio: 9 });
+  const rFan = (d.nacelleDia / 2) / probe.userData.rMax;
   // Length from the deck too, not left to the component's own proportions. A
   // D8's propulsor is short and fat -- 1.24 m long on a 1.68 m diameter, an
   // aspect of 0.74 where a podded engine is nearer 1.8 -- because the duct is
@@ -385,8 +389,21 @@ export function d8Aircraft(deck, opts = {}) {
   parts.engines = [];
   for (const side of [1, -1]) {
     const pod = new THREE.Group();
-    pod.add(podded ? turbofan({ rFan, bypassRatio: 9 })
-                   : bareTurbofan({ rFan, bypassRatio: 9 }));
+    const eng = podded ? turbofan({ rFan, bypassRatio: 9 })
+                       : bareTurbofan({ rFan, bypassRatio: 9 });
+    /**
+     * The whole nacelle white, lip included.
+     *
+     * The cowl already carries the airframe skin, so the paint schemes pick it
+     * up as `nacelle` and it follows the body. The inlet lip does not -- it is
+     * bare metal, which is what a real one often is and is not what this wants.
+     * Giving it the skin material puts it in the same role, so the nacelle
+     * paints as one piece instead of a white barrel with a chrome ring.
+     */
+    if (podded) {
+      eng.traverse((o) => { if (o.isMesh && o.name === 'nacelleLip') o.material = skin; });
+    }
+    pod.add(eng);
     pod.position.set(side * d.engineY, engineAxisY, -d.engineX);
     pod.userData.isEnginePod = true;
     pod.userData.side = side;

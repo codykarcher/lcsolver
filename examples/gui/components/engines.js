@@ -659,6 +659,41 @@ export function turbofan(opts = {}) {
   g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
   g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
 
+  /**
+   * The inlet duct, lined in metal.
+   *
+   * Each band of the cowl is a closed solid carrying its own outer AND inner
+   * surface, which is what makes it a real division of the geometry rather than
+   * a stripe -- but it also means one material serves both faces. So the duct
+   * forward of the fan came out in the airframe white, and looking down an
+   * inlet at painted fairing is wrong: that surface is bare, anti-iced metal on
+   * anything flying.
+   *
+   * A thin liner just inside the cowl's own inner line does it, the same way
+   * the turbojet darkens its bore. It runs from just aft of the highlight --
+   * far enough in not to show as a rim from outside -- back to the fan plane,
+   * which is where `lipZ` is measured from and so sits at z = 0.
+   */
+  const sFan = zLE / c;                   // chord fraction at the fan plane
+  const linerAt = (sv) => {
+    const ro = outerAt(sv);
+    return ro - 2 * halfT(sv);
+  };
+  const liner = [];
+  const NL = 48, s0 = 0.015;
+  for (let i = 0; i <= NL; i++) {
+    const sv = s0 + (sFan - s0) * (i / NL);
+    liner.push([zLE - sv * c, linerAt(sv) * 0.998]);
+  }
+  for (let i = NL; i >= 0; i--) {
+    const sv = s0 + (sFan - s0) * (i / NL);
+    liner.push([zLE - sv * c, linerAt(sv) * 0.990]);
+  }
+  liner.push(liner[0]);
+  const lining = latheZ(liner, M.casing, SEG);
+  lining.name = 'inletLiner';
+  g.add(lining);
+
   const hi = meanAt(0);
   const zAft = zTE;
 
