@@ -334,6 +334,8 @@ passes = [
     ("prof", _prof),
     ("free", None),
 ]
+if os.environ.get("SWEEP"):
+    passes = passes[:2]     # settle the coupled pinned basin, then sweep
 # the restructured engine's s3_ OD point has no stage-B source for its
 # OD-only variables (map coordinates, PR, eff, prm1); seg_warm supplies
 # forward-consistent values exactly as the accretive stage-B steps do
@@ -464,6 +466,98 @@ for label, pred in passes:
         else:
             sys.exit(1)
     src = snapshot(cm, st, res.x)
+
+json.dump(src if isinstance(src, dict) else {},
+          open("b737_stageC_ladder.json", "w"))
+
+if os.environ.get("SWEEP"):
+    # milestone-5 continuation: coupled PINNED solves along the lever
+    # line deck -> engine-level optimum, each warm from the previous
+    import math as _mth
+    line = [
+        (1.685, 5.105, 30.55),
+        (1.655, 5.60, 31.0),
+        (1.625, 6.20, 31.5),
+        (1.595, 6.90, 32.0),
+        (1.565, 7.60, 32.0),
+    ]
+    results = []
+    for (fpr_t, bpr_t, opr_t) in line:
+        lc_t = 1.935
+        hpc_t = opr_t / (fpr_t * lc_t)
+        p_t = _dc.replace(pins, FPR=fpr_t, LPC_PR=lc_t, HPC_PR=hpc_t,
+                          BPR=bpr_t,
+                          eff_fan=0.8948 - 0.077 * (fpr_t - 1.685))
+        try:
+            wsD = WSTART.design_state(p_t)
+        except Exception as e:
+            print(f"  [sweep] fwd warm failed at {fpr_t}/{bpr_t}: {e}")
+            continue
+        eng_w = {}
+        eng_w.update({f"Eng_cyc_{k}": v for k, v in wsD.items()})
+        eng_w.update({f"Eng_cyc_s3_{k}": v for k, v in wsD.items()})
+        for i in range(5):
+            if i == i_des:
+                continue
+            Tt0_d = segs[i_des]['T0'] * (1 + 0.2 * segs[i_des]['M']**2)
+            Tt0_i = segs[i]['T0'] * (1 + 0.2 * segs[i]['M']**2)
+            T4_i = min(1587.0 * Tt0_i / Tt0_d, 1833.0 if i < 3 else 1587.0)
+            p_i = _dc.replace(p_t, T0_K=segs[i]['T0'], P0_Pa=segs[i]['P0'],
+                              MN=segs[i]['M'], V0_m_s=segs[i]['V'],
+                              Fn_N=segs[i]['F'], T4_K=T4_i,
+                              choked_core=(i >= 3), choked_byp=True)
+            try:
+                ws_i = WSTART.design_state(p_i)
+            except Exception:
+                ws_i = wsD
+            eng_w.update({f"Eng_cyc_s{i}_{k}": v for k, v in ws_i.items()})
+            eng_w[f"Eng_TSFC[{i}]"] = ws_i.get("TSFC", 1.7e-5) * 35303.9
+            eng_w[f"Eng_u_6[{i}]"] = ws_i.get("V_core", 400.0)
+            eng_w[f"Eng_u_8[{i}]"] = ws_i.get("V_byp", 290.0)
+            eng_w[f"Eng_m_fan[{i}]"] = ws_i.get("W", 150.0)
+            eng_w[f"Eng_T_t_4[{i}]"] = ws_i.get("Tt4", 1500.0)
+        eng_w["Eng_TSFC[3]"] = wsD.get("TSFC", 1.7e-5) * 35303.9
+        eng_w["Eng_u_6[3]"] = wsD.get("V_core", 400.0)
+        eng_w["Eng_u_8[3]"] = wsD.get("V_byp", 290.0)
+        eng_w["Eng_m_fan[3]"] = wsD.get("W", 150.0)
+        eng_w["Eng_T_t_4[3]"] = wsD.get("Tt4", 1587.0)
+        A2_t = wsD["fan_Wc"] / 199.7
+        A25_t = wsD["hpc_Wc"] / 191.2
+        eng_w.update({
+            "Eng_cyc_pi_f_D": fpr_t, "Eng_cyc_pi_lc_D": lc_t,
+            "Eng_cyc_pi_hc_D": hpc_t, "Eng_cyc_BPR_D": bpr_t,
+            "Eng_cyc_eff_fan_D": 0.8948 - 0.077 * (fpr_t - 1.685),
+            "Eng_mbar_fan_D": wsD["fan_Wc"],
+            "Eng_A_5": wsD.get("A_core", 0.35), "Eng_A_7": wsD.get("A_byp", 1.0),
+            "Eng_A_2": A2_t, "Eng_A_25": A25_t,
+            "Eng_d_f": (4 * A2_t / (_mth.pi * (1 - 0.30**2))) ** 0.5,
+            "Eng_d_LPC": (4 * A25_t / (_mth.pi * (1 - 0.60**2))) ** 0.5,
+        })
+        src2 = dict(src)
+        src2.update(eng_w)
+        cm = build_warmed(src2)
+        n_p = add_pins(cm, lambda n: _prof(n) or n in _DESIGN)
+        st = structure_detector(cm)
+        res = solve_sia(st, options=opts, presolve=False,
+                        split_equalities=True)
+        feas = float(getattr(res, "max_violation", float("nan")))
+        snap = snapshot(cm, st, res.x)
+        # snapshot magnitudes for these variables are ALREADY lbf
+        wf = snap.get("W_f_total", 0.0)
+        wt = snap.get("W_total", 0.0)
+        we = snap.get("Eng_W_engine", 0.0)
+        print(f"  [sweep] FPR {fpr_t:.3f} BPR {bpr_t:.2f} OPR {opr_t:.2f}"
+              f"  conv={res.converged} it={res.iterations} feas={feas:.1e}"
+              f"  W_f {wf:,.0f}  MTOW {wt:,.0f}  W_eng {we:,.0f} lbf",
+              flush=True)
+        results.append(dict(FPR=fpr_t, BPR=bpr_t, OPR=opr_t, Wf=wf,
+                            MTOW=wt, Weng=we, feas=feas,
+                            it=res.iterations))
+        if feas == feas and feas < 0.05:
+            src = snap          # continuation
+    json.dump(results, open("b737_sweep_coupled.json", "w"))
+    print("  [sweep] done ->  b737_sweep_coupled.json")
+    sys.exit(0)
 
 for v, val in zip(st["variables"], res.x):
     v.set_value(float(val))
