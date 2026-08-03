@@ -538,26 +538,30 @@ export function d8Aircraft(deck, opts = {}) {
     lStrut: d.mainStrut, rStrut: 0.10,
   });
   /**
-   * The main legs hang from the body's KEEL, where a D8 stows them.
+   * The main legs hang wherever puts the wheels in one plane -- SOLVED, not
+   * chosen from a shortlist.
    *
-   * Which datum the solve sized its struts against is not in the solve, so it
-   * has to be read off them. The test is that an aeroplane stands on its
-   * wheels: whichever attachment puts all of them in one plane is the one the
-   * strut lengths were written for.
+   * Which datum the solve sized its struts against is not in the solve, and
+   * guessing it has now been wrong three times running: one solve wanted the
+   * wing (its main leg reached 0.881 m further than the nose), the next wanted
+   * the keel (0.158 m less), and this one wants the wing again (0.871 m more).
+   * Each reload was a scramble to re-pick, and picking from two fixed options
+   * only ever lands close by luck -- on this solve the wing, the better of the
+   * two, still leaves 371 mm.
    *
-   * This solve's main leg reaches 0.158 m LESS than its nose leg and the keel
-   * is level between the two stations, so keel-hung leaves 158 mm and 0.64
-   * degrees. Hung from the wing instead -- 0.57 m above the keel there -- it
-   * comes out 875 mm and 3.56 degrees nose-down.
+   * What is not in doubt is that an aeroplane stands on its wheels. That is one
+   * equation and the attachment height is the one unknown in it, so it is
+   * solved rather than selected: put the main attachment exactly as far above
+   * the nose attachment as its leg is longer. The wheels are then coplanar by
+   * construction, whatever the solve does next.
    *
-   * The previous solve said the opposite, and emphatically: its main leg
-   * reached 0.881 m FURTHER than the nose, which no keel-hung leg could
-   * absorb, and the wing was almost exactly that far above the keel. So this is
-   * not a free choice being tuned -- the deck states it, and it has changed its
-   * mind about where a D8 puts its gear. Left on the wing this aeroplane stands
-   * on its nosewheel with the mains in the air.
+   * Reported against the keel and the wing below, because a height that comes
+   * out somewhere structurally silly is worth seeing.
    */
-  const mainAttachY = u.keelAt(-d.mainX);
+  const noseAttachY = u.keelAt(-d.noseX);
+  const mainReach = d.mainStrut + (d.mainTyreIn * IN) / 2;
+  const noseReach = d.noseStrut + (d.noseTyreIn * IN) / 2;
+  const mainAttachY = noseAttachY + mainReach - noseReach;
   const mainContact = mainAttachY + mkMain().userData.contactY;
   parts.gear = [];
   for (const side of [1, -1]) {
@@ -574,7 +578,6 @@ export function d8Aircraft(deck, opts = {}) {
     wheels: 2, rTire: noseTyre, rWheel: noseTyre * 0.55,
     lStrut: d.noseStrut, rStrut: 0.075,
   });
-  const noseAttachY = u.keelAt(-d.noseX);
   nose.position.set(0, noseAttachY, -d.noseX);
   nose.userData.gearKind = 'nose';
   nose.userData.side = 0;
@@ -598,6 +601,17 @@ export function d8Aircraft(deck, opts = {}) {
       verticalTail: parts.verticalTails.reduce((t, f) => t + f.userData.area, 0),
     },
     fin, finCount: parts.verticalTails.length, engineAxisY,
+    /**
+     * Where the solved main-gear attachment landed, against the two datums it
+     * used to be picked from. A height well outside the body would mean the
+     * deck's struts do not describe this aeroplane.
+     */
+    mainGearAttach: {
+      y: mainAttachY,
+      aboveKeel: mainAttachY - u.keelAt(-d.mainX),
+      aboveWing: mainAttachY - (wingY + d.mainY * Math.tan(d.wingDihedral * DEG)),
+      bodyDepth: u.crownAt(-d.mainX) - u.keelAt(-d.mainX),
+    },
     wheelbase, groundAttitude: attitude, ground,
     noseContact, mainContact,
     leadingEdgeSweeps: {

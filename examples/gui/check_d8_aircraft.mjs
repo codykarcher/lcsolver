@@ -298,7 +298,27 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     highest = Math.max(highest, new THREE.Box3().setFromObject(lg).min.y);
   }
   const spread = highest - lowest;
-  console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg; the wheels lie within ` +
+  /**
+ * Where the solved gear attachment ended up.
+ *
+ * The height is solved from the requirement that the wheels are coplanar, so
+ * the attitude below is zero by construction and says nothing on its own. What
+ * is worth checking is that the answer is a place an aeroplane could carry a
+ * leg from -- inside the body's own depth at that station, rather than hanging
+ * in the air above the crown.
+ */
+{
+  const a = u.mainGearAttach;
+  console.log(`\nmain gear attaches ${a.aboveKeel.toFixed(3)} m above the keel ` +
+              `(the body is ${a.bodyDepth.toFixed(3)} deep there), ` +
+              `${a.aboveWing >= 0 ? '+' : ''}${a.aboveWing.toFixed(3)} m from the wing`);
+  if (a.aboveKeel < -0.05 || a.aboveKeel > a.bodyDepth + 0.05) {
+    bad(`the gear attaches ${a.aboveKeel.toFixed(2)} m above the keel, outside the body's ` +
+        `${a.bodyDepth.toFixed(2)} m depth -- the deck's struts do not fit this body`);
+  }
+}
+
+console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg; the wheels lie within ` +
               `${(1000 * spread).toFixed(0)} mm of one plane`);
   if (Math.abs(lowest) > 0.01) bad(`sat down, the lowest wheel is ${lowest.toFixed(3)} off the ground`);
   if (spread > 0.25) {

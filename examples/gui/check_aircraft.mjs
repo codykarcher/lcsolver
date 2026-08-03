@@ -68,16 +68,38 @@ for (const [name, le, c, t, b, k, want] of cases) {
 g.updateMatrixWorld(true);
 const box = new THREE.Box3().setFromObject(g);
 const len = box.max.z - box.min.z, span = box.max.x - box.min.x;
-// The tails sit inside the fuselage, so the aeroplane is no longer than its
-// body -- and the wing sets the span, since nothing reaches further out.
-//
-// Tolerances are float32-sized, not exact. Positions live in a
-// Float32BufferAttribute, so a coordinate 36 m from the origin carries about
-// 4e-6 of representation error and a bounding box built from them cannot be
-// tighter than that. An exact test here fails by 3e-4 and means nothing.
+/**
+ * The wing sets the span, since nothing reaches further out.
+ *
+ * Length is reported rather than bounded. This used to assert that the
+ * aeroplane is no longer than its body, on the reasoning that the tails sit
+ * inside it -- which was true of every deck seen up to now and is not a
+ * requirement. A solve that grows the tailplane's span from 10.8 m to 14.7 m
+ * puts the swept tips 1.15 m aft of the tailcone, and that is the deck talking,
+ * not a fault: plenty of aeroplanes carry an elevator tip aft of the fuselage.
+ *
+ * What IS a requirement is that each surface's ROOT is on the body, since that
+ * is where it attaches to structure. Both roots end exactly on the fuselage's
+ * trailing end here, which is the solve placing them, not this file.
+ *
+ * Tolerances are float32-sized, not exact. Positions live in a
+ * Float32BufferAttribute, so a coordinate 36 m from the origin carries about
+ * 4e-6 of representation error and a bounding box built from them cannot be
+ * tighter than that. An exact test here fails by 3e-4 and means nothing.
+ */
 const eps = 1e-5 * d.fuseLength;
-if (len > d.fuseLength + eps)
-  bad(`overall length ${len.toFixed(4)} exceeds the fuselage's ${d.fuseLength}`);
+console.log(`\noverall length ${len.toFixed(3)} against the body's ${d.fuseLength.toFixed(3)}` +
+            (len > d.fuseLength + eps
+              ? ` -- the tail overhangs by ${(len - d.fuseLength).toFixed(3)}` : ''));
+for (const [what, le, chord] of [['horizontal tail', d.htLE, d.htRootChord],
+                                 ['vertical tail', d.vtLE, d.vtRootChord]]) {
+  if (le == null || chord == null) continue;
+  if (le + chord > d.fuseLength + eps) {
+    bad(`the ${what}'s root trailing edge is ${(le + chord).toFixed(3)}, past the body's ` +
+        `${d.fuseLength.toFixed(3)} -- its root has nothing to attach to`);
+  }
+  if (le < 0) bad(`the ${what}'s root leading edge is ${le.toFixed(3)}, ahead of the nose`);
+}
 if (Math.abs(span - d.wingSpan) > eps)
   bad(`overall span ${span.toFixed(4)} is not the wing's ${d.wingSpan}`);
 
