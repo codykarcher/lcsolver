@@ -25,9 +25,13 @@ t_all = time.time()
 
 # ---- stage A ------------------------------------------------------------
 print("=== stage A: baseline deck-engine solve ===", flush=True)
-vals_A = RG.solve_case("b737", "conventional_M")
-assert vals_A, "stage A failed"
-json.dump(vals_A, open("b737_stageA.json", "w"))
+if os.environ.get("REUSE_A") and os.path.exists("b737_stageA.json"):
+    vals_A = json.load(open("b737_stageA.json"))
+    print("  (reused b737_stageA.json)")
+else:
+    vals_A = RG.solve_case("b737", "conventional_M")
+    assert vals_A, "stage A failed"
+    json.dump(vals_A, open("b737_stageA.json", "w"))
 
 segs = []
 for i in range(5):
@@ -187,7 +191,12 @@ cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
 n_set_A = n_set_B = 0
 for v in cm.component_data_objects(pyo.Var):
     n = v.name
-    if n.startswith("Eng_cyc_") and n[len("Eng_cyc_"):] in vals_B:
+    if n.startswith("Eng_cyc_s3_") and n[len("Eng_cyc_s3_"):] in vals_B:
+        # the restructured engine adds an s3_ off-design point at cruise
+        # conditions; stage-B's design-tagged state is the right seed
+        v.set_value(float(vals_B[n[len("Eng_cyc_s3_"):]]))
+        n_set_B += 1
+    elif n.startswith("Eng_cyc_") and n[len("Eng_cyc_"):] in vals_B:
         v.set_value(float(vals_B[n[len("Eng_cyc_"):]]))
         n_set_B += 1
     elif n in vals_A:
@@ -282,8 +291,15 @@ def add_pins(cm_, pred):
     return n_
 
 opts = SIAOptions(max_iterations=400)
+opts.verbose = bool(os.environ.get("SIA_VERBOSE"))
 opts.stationarity_tolerance = 1e-5
 opts.condense_numerator = True
+# tight trust region: the fitted-surface rows' condensed landscape is
+# treacherous away from the seed (cancellation ~10-30 inside single rows),
+# and the default step sizes walk the engine off a consistent start.
+opts.trust_radius = 0.1
+opts.trust_max = 0.5
+opts.phase2_restore = True
 opts.ipopt_options = dict(opts.ipopt_options, tol=1e-9,
                           constr_viol_tol=1e-9)
 
@@ -293,18 +309,132 @@ warm0 = {v.name: float(pyo.value(v))
          if pyo.value(v, exception=False) and pyo.value(v) > 0}
 
 _DESIGN = {"Eng_cyc_pi_f_D", "Eng_cyc_pi_lc_D", "Eng_cyc_pi_hc_D",
-           "Eng_cyc_BPR_D", "Eng_cyc_eff_fan_D", "Eng_cyc_Tt4"}
+           "Eng_cyc_BPR_D"}
 # Pin only the INDEPENDENT mission coordinates (altitude and Mach) plus
 # thrusts and design variables: pinning all 65 FS_* variables duplicated
 # the flight-state block's own internal equality rows -- LICQ death, house
 # rule 2 -- and the solver drifted off a fully-determined manifold.
 _prof = lambda n: (n.startswith("FS_h[") or n.startswith("FS_M[")
                    or n.startswith("Eng_F["))
+# The engine INTERFACE pins isolate the consistent stage-B engine seed
+# while the airframe re-solves around the SP engine's bigger fan and
+# different TSFCs: phase 1's max-violation repair otherwise trades the
+# airframe's 1-25% seed violations for violation spread across the
+# engine's stiff fitted-surface rows (measured: fan_dhs dragged 4e4 ->
+# 1.4e6 and the pass died at feasibility 4.7).
+_IFACE_PRE = ("Eng_TSFC[", "Eng_u_6[", "Eng_u_8[", "Eng_m_fan[",
+              "Eng_T_t_4[")
+_IFACE_SC = {"Eng_d_f", "Eng_d_LPC", "Eng_A_2", "Eng_A_25", "Eng_A_5",
+             "Eng_A_7", "Eng_W_engine", "Eng_mbar_fan_D"}
+_iface = lambda n: (any(n.startswith(p) for p in _IFACE_PRE)
+                    or n in _IFACE_SC)
 passes = [
+    ("iface", lambda n: _prof(n) or n in _DESIGN or _iface(n)),
     ("prof+D", lambda n: _prof(n) or n in _DESIGN),
     ("prof", _prof),
     ("free", None),
 ]
+# the restructured engine's s3_ OD point has no stage-B source for its
+# OD-only variables (map coordinates, PR, eff, prm1); seg_warm supplies
+# forward-consistent values exactly as the accretive stage-B steps do
+warm0.update({f"Eng_cyc_{k}": v for k, v in seg_warm(3, "s3_").items()})
+
+# ---- SEED REPAIR: rows the A+B name-mapping leaves violated ----------
+# tfcool block (sp_engine-only, no stage-B source): solve the three-row
+# chain at the stage-B takeoff state with 2% margin.
+_Tt3TO = vals_B["s0_hpc_Tt"]
+_Trr = 1.0 / (1.0 + 0.5 * (1.313 - 1.0) * 1.0 ** 2)
+_ef, _tf, _StA = 0.7, 0.30, 0.09
+for _r in (1, 2, 3):
+    _Tg = (1833.0 + 200.0) if _r == 1 else 1833.0 * _Trr ** (_r - 1)
+    _th = min(0.999, (_Tg - 1280.0) / (_Tg - _Tt3TO) * 1.02)
+    _e0 = max(_StA * (_th * (1 - _ef * _tf) - _tf * (1 - _ef))
+              / (_ef * (1 - _th)), 1e-4) * 1.02
+    _ep = _e0 / (1.0 + _e0) * 1.02
+    warm0[f"Eng_cyc_theta_cool_{_r}"] = _th
+    warm0[f"Eng_cyc_eps0_cool_{_r}"] = _e0
+    warm0[f"Eng_cyc_eps_cool_{_r}"] = _ep
+if os.environ.get("AUDIT"):
+    # evaluate every row at the seed; print the worst violations by name
+    import math as _mm
+    cm_a = build_warmed(warm0)
+    rows = []
+    for c in cm_a.component_data_objects(pyo.Constraint, active=True):
+        try:
+            b = pyo.value(c.body, exception=False)
+            lo = pyo.value(c.lower, exception=False) if c.lower is not None else None
+            up = pyo.value(c.upper, exception=False) if c.upper is not None else None
+        except Exception:
+            continue
+        if b is None or b != b:
+            rows.append((float("inf"), c.name, "NaN body")); continue
+        v = 0.0
+        if lo is not None and up is not None and lo == up:
+            s = max(abs(lo), abs(b), 1e-30)
+            v = abs(b - lo) / s
+        else:
+            if up is not None and b > up:
+                v = (b - up) / max(abs(up), 1e-30)
+            if lo is not None and b < lo:
+                v = max(v, (lo - b) / max(abs(lo), 1e-30))
+        if v > 1e-6:
+            rows.append((v, c.name, f"body={b:.6g} lo={lo} up={up}"))
+    rows.sort(reverse=True)
+    print(f"  AUDIT: {len(rows)} rows violated > 1e-6 at the seed")
+    byname = {c.name: c for c in cm_a.component_data_objects(
+        pyo.Constraint, active=True)}
+    for v, nm, d in rows[:25]:
+        expr = str(byname[nm].expr) if nm in byname else "?"
+        print(f"    {v:10.3e}  {nm}  {d}")
+        print(f"        {expr[:220]}")
+    sys.exit(0)
+
+if os.environ.get("AUDIT_VAR"):
+    _tgt = os.environ["AUDIT_VAR"]
+    cm_v = build_warmed(warm0)
+    _vals = {v.name: pyo.value(v, exception=False)
+             for v in cm_v.component_data_objects(pyo.Var)}
+    print(f"  AUDIT_VAR {_tgt}: value = {_vals.get(_tgt)}")
+    for c in cm_v.component_data_objects(pyo.Constraint, active=True):
+        es = str(c.expr)
+        if _tgt in es:
+            b = pyo.value(c.body, exception=False)
+            print(f"    {c.name}: body={b}")
+            print(f"      {es[:200]}")
+    sys.exit(0)
+
+if os.environ.get("AUDIT_GP"):
+    import numpy as _np
+    from edi.solvers.ipopt.slcp_bridge import build_problem as _bp
+    cm_g = build_warmed(warm0)
+    st_g = structure_detector(cm_g)
+    pb = _bp(st_g, sp_form=True)
+    x0 = _np.array([float(pyo.value(v)) for v in st_g["variables"]],
+                   dtype=float)[:pb.n]
+    x0 = _np.where(x0 > 0, x0, 1.0)
+    from edi.solvers.ipopt.sia import _log_g
+    scored = []
+    for ci, c in enumerate(pb.constraints):
+        try:
+            g = _log_g(c, x0)
+        except Exception:
+            g = float("nan")
+        scored.append((g if g == g else 1e9, ci, c))
+    scored.sort(reverse=True)
+    print("  AUDIT_GP: worst solver-view rows at the seed:")
+    for g, ci, c in scored[:20]:
+        terms = list(getattr(c.body, 'terms', None) or [])
+        for side in ('p', 'q'):
+            sub = getattr(c.body, side, None)
+            if sub is not None:
+                terms.extend(getattr(sub, 'terms', None) or [])
+        involved = sorted({j for _c2, a in terms
+                           for j, e in enumerate(a) if e != 0.0})
+        nms = [pb.names[j] for j in involved][:6]
+        print(f"    log g {g:+9.4f}  [{ci}] {c.operator}  "
+              f"{', '.join(nms)}")
+    sys.exit(0)
+
 src = warm0
 res = None
 for label, pred in passes:
@@ -314,15 +444,25 @@ for label, pred in passes:
     else:
         n_p = 0
     st = structure_detector(cm)
-    res = solve_sia(st, options=opts, presolve=False)
+    res = solve_sia(st, options=opts, presolve=False,
+                    split_equalities=True)
+    feas = float(getattr(res, "max_violation", float("nan")))
     print(f"  pass {label:5s} ({n_p} pinned): converged={res.converged} "
-          f"it={res.iterations}", flush=True)
+          f"it={res.iterations}  feas={feas:.2e}", flush=True)
     if not res.converged:
         print("  status:", str(res.status)[:160])
         rep = getattr(res, "report", None)
         if rep:
             print(str(rep)[:1600])
-        sys.exit(1)
+        # A pinned pass may be UNABLE to close rows the pins hold open --
+        # measured: with u_8[0] pinned, the takeoff noise chain (p2 ~
+        # u_8^7.5) cannot close and the pass sticks at ~2e-2 feasibility
+        # with the objective stable to 1e-6. The remaining violation is
+        # the next (freer) pass's work; hand the warm state on.
+        if feas == feas and feas < 0.05:
+            print("  (stable, residual localized -- continuing ladder)")
+        else:
+            sys.exit(1)
     src = snapshot(cm, st, res.x)
 
 for v, val in zip(st["variables"], res.x):

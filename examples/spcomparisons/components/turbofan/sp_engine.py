@@ -191,6 +191,8 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     ]
 
     # ---- per-segment conditions -------------------------------------------
+    _bridge = {}
+
     def cond_for(i, mode):
         T0g = float(pyo.value(state.T_atm[i]))
         # state.P_atm is declared in kPa, but a SEEDED build carries
@@ -221,16 +223,22 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         # only dimensionless variables (the unit-carrying expressions
         # produced nan gradients in the detector -- house rule 3's
         # mistranslation, measured in the mini harness). Three trivial
-        # conversion rows per segment carry all the units.
-        T0v = V(f"T0_{i}", T0g, f"segment {i} ambient T bridge, K")
-        P0v = V(f"P0_{i}", P0g, f"segment {i} ambient P bridge, Pa")
-        u0v = V(f"u0_{i}", u0g, f"segment {i} airspeed bridge, m/s")
-        cons.extend([
-            T0v * units.K == state.T_atm[i],
-            P0v * units.Pa == state.P_atm[i],
-            u0v * (units.m / units.s) == state.V[i] * KT2MS
-                * (units.m / units.s) / units.kts,
-        ])
+        # conversion rows per segment carry all the units. Memoized per
+        # segment: the design anchor and the design-conditions OD point
+        # share one bridge (building it twice is a duplicate component).
+        if i in _bridge:
+            T0v, P0v, u0v = _bridge[i]
+        else:
+            T0v = V(f"T0_{i}", T0g, f"segment {i} ambient T bridge, K")
+            P0v = V(f"P0_{i}", P0g, f"segment {i} ambient P bridge, Pa")
+            u0v = V(f"u0_{i}", u0g, f"segment {i} airspeed bridge, m/s")
+            cons.extend([
+                T0v * units.K == state.T_atm[i],
+                P0v * units.Pa == state.P_atm[i],
+                u0v * (units.m / units.s) == state.V[i] * KT2MS
+                    * (units.m / units.s) / units.kts,
+            ])
+            _bridge[i] = (T0v, P0v, u0v)
         c = dict(T0=T0v, P0=P0v, V0=u0v,
                  MN=MNg,
                  T0_g=T0g, P0_g=P0g, u0_g=u0g, MN_g=MNg,
@@ -242,8 +250,15 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # thrust the aircraft demands, per segment, per engine (interface var)
     F = Vn("F", 24000.0, "N", "total thrust")
     Fn_des_g = 24000.0
+    # magnitude heuristic as in cond_for: a SEEDED aircraft build carries
+    # SI-corrected Pa magnitudes in the kPa-declared state variable, and
+    # blindly multiplying by 1e3 put pins.P0_Pa at 2.4e7 -- every sc-scaled
+    # guess and guard band in the cycle then sat 1000x low, phase 1 crushed
+    # the seeded fuel flows against Wf <= 0.15 ceilings, and every coupled
+    # solve died inside the engine block (measured via the GP seed audit).
+    _P0raw = float(pyo.value(state.P_atm[i_des]))
     pins = _EnginePins(tech, FPR, PIlc, PIhc, BPRD, eff_fan,
-                       P0_g=float(pyo.value(state.P_atm[i_des])) * 1e3,
+                       P0_g=_P0raw * 1e3 if _P0raw < 2000.0 else _P0raw,
                        Fn_g=Fn_des_g)
 
     out_by_tag = {}
@@ -262,11 +277,17 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # rating closes (TASOPT's worst-case sizing, as optimization
     # pressure), and segment performance comes from part-power off-design
     # physics rather than from a point running flat-out at its rating.
+    # T4 == Tt4_CR AND Fn == F[i_des]: square in (T4, W), no free-T4-at-
+    # active-cap corner (the degeneracy that killed every earlier free
+    # solve) and no flat W direction (the anchor's size is determined by
+    # the thrust it must make at its rating, measured: the free-thrust
+    # anchor drifted W 127.5 -> 140.8 along a zero-gradient valley and
+    # ground 105 iterations before an internal solver error).
     cond = cond_for(i_des, 'T4')
     cond['T4'] = tech.Tt4_CR_K
     cond['T4_cap'] = None
     cond['V0'] = cond['u0']
-    cond['F'] = None
+    cond['F'] = F[i_des] / units.N
     des = SC._point(V, cons, "", cond, pins, None, out_by_tag)
     out_by_tag[""] = des
 
@@ -280,7 +301,14 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         # in mid-climb but at hotter Tt0, which needs Tt4 above the cruise
         # cap (measured: 1654 K required vs 1587) -- TASOPT's own climb Tt4
         # profile ramps from Tt4TO for the same reason.
-        cond['T4_cap'] = (tech.Tt4_TO_K if i < Nclimb else tech.Tt4_CR_K)
+        # Climb keeps the takeoff rating as a genuine cap (inactive with
+        # margin at the solution, ~1654 K vs 1833). Cruise segments get NO
+        # cap: the anchor row (rating thrust == cruise demand) already
+        # sizes the machine so cruise T4 lands at/below the rating through
+        # the thrust rows -- a cruise cap would sit EXACTLY active at zero
+        # margin on the design-conditions segment, the degenerate corner
+        # this restructure exists to remove.
+        cond['T4_cap'] = tech.Tt4_TO_K if i < Nclimb else None
         cond['PC'] = cond['pc_of'] = None
         tag = f"s{i}_"
         seg_out[i] = SC._point(V, cons, tag, cond, pins, des['shared'],
