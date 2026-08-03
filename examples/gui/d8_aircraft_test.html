@@ -67,8 +67,7 @@
   <p class="hint" id="windowNote"></p>
 
   <h2>view</h2>
-  <div class="check"><input type="checkbox" id="loft" checked><label for="loft">loft the aft deck under the ducts</label></div>
-  <div class="check"><input type="checkbox" id="duct" checked><label for="duct">carve the engine duct (when not lofted)</label></div>
+  <div class="check"><input type="checkbox" id="duct" checked><label for="duct">carve the engine duct</label></div>
   <div class="check"><input type="checkbox" id="nac" checked><label for="nac">nacelles round the engines</label></div>
   <p class="hint" id="ductNote"></p>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
@@ -288,21 +287,14 @@ function build() {
     detail: false,
     sitOnGround: el('sit').checked,
     ductCarve: el('duct').checked,
-    aftFollowsDucts: el('loft').checked,
     nacelles: el('nac').checked,
   });
   scene.add(craft);
   const u = craft.userData;
   // What the carve actually did, in the numbers that say whether it worked:
   // how much of the body went, and how far the walls stand off the engines.
-  const fud = u.parts.fuselage.userData;
-  const dz = fud.duct, ad = fud.aftDeck;
-  el('ductNote').textContent = ad
-    ? `lofted \u2014 the deck closes at ${ad.roofY.toFixed(2)} m, under two ducts `
-      + `${(2 * ad.spacing).toFixed(2)} m apart, running from ${ad.fromX.toFixed(1)} m `
-      + `aft of the nose; the trailing edge is ${(1000 * (ad.crownAtTE - ad.keelAtTE))
-        .toFixed(0)} mm thick`
-    : dz
+  const dz = u.parts.fuselage.userData.duct;
+  el('ductNote').textContent = dz
     ? `${dz.skin.before - dz.skin.after} of ${dz.skin.before} triangles removed `
       + `\u2014 the hull of the two ducts, ${(2 * dz.spacing).toFixed(2)} m apart, `
       + `${(2 * dz.rThroat).toFixed(2)} m across at the throat `
@@ -453,7 +445,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'loft', 'duct', 'nac'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'duct', 'nac'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {

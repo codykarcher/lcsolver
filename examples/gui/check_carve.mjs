@@ -35,16 +35,8 @@ const bad = (m) => { console.log(`  FAIL  ${m}`); failures++; };
  */
 const drop = (g) => g.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
 
-/**
- * The carve, on its own terms.
- *
- * The D8 lofts its aft deck by default now and never carves at all, so every
- * build in this file has to say so: the subject here is the cut, and a file
- * that quietly measured the lofted body instead would pass by not looking.
- */
-const CARVED = { sitOnGround: false, aftFollowsDucts: false };
-const plain = d8Aircraft(deck, { ...CARVED, ductCarve: false });
-const cut = d8Aircraft(deck, { ...CARVED, ductCarve: true });
+const plain = d8Aircraft(deck, { sitOnGround: false, ductCarve: false });
+const cut = d8Aircraft(deck, { sitOnGround: false, ductCarve: true });
 const fu = cut.userData.parts.fuselage.userData;
 /**
  * The cut, as the aeroplane built it.
@@ -477,7 +469,7 @@ drop(plain);
  * has been told not to.
  */
 const wantsBlend = (cut.userData.deck.ductBlend ?? 0) > 0;
-const square = wantsBlend ? d8Aircraft(deck, { ...CARVED, ductBlend: 0 }) : null;
+const square = wantsBlend ? d8Aircraft(deck, { sitOnGround: false, ductBlend: 0 }) : null;
 const turnSquare = square ? lipTurn(square) : null;
 const turnBlend = lipTurn(cut);
 if (square) drop(square);
@@ -648,7 +640,7 @@ console.log('\nnegative controls');
   // With no duct the body is whole, the nacelle is deep inside it, and the
   // carve has real work to do. Both halves are checked: that it WAS buried,
   // and that afterwards it is not.
-  const whole = d8Aircraft(deck, { ...CARVED, ductCarve: false, nacelles: false });
+  const whole = d8Aircraft(deck, { sitOnGround: false, ductCarve: false, nacelles: false });
   const wf = whole.userData.parts.fuselage.userData;
   const probe = turbofan({ rFan: 1, bypassRatio: 9 });
   const rf = (d.nacelleDia / 2) / probe.userData.nacelleMaxRadius;
@@ -667,7 +659,7 @@ console.log('\nnegative controls');
     }
   });
   drop(whole);
-  const cutWhole = d8Aircraft(deck, { ...CARVED, ductCarve: false, nacelles: true });
+  const cutWhole = d8Aircraft(deck, { sitOnGround: false, ductCarve: false, nacelles: true });
   const cf = cutWhole.userData.parts.fuselage.userData;
   cutWhole.updateMatrixWorld(true);
   const inv2 = new THREE.Matrix4().copy(cutWhole.matrixWorld).invert();

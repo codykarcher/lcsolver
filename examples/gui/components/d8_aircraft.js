@@ -110,15 +110,6 @@ export const D8_CHOICES = {
    */
   ductSkim:       0.005,
   /**
-   * Loft the afterbody under the nacelles instead of cutting a duct out of it.
-   *
-   * The cut is exact and slow: it is mesh surgery, it has to be closed against
-   * its own sheet afterwards, and it leaves a hard edge where the two meet.
-   * A roof that follows the ducts' underside is just a section, so it lofts
-   * with everything else, shades smooth, and costs nothing.
-   */
-  aftFollowsDucts: true,
-  /**
    * How deep into the body the duct's lip is blended, in metres.
    *
    * Zero gives the bare cut, which meets the skin at a right angle along the
@@ -247,57 +238,6 @@ export function d8Aircraft(deck, opts = {}) {
   const rFanFor = (d.nacelleDia / 2) / probe0.userData.rMax;
   const engineNoseX = d.engineX - new THREE.Box3()
     .setFromObject(bareTurbofan({ rFan: rFanFor, bypassRatio: 9 })).max.z;
-
-  const aftFollowsDucts = (opts.aftFollowsDucts ?? d.aftFollowsDucts)
-    && (opts.nacelles ?? d.nacelles);
-  /**
-   * The line the lofted deck closes over: the underside of the two ducts.
-   *
-   * The same law the cut used, read off the same nacelle, so the lofted body
-   * ends up where the carve used to leave it. Aft of the throat it is the
-   * bottom of the inner circles; forward of that the pair climbs on the duct's
-   * own cubic until it is clear of the crown, and from there the roof stops
-   * meaning anything and the body is simply itself.
-   *
-   * It has to exist BEFORE the body, which is why a nacelle is built here and
-   * not with the engines: the section law needs the roof, and the roof needs
-   * the cowl.
-   */
-  const ductRoof = (() => {
-    if (!aftFollowsDucts) return null;
-    const cowl = embeddedTurbofan({ rFan: rFanFor, bypassRatio: 9 })
-      .userData?.cowlInner;
-    if (!cowl?.length) return null;
-    const rAt = (x) => {
-      const z = d.engineX - x;
-      if (z >= cowl[0][0]) return cowl[0][1];
-      for (let i = 0; i < cowl.length - 1; i++) {
-        const a = cowl[i], b = cowl[i + 1];
-        if (z <= a[0] && z >= b[0]) {
-          return a[1] + (b[1] - a[1]) * ((z - a[0]) / ((b[0] - a[0]) || 1));
-        }
-      }
-      return cowl[cowl.length - 1][1];
-    };
-    let throatX = d.engineX - cowl[0][0], rMin = Infinity;
-    for (let i = 0; i < cowl.length; i++) {
-      const x = d.engineX - cowl[i][0];
-      if (x < d.engineX && cowl[i][1] < rMin) { rMin = cowl[i][1]; throatX = x; }
-    }
-    const rT = rMin + d.ductSkim;
-    const fromX = d.fuseLength - d.runStart * d.coneLength;
-    const climb = Math.max(0, (halfH + rT + 0.06) - engineAxisY);
-    const span = Math.max(throatX - fromX, 1e-9);
-    return (x) => {
-      if (x <= fromX) return Infinity;              // forward of the run: no roof
-      if (x >= throatX) return engineAxisY - rT;
-      const f = Math.max(0, (x - fromX) / span);
-      const k = 1;                                  // slope leaving the cabin
-      const rise = climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
-      return engineAxisY + rise - (rAt(Math.max(x, throatX)) + d.ductSkim);
-    };
-  })();
-
   const fuse = d8Fuselage({
     // Stations along the body and segments around it, both from the edge
     // target, so the skin's triangles come out square at any size of aeroplane.
@@ -388,8 +328,6 @@ export function d8Aircraft(deck, opts = {}) {
        */
       channelFromX: d.fuseLength - d.runStart * d.coneLength,
       channelToX: d.fuseLength,
-      aftPlain: aftFollowsDucts,
-      aftRoof: ductRoof ? (z) => ductRoof(-z) : null,
     },
     detail: opts.detail ?? false,
   });
@@ -588,22 +526,6 @@ export function d8Aircraft(deck, opts = {}) {
     };
   })();
 
-  /**
-   * What the lofted deck did, in the numbers that say whether it worked.
-   *
-   * The counterpart of `fuse.userData.duct`, published for the same reason: a
-   * shape this file chose and another file has to be able to report on.
-   */
-  if (ductRoof) {
-    fuse.userData.aftDeck = {
-      roofY: ductRoof(d.fuseLength),
-      fromX: d.fuseLength - d.runStart * d.coneLength,
-      spacing: d.engineY,
-      crownAtTE: fuse.userData.crownAt(-d.fuseLength),
-      keelAtTE: fuse.userData.keelAt(-d.fuseLength),
-    };
-  }
-
   /* ---- the cutout the nacelles sit in --------------------------------- */
   /**
    * The convex hull of the two ducts aft, a straight rectangle forward.
@@ -618,8 +540,7 @@ export function d8Aircraft(deck, opts = {}) {
    * one radius per angle about one centre, and this shape needs two spans of
    * material on the same ray. See `carve.js`.
    */
-  const wantCarve = (opts.ductCarve ?? d.ductCarve) && !aftFollowsDucts;
-  if (wantCarve) {
+  if (opts.ductCarve ?? d.ductCarve) {
     const cowl = podded && parts.engines[0]?.children[0]?.userData?.cowlInner;
     if (cowl?.length) {
       const zOf = (x) => d.engineX - x;

@@ -139,8 +139,7 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   const rN = d.nacelleDia / 2, gap = 0.02;
   const zTE = -d.fuseLength;
   const floor = fu.keelAt(zTE), roof = fu.crownAt(zTE), wall = fu.halfWidthAt(zTE);
-  console.log(`     at the trailing edge: ${fu.aftDeck ? 'lofted deck' : 'channel'}` +
-              `, floor ${floor.toFixed(3)}, closes at ` +
+  console.log(`     at the trailing edge: floor ${floor.toFixed(3)}, open at ` +
               `${roof.toFixed(3)}, walls to ${wall.toFixed(3)}`);
   console.log(`     engines: bottom ${(u.engineAxisY - rN).toFixed(3)}, axis ` +
               `${u.engineAxisY.toFixed(3)}, outer ${(d.engineY + rN).toFixed(3)}`);
@@ -148,25 +147,7 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     bad(`the floor is at ${floor.toFixed(3)}, the engines' undersides at ` +
         `${(u.engineAxisY - rN).toFixed(3)}`);
   }
-  /**
-   * How high it closes depends on which afterbody it is.
-   *
-   * A CHANNEL is open at the engines' axis, because it is a cradle and they sit
-   * in it. A lofted DECK closes under them at the ducts' own floor, because
-   * they sit on it -- and that floor is the cowl's INNER line, so it is above
-   * the nacelle's underside by the thickness of the cowl wall. Asking a deck
-   * the channel's question fails it by three quarters of a metre.
-   */
-  const deck = fu.aftDeck;
-  if (deck) {
-    if (Math.abs(roof - deck.roofY) > 0.02) {
-      bad(`the deck closes at ${roof.toFixed(3)}, the ducts' floor is ${deck.roofY.toFixed(3)}`);
-    }
-    if (roof > u.engineAxisY - rN + 0.10) {
-      bad(`the deck closes at ${roof.toFixed(3)}, up inside engines whose ` +
-          `undersides are at ${(u.engineAxisY - rN).toFixed(3)}`);
-    }
-  } else if (Math.abs(roof - u.engineAxisY) > 0.02) {
+  if (Math.abs(roof - u.engineAxisY) > 0.02) {
     bad(`the channel is open at ${roof.toFixed(3)}, the engine axis is ${u.engineAxisY.toFixed(3)}`);
   }
   /**
