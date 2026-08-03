@@ -930,3 +930,199 @@ export function carveDuct(fuse, spec) {
   };
   return duct;
 }
+
+/* ---- the nacelle duct: a hull aft, a rectangle forward ------------------ */
+
+/**
+ * The cutout an embedded pair of nacelles wants, in two pieces.
+ *
+ * AFT, from the body's trailing edge forward to the nacelles' narrowest
+ * station: the convex hull of the two inner circles. Two circles side by side
+ * hull to a stadium -- flat top and bottom joined by arcs of exactly their
+ * radius -- so the cut is the section of the two ducts and the flat span
+ * between them, and nothing else. It opens and closes along the body with the
+ * ducts, because at every station it IS them.
+ *
+ * FORWARD of that station, up to the end of the cabin: a straight rectangle,
+ * the section the hull had at its narrowest, run forward unchanged.
+ *
+ * The two are given as separate regions rather than one field. Their union is
+ * not convex -- the rectangle is the hull's bounding box, so the corners appear
+ * at the join -- and `carveOut` removes an intersection, so a union has to be
+ * two passes. `step` is the face between them at the join.
+ */
+export function nacelleDuct({
+  axisY, spacing, radiusAt, throatX, fromX, toX, crown,
+}) {
+  const rT = radiusAt(throatX);
+  /** Distance from a point to the segment joining the two circle centres. */
+  const toAxis = (p) => Math.hypot(Math.max(Math.abs(p.x) - spacing, 0), p.y - axisY);
+  const hull = (p) => radiusAt(Math.max(-p.z, throatX)) - toAxis(p);
+
+  /**
+   * One region, one pass: the hull, aft of the narrowest station.
+   *
+   * A rectangle running forward from there to the cabin was tried and dropped.
+   * Its union with the hull is not convex -- the rectangle is the hull's
+   * bounding box, so four corners appear at the join -- and the face between
+   * them is a real surface that has to be meshed and closed against the skin.
+   * It was not closing: 56 cut vertices with nothing within 1.6 m of them, all
+   * of them along that join. Simpler to not make the corners.
+   */
+  const passes = [[hull, (p) => -p.z - throatX]];
+
+  const inside = (p) => -p.z >= throatX && hull(p) > 0;
+
+  /** The outline at a station, as a closed 2-D loop, sampled by arc length. */
+  const outlineAt = (x, n = 160) => {
+    const pts = [];
+    {
+      const r = radiusAt(Math.max(x, throatX));
+      const arc = Math.PI * r, flat = 2 * spacing;
+      const total = 2 * (arc / 2) + 2 * flat;      // two half-arcs, two flats
+      for (let i = 0; i < n; i++) {
+        let s = total * (i / n);
+        // bottom flat, right arc, top flat, left arc
+        if (s < flat) { pts.push([-spacing + s, axisY - r]); continue; }
+        s -= flat;
+        if (s < arc / 2) {
+          const th = -Math.PI / 2 + (s / (arc / 2)) * Math.PI;
+          pts.push([spacing + r * Math.cos(th), axisY + r * Math.sin(th)]);
+          continue;
+        }
+        s -= arc / 2;
+        if (s < flat) { pts.push([spacing - s, axisY + r]); continue; }
+        s -= flat;
+        const th = Math.PI / 2 + (s / (arc / 2)) * Math.PI;
+        pts.push([-spacing + r * Math.cos(th), axisY + r * Math.sin(th)]);
+      }
+    }
+    return pts;
+  };
+
+  /**
+   * Signed depth into the cut: positive inside, negative outside.
+   *
+   * The union of the two regions, so it is the greater of them -- each region
+   * being the least of its own bounding surfaces. Not for cutting, which goes
+   * one surface at a time through `passes`; this is for asking about a point.
+   */
+  const depth = (p) => Math.min(hull(p), -p.z - throatX);
+  return { axisY, spacing, rT, throatX, fromX, toX, crown,
+           radiusAt, passes, inside, depth, outlineAt, hull };
+}
+
+/**
+ * The duct's own surface, over just the part of it inside the body.
+ *
+ * A closed outline swept along the body, rather than the open U the earlier
+ * trough needed: this cut has a roof as well as a floor, so the sheet has to
+ * carry both or the body is left open above the nacelles.
+ *
+ * The step at the narrowest station is meshed too. The rectangle forward is the
+ * hull's bounding box, so where they meet the rectangle has four corners the
+ * hull does not, and the face between them is real material with a real
+ * surface. Built as a ring: both outlines are star-shaped about the middle of
+ * the flat, so one ray finds a point on each.
+ */
+export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = 160 } = {}) {
+  const pos = [], idx = [];
+  const x0 = duct.throatX, x1 = duct.toX + 0.2;
+  const nx = 2 * Math.max(8, Math.round((x1 - x0) / edge / 2));
+  const rows = [];
+  for (let i = 0; i <= nx; i++) {
+    // A station is nudged off the join so a row never lands exactly on the
+    // step, where the outline is two different loops depending on the side.
+    let x = x0 + (x1 - x0) * (i / nx);
+    if (Math.abs(x - duct.throatX) < 1e-6) x += 1e-6;
+    rows.push(duct.outlineAt(x, nu).map(([px, py]) => new THREE.Vector3(px, py, -x)));
+  }
+  const vid = new Map();
+  const id = (r, c) => {
+    const k = r * 8192 + c;
+    if (vid.has(k)) return vid.get(k);
+    const p = rows[r][c];
+    const n = pos.length / 3;
+    pos.push(p.x, p.y, p.z);
+    vid.set(k, n);
+    return n;
+  };
+  for (let i = 0; i < nx; i++) {
+    for (let j = 0; j < nu; j++) {
+      const j2 = (j + 1) % nu;
+      const a = id(i, j), b = id(i, j2), c = id(i + 1, j), e = id(i + 1, j2);
+      idx.push(a, c, b, b, c, e);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  faceInward(g, duct);
+  g.computeVertexNormals();
+
+  /**
+   * The forward end, capped.
+   *
+   * The cut stops at the nacelles' narrowest station, and a cut that stops
+   * leaves a hole: the skin is opened right up to it and there is nothing
+   * across it, so you see into the body. Worth saying plainly because the
+   * failure reads as a seam problem -- cut vertices with nothing within a metre
+   * of them -- when it is not a gap, it is a missing face.
+   */
+  const cap = [], capIdx = [];
+  const loop = duct.outlineAt(duct.throatX, nu);
+  cap.push(0, duct.axisY, -duct.throatX);          // fan from the middle
+  for (const [px, py] of loop) cap.push(px, py, -duct.throatX);
+  for (let j = 0; j < nu; j++) capIdx.push(0, 1 + j, 1 + ((j + 1) % nu));
+  const front = new THREE.BufferGeometry();
+  front.setAttribute('position', new THREE.Float32BufferAttribute(cap, 3));
+  front.setIndex(capIdx);
+  front.computeVertexNormals();
+
+  // All trimmed to what is actually inside the body.
+  const keep = (geo) => clipTriangles(geo, (p) => depthInside(p.x, p.y, p.z));
+  return { wall: keep(g), front: keep(front) };
+}
+
+
+/**
+ * Wind a closed cut's surface so its visible side faces INTO the cut.
+ *
+ * The old trough was a U -- open at the top -- and "into the void" was up and
+ * inboard everywhere on it. This cut has a roof, where into the void is DOWN,
+ * so a single direction cannot say which way a face should look. What holds
+ * everywhere is that the void is around the two duct axes: a face is right way
+ * out when its normal points toward the nearer of them.
+ *
+ * Votes by area and flips the lot, rather than per face, because a closed sweep
+ * is already consistent with itself -- the only question is which way round.
+ */
+function faceInward(geo, duct) {
+  const pos = geo.getAttribute('position');
+  const index = geo.getIndex();
+  const n = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const nrm = new THREE.Vector3(), cen = new THREE.Vector3(), toIn = new THREE.Vector3();
+  let vote = 0;
+  for (let t = 0; t + 2 < n; t += 3) {
+    a.fromBufferAttribute(pos, at(t));
+    b.fromBufferAttribute(pos, at(t + 1));
+    c.fromBufferAttribute(pos, at(t + 2));
+    cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+    nrm.crossVectors(b.clone().sub(a), c.clone().sub(a));      // 2 x area x normal
+    // Toward the nearer duct axis, in the section plane.
+    toIn.set(Math.sign(cen.x) * duct.spacing - cen.x, duct.axisY - cen.y, 0);
+    vote += nrm.dot(toIn);
+  }
+  if (vote < 0) {
+    if (index) {
+      const arr = index.array;
+      for (let t = 0; t + 2 < arr.length; t += 3) {
+        const s = arr[t + 1]; arr[t + 1] = arr[t + 2]; arr[t + 2] = s;
+      }
+      index.needsUpdate = true;
+    }
+  }
+  return geo;
+}

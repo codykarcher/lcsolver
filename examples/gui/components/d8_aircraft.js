@@ -17,7 +17,8 @@ import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
 import { bareTurbofan, turbofan, embeddedTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
-import { carveDuct, carveInto, wouldCarve } from './carve.js';
+import { carveInto, wouldCarve, carveOut,
+         nacelleDuct, nacelleDuctSurface } from './carve.js';
 
 const DEG = Math.PI / 180;
 const IN = 0.0254;
@@ -509,143 +510,102 @@ export function d8Aircraft(deck, opts = {}) {
     };
   })();
 
-  /* ---- the duct the engines sit in ------------------------------------ */
+  /* ---- the cutout the nacelles sit in --------------------------------- */
   /**
-   * Cut AFTER everything is placed, and out of the mesh rather than out of the
-   * section, so the body's shape is bit-for-bit what it was and everything
-   * hung on it -- fins, tailplane, engines, decals -- still sits where it did.
+   * The convex hull of the two ducts aft, a straight rectangle forward.
    *
-   * The duct's size is the engines', not a choice: its walls round up at their
-   * radius, stand a clearance outboard of their outer extent, and its floor is
-   * a clearance below them. It runs from the trailing edge, where it is
-   * deepest, forward to the end of the cabin, where it closes on the crown and
-   * the body is untouched.
+   * Aft of the nacelles' narrowest station the cut is the hull of their two
+   * INNER circles -- a stadium, since that is what two circles side by side
+   * hull to -- so at every station it is exactly their section and the flat
+   * between them. Forward of that station it is the section the hull had there,
+   * run straight to the end of the cabin.
+   *
+   * Cut out of the MESH, not out of the body's section law: a section here is
+   * one radius per angle about one centre, and this shape needs two spans of
+   * material on the same ray. See `carve.js`.
    */
-  const blendR = opts.ductBlend ?? d.ductBlend;
   if (opts.ductCarve ?? d.ductCarve) {
-    const duct = carveDuct(fuse, {
-      floor: engineAxisY - rNac - d.ductGap,
+    const cowl = podded && parts.engines[0]?.children[0]?.userData?.cowlInner;
+    if (cowl?.length) {
+      const zOf = (x) => d.engineX - x;
+      const rRaw = (x) => {
+        const z = zOf(x);
+        if (z >= cowl[0][0]) return cowl[0][1];
+        for (let i = 0; i < cowl.length - 1; i++) {
+          const a = cowl[i], b = cowl[i + 1];
+          if (z <= a[0] && z >= b[0]) {
+            return a[1] + (b[1] - a[1]) * ((z - a[0]) / ((b[0] - a[0]) || 1));
+          }
+        }
+        return cowl[cowl.length - 1][1];
+      };
       /**
-       * The walls stand exactly on the engines' outer extent -- no clearance,
-       * where the floor gets `ductGap`.
+       * The narrowest station, found by looking rather than assumed.
        *
-       * Because `tailSpan` is 1.00 there is nothing to spare. The body's
-       * trailing edge is as wide as the engines and no wider, and the fins hang
-       * off its back upper corners, 20 mm outboard of that. A duct even 40 mm
-       * wider takes those corners with it and the fin roots come out floating
-       * 189 mm above the trough with nothing under them. So the wall goes on
-       * the engine line and the last 20 mm of body is what carries the fins.
-       *
-       * The engines then touch the wall at their equator. That is the whole
-       * clearance the configuration has: a wider duct costs the fins their
-       * mounting, and a wider BODY is a change to the shape.
+       * An inlet contracts from the highlight to a throat and opens out again,
+       * so the smallest section is inside the lip, not at it -- and where it
+       * falls depends on the mean line, which is the nacelle's business and not
+       * this file's.
        */
-      halfWidth: d.engineY + rNac,
-      cornerR: rNac + d.ductGap,
-      toX: d.fuseLength,
-      fromX: -u.cabinZ[1],
+      let throatX = d.engineX - cowl[0][0], rMin = Infinity;
+      for (let i = 0; i < cowl.length; i++) {
+        const x = d.engineX - cowl[i][0];
+        if (x < d.engineX && cowl[i][1] < rMin) { rMin = cowl[i][1]; throatX = x; }
+      }
+      const duct = nacelleDuct({
+        axisY: engineAxisY,
+        spacing: d.engineY,
+        radiusAt: (x) => rRaw(x) + d.ductGap,
+        throatX,
+        fromX: -u.cabinZ[1],
+        toX: d.fuseLength,
+        crown: u.crownAt(u.cabinZ[1]),
+      });
+      const skinMesh = fuse.userData.skinMesh;
+      for (const fields of duct.passes) {
+        const before = skinMesh.geometry;
+        skinMesh.geometry = carveOut(before, fields);
+        before.dispose();
+      }
+      const { wall, front } = nacelleDuctSurface(duct, u.depthInside);
+      const wallMesh = new THREE.Mesh(wall, skinMesh.material);
+      const frontMesh = new THREE.Mesh(front, skinMesh.material);
+      wallMesh.name = 'ductWall';
+      frontMesh.name = 'ductFront';
+      fuse.add(wallMesh); fuse.add(frontMesh);
+      fuse.userData.duct = {
+        throatX, fromX: duct.fromX, toX: duct.toX, spacing: d.engineY,
+        axisY: engineAxisY, rThroat: duct.rT, radiusAt: duct.radiusAt,
+        inside: duct.inside, depth: duct.depth, passes: duct.passes,
+        mesh: wallMesh, front: frontMesh,
+      };
+      const body = (p) => u.depthInside(p.x, p.y, p.z);
       /**
-       * Level from the engines' NOSE aft, not just at the trailing edge. The
-       * ramp is what closes the duct into the cabin roof, and if it is still
-       * descending where the engines are then the floor cuts through them: at
-       * the engine's own station it stood 270 mm above the bottom of the fan,
-       * and a third of the nacelle stayed buried.
-       */
-      /**
-       * The trough IS the nacelle's inner line, from the body's trailing edge
-       * all the way forward to the inlet lip.
+       * The fins lose what stands IN the cut; the nacelles lose what is left
+       * outside it. Opposite rules, and they were briefly the same one.
        *
-       * Not the outer line, and not level anywhere. An engine let into a body
-       * is faired to the surface the air sees: the body closes round the cowl,
-       * and what stands open is the inlet. So the U opens and closes along the
-       * body with the duct inside it, and where it reaches the lip it is the
-       * inlet's own dimension.
+       * A fin's job is to stand on the body. Where it crosses into the open
+       * trough it is a slab hanging in the middle of the duct, so what goes is
+       * `in the body AND in the cut` -- one pass per region, since a pass
+       * removes an intersection and that is exactly what this is.
        */
-      ...(podded ? nacelleTrough : { deepFrom: engineNoseX - d.ductGap }),
-      crown: u.crownAt(u.cabinZ[1]),
-      blend: blendR,
-      // The sheet's triangles, as a target EDGE rather than a count, so they
-      // stay square whatever size the duct comes out.
-      /**
-       * The sheet is meshed FINER than the skin, not to match it.
-       *
-       * The two carry different things. The skin carries the body, whose
-       * features are metres; the sheet carries the lip's round, which is
-       * 80 mm. Given the skin's own edge the round fell across a single quad
-       * and the blend read at 84 degrees instead of 35 -- the same failure as
-       * before, arrived at from the other direction. Half the blend's radius
-       * resolves it, and a third does not read any better -- measured at 0.027,
-       * 0.035, 0.045 and 0.060 m the lip sits between 52 and 67 degrees with no
-       * trend, so the extra 45,000 triangles a third would cost buy nothing.
-       */
-// Guarded, because a blend of zero is a legitimate setting -- it is how
-      // the unblended lip is measured -- and `blend / 3` is then an edge
-      // length of zero, which asks for a grid of infinite width. That is what
-      // ran the heap out at 4 GB, and it looked exactly like the density being
-      // too high, which it was not.
-      edge: opts.sheetEdge ?? (blendR > 0
-        ? Math.min(edge, blendR * d.ductSheetGrain) : edge),
-    });
-    /**
-     * The cut runs on through the fins.
-     *
-     * The fins stand 20 mm outboard of the duct's wall but they are 184 mm
-     * thick at the root, so their inboard face pokes 92 mm through the wall,
-     * 310 mm tall and 2 m long -- a ridge down the inside of the trough that
-     * belongs to neither surface.
-     *
-     * Cut by the duct AND the body together, not by the duct alone. The duct's
-     * wall is a plane with no top to it, so on its own it would go on slicing
-     * the fin all the way to the tailplane; what wants removing is only what is
-     * inside the body as well, which is exactly the part the carve exposed. The
-     * hole it leaves sits in the plane of the wall, with the wall's own sheet
-     * across it, so there is nothing to see through.
-     */
-    // The body FIRST. Only the fin's root is inside it, so for almost every
-    // triangle three queries settle the matter, where asking the duct's two
-    // faces first spent nine on the same answer.
-    for (const vt of parts.verticalTails) {
-      carveInto(vt, [(p) => u.depthInside(p.x, p.y, p.z), ...duct.faces]);
-    }
-
-    /**
-     * And the nacelles lose whatever the body already fills.
-     *
-     * TWO passes, not one, and the reason is what "solid body" means here. The
-     * body's own field says nothing about the duct, so a point sitting in the
-     * trough reads as inside the body even though that material was carved
-     * away. Cutting the nacelle on that field alone would delete exactly the
-     * half that is supposed to show.
-     *
-     * What has to go is inside the body AND outside the duct. Outside the duct
-     * is `floor <= 0 OR wall <= 0` -- a union, which one pass cannot express,
-     * since a pass removes where every field is positive at once. Run as two
-     * passes the removals add up to the union: inside-and-below-the-floor, then
-     * inside-and-outboard-of-the-walls.
-     */
-    /**
-     * Twice round, because each pass can undo a little of the other's work.
-     *
-     * The passes cut on different surfaces, and a cut makes new vertices on the
-     * surface it cut against. The wall pass therefore leaves vertices on the
-     * wall plane that can sit below the floor -- a region the floor pass had
-     * already cleared before those vertices existed. Sixteen of them survived,
-     * every one inside the body where its own skin hides them, but they are
-     * still material that was asked to go. A second round takes them, and costs
-     * almost nothing because `wouldCarve` finds nothing left to do.
-     */
-    const body = (p) => u.depthInside(p.x, p.y, p.z);
-    for (const pod of parts.engines) {
-      for (let round = 0; round < 2; round++) {
-        for (const face of duct.faces) {
-          const fields = [body, (p) => -face(p)];
-          if (wouldCarve(pod, fields)) carveInto(pod, fields);
+      for (const vt of parts.verticalTails) {
+        for (const fields of duct.passes) carveInto(vt, [body, ...fields]);
+      }
+      for (const pod of parts.engines) {
+        for (let round = 0; round < 2; round++) {
+          for (const fields of duct.passes) {
+            for (const f of fields) {
+              const fs = [body, (p) => -f(p)];
+              if (wouldCarve(pod, fs)) carveInto(pod, fs);
+            }
+          }
         }
       }
     }
   } else {
-    // No duct, so nothing has been carved out of the body and everything inside
-    // it is solid. One pass does it.
+    // No cut, so the body is whole and everything inside it is solid: the
+    // nacelles lose whatever the body already fills, in one pass.
     const body = (p) => u.depthInside(p.x, p.y, p.z);
     for (const pod of parts.engines) {
       if (wouldCarve(pod, [body])) carveInto(pod, [body]);

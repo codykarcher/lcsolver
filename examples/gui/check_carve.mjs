@@ -38,13 +38,15 @@ const drop = (g) => g.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
 const plain = d8Aircraft(deck, { sitOnGround: false, ductCarve: false });
 const cut = d8Aircraft(deck, { sitOnGround: false, ductCarve: true });
 const fu = cut.userData.parts.fuselage.userData;
-// Built WITH the body's own depth function, because the duct's lip is flared
-// against it. Without that the volume is the unblended one, and every triangle
-// the blend removed looks like a triangle that was outside the duct and taken
-// anyway -- 293 of them -- while the cut edge, which the flare moves up to
-// 120 mm outboard, falls outside the band this looks in and all but six of its
-// edges vanish from the count.
-const duct = ductVolume({ ...fu.duct, depthInside: fu.depthInside });
+/**
+ * The cut, as the aeroplane built it.
+ *
+ * Taken from the aeroplane rather than rebuilt from a spec: the cut is now two
+ * regions -- the hull of the two ducts aft, a rectangle forward -- and there is
+ * no single set of numbers a checker could reassemble it from without copying
+ * the construction and being wrong in its own way.
+ */
+const duct = fu.duct;
 
 /**
  * Walk a mesh's triangles, handing each one to `fn` as a key and three points.
@@ -107,8 +109,8 @@ const pod = cut.userData.parts.engines[0];
 pod.updateMatrixWorld(true);
 const box = new THREE.Box3().setFromObject(pod);
 const [xNose, xTail] = [-box.max.z, -box.min.z];
-console.log(`nacelle runs x ${xNose.toFixed(2)} to ${xTail.toFixed(2)}; ` +
-            `the trough follows it forward to x ${fu.duct.noseFrom.toFixed(2)}`);
+console.log(`nacelle runs x ${xNose.toFixed(2)} to ${xTail.toFixed(2)}; the cut is the ducts' ` +
+            `hull aft of x ${fu.duct.throatX.toFixed(2)} and a rectangle forward of it`);
 /**
  * How far the nacelle reaches into solid material, at its worst.
  *
@@ -258,7 +260,20 @@ const nearDuct = (q) => duct.depth(q) > -1.0 && -q.z > duct.fromX - 1;
 const skinEdge = realHoles(
   boundary(cut.userData.parts.fuselage.userData.skinMesh.geometry, nearDuct)
     .filter((s) => duct.depth(s.mid) > -0.05));   // only the edge the carve made
-const floorEdge = boundary(fu.duct.mesh.geometry);
+/**
+ * All of the cut's surface, not just its walls.
+ *
+ * The cut is three pieces now -- the swept wall, the step where the rectangle
+ * meets the hull, and the cap across the forward end -- and a skin edge closed
+ * by any of them is closed. Comparing against the wall alone reported 69
+ * unclosed vertices with nothing within 1.6 m, which was the cap it was not
+ * looking at.
+ */
+const floorEdge = [
+  ...boundary(fu.duct.mesh.geometry),
+  ...(fu.duct.step ? boundary(fu.duct.step.geometry) : []),
+  ...(fu.duct.front ? boundary(fu.duct.front.geometry) : []),
+];
 console.log(`cut edge: ${skinEdge.length} open edges on the skin, ${floorEdge.length} on the floor`);
 const nearest = (q, set) => set.reduce((m, s) => Math.min(m, toSegment(q, s)), Infinity);
 const TOL = 0.01;                                // 10 mm on a 30 m aeroplane
@@ -295,8 +310,16 @@ if (strays.length > gaps.length * 0.02) bad(`${strays.length} of ${gaps.length} 
     cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
     n.crossVectors(b.clone().sub(a), c.clone().sub(a));
     if (n.lengthSq() < 1e-18) continue;
-    // A step into the void from the face's own centre: up, and inboard.
-    const into = new THREE.Vector3(-Math.sign(cen.x) * 0.01, 0.01, 0);
+    /**
+     * Toward the nearer duct axis, not "up and inboard".
+     *
+     * That was right for a trough open at the top. This cut has a ROOF, where
+     * into the void is down, so one direction cannot say which way a face
+     * should look -- it called every roof face inside out, 4,565 of them, on a
+     * surface that is wound correctly.
+     */
+    const into = new THREE.Vector3(
+      Math.sign(cen.x) * duct.spacing - cen.x, duct.axisY - cen.y, 0);
     total++;
     if (n.dot(into) < 0) wrong++;
   }
@@ -340,10 +363,16 @@ function flatFraction(geo, where = null) {
 // flat by construction, so identical normals there are correct, and counting
 // them made a correctly shaded sheet read as 17% faceted. The arcs are the part
 // that has to be smooth, and the part that shows if it is not.
-const onTheRound = (q) => {
-  const ax = Math.abs(q.x);
-  return ax > fu.duct.halfWidth - fu.duct.cornerR + 0.05 && ax < fu.duct.halfWidth - 0.05;
-};
+/**
+ * The arcs at the two ends of the hull -- the part that has to shade smooth.
+ *
+ * Written against the hull's own geometry: a point is on an arc when it is
+ * beyond the flat span, which is what `spacing` measures. The old test asked
+ * for `halfWidth` and `cornerR`, numbers the cut no longer has, so it selected
+ * on NaN and reported a smooth sheet as 100 per cent faceted.
+ */
+const onTheRound = (q) => Math.abs(q.x) > fu.duct.spacing + 0.05
+  && -q.z >= fu.duct.throatX;      // the hull; forward of it the sides ARE flat
 for (const [what, geo, where] of [
   ['skin', cut.userData.parts.fuselage.userData.skinMesh.geometry, null],
   ['duct corner rounds', fu.duct.mesh.geometry, onTheRound],
@@ -366,8 +395,7 @@ for (const [what, geo, where] of [
  */
 function finReach(craft) {
   const cu = craft.userData, cf = cu.parts.fuselage.userData;
-  const vol = cf.duct
-    ? ductVolume({ ...cf.duct, depthInside: cf.depthInside }) : duct;
+  const vol = cf.duct ?? duct;
   craft.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(craft.matrixWorld).invert();
   let worst = 0;
@@ -470,8 +498,7 @@ if (!wantsBlend) {
  */
 function nacelleReach(craft, useDuct) {
   const cu = craft.userData, cf = cu.parts.fuselage.userData;
-  const vol = useDuct && cf.duct
-    ? ductVolume({ ...cf.duct, depthInside: cf.depthInside }) : null;
+  const vol = useDuct && cf.duct ? cf.duct : null;
   craft.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(craft.matrixWorld).invert();
   let worst = 0;
@@ -553,7 +580,7 @@ console.log('\nnegative controls');
 }
 {
   // A duct too shallow to reach the engines leaves them buried.
-  const shallow = ductVolume({ ...fu.duct, depthInside: fu.depthInside, floor: axis + rN * 0.9 });
+  const shallow = { depth: (p) => fu.duct.depth(p) - 0.9 * rN };
   const f = deepestBurial(shallow);
   console.log(`  a duct stopping short leaves ${(1000 * f).toFixed(0)} mm buried` +
               (f > 1e-3 ? '  ok' : '  NOT DETECTED'));
@@ -561,10 +588,8 @@ console.log('\nnegative controls');
 }
 {
   // A floor built for a duct 30 cm narrower cannot close the skin's cut.
-  const wrong = ductVolume({ ...fu.duct, depthInside: fu.depthInside,
-                             halfWidth: fu.duct.halfWidth - 0.3 });
-  const g = clipTriangles(
-    fu.duct.mesh.geometry, (q) => wrong.halfWidth - Math.abs(q.x));
+  const wrong = { depth: (p) => fu.duct.depth(p) - 0.3 };
+  const g = clipTriangles(fu.duct.mesh.geometry, (q) => wrong.depth(q) + 0.3 - 0.3);
   const e = boundary(g);
   const pts = [...cutPoints.values()];
   const n = pts.filter((q) => nearest(q, e) > TOL).length;
