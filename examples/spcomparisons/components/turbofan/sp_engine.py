@@ -249,26 +249,29 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     out_by_tag = {}
     seg_out = [None] * N
 
-    # design point: cruise segment, thrust-driven with the cruise rating as
-    # a CAP, T4 free. Pinning T4 == Tt4_CR here under-sizes the engine: the
-    # baseline deck engine cruises at 1360 K, and a machine sized so that
-    # 1587 K just meets cruise thrust cannot double its thrust for climb
-    # under the same cap (measured: mid-climb segments infeasible). With T4
-    # free the engine SIZE settles where the binding climb rating closes --
-    # TASOPT's worst-case sizing, as optimization pressure.
-    cond = cond_for(i_des, 'F')
-    cond['T4'] = None
-    cond['T4_cap'] = tech.Tt4_CR_K
+    # design point: a pure SIZING ANCHOR at cruise conditions, T4 PINNED at
+    # the cruise rating, thrust FREE. The earlier thrust-driven design
+    # (Fn == F with T4 free under the rating cap) left two dofs (T4, W)
+    # against one row whose optimum sits exactly where the cap goes active
+    # -- a degenerate corner at which the SIA's conservative sub-problem
+    # goes infeasible within 2-8 iterations in EVERY free-design run
+    # (measured; with T4 pinned the same model converges in 4). Every
+    # mission segment, including the design-conditions one, is now an
+    # ordinary off-design point with its own thrust row and rating cap, so
+    # nothing is lost: the SIZE still settles where the binding climb
+    # rating closes (TASOPT's worst-case sizing, as optimization
+    # pressure), and segment performance comes from part-power off-design
+    # physics rather than from a point running flat-out at its rating.
+    cond = cond_for(i_des, 'T4')
+    cond['T4'] = tech.Tt4_CR_K
+    cond['T4_cap'] = None
     cond['V0'] = cond['u0']
-    cond['F'] = F[i_des] / units.N
+    cond['F'] = None
     des = SC._point(V, cons, "", cond, pins, None, out_by_tag)
     out_by_tag[""] = des
-    seg_out[i_des] = des
 
-    # off-design points: every other segment, thrust-driven, rating-capped
+    # off-design points: EVERY segment, thrust-driven, rating-capped
     for i in range(N):
-        if i == i_des:
-            continue
         cond = cond_for(i, 'F')
         cond['F'] = F[i] / units.N
         cond['T4'] = None
@@ -304,7 +307,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     _TSFC_CONV = 9.80665 * 3600.0
     for i in range(N):
         o = seg_out[i]
-        tag = "" if i == i_des else f"s{i}_"
+        tag = f"s{i}_"
         # group attribute lookup by full internal name
         g_ = lambda nme: getattr(eng, f"cyc_{tag}{nme}")
         cons += [

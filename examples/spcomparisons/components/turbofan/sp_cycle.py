@@ -492,24 +492,18 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             Nc * (c['Tt_in'] / T_STD)**0.5 == c['Nmech'],
         ])
         if design:
-            sWc = V(n("sWc"), 1.0, f"{key} flow map scalar")
-            sNc = V(n("sNc"), 4500.0, f"{key} speed map scalar")
-            cons.extend([sWc * (at['Wc'] * LB2KG) == Wc,
-                         sNc * M['NcMap_d'] == Nc])
-            # Fixed decks pin PR/eff as constants and the scalars are plain
-            # numbers; the RUBBER engine hands in variables, and the scalars
-            # become variables with their defining rows.
-            if isinstance(c['PR_pin'], (int, float)):
-                sPR = (c['PR_pin'] - 1.0) / (at['PR'] - 1.0)
-            else:
-                sPR = V(n("sPR"), 0.9, f"{key} PR map scalar")
-                cons.extend([sPR * (at['PR'] - 1.0) + 1.0
-                             == c['PR_pin']])              # SigEq (posy)
-            if isinstance(c['eff_pin'], (int, float)):
-                sEff = c['eff_pin'] / at['eff']
-            else:
-                sEff = V(n("sEff"), 1.0, f"{key} eff map scalar")
-                cons.extend([sEff * at['eff'] == c['eff_pin']])
+            # RATIO FORM: the map scalars are pure ratios of design-point
+            # quantities to map-default constants, so they are EXPRESSIONS,
+            # not variables with defining rows.  Off-design rows then couple
+            # directly to the design variables (Wc_od*at == Wc_des*WcM_od
+            # after substitution) -- no intermediate scalar columns for the
+            # SIA to drag along when the design point is FREE.
+            sWc = Wc / (at['Wc'] * LB2KG)
+            sNc = Nc / M['NcMap_d']
+            # PR keeps pycycle's shifted convention s_PR = (PR-1)/(PRmap-1);
+            # as an expression it is signomial-linear in the design PR.
+            sPR = (c['PR_pin'] - 1.0) / (at['PR'] - 1.0)
+            sEff = c['eff_pin'] / at['eff']
             shared_out.update({
                 f"s_Wc_{key}": sWc, f"s_Nc_{key}": sNc,
                 f"s_PR_{key}": sPR, f"s_eff_{key}": sEff})
@@ -519,6 +513,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                     bounds=tuple(wNc))
             Rl = V(n("R"), M['RlineMap_d'], f"{key} map R-line",
                    bounds=tuple(wR))
+            # Window guards as ROWS: the fits are free-sign signomials that
+            # go NEGATIVE off-window, and an iterate that wanders there makes
+            # the eff/PR rows unclosable in log space (subproblem infeasible
+            # at it 3-4 in every free-design run).  Variable bounds are
+            # silently dropped by the detector, so they guard nothing.
+            cons.extend([NcM >= wNc[0], NcM <= wNc[1],
+                         Rl >= wR[0], Rl <= wR[1]])
             prm1 = V(n("prm1"), at['PR'] - 1.0, f"{key} map PR - 1")
             WcM = V(n("WcMv"), at['Wc'], f"{key} map corrected-flow value")
             cons.extend([
@@ -749,17 +750,12 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         PRv = V(nm("PR"), PR_guess, f"{key} pressure ratio Pt_in/Pt_out")
         cons.extend([PRv * Pt_out == Pt_in])
         if design:
-            sWp = V(nm("sWp"), 1.0, f"{key} flow map scalar")
-            sNp = V(nm("sNp"), 3.0, f"{key} speed map scalar")
-            sPR = V(nm("sPR"), 0.7, f"{key} PR map scalar")
-            cons.extend([sWp * at['Wp'] == Wp,
-                         sNp * M['NpMap_d'] == Np,
-                         sPR * (M['PRmap_d'] - 1.0) + 1.0 == PRv])  # SigEq
-            if isinstance(eff_pin, (int, float)):
-                sEfft = eff_pin / at['eff']
-            else:
-                sEfft = V(nm("sEff"), 3.0, f"{key} eff map scalar")
-                cons.extend([sEfft * at['eff'] == eff_pin])
+            # RATIO FORM (see comp_maps): scalars as expressions of the
+            # design variables, no scalar columns or defining rows.
+            sWp = Wp / at['Wp']
+            sNp = Np / M['NpMap_d']
+            sPR = (PRv - 1.0) / (M['PRmap_d'] - 1.0)
+            sEfft = eff_pin / at['eff']
             shared_out.update({f"s_Wp_{key}": sWp, f"s_Np_{key}": sNp,
                                f"s_PR_{key}": sPR,
                                f"s_eff_{key}": sEfft})
@@ -769,6 +765,10 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                     bounds=tuple(wNp))
             PRm = V(nm("PRmap"), M['PRmap_d'], f"{key} map PR",
                     bounds=tuple(wPR))
+            # Window guards as ROWS (see comp_maps): off-window the map
+            # surfaces are invalid/negative and the rows cannot close.
+            cons.extend([NpM >= wNp[0], NpM <= wNp[1],
+                         PRm >= wPR[0], PRm <= wPR[1]])
             WpM = V(nm("WpMv"), at['Wp'], f"{key} map referred-flow value")
             effM = V(nm("effMv"), at['eff'], f"{key} map efficiency value")
             cons.extend([
