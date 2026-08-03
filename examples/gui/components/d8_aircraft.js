@@ -94,6 +94,22 @@ export const D8_CHOICES = {
   /** Clearance between the duct's walls and the engines they hold. */
   ductGap:        0.04,
   /**
+   * How far outside the nacelle's INNER line the cut is taken, in metres.
+   *
+   * Small on purpose. The cut is meant to BE that surface -- the body closes
+   * around the cowl and what stands open is the duct the air sees -- and the
+   * cowl's wall is only about 65 mm thick, so a clearance of `ductGap` put the
+   * cut two thirds of the way through it and left a 40 mm ring of cowl standing
+   * proud all round. That reads as a cut following the OUTER surface, because
+   * cowl is what you see at the edge of it.
+   *
+   * Not zero, though: at zero the body's cut surface and the nacelle's inner
+   * wall are the same surface in the same place, and two coincident faces
+   * flicker against each other. A few millimetres puts the body just behind the
+   * duct wall, where it is hidden by it.
+   */
+  ductSkim:       0.005,
+  /**
    * How deep into the body the duct's lip is blended, in metres.
    *
    * Zero gives the bare cut, which meets the skin at a right angle along the
@@ -555,7 +571,7 @@ export function d8Aircraft(deck, opts = {}) {
       const duct = nacelleDuct({
         axisY: engineAxisY,
         spacing: d.engineY,
-        radiusAt: (x) => rRaw(x) + d.ductGap,
+        radiusAt: (x) => rRaw(x) + d.ductSkim,
         throatX,
         fromX: -u.cabinZ[1],
         toX: d.fuseLength,

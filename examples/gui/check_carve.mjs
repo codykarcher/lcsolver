@@ -110,7 +110,7 @@ pod.updateMatrixWorld(true);
 const box = new THREE.Box3().setFromObject(pod);
 const [xNose, xTail] = [-box.max.z, -box.min.z];
 console.log(`nacelle runs x ${xNose.toFixed(2)} to ${xTail.toFixed(2)}; the cut is the ducts' ` +
-            `hull aft of x ${fu.duct.throatX.toFixed(2)} and a rectangle forward of it`);
+            `hull, from the tail forward to their throat at x ${fu.duct.throatX.toFixed(2)}`);
 /**
  * How far the nacelle reaches into solid material, at its worst.
  *
