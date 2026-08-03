@@ -168,7 +168,41 @@ export function carveOut(geometry, fields) {
   const out = [];
   let whole = 0, split = 0, dropped = 0;
 
-  for (const tri of tris) {
+  /**
+   * Does this triangle cross the region between its corners?
+   *
+   * The corners alone are exact for a plane and not for an arc, so the centroid
+   * and the three edge midpoints get a vote: a bulge across one EDGE shows up
+   * at that midpoint and nowhere else, since a triangle with one bowed side can
+   * still have a clear centroid.
+   */
+  const bulgesInto = (t) => {
+    const pts = [
+      t[0].p.clone().add(t[1].p).add(t[2].p).multiplyScalar(1 / 3),
+      t[0].p.clone().lerp(t[1].p, 0.5),
+      t[1].p.clone().lerp(t[2].p, 0.5),
+      t[2].p.clone().lerp(t[0].p, 0.5),
+    ];
+    // A THRESHOLD, not any crossing at all. Every triangle that merely grazes
+    // the region would otherwise be quartered, and the extra edges cost more
+    // than they fix -- the seam went from 12 unclosed vertices to 92 and the
+    // build from 2.5 s to 4. The strays that started this were 48 and 65 mm.
+    return pts.some((q) => {
+      let least = Infinity;
+      for (const f of fields) { const v = f(q); if (v < least) least = v; }
+      return least > 0.02;
+    });
+  };
+
+  // A queue rather than a loop over the list, so a quartered triangle's pieces
+  // come back round and are asked again.
+  const queue = tris;
+  for (let qi = 0; qi < queue.length; qi++) {
+    const tri = queue[qi];
+    const depth = tri.depth ?? 0;
+    const mid = vert(
+      tri[0].p.clone().add(tri[1].p).add(tri[2].p).multiplyScalar(1 / 3),
+      tri[0].n.clone().add(tri[1].n).add(tri[2].n).normalize());
     /**
      * Asked one surface at a time, and stopped as soon as one settles it.
      *
@@ -187,6 +221,35 @@ export function carveOut(geometry, fields) {
       d.push(row);
       if (row[0] <= 0 && row[1] <= 0 && row[2] <= 0) { clear = true; break; }
     }
+    /**
+     * A triangle can straddle a CURVED surface with every corner outside it.
+     *
+     * The test above -- clear if some field is negative at all three corners --
+     * is exact for a plane and not for an arc. On the body's trailing-edge cap,
+     * whose triangles are large, three had every corner clear of the cut and
+     * their middles 65 mm inside it, and they survived as slivers hanging in
+     * the duct.
+     *
+     * So the centroid gets a vote. Where it disagrees with the corners the
+     * triangle is quartered and the pieces asked again: the disagreement is a
+     * sagitta, and quartering halves the span, so two rounds settle it.
+     */
+    const h = clear && depth < 3
+      ? [lerpVert(tri[0], tri[1], 0.5),
+         lerpVert(tri[1], tri[2], 0.5),
+         lerpVert(tri[2], tri[0], 0.5)]
+      : null;
+    // The centroid alone caught one of the three. The edge midpoints catch the
+    // rest: a bulge across one EDGE shows up there and nowhere else, since the
+    // centroid of a triangle with one bowed side can still be clear.
+    if (h != null && bulgesInto(tri)) {
+      for (const piece of [[tri[0], h[0], h[2]], [h[0], tri[1], h[1]],
+                           [h[2], h[1], tri[2]], [h[0], h[1], h[2]]]) {
+        piece.depth = depth + 1;
+        queue.push(piece);
+      }
+      continue;
+    }
     if (clear) { whole++; out.push(tri); continue; }
 
     // Clear of the region entirely -- handled above -- passes through
@@ -204,7 +267,23 @@ export function carveOut(geometry, fields) {
       const next = [];
       for (const piece of rest) {
         const r = cutTriangle(piece, f);
-        out.push(...r.neg);                        // outside this surface: kept
+        /**
+         * A kept piece goes back round rather than straight out.
+         *
+         * The bulge test above only runs on triangles that arrive clear of
+         * everything. A piece the cutter has just made is not one of those, and
+         * it can bulge exactly as its parent could -- which is where the last
+         * two strays on the trailing-edge cap came from, both of them pieces
+         * rather than whole triangles. Re-queued, they meet the same test.
+         */
+        for (const k of r.neg) {
+          // Only a piece that actually bulges goes back round. Re-queuing all
+          // of them cuts every piece again, and the extra edges cost more than
+          // they fix: the seam went from 12 unclosed vertices to 86 and the
+          // build from 2.5 s to 5.
+          if (depth < 2 && bulgesInto(k)) { k.depth = depth + 1; queue.push(k); }
+          else out.push(k);
+        }
         next.push(...r.pos);                       // inside it: still in question
       }
       rest = next;
@@ -955,8 +1034,33 @@ export function nacelleDuct({
   axisY, spacing, radiusAt, throatX, fromX, toX, crown,
 }) {
   const rT = radiusAt(throatX);
+  /**
+   * Forward of the throat the cut keeps its size and CLIMBS, so that it leaves
+   * through the roof at the end of the cabin.
+   *
+   * Aft of the throat the section is the ducts' own, and the two circles sit on
+   * the engines. Ahead of it there is nothing left to follow, so the section
+   * stops changing and the pair of circles simply rises, carrying the same
+   * opening up and out of the body.
+   *
+   * Cubic, level where it meets the constant part at the throat so there is no
+   * corner there, and leaving the cabin end at a slope rather than tangentially
+   * -- a cut that grazes the roof crosses it at a few degrees over half a metre
+   * instead of at a curve, and trimming one surface against another along a
+   * graze does not close.
+   */
+  const climb = Math.max(0, (crown + rT + 0.06) - axisY);
+  const span = Math.max(throatX - fromX, 1e-9);
+  const riseAt = (x) => {
+    if (x >= throatX) return 0;
+    const f = Math.max(0, (x - fromX) / span);       // 0 at the cabin, 1 at the throat
+    const k = 1;                                     // slope leaving the cabin
+    return climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
+  };
+  const centreY = (x) => axisY + riseAt(x);
   /** Distance from a point to the segment joining the two circle centres. */
-  const toAxis = (p) => Math.hypot(Math.max(Math.abs(p.x) - spacing, 0), p.y - axisY);
+  const toAxis = (p) => Math.hypot(
+    Math.max(Math.abs(p.x) - spacing, 0), p.y - centreY(-p.z));
   const hull = (p) => radiusAt(Math.max(-p.z, throatX)) - toAxis(p);
 
   /**
@@ -969,32 +1073,33 @@ export function nacelleDuct({
    * It was not closing: 56 cut vertices with nothing within 1.6 m of them, all
    * of them along that join. Simpler to not make the corners.
    */
-  const passes = [[hull, (p) => -p.z - throatX]];
+  const passes = [[hull, (p) => -p.z - fromX]];
 
-  const inside = (p) => -p.z >= throatX && hull(p) > 0;
+  const inside = (p) => -p.z >= fromX && hull(p) > 0;
 
   /** The outline at a station, as a closed 2-D loop, sampled by arc length. */
   const outlineAt = (x, n = 160) => {
     const pts = [];
     {
       const r = radiusAt(Math.max(x, throatX));
+      const cy = centreY(x);
       const arc = Math.PI * r, flat = 2 * spacing;
       const total = 2 * (arc / 2) + 2 * flat;      // two half-arcs, two flats
       for (let i = 0; i < n; i++) {
         let s = total * (i / n);
         // bottom flat, right arc, top flat, left arc
-        if (s < flat) { pts.push([-spacing + s, axisY - r]); continue; }
+        if (s < flat) { pts.push([-spacing + s, cy - r]); continue; }
         s -= flat;
         if (s < arc / 2) {
           const th = -Math.PI / 2 + (s / (arc / 2)) * Math.PI;
-          pts.push([spacing + r * Math.cos(th), axisY + r * Math.sin(th)]);
+          pts.push([spacing + r * Math.cos(th), cy + r * Math.sin(th)]);
           continue;
         }
         s -= arc / 2;
-        if (s < flat) { pts.push([spacing - s, axisY + r]); continue; }
+        if (s < flat) { pts.push([spacing - s, cy + r]); continue; }
         s -= flat;
         const th = Math.PI / 2 + (s / (arc / 2)) * Math.PI;
-        pts.push([-spacing + r * Math.cos(th), axisY + r * Math.sin(th)]);
+        pts.push([-spacing + r * Math.cos(th), cy + r * Math.sin(th)]);
       }
     }
     return pts;
@@ -1007,9 +1112,9 @@ export function nacelleDuct({
    * being the least of its own bounding surfaces. Not for cutting, which goes
    * one surface at a time through `passes`; this is for asking about a point.
    */
-  const depth = (p) => Math.min(hull(p), -p.z - throatX);
-  return { axisY, spacing, rT, throatX, fromX, toX, crown,
-           radiusAt, passes, inside, depth, outlineAt, hull };
+  const depth = (p) => Math.min(hull(p), -p.z - fromX);
+  return { axisY, spacing, rT, throatX, fromX, toX, crown, climb,
+           radiusAt, centreY, passes, inside, depth, outlineAt, hull };
 }
 
 /**
@@ -1027,7 +1132,7 @@ export function nacelleDuct({
  */
 export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = 160 } = {}) {
   const pos = [], idx = [];
-  const x0 = duct.throatX, x1 = duct.toX + 0.2;
+  const x0 = duct.fromX, x1 = duct.toX + 0.2;
   const nx = 2 * Math.max(8, Math.round((x1 - x0) / edge / 2));
   const rows = [];
   for (let i = 0; i <= nx; i++) {
@@ -1070,9 +1175,9 @@ export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = 160 } 
    * of them -- when it is not a gap, it is a missing face.
    */
   const cap = [], capIdx = [];
-  const loop = duct.outlineAt(duct.throatX, nu);
-  cap.push(0, duct.axisY, -duct.throatX);          // fan from the middle
-  for (const [px, py] of loop) cap.push(px, py, -duct.throatX);
+  const loop = duct.outlineAt(duct.fromX, nu);
+  cap.push(0, duct.centreY(duct.fromX), -duct.fromX);   // fan from the middle
+  for (const [px, py] of loop) cap.push(px, py, -duct.fromX);
   for (let j = 0; j < nu; j++) capIdx.push(0, 1 + j, 1 + ((j + 1) % nu));
   const front = new THREE.BufferGeometry();
   front.setAttribute('position', new THREE.Float32BufferAttribute(cap, 3));
@@ -1112,7 +1217,8 @@ function faceInward(geo, duct) {
     cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
     nrm.crossVectors(b.clone().sub(a), c.clone().sub(a));      // 2 x area x normal
     // Toward the nearer duct axis, in the section plane.
-    toIn.set(Math.sign(cen.x) * duct.spacing - cen.x, duct.axisY - cen.y, 0);
+    toIn.set(Math.sign(cen.x) * duct.spacing - cen.x,
+             duct.centreY(-cen.z) - cen.y, 0);
     vote += nrm.dot(toIn);
   }
   if (vote < 0) {

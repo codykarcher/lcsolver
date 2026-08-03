@@ -319,7 +319,8 @@ if (strays.length > gaps.length * 0.02) bad(`${strays.length} of ${gaps.length} 
      * surface that is wound correctly.
      */
     const into = new THREE.Vector3(
-      Math.sign(cen.x) * duct.spacing - cen.x, duct.axisY - cen.y, 0);
+      Math.sign(cen.x) * duct.spacing - cen.x,
+      (duct.centreY ? duct.centreY(-cen.z) : duct.axisY) - cen.y, 0);
     total++;
     if (n.dot(into) < 0) wrong++;
   }

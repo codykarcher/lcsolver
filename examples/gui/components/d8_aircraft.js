@@ -599,6 +599,7 @@ export function d8Aircraft(deck, opts = {}) {
         skin: { before: before0, after: after0 },
         throatX, fromX: duct.fromX, toX: duct.toX, spacing: d.engineY,
         axisY: engineAxisY, rThroat: duct.rT, radiusAt: duct.radiusAt,
+        climb: duct.climb, centreY: duct.centreY,
         inside: duct.inside, depth: duct.depth, passes: duct.passes,
         mesh: wallMesh, front: frontMesh,
       };
