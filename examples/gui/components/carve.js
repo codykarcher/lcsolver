@@ -232,7 +232,7 @@ export function carveOut(geometry, fields) {
  */
 export function ductVolume({
   floor, halfWidth, cornerR, fromX, toX, deepFrom, crown,
-  axisY = null, noseFrom = null, radiusAt = null,
+  axisY = null, noseFrom = null, radiusAt = null, spacing = null,
   blend = 0, depthInside = null,
 }) {
   const deep = deepFrom ?? toX;
@@ -249,8 +249,26 @@ export function ductVolume({
    */
   const follows = axisY != null && noseFrom != null && typeof radiusAt === 'function';
   const rAt = (x) => (follows ? radiusAt(Math.max(x, noseFrom)) : cornerR);
-  const flatAt = (x) => Math.max(halfWidth - rAt(x), 0);
-  const flat = Math.max(halfWidth - cornerR, 0);
+  /**
+   * The FLAT between the two rounds is what stays fixed, and the walls move.
+   *
+   * It is the spacing of the things being cradled, so it cannot change along
+   * the body -- the engines do not converge. Holding the WALL fixed instead and
+   * letting the flat absorb the varying radius, which is what this did, walks
+   * the cradle's circles inboard as the duct narrows: measured, the flat drifted
+   * from 1.030 to 0.886 where the engines sit at 1.007, so the trough's rounds
+   * were centred up to 120 mm off the nacelles and left body inside them.
+   */
+  const flat = follows ? Math.max(halfWidth - radiusAt(noseFrom), 0)
+                       : Math.max(halfWidth - cornerR, 0);
+  /**
+   * Given outright rather than derived. Backing it out of `halfWidth - cornerR`
+   * is off by whatever clearance is folded into the radius -- 40 mm here, which
+   * put the cradle's rounds 40 mm inboard of the engines they hold.
+   */
+  const spacingHalf = follows ? (spacing ?? Math.max(halfWidth - cornerR, 0)) : flat;
+  const flatAt = () => spacingHalf;
+  const halfWidthAt = (x) => (follows ? spacingHalf + rAt(x) : halfWidth);
   /**
    * The floor's height at a lateral offset: flat across, then rounding up at
    * the local radius.
@@ -350,7 +368,7 @@ export function ductVolume({
 
   return {
     fromX, toX, deepFrom: deep, noseFrom: noseX, floor, halfWidth, cornerR,
-    crown, blend, flat, flatAt, rAt, lift, floorAt, flare, lip, eSkin,
+    crown, blend, flat, flatAt, rAt, halfWidthAt, lift, floorAt, flare, lip, eSkin,
     /**
      * The two surfaces that bound the duct, each on its own and each smooth.
      * Kept separate because anything cutting geometry has to cut on one at a
@@ -358,13 +376,13 @@ export function ductVolume({
      */
     faces: [
       (p) => p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),  // above the floor
-      (p) => halfWidth + lip(p) - Math.abs(p.x),           // inboard of the walls
+      (p) => halfWidthAt(-p.z) + lip(p) - Math.abs(p.x),   // inboard of the walls
     ],
     /** Inside both at once. For asking about a point, not for cutting. */
     depth(p) {
       return Math.min(
         p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),
-        halfWidth + lip(p) - Math.abs(p.x),
+        halfWidthAt(-p.z) + lip(p) - Math.abs(p.x),
       );
     },
   };
@@ -416,11 +434,12 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
     if (!depthInside) return duct.crown + 0.1;
     const margin = (duct.eSkin ?? 0) + 0.10;
     const y0 = duct.floorAt(x) + (duct.rAt ? duct.rAt(x) : duct.cornerR);
+    const hw = duct.halfWidthAt ? duct.halfWidthAt(x) : duct.halfWidth;
     let lo = y0, hi = duct.crown + 0.2;
-    if (!(depthInside(duct.halfWidth, lo, -x) > 0)) return y0 + margin;
+    if (!(depthInside(hw, lo, -x) > 0)) return y0 + margin;
     for (let i = 0; i < 32; i++) {
       const m = (lo + hi) / 2;
-      if (depthInside(duct.halfWidth, m, -x) > 0) lo = m; else hi = m;
+      if (depthInside(hw, m, -x) > 0) lo = m; else hi = m;
     }
     return lo + margin;
   };
@@ -476,7 +495,8 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
         return [side * (fl + cR * Math.sin(th)), y0 + cR * (1 - Math.cos(th))];
       }
       const v = Math.min(1, (a - fl - arc) / Math.max(wEff, 1e-9));
-      return [side * duct.halfWidth, y0 + cR + wallH * (1 - (1 - v) ** 2.4)];
+      const hw = duct.halfWidthAt ? duct.halfWidthAt(x) : duct.halfWidth;
+      return [side * hw, y0 + cR + wallH * (1 - (1 - v) ** 2.4)];
     };
     return { at, half };
   };

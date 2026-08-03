@@ -456,6 +456,7 @@ export function d8Aircraft(deck, opts = {}) {
     };
     return {
       axisY: engineAxisY,
+      spacing: d.engineY,                         // half the distance between them
       noseFrom: d.engineX - cowl[0][0],           // the inlet lip's station
       radiusAt: (x) => rAt(x) + d.ductGap,
     };
