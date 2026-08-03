@@ -370,7 +370,25 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
     }
     return lo + margin;
   };
+  /**
+   * One station's profile, remembered.
+   *
+   * `wallTopAt` bisects against the body to find where the wall leaves it --
+   * 32 section queries -- and this was being rebuilt for every point AROUND the
+   * profile rather than once per station. That alone was 376,000 of the 572,000
+   * queries the sheet made, two thirds of the most expensive stage in the
+   * build, all of it recomputing the same number 73 times in a row.
+   *
+   * One slot is all it needs: the grid walks the whole profile at one station
+   * before moving to the next.
+   */
+  let lastX = NaN, lastProfile = null;
   const profile = (x) => {
+    if (x === lastX) return lastProfile;
+    lastX = x; lastProfile = buildProfile(x);
+    return lastProfile;
+  };
+  const buildProfile = (x) => {
     const y0 = duct.floorAt(x);
     const wallH = Math.max(wallTopAt(x) - (y0 + duct.cornerR), 0);
     const arc = (Math.PI / 2) * duct.cornerR;
@@ -458,8 +476,18 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
     // Away from the lip there is nothing to solve, and this is most of the
     // sheet: the round only reaches `blend` in from the skin, so a point deeper
     // than that is already where it belongs and the search would spend two
-    // dozen section evaluations confirming it.
-    if (depthInside(px, py, -x) > duct.blend) return p;
+    // dozen section evaluations confirming it. A point well OUTSIDE the body is
+    // the same story from the other side -- the solve can only push it further
+    // out, and the clip throws it away regardless.
+    //
+    // Well outside means several grid steps outside, not merely outside. A
+    // vertex just past the skin is still one END of the segment the clip
+    // interpolates the rim along, so leaving it unsolved moves the rim: cutting
+    // at the flare's own reach, 140 mm, took the lip's blend from 65 back
+    // towards 55 degrees. Half a metre is past anything the grid can reach
+    // across.
+    const a0 = depthInside(px, py, -x);
+    if (a0 > duct.blend || a0 < -0.5) return p;
     // Out into the material, the way this part of the profile faces.
     const onWall = Math.abs(s) > wallAt;
     const face = onWall ? duct.faces[1] : duct.faces[0];
