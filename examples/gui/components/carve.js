@@ -213,7 +213,10 @@ export function carveOut(geometry, fields) {
  * needs, and it frees the duct from having to be star-shaped about anything,
  * which is the entire reason this works where the section could not.
  */
-export function ductVolume({ floor, halfWidth, cornerR, fromX, toX, deepFrom, crown }) {
+export function ductVolume({
+  floor, halfWidth, cornerR, fromX, toX, deepFrom, crown,
+  blend = 0, depthInside = null,
+}) {
   const flat = Math.max(halfWidth - cornerR, 0);
   const deep = deepFrom ?? toX;
   /** The floor's height at a lateral offset: flat across, then rounding up. */
@@ -254,22 +257,60 @@ export function ductVolume({ floor, halfWidth, cornerR, fromX, toX, deepFrom, cr
     if (f <= 0) return crown + drop * k * f;      // climbing out through the roof
     return crown + drop * ((k - 2) * f ** 3 + (3 - 2 * k) * f ** 2 + k * f);
   };
+  /**
+   * The lip, rounded rather than square.
+   *
+   * Left alone the duct meets the skin at a hard crease -- a right angle along
+   * the median of the rim, and folded back on itself at 158 degrees at the
+   * worst. This flares the duct outward as it nears the skin, by an amount that
+   * depends only on how deep into the body a point is. The rim is exactly where
+   * that depth is zero, everywhere it runs, so one profile rounds the whole lip
+   * -- walls, forward closure, trailing edge -- without ever having to find the
+   * rim or follow it.
+   *
+   * The flare has to be in the FACES, not in the sheet alone. A fillet moves
+   * the line where the two surfaces meet: it is tangent to the skin a distance
+   * out from the old corner, not at it. Scooping only the sheet and leaving the
+   * cut where it was cannot be tangent to anything -- tried, and it turned the
+   * median crease from 90 to 48 degrees by undercutting the wall, which softens
+   * the shading but leaves an overhang rather than a round.
+   *
+   * The arc is truncated at 70 degrees instead of running to tangency. A fillet
+   * that meets the skin flat meets it at a grazing angle, and trimming one
+   * surface against another along a graze is exactly what left a hairline slot
+   * across the crown 227 mm from anything. Stopping at 70 leaves the surfaces
+   * crossing at 20 degrees -- shallow, but a crossing.
+   */
+  const LIP = 70 * Math.PI / 180;
+  const aKnee = blend * (1 - Math.sin(LIP));      // where the arc is truncated
+  const eKnee = blend * (1 - Math.cos(LIP));
+  const eSkin = eKnee + Math.tan(LIP) * aKnee;    // the flare at the skin itself
+  const flare = (a) => {
+    if (!(blend > 0)) return 0;
+    if (a >= blend) return 0;
+    if (a <= aKnee) return eKnee + Math.tan(LIP) * (aKnee - Math.max(a, 0));
+    const w = blend - a;
+    return blend - Math.sqrt(Math.max(0, blend * blend - w * w));
+  };
+  const lip = depthInside ? (p) => flare(depthInside(p.x, p.y, p.z)) : () => 0;
+
   return {
-    fromX, toX, deepFrom: deep, floor, halfWidth, cornerR, crown, flat, lift, floorAt,
+    fromX, toX, deepFrom: deep, floor, halfWidth, cornerR, crown, blend, flat,
+    lift, floorAt, flare, lip, eSkin,
     /**
-     * The three surfaces that bound the duct, each on its own and each smooth.
+     * The two surfaces that bound the duct, each on its own and each smooth.
      * Kept separate because anything cutting geometry has to cut on one at a
      * time -- see `carveOut` for what combining them first does to the edge.
      */
     faces: [
-      (p) => p.y - (floorAt(-p.z) + lift(p.x)),   // above the floor
-      (p) => halfWidth - Math.abs(p.x),           // inboard of the walls
+      (p) => p.y - (floorAt(-p.z) + lift(p.x)) + lip(p),   // above the floor
+      (p) => halfWidth + lip(p) - Math.abs(p.x),           // inboard of the walls
     ],
     /** Inside both at once. For asking about a point, not for cutting. */
     depth(p) {
       return Math.min(
-        p.y - (floorAt(-p.z) + lift(p.x)),
-        halfWidth - Math.abs(p.x),
+        p.y - (floorAt(-p.z) + lift(p.x)) + lip(p),
+        halfWidth + lip(p) - Math.abs(p.x),
       );
     },
   };
@@ -288,7 +329,7 @@ export function ductVolume({ floor, halfWidth, cornerR, fromX, toX, deepFrom, cr
  * the two surfaces meet.
  */
 export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = {}) {
-  const pos = [], idx = [];
+  const pos = [], nrm = [], idx = [];
   /**
    * One station's profile: down one wall, round the corner, across the floor,
    * and back up the other.
@@ -304,12 +345,48 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
    * Sampled by ARC LENGTH along the profile rather than by segment, so the
    * quads stay near-square instead of bunching at the corners.
    */
-  const top = wallTop ?? (duct.crown + 0.1);
+  /**
+   * How high this station's walls are meshed: just past where they leave the
+   * body, found by asking the body.
+   *
+   * A single height for the whole duct -- the cabin's crown, which is what this
+   * used -- wastes almost all of the samples. The afterbody is 0.9 m lower at
+   * the engines than at the cabin, so at those stations two thirds of every
+   * wall was meshed in open air and thrown away by the clip, leaving three rows
+   * across the part that is actually there. The lip's round then fell inside a
+   * single row and did not appear at all: the sheet stepped 180 mm sideways in
+   * one quad and read exactly as square as before.
+   */
+  const wallTopAt = (x) => {
+    if (wallTop != null) return wallTop;
+    if (!depthInside) return duct.crown + 0.1;
+    const margin = (duct.eSkin ?? 0) + 0.10;
+    const y0 = duct.floorAt(x) + duct.cornerR;
+    let lo = y0, hi = duct.crown + 0.2;
+    if (!(depthInside(duct.halfWidth, lo, -x) > 0)) return y0 + margin;
+    for (let i = 0; i < 32; i++) {
+      const m = (lo + hi) / 2;
+      if (depthInside(duct.halfWidth, m, -x) > 0) lo = m; else hi = m;
+    }
+    return lo + margin;
+  };
   const profile = (x) => {
     const y0 = duct.floorAt(x);
-    const wallH = Math.max(top - (y0 + duct.cornerR), 0);
+    const wallH = Math.max(wallTopAt(x) - (y0 + duct.cornerR), 0);
     const arc = (Math.PI / 2) * duct.cornerR;
-    const half = wallH + arc + duct.flat;          // one side, floor centre out
+    /**
+     * The wall is sampled far more finely than its length deserves, and
+     * clustered at its top.
+     *
+     * Straight arc length gives every part of the profile the same spacing,
+     * which is right for quad aspect and wrong for what is happening here: the
+     * wall is a tenth of the profile and the lip's round lives in its top few
+     * centimetres, so the round fell inside a single quad and the sheet stepped
+     * 180 mm sideways in one go. It shaded exactly as square as an unblended
+     * cut, because as far as the mesh was concerned it was one.
+     */
+    const wEff = Math.max(wallH, 0.45 * (arc + duct.flat));
+    const half = wEff + arc + duct.flat;           // one side, floor centre out
     const at = (s) => {                            // s in [-half, half]
       const side = s < 0 ? -1 : 1, a = Math.abs(s);
       if (a <= duct.flat) return [side * a, y0];
@@ -318,7 +395,9 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
         return [side * (duct.flat + duct.cornerR * Math.sin(th)),
                 y0 + duct.cornerR * (1 - Math.cos(th))];
       }
-      return [side * duct.halfWidth, y0 + duct.cornerR + (a - duct.flat - arc)];
+      const v = Math.min(1, (a - duct.flat - arc) / Math.max(wEff, 1e-9));
+      return [side * duct.halfWidth,
+              y0 + duct.cornerR + wallH * (1 - (1 - v) ** 2.4)];
     };
     return { at, half };
   };
@@ -327,38 +406,106 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
   // reach past the point where the two surfaces cross or the cut edge runs off
   // the end of it.
   const x0 = duct.fromX - 0.5;
-  /** A point on the sheet, from station and normalised position around it. */
+  /**
+   * The lip, blended rather than square.
+   *
+   * Left alone the duct meets the skin at a hard crease -- a right angle at the
+   * median of the rim, and folded back on itself at 158 degrees at the worst.
+   * The blend scoops the sheet away from the rim so it leaves ALONG the skin
+   * and turns down into the wall over a band, which is what a fillet does.
+   *
+   * The scoop is a function of depth into the body, and that is what makes it
+   * simple: the rim is exactly where that depth is zero, everywhere it runs,
+   * so one profile softens the whole lip -- walls, forward closure, trailing
+   * edge -- without ever having to find the rim or follow it.
+   *
+   * It also has to vanish AT the rim, which is why a bulge and not a ramp. The
+   * skin's cut is on the unblended duct and must not move: the two meshes were
+   * brought into agreement to 7.4 mm and a lip that shifted the sheet's edge
+   * would open all of that back up.
+   *
+   * `sin` gives both ends for free -- zero and steep at the rim, zero and level
+   * where it rejoins the wall -- and its slope at the rim is the angle the
+   * crease is turned through.
+   *
+   * That angle is worked out AT EACH POINT, not fixed. Turning every point
+   * through the same 55 degrees brought the median crease down from 90 to 56
+   * and made the tail worse -- the 90th percentile went from 129 to 159 and the
+   * worst from 158 to 178 -- because much of the rim was already shallow and
+   * the scoop drove it straight past flat into a fold. Each point turns by what
+   * it actually needs, capped, and a point that needs nothing gets nothing.
+   */
+  /**
+   * A point of the sheet: on the duct's profile, then pushed out to wherever
+   * the flared face actually is.
+   *
+   * SOLVED for rather than offset. The flare depends on depth into the body,
+   * and moving a point changes its depth, so the displacement that satisfies it
+   * is a fixed point of that relation -- and iterating it diverges near the rim,
+   * where the flare's slope exceeds one. Walking in from the outside and
+   * bisecting the first sign change finds the OUTERMOST root, which is the
+   * fillet; a plain bisection over the whole span can land on an inner one and
+   * put the sheet inside the wall it is supposed to be rounding.
+   */
+  const wallAt = duct.flat + (Math.PI / 2) * duct.cornerR;
+  const reach = (duct.eSkin ?? 0) + 0.02;
   const point = (x, t) => {
     const { at, half } = profile(x);
-    const [px, py] = at(half * (2 * t - 1));
-    return new THREE.Vector3(px, py, -x);
+    const s = half * (2 * t - 1);
+    const [px, py] = at(s);
+    const p = new THREE.Vector3(px, py, -x);
+    if (!(reach > 0.02) || !depthInside) return p;
+    // Away from the lip there is nothing to solve, and this is most of the
+    // sheet: the round only reaches `blend` in from the skin, so a point deeper
+    // than that is already where it belongs and the search would spend two
+    // dozen section evaluations confirming it.
+    if (depthInside(px, py, -x) > duct.blend) return p;
+    // Out into the material, the way this part of the profile faces.
+    const onWall = Math.abs(s) > wallAt;
+    const face = onWall ? duct.faces[1] : duct.faces[0];
+    const step = (u) => (onWall
+      ? new THREE.Vector3(px + Math.sign(s) * u, py, -x)
+      : new THREE.Vector3(px, py - u, -x));
+    const N = 24;
+    let hi = reach, fHi = face(step(hi));
+    for (let k = N - 1; k >= 0; k--) {
+      const lo = reach * (k / N), fLo = face(step(lo));
+      if ((fLo > 0) !== (fHi > 0)) {
+        let a = lo, b = hi;
+        for (let it = 0; it < 30; it++) {
+          const m = (a + b) / 2;
+          if ((face(step(m)) > 0) === (fLo > 0)) a = m; else b = m;
+        }
+        return step((a + b) / 2);
+      }
+      hi = lo; fHi = fLo;
+    }
+    return p;
   };
-  /**
-   * The sheet's normal, from the surface itself rather than from its triangles.
-   *
-   * Face normals would face the duct exactly as well and shade it as a set of
-   * flat panels, which is the same fault the skin had: the arc across the
-   * corners would read as a row of chamfers instead of a round.
-   */
-  const nrm = [];
-  const normalAt = (x, t) => {
-    const h = 1e-4;
-    const ds = point(x, Math.min(1, t + h)).sub(point(x, Math.max(0, t - h)));
-    const dx = point(x + h, t).sub(point(x - h, t));
-    const n = new THREE.Vector3().crossVectors(ds, dx).normalize();
-    // Into the void: up off the floor, inboard off the walls.
-    const p = point(x, t);
-    if (n.dot(new THREE.Vector3(-Math.sign(p.x) * 0.3, 1, 0)) < 0) n.negate();
-    return n;
-  };
+  const rows = [];
   for (let i = 0; i <= nx; i++) {
     const x = x0 + (duct.toX - x0) * (i / nx);
-    const { at, half } = profile(x);
+    const row = [];
+    for (let j = 0; j <= nu; j++) row.push(point(x, j / nu));
+    rows.push(row);
+  }
+  /**
+   * Normals from the finished grid, by central differences on its neighbours.
+   *
+   * Taken from the grid rather than analytically because the blend is not
+   * analytic -- it asks the body how deep it is -- and because differencing the
+   * grid gives the normals of the surface that is actually there, blend
+   * included, rather than of the one it started as.
+   */
+  for (let i = 0; i <= nx; i++) {
     for (let j = 0; j <= nu; j++) {
-      const t = j / nu;
-      const [px, py] = at(half * (2 * t - 1));
-      pos.push(px, py, -x);
-      const n = normalAt(x, t);
+      const ds = rows[i][Math.min(nu, j + 1)].clone().sub(rows[i][Math.max(0, j - 1)]);
+      const dx = rows[Math.min(nx, i + 1)][j].clone().sub(rows[Math.max(0, i - 1)][j]);
+      const n = new THREE.Vector3().crossVectors(ds, dx);
+      if (n.lengthSq() < 1e-18) n.set(0, 1, 0); else n.normalize();
+      const p = rows[i][j];
+      if (n.dot(new THREE.Vector3(-Math.sign(p.x) * 0.3, 1, 0)) < 0) n.negate();
+      pos.push(p.x, p.y, p.z);
       nrm.push(n.x, n.y, n.z);
     }
   }
@@ -524,8 +671,44 @@ export function carveInto(root, fields, base = new THREE.Matrix4()) {
   return out;
 }
 
+/**
+ * Give the sheet the body's own normal where the two meet.
+ *
+ * The blend is in the geometry, but shading is what the eye reads as an edge,
+ * and two meshes that meet along a curve shade as a crease unless their normals
+ * agree there. The skin's normals at its cut are the body's, unchanged; the
+ * sheet's at its rim are the fillet's. Setting the second equal to the first is
+ * not a cheat -- the fillet is built tangent to the skin, truncated at 70
+ * degrees of its arc, so the body's normal is what the sheet's normal is
+ * approaching anyway, to within the 20 degrees that truncation left.
+ *
+ * Only the rim vertices, so the fillet still carries the turn.
+ */
+function matchRimNormals(geometry, depthInside, tol = 1e-3) {
+  const pos = geometry.getAttribute('position');
+  const nrm = geometry.getAttribute('normal');
+  if (!nrm) return 0;
+  const p = new THREE.Vector3();
+  const h = 1e-4;
+  let n = 0;
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    if (Math.abs(depthInside(p.x, p.y, p.z)) > tol) continue;
+    const g = new THREE.Vector3(
+      depthInside(p.x + h, p.y, p.z) - depthInside(p.x - h, p.y, p.z),
+      depthInside(p.x, p.y + h, p.z) - depthInside(p.x, p.y - h, p.z),
+      depthInside(p.x, p.y, p.z + h) - depthInside(p.x, p.y, p.z - h));
+    if (g.lengthSq() < 1e-18) continue;
+    g.normalize().negate();                       // the body's OUTWARD normal
+    nrm.setXYZ(i, g.x, g.y, g.z);
+    n++;
+  }
+  nrm.needsUpdate = true;
+  return n;
+}
+
 export function carveDuct(fuse, spec) {
-  const duct = ductVolume(spec);
+  const duct = ductVolume({ ...spec, depthInside: fuse.userData.depthInside });
   const skin = fuse.userData.skinMesh;
   const before = skin.geometry;
   const kept = carveOut(before, duct.faces);
@@ -534,12 +717,13 @@ export function carveDuct(fuse, spec) {
 
   const sheet = ductSurface(duct, fuse.userData.depthInside);
   const snap = snapRim(sheet, openEdges(kept));
+  const matched = matchRimNormals(sheet, fuse.userData.depthInside);
   const floor = new THREE.Mesh(sheet, skin.material);
   floor.name = 'ductFloor';
   fuse.add(floor);
 
   fuse.userData.duct = {
-    ...spec, mesh: floor, snap,
+    ...spec, mesh: floor, snap, rimNormals: matched,
     skin: kept.userData.clip,
     floorTriangles: sheet.getAttribute('position').count / 3,
   };

@@ -73,6 +73,23 @@ export const D8_CHOICES = {
   ductCarve:      true,
   /** Clearance between the duct's walls and the engines they hold. */
   ductGap:        0.04,
+  /**
+   * How deep into the body the duct's lip is blended, in metres.
+   *
+   * Zero gives the bare cut, which meets the skin at a right angle along the
+   * median of the rim and folds back on itself at 158 degrees at the worst.
+   *
+   * Small, because the thing it is rounding is small: where the walls come
+   * through the upper skin they are a few centimetres tall, so a radius of the
+   * 0.30 m that first looked right swallowed the wall whole and came out worse
+   * than no blend at all.
+   *
+   * 0.08 is the largest that still closes. The flare moves the cut outboard, and
+   * past this the duct's own sheet starts running out of body to be clipped
+   * against before the skin's cut edge does: at 0.10 ten of the seam's edges
+   * open up and the worst gap goes from 18 to 45 mm.
+   */
+  ductBlend:      0.08,
 };
 
 /** Leading-edge sweep from a quarter-chord one. `k` is 1/2 tip-to-tip, 1/4 for a fin. */
@@ -333,6 +350,7 @@ export function d8Aircraft(deck, opts = {}) {
        */
       deepFrom: engineNoseX - d.ductGap,
       crown: u.crownAt(u.cabinZ[1]),
+      blend: opts.ductBlend ?? d.ductBlend,
     });
     /**
      * The cut runs on through the fins.
@@ -361,18 +379,26 @@ export function d8Aircraft(deck, opts = {}) {
     lStrut: d.mainStrut, rStrut: 0.10,
   });
   /**
-   * The main legs hang from the WING, as the conventional aeroplane's do.
+   * The main legs hang from the body's KEEL, where a D8 stows them.
    *
-   * Hung from the body's keel instead -- on the reasoning that a D8 stows them
-   * in the fuselage -- the aeroplane sat 3.22 degrees nose-up with its nose
-   * wheel 901 mm clear of the ground, and that is the deck telling us the
-   * attachment is wrong rather than the struts being. The solve's main leg
-   * reaches 0.881 m further down than its nose leg, and the keel rises only
-   * 0.020 m between the two stations, so a main leg hung level with the nose
-   * one cannot possibly put both wheels on the same plane. The wing sits 0.73 m
-   * above the keel at that station, which is very nearly the difference.
+   * Which datum the solve sized its struts against is not in the solve, so it
+   * has to be read off them. The test is that an aeroplane stands on its
+   * wheels: whichever attachment puts all of them in one plane is the one the
+   * strut lengths were written for.
+   *
+   * This solve's main leg reaches 0.158 m LESS than its nose leg and the keel
+   * is level between the two stations, so keel-hung leaves 158 mm and 0.64
+   * degrees. Hung from the wing instead -- 0.57 m above the keel there -- it
+   * comes out 875 mm and 3.56 degrees nose-down.
+   *
+   * The previous solve said the opposite, and emphatically: its main leg
+   * reached 0.881 m FURTHER than the nose, which no keel-hung leg could
+   * absorb, and the wing was almost exactly that far above the keel. So this is
+   * not a free choice being tuned -- the deck states it, and it has changed its
+   * mind about where a D8 puts its gear. Left on the wing this aeroplane stands
+   * on its nosewheel with the mains in the air.
    */
-  const mainAttachY = wingY + d.mainY * Math.tan(d.wingDihedral * DEG);
+  const mainAttachY = u.keelAt(-d.mainX);
   const mainContact = mainAttachY + mkMain().userData.contactY;
   parts.gear = [];
   for (const side of [1, -1]) {

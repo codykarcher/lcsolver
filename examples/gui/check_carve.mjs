@@ -28,7 +28,13 @@ const bad = (m) => { console.log(`  FAIL  ${m}`); failures++; };
 const plain = d8Aircraft(deck, { sitOnGround: false, ductCarve: false });
 const cut = d8Aircraft(deck, { sitOnGround: false, ductCarve: true });
 const fu = cut.userData.parts.fuselage.userData;
-const duct = ductVolume(fu.duct);
+// Built WITH the body's own depth function, because the duct's lip is flared
+// against it. Without that the volume is the unblended one, and every triangle
+// the blend removed looks like a triangle that was outside the duct and taken
+// anyway -- 293 of them -- while the cut edge, which the flare moves up to
+// 120 mm outboard, falls outside the band this looks in and all but six of its
+// edges vanish from the count.
+const duct = ductVolume({ ...fu.duct, depthInside: fu.depthInside });
 
 /** Every triangle of a mesh, as sorted vertex triples rounded to the micron. */
 function triangles(geo) {
@@ -291,7 +297,8 @@ for (const [what, geo, where] of [
  */
 function finReach(craft) {
   const cu = craft.userData, cf = cu.parts.fuselage.userData;
-  const vol = cf.duct ? ductVolume(cf.duct) : duct;
+  const vol = cf.duct
+    ? ductVolume({ ...cf.duct, depthInside: cf.depthInside }) : duct;
   craft.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(craft.matrixWorld).invert();
   let worst = 0;
@@ -314,6 +321,44 @@ console.log(`fins reach ${(1000 * finWas).toFixed(0)} mm into the trough before,
 if (finNow > 1e-3) bad(`the fins still reach ${(1000 * finNow).toFixed(0)} mm into the trough`);
 if (finWas < 0.02) bad('the fins never reached into the trough -- the test proves nothing');
 
+/* ---- 7. the lip is blended, not square ---------------------------------- */
+/**
+ * Measured as the turn in the surface normal just inside the seam, not at the
+ * seam itself. At the seam the sheet is GIVEN the body's normal, so it reads
+ * zero whether or not there is a blend there -- the question is whether the
+ * turn is then spread over a fillet or taken in one step by the next row of
+ * triangles.
+ */
+function lipTurn(craft) {
+  const cu = craft.userData, cf = cu.parts.fuselage.userData;
+  if (!cf.duct) return null;
+  const geo = cf.duct.mesh.geometry;
+  const pos = geo.getAttribute('position'), nrm = geo.getAttribute('normal');
+  const q = new THREE.Vector3(), n = new THREE.Vector3();
+  const h = 1e-4, angs = [];
+  for (let i = 0; i < pos.count; i++) {
+    q.fromBufferAttribute(pos, i);
+    const a = cf.depthInside(q.x, q.y, q.z);
+    if (!(a > 0.005 && a < 0.05)) continue;          // just inside the seam
+    n.fromBufferAttribute(nrm, i);
+    const g = new THREE.Vector3(
+      cf.depthInside(q.x + h, q.y, q.z) - cf.depthInside(q.x - h, q.y, q.z),
+      cf.depthInside(q.x, q.y + h, q.z) - cf.depthInside(q.x, q.y - h, q.z),
+      cf.depthInside(q.x, q.y, q.z + h) - cf.depthInside(q.x, q.y, q.z - h));
+    if (g.lengthSq() < 1e-18) continue;
+    g.normalize().negate();
+    angs.push(Math.acos(Math.max(-1, Math.min(1, g.dot(n)))) * 180 / Math.PI);
+  }
+  angs.sort((a, b) => a - b);
+  return angs.length ? angs[Math.floor(angs.length / 2)] : null;
+}
+const square = d8Aircraft(deck, { sitOnGround: false, ductBlend: 0 });
+const turnSquare = lipTurn(square), turnBlend = lipTurn(cut);
+console.log(`lip: the normal turns ${turnSquare.toFixed(0)} deg within 50 mm of the seam ` +
+            `unblended, ${turnBlend.toFixed(0)} deg blended`);
+if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBlend.toFixed(0)} vs ${turnSquare.toFixed(0)} deg)`);
+if (turnSquare < 90) bad('the unblended lip was not square -- the test proves nothing');
+
 /* ---- negative controls -------------------------------------------------- */
 /**
  * Each check, run against geometry it is supposed to reject. A check that has
@@ -331,7 +376,7 @@ console.log('\nnegative controls');
 }
 {
   // A duct too shallow to reach the engines leaves them buried.
-  const shallow = ductVolume({ ...fu.duct, floor: axis + rN * 0.9 });
+  const shallow = ductVolume({ ...fu.duct, depthInside: fu.depthInside, floor: axis + rN * 0.9 });
   const f = deepestBurial(shallow);
   console.log(`  a duct stopping short leaves ${(1000 * f).toFixed(0)} mm buried` +
               (f > 1e-3 ? '  ok' : '  NOT DETECTED'));
@@ -339,7 +384,8 @@ console.log('\nnegative controls');
 }
 {
   // A floor built for a duct 30 cm narrower cannot close the skin's cut.
-  const wrong = ductVolume({ ...fu.duct, halfWidth: fu.duct.halfWidth - 0.3 });
+  const wrong = ductVolume({ ...fu.duct, depthInside: fu.depthInside,
+                             halfWidth: fu.duct.halfWidth - 0.3 });
   const g = clipTriangles(
     fu.duct.mesh.geometry, (q) => wrong.halfWidth - Math.abs(q.x));
   const e = boundary(g);
