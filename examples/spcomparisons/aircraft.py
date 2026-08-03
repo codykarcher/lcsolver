@@ -1690,8 +1690,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # the yaw inertia, both of which want it small -- so the pods snuggle
         # to the inner wall: the real D8 layout, engines shoulder-to-shoulder
         # on the tailcone centreline between the fins.
-        *([2.0 * y_eng >= k_eng_clear * eng.d_f,
-           y_eng + k_eng_clear * eng.d_f / 2.0 <= fu.w_fuse] if _rear else
+        # ... on the NACELLE diameter, not the bare fan disc: with the rows
+        # written on d_f the solved pods sat 3 cm apart skin-to-skin (the
+        # 1.2 factor on the fan is ~1.0 on the cowl). d_nacelle = d_f + two
+        # cowl walls is the body that occupies space.
+        *([2.0 * y_eng >= k_eng_clear * lg.d_nacelle,
+           y_eng + k_eng_clear * lg.d_nacelle / 2.0 <= fu.w_fuse] if _rear else
           ([y_eng >= 1.15 * (fu.w_fuse + 0.5 * lg.d_nacelle),
             y_eng <= 0.5 * (wing.b / 2.0)]
            if _FREE_Y_ENG else
