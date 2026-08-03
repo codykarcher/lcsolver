@@ -800,6 +800,7 @@ function buildFuselage({
   exits = detail,
   apu = detail,
   nSeg = 64,
+  nStation = 140,
 }) {
   const L = length ?? p.fineness * 2 * radius;
   const shape = jetShape({ length: L, radius, p });
@@ -812,7 +813,7 @@ function buildFuselage({
   const lift = radius * 0.005;
   const parts = [], occ = [];
 
-  const body = new THREE.Mesh(skinBody(shape, section, { nSeg }), skin);
+  const body = new THREE.Mesh(skinBody(shape, section, { nSeg, nStation }), skin);
   g.add(body);
 
   // The radome is a different material to the skin on a real aeroplane -- it

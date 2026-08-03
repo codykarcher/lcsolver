@@ -169,14 +169,31 @@ export function carveOut(geometry, fields) {
   let whole = 0, split = 0, dropped = 0;
 
   for (const tri of tris) {
-    const d = fields.map((f) => tri.map((v) => f(v.p)));
+    /**
+     * Asked one surface at a time, and stopped as soon as one settles it.
+     *
+     * Every field here is expensive -- the duct's faces flare against the body,
+     * so all three ask the section where the skin is -- and evaluating all of
+     * them on all three vertices before looking at any was most of what the fin
+     * carve cost: nine section queries on every triangle, when the first three
+     * already showed the triangle was nowhere near. Order matters for the same
+     * reason, which is why the caller puts the field that rules out the most
+     * first.
+     */
+    const d = [];
+    let clear = false;
+    for (const f of fields) {
+      const row = [f(tri[0].p), f(tri[1].p), f(tri[2].p)];
+      d.push(row);
+      if (row[0] <= 0 && row[1] <= 0 && row[2] <= 0) { clear = true; break; }
+    }
+    if (clear) { whole++; out.push(tri); continue; }
 
-    // Clear of the region entirely -- every vertex outside the same surface --
-    // so it passes through UNTOUCHED. Not merely unchanged in shape: the same
-    // three vertices, in the same order, unsplit. Splitting a triangle far
-    // from the duct is invisible but it is still a change to the body, and
-    // the whole premise here is that nothing outside the cut moves.
-    if (d.some((row) => row.every((x) => x <= 0))) { whole++; out.push(tri); continue; }
+    // Clear of the region entirely -- handled above -- passes through
+    // UNTOUCHED. Not merely unchanged in shape: the same three vertices, in the
+    // same order, unsplit. Splitting a triangle far from the duct is invisible
+    // but it is still a change to the body, and the whole premise here is that
+    // nothing outside the cut moves.
     if (d.every((row) => row.every((x) => x > 0))) { dropped++; continue; }
 
     // On the boundary: cut against one surface at a time, setting aside what
@@ -328,7 +345,8 @@ export function ductVolume({
  * ends exactly where the skin's cut began -- both cuts run to the curve where
  * the two surfaces meet.
  */
-export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = {}) {
+export function ductSurface(duct, depthInside, { nx, nu, wallTop } = {}) {
+  nx = nx ?? 160; nu = nu ?? 72;
   const pos = [], nrm = [], idx = [];
   /**
    * One station's profile: down one wall, round the corner, across the floor,
@@ -743,7 +761,8 @@ export function carveDuct(fuse, spec) {
   skin.geometry = kept;
   before.dispose();
 
-  const sheet = ductSurface(duct, fuse.userData.depthInside);
+  const sheet = ductSurface(duct, fuse.userData.depthInside,
+                            { nx: spec.nx, nu: spec.nu });
   const snap = snapRim(sheet, openEdges(kept));
   const matched = matchRimNormals(sheet, fuse.userData.depthInside);
   const floor = new THREE.Mesh(sheet, skin.material);

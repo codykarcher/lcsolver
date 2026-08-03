@@ -90,6 +90,18 @@ export const D8_CHOICES = {
    * open up and the worst gap goes from 18 to 45 mm.
    */
   ductBlend:      0.08,
+  /**
+   * Mesh density, as a multiplier on every count that drives it.
+   *
+   * One knob rather than four, because the four have to move together: a fine
+   * skin carved against a coarse duct sheet is not a better aeroplane, it is
+   * the same seam mismatch with more triangles on one side of it.
+   *
+   * 1.0 is the density everything above was judged at. It costs about half a
+   * second a build, nearly all of it the carve, which is fine for looking at
+   * one aeroplane and too slow to sit inside a solver's loop.
+   */
+  quality:        1.0,
 };
 
 /** Leading-edge sweep from a quarter-chord one. `k` is 1/2 tip-to-tip, 1/4 for a fin. */
@@ -100,6 +112,16 @@ function leadingEdgeSweep(sweepC4, rootChord, taper, span, mirrored = true) {
 
 export function d8Aircraft(deck, opts = {}) {
   const d = { ...D8_CHOICES, ...deck };
+  /**
+   * How finely everything is meshed, from one number.
+   *
+   * The skin's stations and segments, and the duct sheet's grid, all scale
+   * together. Rounded to even numbers because the section's meshing pairs
+   * points across the symmetry plane and an odd count puts a seam down the
+   * middle of the aeroplane.
+   */
+  const q = Math.max(0.15, opts.quality ?? d.quality);
+  const grain = (n) => 2 * Math.max(3, Math.round((n * q) / 2));
   const g = new THREE.Group();
   const parts = {};
 
@@ -123,6 +145,8 @@ export function d8Aircraft(deck, opts = {}) {
   const engineNoseX = d.engineX - new THREE.Box3()
     .setFromObject(bareTurbofan({ rFan: rFanFor, bypassRatio: 9 })).max.z;
   const fuse = d8Fuselage({
+    nSeg: grain(64),
+    nStation: grain(140),
     radius: halfH,
     length: d.fuseLength,
     noseD: d.noseLength / (2 * halfH),
@@ -351,6 +375,8 @@ export function d8Aircraft(deck, opts = {}) {
       deepFrom: engineNoseX - d.ductGap,
       crown: u.crownAt(u.cabinZ[1]),
       blend: opts.ductBlend ?? d.ductBlend,
+      nx: grain(160),
+      nu: grain(72),
     });
     /**
      * The cut runs on through the fins.
@@ -367,8 +393,11 @@ export function d8Aircraft(deck, opts = {}) {
      * hole it leaves sits in the plane of the wall, with the wall's own sheet
      * across it, so there is nothing to see through.
      */
+    // The body FIRST. Only the fin's root is inside it, so for almost every
+    // triangle three queries settle the matter, where asking the duct's two
+    // faces first spent nine on the same answer.
     for (const vt of parts.verticalTails) {
-      carveInto(vt, [...duct.faces, (p) => u.depthInside(p.x, p.y, p.z)]);
+      carveInto(vt, [(p) => u.depthInside(p.x, p.y, p.z), ...duct.faces]);
     }
   }
 
