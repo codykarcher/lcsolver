@@ -2070,7 +2070,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
            # cabin width. Priced: a wider fin station pushes x_ht_le
            # forward through the join and grows the tail, so the optimiser
            # hugs the fins to the nacelles and the floor binds.
-           y_vt >= y_eng + k_eng_clear * lg.d_nacelle / 2.0
+           # No clearance factor: the fin may stand flush against the
+           # nacelle skin (the D8 arrangement effectively does), so the
+           # floor is skin-to-skin -- nacelle radius plus the fin's own
+           # half-thickness, nothing more.
+           y_vt >= y_eng + lg.d_nacelle / 2.0
                  + 0.5 * vt.tau_vt * vt.c_root_vt,
            y_vt <= fu.w_fuse,
            # SPAR CENTRES coincide AT THE FIN STATION y_vt -- the box axis
