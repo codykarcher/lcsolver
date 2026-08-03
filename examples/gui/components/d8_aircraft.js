@@ -32,7 +32,18 @@ const IN = 0.0254;
 export const D8_CHOICES = {
   wingRootY:     -0.55,   // wing root chord height, in body half-heights
   finY:           0.62,   // fin root, as a fraction of the body's half-width
-  finCant:       14.0,    // degrees outboard from vertical
+  /**
+   * Fin cant, degrees outboard from vertical.
+   *
+   * ZERO. The 14 degrees this carried was read off the general arrangement
+   * drawing, and it is not what the solve does: the solve has the ability and
+   * leaves it unused, so the fins stand upright. It is kept as a parameter
+   * because the machinery for it is built and a later deck may want it.
+   *
+   * Not cosmetic -- the cant moved the fin tip 0.79 m outboard, and the
+   * tailplane sits on those tips, so it carried the whole tailplane with it.
+   */
+  finCant:        0.0,
   /**
    * Engine axis height, as a fraction of the BODY's height up from its keel.
    *
