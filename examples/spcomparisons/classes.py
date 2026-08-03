@@ -131,7 +131,15 @@ class SizeClass:
     # (x_n 5.63, B 15.34) -- at almost equal cost, 1.045 against 1.049 MTOW.
     # Changing this constant selects a branch rather than nudging a trend, so
     # re-check the geometry after any change rather than interpolating.
-    f_nose_load_min: float = 0.11
+    # 0.08, from 0.11 (2026-08-03). The band is 8-15%; 0.11 was calibrated
+    # when the gear station FLOATED and could sit aft of the rear spar --
+    # with x_m pinned to the spar (aircraft.py) the floor is evaluated
+    # against real structure, and at 0.11 it dragged the CG envelope
+    # forward and grew the tail 48%. At 0.08 the 737 lands 2.2% over the
+    # real MTOW with the wing area right on the real 124.6 m2. The residual
+    # tail oversize (~26%) is the LOADABILITY-extreme envelope this floor
+    # is tested at, not the floor itself -- see the audit in the commit.
+    f_nose_load_min: float = 0.08
     # NOSE LENGTH, metres: nose tip to the front of the pressure shell. The
     # SECOND of TASOPT's two independent nose inputs -- xshell1 in the deck
     # (runs/737/737s.tas:294, 17.0 ft = 5.182 m), separate from and unrelated

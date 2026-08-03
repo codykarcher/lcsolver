@@ -355,20 +355,45 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             # thrust demands are model data; applying the flight-state
             # part here -- before the engine add -- lets the seed see the
             # mission instead of five copies of the declared guess.
+            # HANDBOOK CLIMB SCHEDULE for the seed conditions: the
+            # flight-state declarations carry the CRUISE point; climb
+            # segments are seeded by a standard transport climb profile
+            # (ISA ratios for a ~15/26/33 kft ramp to a 35 kft cruise,
+            # Mach building to the cruise value). Reasonable, not
+            # optimal, and derived from the class declaration -- NOT
+            # from a recorded solution (the D8 reference's mission
+            # seeded a 737 engine at M 0.73 / 196 K and the seed fought
+            # the 737's own mission rows at feasibility 0.16).
             _Fn_seg = None
             try:
-                from pathlib import Path as _Pth
-                from components.crosscheck import reference_point as _rp
-                _ref0 = _rp(_Pth(__file__).parent / "components"
-                            / "reference.json")
-                for _nm, _vv in (("T_atm", st.T_atm), ("P_atm", st.P_atm),
-                                 ("M", st.M), ("V", st.V), ("a", st.a)):
-                    _rv = _ref0.get(f"FS_{_nm}")
-                    if isinstance(_rv, list):
-                        for _i in range(min(N, len(_rv))):
-                            _vv[_i].set_value(float(_rv[_i]),
-                                              skip_validation=True)
-                _Fn_seg = _ref0.get("Eng_F")
+                _Tc = float(pyo.value(st.T_atm[N - 1]))
+                _Pc_raw = float(pyo.value(st.P_atm[N - 1]))
+                _Pc = _Pc_raw * 1e3 if _Pc_raw < 2000.0 else _Pc_raw
+                _Mc = float(pyo.value(st.M[N - 1]))
+                _Vc = float(pyo.value(st.V[N - 1]))
+                _rT = (1.23, 1.145, 1.06, 1.0, 0.99)
+                _rP = (3.03, 2.03, 1.35, 1.0, 0.89)
+                _rM = (0.84, 0.86, 0.93, 1.0, 1.0)
+                for _i in range(N):
+                    _f = min(_i, 4)
+                    st.T_atm[_i].set_value(_Tc * _rT[_f],
+                                           skip_validation=True)
+                    st.P_atm[_i].set_value(
+                        (_Pc * _rP[_f]) / (1e3 if _Pc_raw < 2000.0
+                                           else 1.0),
+                        skip_validation=True)
+                    st.M[_i].set_value(_Mc * _rM[_f],
+                                       skip_validation=True)
+                    st.V[_i].set_value(_Vc * _rM[_f] *
+                                       (_rT[_f]) ** 0.5,
+                                       skip_validation=True)
+                # thrust: cruise drag ~ MTOW/(L/D); climb ~2.4x ramp.
+                # MTOW guess from the class payload via a whole-aircraft
+                # factor -- handbook numbers, deliberately coarse.
+                _MTOW_g = 750e3        # N, single-aisle class
+                _Fc = _MTOW_g / (17.0 * 2.0)
+                _rF = (2.35, 1.85, 1.3, 1.0, 0.89)
+                _Fn_seg = [_Fc * _rF[min(_i, 4)] for _i in range(N)]
             except Exception:
                 pass
             eng, c = add_engine_sp(f, N, st, tech=_SP_TECHS[_SP_ENGINE],
@@ -2069,8 +2094,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           [x_vt_le + vt.c_root_vt == fu.l_fuse,             # [SP] SigEq
            xCG + vt.dx_lead_vt <= x_vt_le,
            xCG + vt.dx_trail_vt <= x_vt_le + vt.c_root_vt,
-           x_ht_le + fu.w_fuse * wing.tan_Lambda + 0.25 * ht.c_root_ht
-               == x_vt_le + 0.25 * vt.c_root_vt
+           # SPAR CENTRES coincide at the attachment -- the box axis rides
+           # at 0.40c (TASOPT's Xaxis), not the quarter chord; aligning at
+           # c/4 left the HT spar 0.29 m aft of the fin-tip spar because
+           # the HT root chord dwarfs the fin tip chord.
+           x_ht_le + fu.w_fuse * wing.tan_Lambda + 0.40 * ht.c_root_ht
+               == x_vt_le + 0.40 * vt.c_root_vt
                 + vt.b_vt * tan(SWEEP_VT * pi / 180),       # [SP] SigEq
            xCG + ht.dx_lead_ht <= x_ht_le]),
         # THE HORIZONTAL TAIL HAS TO FIT ON THE AEROPLANE TOO.
