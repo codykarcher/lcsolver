@@ -169,14 +169,31 @@ export function carveOut(geometry, fields) {
   let whole = 0, split = 0, dropped = 0;
 
   for (const tri of tris) {
-    const d = fields.map((f) => tri.map((v) => f(v.p)));
+    /**
+     * Asked one surface at a time, and stopped as soon as one settles it.
+     *
+     * Every field here is expensive -- the duct's faces flare against the body,
+     * so all three ask the section where the skin is -- and evaluating all of
+     * them on all three vertices before looking at any was most of what the fin
+     * carve cost: nine section queries on every triangle, when the first three
+     * already showed the triangle was nowhere near. Order matters for the same
+     * reason, which is why the caller puts the field that rules out the most
+     * first.
+     */
+    const d = [];
+    let clear = false;
+    for (const f of fields) {
+      const row = [f(tri[0].p), f(tri[1].p), f(tri[2].p)];
+      d.push(row);
+      if (row[0] <= 0 && row[1] <= 0 && row[2] <= 0) { clear = true; break; }
+    }
+    if (clear) { whole++; out.push(tri); continue; }
 
-    // Clear of the region entirely -- every vertex outside the same surface --
-    // so it passes through UNTOUCHED. Not merely unchanged in shape: the same
-    // three vertices, in the same order, unsplit. Splitting a triangle far
-    // from the duct is invisible but it is still a change to the body, and
-    // the whole premise here is that nothing outside the cut moves.
-    if (d.some((row) => row.every((x) => x <= 0))) { whole++; out.push(tri); continue; }
+    // Clear of the region entirely -- handled above -- passes through
+    // UNTOUCHED. Not merely unchanged in shape: the same three vertices, in the
+    // same order, unsplit. Splitting a triangle far from the duct is invisible
+    // but it is still a change to the body, and the whole premise here is that
+    // nothing outside the cut moves.
     if (d.every((row) => row.every((x) => x > 0))) { dropped++; continue; }
 
     // On the boundary: cut against one surface at a time, setting aside what
@@ -328,7 +345,7 @@ export function ductVolume({
  * ends exactly where the skin's cut began -- both cuts run to the curve where
  * the two surfaces meet.
  */
-export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = {}) {
+export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
   const pos = [], nrm = [], idx = [];
   /**
    * One station's profile: down one wall, round the corner, across the floor,
@@ -380,8 +397,7 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
    * build, all of it recomputing the same number 73 times in a row.
    *
    * One slot is all it needs: the grid walks the whole profile at one station
-   * before moving to the next. It is a cache of a pure function, so the surface
-   * it describes is unchanged -- checked, to picometres.
+   * before moving to the next.
    */
   let lastX = NaN, lastProfile = null;
   const profile = (x) => {
@@ -404,6 +420,11 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
      * 180 mm sideways in one go. It shaded exactly as square as an unblended
      * cut, because as far as the mesh was concerned it was one.
      */
+    // Enough extra to resolve the lip's round, and no more. Boosting it to a
+    // fixed share of the whole profile -- which is what this did -- gave the
+    // wall five times the sample density of the floor, so the quads went from
+    // 18 mm across on the wall to 92 mm on the floor and no single grid count
+    // could suit both.
     const wEff = Math.max(wallH, 0.45 * (arc + duct.flat));
     const half = wEff + arc + duct.flat;           // one side, floor centre out
     const at = (s) => {                            // s in [-half, half]
@@ -420,11 +441,33 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
     };
     return { at, half };
   };
-  // Starts FORWARD of the cabin, where the floor is already climbing out
-  // through the roof. Nothing there survives the clip, but the sheet has to
-  // reach past the point where the two surfaces cross or the cut edge runs off
-  // the end of it.
+  // Runs past the duct at BOTH ends. Forward of the cabin the floor is already
+  // climbing out through the roof, and aft of the trailing edge there is no
+  // body left -- nothing there survives the clip either way. But the sheet has
+  // to reach past the point where the two surfaces cross or the cut edge runs
+  // off the end of it, and stopping dead on the trailing edge left the last
+  // three edges of the seam with nothing to close them, the worst 30 mm.
   const x0 = duct.fromX - 0.5;
+  const x1 = duct.toX + 0.2;
+
+  /**
+   * The grid, from a target EDGE LENGTH rather than from two fixed counts.
+   *
+   * Fixed counts cannot know the sheet's proportions. 160 by 72 across a duct
+   * 5.7 m long and 6.7 m around the profile makes quads 36 mm by 93 mm -- two
+   * and a half to one -- and that ratio IS the tessellation the eye objects to:
+   * area over longest-edge-squared came out at 0.168, where a right isoceles
+   * triangle, the best a quad grid can do, is 0.250.
+   *
+   * Derived from the geometry, so it holds at any size of aeroplane and any
+   * shape of duct, which two hand-set numbers never could.
+   */
+  const midProfile = profile((x0 + x1) / 2);
+  const target = edge ?? 0.045;
+  const even = (n) => 2 * Math.max(3, Math.round(n / 2));
+  nx = nx ?? even((x1 - x0) / target);
+  nu = nu ?? even((2 * midProfile.half) / target);
+
   /**
    * The lip, blended rather than square.
    *
@@ -477,14 +520,40 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
     // Away from the lip there is nothing to solve, and this is most of the
     // sheet: the round only reaches `blend` in from the skin, so a point deeper
     // than that is already where it belongs and the search would spend two
-    // dozen section evaluations confirming it.
-    if (depthInside(px, py, -x) > duct.blend) return p;
-    // Out into the material, the way this part of the profile faces.
+    // dozen section evaluations confirming it. A point well OUTSIDE the body is
+    // the same story from the other side -- the solve can only push it further
+    // out, and the clip throws it away regardless.
+    //
+    // Well outside means several grid steps outside, not merely outside. A
+    // vertex just past the skin is still one END of the segment the clip
+    // interpolates the rim along, so leaving it unsolved moves the rim: cutting
+    // at the flare's own reach, 140 mm, took the lip's blend from 65 back
+    // towards 55 degrees. Half a metre is past anything the grid can reach
+    // across.
+    const a0 = depthInside(px, py, -x);
+    if (a0 > duct.blend || a0 < -0.5) return p;
+    /**
+     * Out into the material, along the face's OWN gradient.
+     *
+     * Along an axis was the obvious thing and is wrong on the corner rounds.
+     * The round turns through ninety degrees, so near its top the surface is
+     * nearly vertical and stepping in y barely moves you off it -- the solve
+     * finds no crossing, returns the unflared point, and the sheet stops short
+     * of where the skin was cut. That is the 55 mm gap at the body's aft
+     * corner: not a resolution problem, a direction one.
+     *
+     * The gradient is the direction the face actually changes in, so it is
+     * never degenerate on the face's own surface.
+     */
     const onWall = Math.abs(s) > wallAt;
     const face = onWall ? duct.faces[1] : duct.faces[0];
-    const step = (u) => (onWall
-      ? new THREE.Vector3(px + Math.sign(s) * u, py, -x)
-      : new THREE.Vector3(px, py - u, -x));
+    const h = 1e-5;
+    const gx = (face(new THREE.Vector3(px + h, py, -x)) - face(new THREE.Vector3(px - h, py, -x))) / (2 * h);
+    const gy = (face(new THREE.Vector3(px, py + h, -x)) - face(new THREE.Vector3(px, py - h, -x))) / (2 * h);
+    const gl = Math.hypot(gx, gy);
+    const dx = gl > 1e-9 ? -gx / gl : (onWall ? Math.sign(s) : 0);
+    const dy = gl > 1e-9 ? -gy / gl : (onWall ? 0 : -1);
+    const step = (u) => new THREE.Vector3(px + dx * u, py + dy * u, -x);
     const N = 24;
     let hi = reach, fHi = face(step(hi));
     for (let k = N - 1; k >= 0; k--) {
@@ -503,7 +572,7 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
   };
   const rows = [];
   for (let i = 0; i <= nx; i++) {
-    const x = x0 + (duct.toX - x0) * (i / nx);
+    const x = x0 + (x1 - x0) * (i / nx);
     const row = [];
     for (let j = 0; j <= nu; j++) row.push(point(x, j / nu));
     rows.push(row);
@@ -539,8 +608,21 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
-  // Keep only what lies within the body. Elsewhere the floor has nothing to be
-  // the floor OF, and would read as a shelf hanging in the open air.
+  /**
+   * Keep what lies within the body -- and a little beyond it.
+   *
+   * Elsewhere the floor has nothing to be the floor OF and would read as a
+   * shelf hanging in the open air, so it has to be trimmed. But trimming
+   * exactly at the skin puts the sheet's rim on a knife edge: the lip is built
+   * nearly tangent to the skin, so whether a vertex near it falls inside or out
+   * turns on millimetres, and where it fell outside the sheet simply stopped
+   * short of the cut. At the body's aft corner it stopped 55 mm short, and a
+   * coarse skin only hid that by having few cut edges there to notice.
+   *
+   * So the sheet is cut slightly PROUD of the skin and `snapRim` then pulls the
+   * overshoot back onto the skin's own cut. Overshoot and snap, rather than try
+   * to land on a tangency.
+   */
   const clipped = clipTriangles(g, (p) => depthInside(p.x, p.y, p.z));
   return faceUp(clipped);
 }
@@ -734,7 +816,8 @@ export function carveDuct(fuse, spec) {
   skin.geometry = kept;
   before.dispose();
 
-  const sheet = ductSurface(duct, fuse.userData.depthInside);
+  const sheet = ductSurface(duct, fuse.userData.depthInside,
+                            { edge: spec.edge });
   const snap = snapRim(sheet, openEdges(kept));
   const matched = matchRimNormals(sheet, fuse.userData.depthInside);
   const floor = new THREE.Mesh(sheet, skin.material);

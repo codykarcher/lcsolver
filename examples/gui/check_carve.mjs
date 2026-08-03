@@ -25,6 +25,15 @@ const deck = deckFromSolve(sol);
 let failures = 0;
 const bad = (m) => { console.log(`  FAIL  ${m}`); failures++; };
 
+/**
+ * Geometries are thrown away as soon as each comparison is done with them.
+ *
+ * At the quality this now runs at an aeroplane is a quarter of a million
+ * triangles, and this builds four of them; holding all four at once ran the
+ * heap out mid-check, which reads as a broken carve rather than a broken test.
+ */
+const drop = (g) => g.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+
 const plain = d8Aircraft(deck, { sitOnGround: false, ductCarve: false });
 const cut = d8Aircraft(deck, { sitOnGround: false, ductCarve: true });
 const fu = cut.userData.parts.fuselage.userData;
@@ -36,40 +45,50 @@ const fu = cut.userData.parts.fuselage.userData;
 // edges vanish from the count.
 const duct = ductVolume({ ...fu.duct, depthInside: fu.depthInside });
 
-/** Every triangle of a mesh, as sorted vertex triples rounded to the micron. */
-function triangles(geo) {
+/**
+ * Walk a mesh's triangles, handing each one to `fn` as a key and three points.
+ *
+ * Streamed rather than collected. At this density the skin is 176,000
+ * triangles and building the list twice over -- once per aeroplane, four
+ * strings each -- ran the heap out before any check had finished.
+ */
+function eachTriangle(geo, fn) {
   const pos = geo.getAttribute('position');
   const index = geo.getIndex();
   const n = index ? index.count : pos.count;
   const at = index ? (i) => index.getX(i) : (i) => i;
   const v = new THREE.Vector3();
-  const out = [];
+  const c = ['', '', ''], xyz = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   for (let t = 0; t + 2 < n; t += 3) {
-    const c = [];
     for (let k = 0; k < 3; k++) {
       v.fromBufferAttribute(pos, at(t + k));
-      c.push(`${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`);
+      c[k] = `${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`;
+      xyz[k * 3] = v.x; xyz[k * 3 + 1] = v.y; xyz[k * 3 + 2] = v.z;
     }
-    out.push({ key: c.slice().sort().join('|'), pts: c });
+    fn(c.slice().sort().join('|'), xyz);
   }
-  return out;
 }
 
 /* ---- 1. everything clear of the duct is untouched ----------------------- */
 // The test is on triangles wholly clear of the duct by a margin, since one
 // sitting exactly on the boundary is legitimately allowed to be split.
-const before = triangles(plain.userData.parts.fuselage.userData.skinMesh.geometry);
-const after = new Set(triangles(cut.userData.parts.fuselage.userData.skinMesh.geometry)
-  .map((t) => t.key));
+const after = new Set();
+eachTriangle(cut.userData.parts.fuselage.userData.skinMesh.geometry, (k) => after.add(k));
+// Kept for the control below, which has to run after the uncarved aeroplane
+// has been released.
+const plainSkin = plain.userData.parts.fuselage.userData.skinMesh.geometry.clone();
 const p = new THREE.Vector3();
-const clearOf = (t) => t.pts.every((s) => {
-  const [x, y, z] = s.split(',').map(Number);
-  return duct.depth(p.set(x, y, z)) < -0.02;
+let total = 0, clear = 0, lost = 0;
+eachTriangle(plain.userData.parts.fuselage.userData.skinMesh.geometry, (k, xyz) => {
+  total++;
+  for (let i = 0; i < 3; i++) {
+    if (!(duct.depth(p.set(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2])) < -0.02)) return;
+  }
+  clear++;
+  if (!after.has(k)) lost++;
 });
-const clear = before.filter(clearOf);
-const lost = clear.filter((t) => !after.has(t.key));
-console.log(`skin ${before.length} triangles, ${clear.length} clear of the duct`);
-if (lost.length) bad(`${lost.length} triangles clear of the duct were changed`);
+console.log(`skin ${total} triangles, ${clear} clear of the duct`);
+if (lost) bad(`${lost} triangles clear of the duct were changed`);
 
 /* ---- 2. the engines are no longer buried -------------------------------- */
 /**
@@ -128,7 +147,14 @@ if (wasBuried < 0.1) bad('nothing was buried to begin with -- the test proves no
  * identity, because the two sheets cut on DIFFERENT surfaces -- the skin on the
  * duct, the floor on the body -- and meet on the curve where those cross.
  */
-function boundary(geo) {
+/**
+ * `near` restricts the walk to triangles inside a box, which is what makes this
+ * affordable on the fine skin: 176,000 triangles carry half a million edges,
+ * and all but a few hundred of them are nowhere near the duct. Safe because the
+ * box is drawn a metre clear of the cut, so an edge wrongly called a boundary
+ * for want of its neighbour is far outside the region the result is read in.
+ */
+function boundary(geo, near = null) {
   const pos = geo.getAttribute('position');
   const index = geo.getIndex();
   const n = index ? index.count : pos.count;
@@ -140,7 +166,13 @@ function boundary(geo) {
   };
   const uses = new Map();
   const seg = new Map();
+  const c = new THREE.Vector3();
   for (let t = 0; t + 2 < n; t += 3) {
+    if (near) {
+      c.set(0, 0, 0);
+      for (let k = 0; k < 3; k++) c.add(v.fromBufferAttribute(pos, at(t + k)));
+      if (!near(c.multiplyScalar(1 / 3))) continue;
+    }
     const k = [key(t), key(t + 1), key(t + 2)];
     for (let e = 0; e < 3; e++) {
       const a = k[e], b = k[(e + 1) % 3];
@@ -167,11 +199,15 @@ function boundary(geo) {
  * two sheets are meshed at different resolutions and their vertices have no
  * reason to coincide, so only distance to the other CURVE means anything.
  */
+// Written without allocating: this runs a few million times now that the
+// meshes are ten times finer, and three Vector3s per call was most of the cost.
 const toSegment = (q, s) => {
-  const ab = s.b.clone().sub(s.a);
-  const l2 = ab.lengthSq();
-  const t = l2 < 1e-18 ? 0 : Math.min(1, Math.max(0, q.clone().sub(s.a).dot(ab) / l2));
-  return q.distanceTo(s.a.clone().addScaledVector(ab, t));
+  const abx = s.b.x - s.a.x, aby = s.b.y - s.a.y, abz = s.b.z - s.a.z;
+  const l2 = abx * abx + aby * aby + abz * abz;
+  const t = l2 < 1e-18 ? 0 : Math.min(1, Math.max(0,
+    ((q.x - s.a.x) * abx + (q.y - s.a.y) * aby + (q.z - s.a.z) * abz) / l2));
+  const dx = q.x - (s.a.x + abx * t), dy = q.y - (s.a.y + aby * t), dz = q.z - (s.a.z + abz * t);
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 };
 /**
  * Drop edges that are only topologically open.
@@ -191,18 +227,41 @@ function realHoles(edges) {
   return edges.filter((s, i) =>
     !edges.some((o, j) => j !== i && toSegment(s.mid, o) < 1e-4));
 }
-const skinEdge = realHoles(boundary(cut.userData.parts.fuselage.userData.skinMesh.geometry))
-  .filter((s) => duct.depth(s.mid) > -0.05);    // only the edge the carve made
+// Narrowed to the duct's own rim BEFORE the T-junction pass, which compares
+// every edge against every other: on a mesh this fine the skin has thousands of
+// open edges elsewhere, and sorting those out first turned a quadratic over all
+// of them into one over the few hundred that matter.
+/**
+ * Measured at the cut's VERTICES, not at its edge midpoints.
+ *
+ * A midpoint is not on the cut. It is the middle of a chord across a curved
+ * rim, so it sits off that rim by the chord's sagitta -- which is a property of
+ * how finely the skin is meshed, not of whether there is a hole. That made the
+ * measure read the skin's density: the same geometry gave 5 strays with a fine
+ * skin and 11 with a coarse one, and tuning the duct against it chased
+ * something that was never there.
+ *
+ * The cut's vertices ARE on it, exactly, since that is where the clipper solved
+ * for the crossing. If one of them is far from the duct's rim, there is a hole.
+ */
+const nearDuct = (q) => duct.depth(q) > -1.0 && -q.z > duct.fromX - 1;
+const skinEdge = realHoles(
+  boundary(cut.userData.parts.fuselage.userData.skinMesh.geometry, nearDuct)
+    .filter((s) => duct.depth(s.mid) > -0.05));   // only the edge the carve made
 const floorEdge = boundary(fu.duct.mesh.geometry);
 console.log(`cut edge: ${skinEdge.length} open edges on the skin, ${floorEdge.length} on the floor`);
 const nearest = (q, set) => set.reduce((m, s) => Math.min(m, toSegment(q, s)), Infinity);
 const TOL = 0.01;                                // 10 mm on a 30 m aeroplane
-const gaps = skinEdge.map((s) => nearest(s.mid, floorEdge));
+const cutPoints = new Map();
+for (const s of skinEdge) {
+  for (const q of [s.a, s.b]) cutPoints.set(`${q.x.toFixed(5)},${q.y.toFixed(5)},${q.z.toFixed(5)}`, q);
+}
+const gaps = [...cutPoints.values()].map((q) => nearest(q, floorEdge));
 const strays = gaps.filter((g) => g > TOL);
 console.log(`worst gap ${gaps.length ? Math.max(...gaps).toFixed(4) : 'n/a'} m, ` +
-            `${strays.length} open edges further than ${TOL * 1000} mm from the duct`);
+            `${strays.length} of ${gaps.length} cut vertices further than ${TOL * 1000} mm from the duct`);
 if (!skinEdge.length) bad('the carve left no open edge at all -- it cut nothing');
-if (strays.length > skinEdge.length * 0.02) bad(`${strays.length} of ${skinEdge.length} cut edges are unclosed`);
+if (strays.length > gaps.length * 0.02) bad(`${strays.length} of ${gaps.length} cut vertices are unclosed`);
 
 /* ---- 4. the duct's surface faces into the duct --------------------------- */
 /**
@@ -352,12 +411,24 @@ function lipTurn(craft) {
   angs.sort((a, b) => a - b);
   return angs.length ? angs[Math.floor(angs.length / 2)] : null;
 }
+/**
+ * The uncarved aeroplane is released first.
+ *
+ * Nothing after this point needs it, and at render density each aeroplane is a
+ * hundred thousand triangles held as objects while it is carved. Keeping a
+ * fourth one alive to compare against ran the heap out mid-check, which reads
+ * as a broken carve rather than a test that asked for too much.
+ */
+drop(plain);
 const square = d8Aircraft(deck, { sitOnGround: false, ductBlend: 0 });
 const turnSquare = lipTurn(square), turnBlend = lipTurn(cut);
+drop(square);
 console.log(`lip: the normal turns ${turnSquare.toFixed(0)} deg within 50 mm of the seam ` +
             `unblended, ${turnBlend.toFixed(0)} deg blended`);
 if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBlend.toFixed(0)} vs ${turnSquare.toFixed(0)} deg)`);
-if (turnSquare < 90) bad('the unblended lip was not square -- the test proves nothing');
+// Near square, not exactly: the median is taken over a meshed rim, so it lands
+// a degree or two either side of 90 depending on where the rows fall.
+if (turnSquare < 80) bad('the unblended lip was not square -- the test proves nothing');
 
 /* ---- negative controls -------------------------------------------------- */
 /**
@@ -367,10 +438,16 @@ if (turnSquare < 90) bad('the unblended lip was not square -- the test proves no
 console.log('\nnegative controls');
 {
   // A carve that moves the untouched region: nudge one far-forward vertex.
-  const g = plain.userData.parts.fuselage.userData.skinMesh.geometry.clone();
-  g.getAttribute('position').setY(0, g.getAttribute('position').getY(0) + 0.5);
-  const moved = new Set(triangles(g).map((t) => t.key));
-  const n = clear.filter((t) => !moved.has(t.key)).length;
+  plainSkin.getAttribute('position').setY(0, plainSkin.getAttribute('position').getY(0) + 0.5);
+  const moved = new Set();
+  eachTriangle(plainSkin, (k) => moved.add(k));
+  let n = 0;
+  eachTriangle(cut.userData.parts.fuselage.userData.skinMesh.geometry, (k, xyz) => {
+    for (let i = 0; i < 3; i++) {
+      if (!(duct.depth(p.set(xyz[i*3], xyz[i*3+1], xyz[i*3+2])) < -0.02)) return;
+    }
+    if (!moved.has(k)) n++;
+  });
   console.log(`  a moved vertex loses ${n} clear triangles` + (n ? '  ok' : '  NOT DETECTED'));
   if (!n) bad('control: a moved vertex was not detected as a change');
 }
@@ -389,10 +466,11 @@ console.log('\nnegative controls');
   const g = clipTriangles(
     fu.duct.mesh.geometry, (q) => wrong.halfWidth - Math.abs(q.x));
   const e = boundary(g);
-  const n = skinEdge.filter((s) => nearest(s.mid, e) > TOL).length;
-  console.log(`  a floor 300 mm narrow leaves ${n} of ${skinEdge.length} edges open` +
-              (n > skinEdge.length * 0.02 ? '  ok' : '  NOT DETECTED'));
-  if (!(n > skinEdge.length * 0.02)) bad('control: a narrow floor was not detected');
+  const pts = [...cutPoints.values()];
+  const n = pts.filter((q) => nearest(q, e) > TOL).length;
+  console.log(`  a floor 300 mm narrow leaves ${n} of ${pts.length} vertices open` +
+              (n > pts.length * 0.02 ? '  ok' : '  NOT DETECTED'));
+  if (!(n > pts.length * 0.02)) bad('control: a narrow floor was not detected');
 }
 
 {

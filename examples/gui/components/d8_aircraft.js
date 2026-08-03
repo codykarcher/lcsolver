@@ -90,6 +90,45 @@ export const D8_CHOICES = {
    * open up and the worst gap goes from 18 to 45 mm.
    */
   ductBlend:      0.08,
+  /**
+   * Target triangle edge, in metres, for the body and the duct together.
+   *
+   * 0.18 puts about 170 stations along a 30 m body, against the 140 this ran
+   * at, and gives 276 mm triangles where they were 337.
+   *
+   * Chosen off the measured trade rather than picked. Going to 0.13 with a
+   * matching sheet buys 39 mm triangles on the duct but costs 3.9 seconds a
+   * build against 1.4, and the lip -- the thing the density is FOR -- reads no
+   * better: 52 degrees against 47. The body's own curvature is metres, so past
+   * about here the extra triangles are spent on a surface that was already
+   * smooth. The duct's sheet is meshed on its own, finer, because what it
+   * carries is small. `quality` scales both.
+   */
+  ductEdge:       0.18,
+  /**
+   * The duct sheet's triangle edge, as a fraction of the lip's radius.
+   *
+   * Its own number because the sheet and the skin carry different things: the
+   * body's features are metres, the lip's round is 80 mm. Measured at 0.027,
+   * 0.035, 0.045 and 0.060 m the lip sits between 52 and 67 degrees with no
+   * trend, so there is nothing to buy below about half the radius -- and
+   * plenty to pay, since the sheet is where nearly all the build time goes.
+   * 0.625 of the radius puts the sheet's triangles at 71 mm -- finer than the
+   * 101 mm they were before any of this, and square where they were 2.5:1.
+   */
+  ductSheetGrain: 0.625,
+  /**
+   * Mesh density, as a multiplier on every count that drives it.
+   *
+   * One knob rather than four, because the four have to move together: a fine
+   * skin carved against a coarse duct sheet is not a better aeroplane, it is
+   * the same seam mismatch with more triangles on one side of it.
+   *
+   * 1.0 is the density everything above was judged at. It costs about half a
+   * second a build, nearly all of it the carve, which is fine for looking at
+   * one aeroplane and too slow to sit inside a solver's loop.
+   */
+  quality:        1.0,
 };
 
 /** Leading-edge sweep from a quarter-chord one. `k` is 1/2 tip-to-tip, 1/4 for a fin. */
@@ -100,6 +139,26 @@ function leadingEdgeSweep(sweepC4, rootChord, taper, span, mirrored = true) {
 
 export function d8Aircraft(deck, opts = {}) {
   const d = { ...D8_CHOICES, ...deck };
+  /**
+   * How finely everything is meshed, from one number.
+   *
+   * The skin's stations and segments, and the duct sheet's grid, all scale
+   * together. Rounded to even numbers because the section's meshing pairs
+   * points across the symmetry plane and an odd count puts a seam down the
+   * middle of the aeroplane.
+   */
+  const q = Math.max(0.15, opts.quality ?? d.quality);
+  const grain = (n) => 2 * Math.max(3, Math.round((n * q) / 2));
+  /**
+   * The size of a triangle, in metres, which is what actually decides how a
+   * surface reads. Everything that meshes here is derived from it.
+   *
+   * Counts were the wrong thing to set. 140 stations by 64 segments gave the
+   * skin 337 mm edges while the duct's sheet ran at 67 mm, so the trough was
+   * a finely meshed hole in a coarse body -- and the seam between them was
+   * limited by the coarse side, which is also the side that cannot be moved.
+   */
+  const edge = (opts.edge ?? d.ductEdge) / q;
   const g = new THREE.Group();
   const parts = {};
 
@@ -123,6 +182,11 @@ export function d8Aircraft(deck, opts = {}) {
   const engineNoseX = d.engineX - new THREE.Box3()
     .setFromObject(bareTurbofan({ rFan: rFanFor, bypassRatio: 9 })).max.z;
   const fuse = d8Fuselage({
+    // Stations along the body and segments around it, both from the edge
+    // target, so the skin's triangles come out square at any size of aeroplane.
+    nStation: 2 * Math.max(8, Math.round(d.fuseLength / edge / 2)),
+    nSeg: 2 * Math.max(8, Math.round(
+      (2 * Math.PI * Math.sqrt((halfW * halfW + halfH * halfH) / 2)) / edge / 2)),
     radius: halfH,
     length: d.fuseLength,
     noseD: d.noseLength / (2 * halfH),
@@ -319,6 +383,7 @@ export function d8Aircraft(deck, opts = {}) {
    * deepest, forward to the end of the cabin, where it closes on the crown and
    * the body is untouched.
    */
+  const blendR = opts.ductBlend ?? d.ductBlend;
   if (opts.ductCarve ?? d.ductCarve) {
     const duct = carveDuct(fuse, {
       floor: engineAxisY - rNac - d.ductGap,
@@ -350,7 +415,28 @@ export function d8Aircraft(deck, opts = {}) {
        */
       deepFrom: engineNoseX - d.ductGap,
       crown: u.crownAt(u.cabinZ[1]),
-      blend: opts.ductBlend ?? d.ductBlend,
+      blend: blendR,
+      // The sheet's triangles, as a target EDGE rather than a count, so they
+      // stay square whatever size the duct comes out.
+      /**
+       * The sheet is meshed FINER than the skin, not to match it.
+       *
+       * The two carry different things. The skin carries the body, whose
+       * features are metres; the sheet carries the lip's round, which is
+       * 80 mm. Given the skin's own edge the round fell across a single quad
+       * and the blend read at 84 degrees instead of 35 -- the same failure as
+       * before, arrived at from the other direction. Half the blend's radius
+       * resolves it, and a third does not read any better -- measured at 0.027,
+       * 0.035, 0.045 and 0.060 m the lip sits between 52 and 67 degrees with no
+       * trend, so the extra 45,000 triangles a third would cost buy nothing.
+       */
+// Guarded, because a blend of zero is a legitimate setting -- it is how
+      // the unblended lip is measured -- and `blend / 3` is then an edge
+      // length of zero, which asks for a grid of infinite width. That is what
+      // ran the heap out at 4 GB, and it looked exactly like the density being
+      // too high, which it was not.
+      edge: opts.sheetEdge ?? (blendR > 0
+        ? Math.min(edge, blendR * d.ductSheetGrain) : edge),
     });
     /**
      * The cut runs on through the fins.
@@ -367,8 +453,11 @@ export function d8Aircraft(deck, opts = {}) {
      * hole it leaves sits in the plane of the wall, with the wall's own sheet
      * across it, so there is nothing to see through.
      */
+    // The body FIRST. Only the fin's root is inside it, so for almost every
+    // triangle three queries settle the matter, where asking the duct's two
+    // faces first spent nine on the same answer.
     for (const vt of parts.verticalTails) {
-      carveInto(vt, [...duct.faces, (p) => u.depthInside(p.x, p.y, p.z)]);
+      carveInto(vt, [(p) => u.depthInside(p.x, p.y, p.z), ...duct.faces]);
     }
   }
 
