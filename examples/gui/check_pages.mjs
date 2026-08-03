@@ -21,6 +21,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const E = await import(join(HERE, 'components/engines.js'));
 const F = await import(join(HERE, 'components/fuselage.js'));
 const W = await import(join(HERE, 'components/wing.js'));
+const A = await import(join(HERE, 'components/aircraft.js'));
+const D = await import(join(HERE, 'components/d8_aircraft.js'));
+const deckOf = (f) => A.deckFromSolve(
+  JSON.parse(readFileSync(join(HERE, 'decks', f), 'utf8')));
 
 /**
  * page -> { build: the variants it can build, vars: what it calls the object }
@@ -30,7 +34,27 @@ const W = await import(join(HERE, 'components/wing.js'));
  * destructuring on a fuselage page -- and the whole point of this check is to
  * see the same field names the page actually writes.
  */
+/**
+ * The aeroplane pages read the DUCT's fields, and nothing was watching them.
+ *
+ * `u.parts.fuselage.userData.duct` is written by the carve and read by the page
+ * to print what it did. When the cut was rebuilt those field names changed --
+ * `floor`, `halfWidth`, `deepFrom` became `throatX`, `spacing`, `rThroat` --
+ * and the page threw inside `build()` on the first one it touched. Nothing
+ * reaches the scene after that, so the window comes up dead: no aeroplane, no
+ * orbit, no error anywhere obvious. Exactly the failure this file exists for,
+ * on the two pages it had no builder for.
+ */
 const PAGES = {
+  'd8_aircraft_test.html': {
+    build: [() => D.d8Aircraft(deckOf('b737_d8_solve.json'), { sitOnGround: false })],
+    vars: ['u.parts.fuselage.userData.duct', 'dz'],
+  },
+  'b737_test.html': {
+    build: [() => A.conventionalAircraft(deckOf('b737_conventional_solve.json'),
+                                         { sitOnGround: false })],
+    vars: ['u.parts.fuselage.userData.duct', 'dz'],
+  },
   'turbofan_test.html': { build: [() => E.turbofan({}), () => E.bareTurbofan({})],
                           vars: ['engine.userData', 'd'] },
   'pylon_test.html':    { build: [() => E.turbofan({}), () => E.bareTurbofan({})],
@@ -126,11 +150,16 @@ for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
   if (!page) { console.log(`${file.padEnd(24)} (no builder registered)`); continue; }
   const src = readFileSync(join(HERE, file), 'utf8');
   const fields = [...new Set(page.vars.flatMap((v) => {
-    const re = new RegExp(`\\b${v.replace('.', '\\.')}\\.([A-Za-z_$][\\w$]*)`, 'g');
+    const re = new RegExp(`\\b${v.replace(/\./g, '\\.')}\\.([A-Za-z_$][\\w$]*)`, 'g');
     return [...src.matchAll(re)].map((m) => m[1]);
   }))];
   for (const make of page.build) {
-    const u = make().userData;
+    const built = make().userData;
+    // `dz` is the page's own name for the duct, so those fields are looked for
+    // there rather than on the aeroplane.
+    const u = page.vars.includes('dz')
+      ? { ...built, ...(built.parts?.fuselage?.userData?.duct ?? {}) }
+      : built;
     const missing = fields.filter((f) => u[f] === undefined);
     if (missing.length) { bad++; console.log(`  ${file}: MISSING ${missing.join(', ')}`); }
   }

@@ -295,9 +295,10 @@ function build() {
   // how much of the body went, and how far the walls stand off the engines.
   const dz = u.parts.fuselage.userData.duct;
   el('ductNote').textContent = dz
-    ? `${dz.skin.dropped} of ${dz.skin.dropped + dz.skin.whole + dz.skin.split} `
-      + `triangles removed \u2014 floor ${dz.floor.toFixed(2)} m, walls at `
-      + `${dz.halfWidth.toFixed(2)} m, level from ${dz.deepFrom.toFixed(1)} m aft of the nose`
+    ? `${dz.skin.before - dz.skin.after} of ${dz.skin.before} triangles removed `
+      + `\u2014 the hull of the two ducts, ${(2 * dz.spacing).toFixed(2)} m apart, `
+      + `${(2 * dz.rThroat).toFixed(2)} m across at the throat `
+      + `${dz.throatX.toFixed(1)} m aft of the nose`
     : 'off \u2014 the body is exactly as the section law builds it';
   u.parts.engines.forEach((p, i) => { p.userData.spinning = spinning[i]; });
   applyGear();

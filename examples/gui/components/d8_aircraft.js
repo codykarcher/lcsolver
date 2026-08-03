@@ -562,11 +562,17 @@ export function d8Aircraft(deck, opts = {}) {
         crown: u.crownAt(u.cabinZ[1]),
       });
       const skinMesh = fuse.userData.skinMesh;
+      const triangles = (g2) => {
+        const ix = g2.getIndex(), pp = g2.getAttribute('position');
+        return (ix ? ix.count : pp.count) / 3;
+      };
+      const before0 = triangles(skinMesh.geometry);
       for (const fields of duct.passes) {
         const before = skinMesh.geometry;
         skinMesh.geometry = carveOut(before, fields);
         before.dispose();
       }
+      const after0 = triangles(skinMesh.geometry);
       const { wall, front } = nacelleDuctSurface(duct, u.depthInside);
       const wallMesh = new THREE.Mesh(wall, skinMesh.material);
       const frontMesh = new THREE.Mesh(front, skinMesh.material);
@@ -574,6 +580,7 @@ export function d8Aircraft(deck, opts = {}) {
       frontMesh.name = 'ductFront';
       fuse.add(wallMesh); fuse.add(frontMesh);
       fuse.userData.duct = {
+        skin: { before: before0, after: after0 },
         throatX, fromX: duct.fromX, toX: duct.toX, spacing: d.engineY,
         axisY: engineAxisY, rThroat: duct.rT, radiusAt: duct.radiusAt,
         inside: duct.inside, depth: duct.depth, passes: duct.passes,
