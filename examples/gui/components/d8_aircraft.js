@@ -91,6 +91,17 @@ export const D8_CHOICES = {
    */
   ductBlend:      0.08,
   /**
+   * Target triangle edge, in metres, for the body and the duct together.
+   *
+   * 0.13 puts about 230 stations along a 30 m body, against the 140 this ran
+   * at. Finer than that stops paying: the body's own curvature is metres, and
+   * past about this the extra triangles only make the CHECKS expensive -- a
+   * quarter-million-triangle aeroplane runs the heap out before they finish.
+   * The duct's sheet is meshed on its own, finer, because what it carries is
+   * small. `quality` scales both for anything that has to keep up with a solver.
+   */
+  ductEdge:       0.13,
+  /**
    * Mesh density, as a multiplier on every count that drives it.
    *
    * One knob rather than four, because the four have to move together: a fine
@@ -122,6 +133,16 @@ export function d8Aircraft(deck, opts = {}) {
    */
   const q = Math.max(0.15, opts.quality ?? d.quality);
   const grain = (n) => 2 * Math.max(3, Math.round((n * q) / 2));
+  /**
+   * The size of a triangle, in metres, which is what actually decides how a
+   * surface reads. Everything that meshes here is derived from it.
+   *
+   * Counts were the wrong thing to set. 140 stations by 64 segments gave the
+   * skin 337 mm edges while the duct's sheet ran at 67 mm, so the trough was
+   * a finely meshed hole in a coarse body -- and the seam between them was
+   * limited by the coarse side, which is also the side that cannot be moved.
+   */
+  const edge = (opts.edge ?? d.ductEdge) / q;
   const g = new THREE.Group();
   const parts = {};
 
@@ -145,8 +166,11 @@ export function d8Aircraft(deck, opts = {}) {
   const engineNoseX = d.engineX - new THREE.Box3()
     .setFromObject(bareTurbofan({ rFan: rFanFor, bypassRatio: 9 })).max.z;
   const fuse = d8Fuselage({
-    nSeg: grain(64),
-    nStation: grain(140),
+    // Stations along the body and segments around it, both from the edge
+    // target, so the skin's triangles come out square at any size of aeroplane.
+    nStation: 2 * Math.max(8, Math.round(d.fuseLength / edge / 2)),
+    nSeg: 2 * Math.max(8, Math.round(
+      (2 * Math.PI * Math.sqrt((halfW * halfW + halfH * halfH) / 2)) / edge / 2)),
     radius: halfH,
     length: d.fuseLength,
     noseD: d.noseLength / (2 * halfH),
@@ -343,6 +367,7 @@ export function d8Aircraft(deck, opts = {}) {
    * deepest, forward to the end of the cabin, where it closes on the crown and
    * the body is untouched.
    */
+  const blendR = opts.ductBlend ?? d.ductBlend;
   if (opts.ductCarve ?? d.ductCarve) {
     const duct = carveDuct(fuse, {
       floor: engineAxisY - rNac - d.ductGap,
@@ -374,9 +399,27 @@ export function d8Aircraft(deck, opts = {}) {
        */
       deepFrom: engineNoseX - d.ductGap,
       crown: u.crownAt(u.cabinZ[1]),
-      blend: opts.ductBlend ?? d.ductBlend,
-      nx: grain(160),
-      nu: grain(72),
+      blend: blendR,
+      // The sheet's triangles, as a target EDGE rather than a count, so they
+      // stay square whatever size the duct comes out.
+      /**
+       * The sheet is meshed FINER than the skin, not to match it.
+       *
+       * The two carry different things. The skin carries the body, whose
+       * features are metres; the sheet carries the lip's round, which is
+       * 80 mm. Given the skin's own edge the round fell across a single quad
+       * and the blend read at 84 degrees instead of 35 -- the same failure as
+       * before, arrived at from the other direction. Half the blend's radius
+       * resolves it, and a third does not read any better -- measured at 0.027,
+       * 0.035, 0.045 and 0.060 m the lip sits between 52 and 67 degrees with no
+       * trend, so the extra 45,000 triangles a third would cost buy nothing.
+       */
+// Guarded, because a blend of zero is a legitimate setting -- it is how
+      // the unblended lip is measured -- and `blend / 3` is then an edge
+      // length of zero, which asks for a grid of infinite width. That is what
+      // ran the heap out at 4 GB, and it looked exactly like the density being
+      // too high, which it was not.
+      edge: blendR > 0 ? Math.min(edge, blendR / 3) : edge,
     });
     /**
      * The cut runs on through the fins.
