@@ -248,7 +248,27 @@ export function ductVolume({
    * is nothing to follow and the trough is on its way out through the roof.
    */
   const follows = axisY != null && noseFrom != null && typeof radiusAt === 'function';
-  const rAt = (x) => (follows ? radiusAt(Math.max(x, noseFrom)) : cornerR);
+  /**
+   * Forward of the lip the trough CLOSES as it rises, rather than running on at
+   * full width.
+   *
+   * Holding the radius at its lip value -- which is what clamping the station
+   * did -- carries the whole cross-section forward as a constant-width trench
+   * ahead of the inlet, and the trench's floor climbing out of it is a step up
+   * into the nacelle. There is nothing ahead of the lip for a trough that size
+   * to be holding.
+   *
+   * So it narrows and lifts together: at the lip it is the inlet, and by the
+   * cabin it has shut and the roof is whole. Smoothstepped, so it leaves the
+   * lip without a corner.
+   */
+  const rNose = follows ? radiusAt(noseFrom) : cornerR;
+  const rAt = (x) => {
+    if (!follows) return cornerR;
+    if (x >= noseFrom) return radiusAt(x);
+    const f = Math.min(1, Math.max(0, (x - fromX) / Math.max(noseFrom - fromX, 1e-9)));
+    return rNose * f * f * (3 - 2 * f);
+  };
   /**
    * The FLAT between the two rounds is what stays fixed, and the walls move.
    *
