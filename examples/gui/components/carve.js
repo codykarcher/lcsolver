@@ -1035,32 +1035,65 @@ export function nacelleDuct({
 }) {
   const rT = radiusAt(throatX);
   /**
-   * Forward of the throat the cut keeps its size and CLIMBS, so that it leaves
-   * through the roof at the end of the cabin.
+   * Forward of the throat the cut STRETCHES upward rather than translating.
    *
-   * Aft of the throat the section is the ducts' own, and the two circles sit on
-   * the engines. Ahead of it there is nothing left to follow, so the section
-   * stops changing and the pair of circles simply rises, carrying the same
-   * opening up and out of the body.
+   * Translating it -- the whole pair of circles rising together -- is what it
+   * used to do, and the trouble is what that leaves in the upper surface. A
+   * circle rising through a roof cuts an opening that starts wide, narrows as
+   * the circle clears, and closes to a point: the slot's edges curve inward and
+   * it tapers away to nothing. There is no station where you could say the cut
+   * has a left side and a right side.
    *
-   * Cubic, level where it meets the constant part at the throat so there is no
-   * corner there, and leaving the cabin end at a slope rather than tangentially
-   * -- a cut that grazes the roof crosses it at a few degrees over half a metre
-   * instead of at a curve, and trimming one surface against another along a
-   * graze does not close.
+   * Stretching keeps them. The section becomes the hull of FOUR circles rather
+   * than two -- the same pair, plus a copy lifted to the roof line -- so its
+   * outer edge is a straight vertical line running up from the widest point of
+   * each, at a half-width that does not change with height. The slot those
+   * leave in the crown has two straight parallel edges. It is still convex, it
+   * is still smooth where the arcs meet the flats and the verticals, and with
+   * both lift heights at zero it is exactly the old pair of circles, so there
+   * is no join at the throat to mesh or to close.
+   *
+   * Floor and roof are lifted by different laws because they are doing
+   * different jobs. The FLOOR climbs slowly, all the way to the end of the
+   * cabin, and where it meets the crown is where the cut ends -- so it must not
+   * arrive tangentially, or the two surfaces graze along half a metre instead
+   * of crossing, and nothing closes. The ROOF climbs fast and only has to get
+   * clear of the body; it never meets anything, so it can ease out at both ends
+   * and leave no crease at the throat.
    */
   const climb = Math.max(0, (crown + rT + 0.06) - axisY);
   const span = Math.max(throatX - fromX, 1e-9);
-  const riseAt = (x) => {
+  const riseFloor = (x) => {
     if (x >= throatX) return 0;
     const f = Math.max(0, (x - fromX) / span);       // 0 at the cabin, 1 at the throat
     const k = 1;                                     // slope leaving the cabin
     return climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
   };
-  const centreY = (x) => axisY + riseAt(x);
-  /** Distance from a point to the segment joining the two circle centres. */
-  const toAxis = (p) => Math.hypot(
-    Math.max(Math.abs(p.x) - spacing, 0), p.y - centreY(-p.z));
+  /** The roof is up and out of the body within this much of the run. */
+  const roofSpan = Math.max(span * 0.35, 1e-9);
+  const riseRoof = (x) => {
+    if (x >= throatX) return 0;
+    const f = Math.min(1, Math.max(0, (x - (throatX - roofSpan)) / roofSpan));
+    return climb * (1 - f * f * (3 - 2 * f));        // eased at both ends
+  };
+  const loAt = (x) => axisY + riseFloor(x);
+  const hiAt = (x) => axisY + riseRoof(x);
+  /** The middle of the lifted rectangle -- what the section is star-shaped about. */
+  const centreY = (x) => (loAt(x) + hiAt(x)) / 2;
+
+  /**
+   * Distance from a point to the RECTANGLE the four circle centres span.
+   *
+   * The two circles' joining segment when nothing is lifted, which is what this
+   * replaces, and the same closed form: clamp into the rectangle, measure what
+   * is left over.
+   */
+  const toAxis = (p) => {
+    const x = -p.z;
+    return Math.hypot(
+      Math.max(Math.abs(p.x) - spacing, 0),
+      Math.max(loAt(x) - p.y, 0, p.y - hiAt(x)));
+  };
   const hull = (p) => radiusAt(Math.max(-p.z, throatX)) - toAxis(p);
 
   /**
@@ -1071,7 +1104,8 @@ export function nacelleDuct({
    * bounding box, so four corners appear at the join -- and the face between
    * them is a real surface that has to be meshed and closed against the skin.
    * It was not closing: 56 cut vertices with nothing within 1.6 m of them, all
-   * of them along that join. Simpler to not make the corners.
+   * of them along that join. Lifting the circles gets the straight sides that
+   * rectangle was for, with no join at all.
    */
   const passes = [[hull, (p) => -p.z - fromX]];
 
@@ -1079,31 +1113,53 @@ export function nacelleDuct({
 
   /** The outline at a station, as a closed 2-D loop, sampled by arc length. */
   const outlineAt = (x, n = 160) => {
+    const r = radiusAt(Math.max(x, throatX));
+    const lo = loAt(x), hi = hiAt(x), h = Math.max(hi - lo, 0);
+    const flat = 2 * spacing, quarter = (Math.PI * r) / 2;
+    /**
+     * The eight pieces, in order, anticlockwise from the bottom-left corner.
+     *
+     * Written out rather than solved for so that a station with no lift is the
+     * same loop as before, sampled the same way: the two vertical runs simply
+     * have zero length and the quarters pair back up into the half-arcs the
+     * stadium had.
+     */
+    const segs = [
+      [flat,    (t) => [-spacing + t, lo - r]],
+      [quarter, (t) => arcPt(spacing, lo, r, -Math.PI / 2, t / quarter)],
+      [h,       (t) => [spacing + r, lo + t]],
+      [quarter, (t) => arcPt(spacing, hi, r, 0, t / quarter)],
+      [flat,    (t) => [spacing - t, hi + r]],
+      [quarter, (t) => arcPt(-spacing, hi, r, Math.PI / 2, t / quarter)],
+      [h,       (t) => [-spacing - r, hi - t]],
+      [quarter, (t) => arcPt(-spacing, lo, r, Math.PI, t / quarter)],
+    ];
+    const total = segs.reduce((a, sg) => a + sg[0], 0);
     const pts = [];
-    {
-      const r = radiusAt(Math.max(x, throatX));
-      const cy = centreY(x);
-      const arc = Math.PI * r, flat = 2 * spacing;
-      const total = 2 * (arc / 2) + 2 * flat;      // two half-arcs, two flats
-      for (let i = 0; i < n; i++) {
-        let s = total * (i / n);
-        // bottom flat, right arc, top flat, left arc
-        if (s < flat) { pts.push([-spacing + s, cy - r]); continue; }
-        s -= flat;
-        if (s < arc / 2) {
-          const th = -Math.PI / 2 + (s / (arc / 2)) * Math.PI;
-          pts.push([spacing + r * Math.cos(th), cy + r * Math.sin(th)]);
-          continue;
-        }
-        s -= arc / 2;
-        if (s < flat) { pts.push([spacing - s, cy + r]); continue; }
-        s -= flat;
-        const th = Math.PI / 2 + (s / (arc / 2)) * Math.PI;
-        pts.push([-spacing + r * Math.cos(th), cy + r * Math.sin(th)]);
+    for (let i = 0; i < n; i++) {
+      let sLen = total * (i / n);
+      for (const [len, at] of segs) {
+        if (sLen < len || len === total) { pts.push(at(sLen)); break; }
+        sLen -= len;
       }
+      if (pts.length < i + 1) pts.push(segs[segs.length - 1][1](0));
     }
     return pts;
   };
+
+  /**
+   * Which way is INTO the cut, from a point on its surface.
+   *
+   * Toward the nearest point of the rectangle, which on a vertical wall is
+   * straight inboard and on the floor is straight up. A single centre cannot
+   * say this once the section is tall: from the top of a wall the centre is a
+   * long way DOWN, and a face there would be judged by its height rather than
+   * by the side of the duct it is on.
+   */
+  const toInward = (px, py, x) => [
+    Math.max(-spacing, Math.min(spacing, px)) - px,
+    Math.max(loAt(x), Math.min(hiAt(x), py)) - py,
+  ];
 
   /**
    * Signed depth into the cut: positive inside, negative outside.
@@ -1114,7 +1170,14 @@ export function nacelleDuct({
    */
   const depth = (p) => Math.min(hull(p), -p.z - fromX);
   return { axisY, spacing, rT, throatX, fromX, toX, crown, climb,
-           radiusAt, centreY, passes, inside, depth, outlineAt, hull };
+           radiusAt, centreY, loAt, hiAt, toInward,
+           passes, inside, depth, outlineAt, hull };
+}
+
+/** A point on a circle, `f` of the way through a quarter turn from `th0`. */
+function arcPt(cx, cy, r, th0, f) {
+  const th = th0 + f * (Math.PI / 2);
+  return [cx + r * Math.cos(th), cy + r * Math.sin(th)];
 }
 
 /**
@@ -1216,9 +1279,9 @@ function faceInward(geo, duct) {
     c.fromBufferAttribute(pos, at(t + 2));
     cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
     nrm.crossVectors(b.clone().sub(a), c.clone().sub(a));      // 2 x area x normal
-    // Toward the nearer duct axis, in the section plane.
-    toIn.set(Math.sign(cen.x) * duct.spacing - cen.x,
-             duct.centreY(-cen.z) - cen.y, 0);
+    // Toward the nearest point of the duct's axis, in the section plane.
+    const [ix, iy] = duct.toInward(cen.x, cen.y, -cen.z);
+    toIn.set(ix, iy, 0);
     vote += nrm.dot(toIn);
   }
   if (vote < 0) {

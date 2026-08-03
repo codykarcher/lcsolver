@@ -600,6 +600,9 @@ export function d8Aircraft(deck, opts = {}) {
         throatX, fromX: duct.fromX, toX: duct.toX, spacing: d.engineY,
         axisY: engineAxisY, rThroat: duct.rT, radiusAt: duct.radiusAt,
         climb: duct.climb, centreY: duct.centreY,
+        // The floor and roof lines, so the slot the cut leaves in the crown can
+        // be reported on without rebuilding the law that made it.
+        loAt: duct.loAt, hiAt: duct.hiAt,
         inside: duct.inside, depth: duct.depth, passes: duct.passes,
         mesh: wallMesh, front: frontMesh,
       };
