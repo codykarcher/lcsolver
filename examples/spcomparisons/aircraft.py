@@ -355,50 +355,8 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
             # thrust demands are model data; applying the flight-state
             # part here -- before the engine add -- lets the seed see the
             # mission instead of five copies of the declared guess.
-            # HANDBOOK CLIMB SCHEDULE for the seed conditions: the
-            # flight-state declarations carry the CRUISE point; climb
-            # segments are seeded by a standard transport climb profile
-            # (ISA ratios for a ~15/26/33 kft ramp to a 35 kft cruise,
-            # Mach building to the cruise value). Reasonable, not
-            # optimal, and derived from the class declaration -- NOT
-            # from a recorded solution (the D8 reference's mission
-            # seeded a 737 engine at M 0.73 / 196 K and the seed fought
-            # the 737's own mission rows at feasibility 0.16).
-            _Fn_seg = None
-            try:
-                _Tc = float(pyo.value(st.T_atm[N - 1]))
-                _Pc_raw = float(pyo.value(st.P_atm[N - 1]))
-                _Pc = _Pc_raw * 1e3 if _Pc_raw < 2000.0 else _Pc_raw
-                _Mc = float(pyo.value(st.M[N - 1]))
-                _Vc = float(pyo.value(st.V[N - 1]))
-                _rT = (1.23, 1.145, 1.06, 1.0, 0.99)
-                _rP = (3.03, 2.03, 1.35, 1.0, 0.89)
-                _rM = (0.84, 0.86, 0.93, 1.0, 1.0)
-                for _i in range(N):
-                    _f = min(_i, 4)
-                    st.T_atm[_i].set_value(_Tc * _rT[_f],
-                                           skip_validation=True)
-                    st.P_atm[_i].set_value(
-                        (_Pc * _rP[_f]) / (1e3 if _Pc_raw < 2000.0
-                                           else 1.0),
-                        skip_validation=True)
-                    st.M[_i].set_value(_Mc * _rM[_f],
-                                       skip_validation=True)
-                    st.V[_i].set_value(_Vc * _rM[_f] *
-                                       (_rT[_f]) ** 0.5,
-                                       skip_validation=True)
-                # thrust: cruise drag ~ MTOW/(L/D); climb ~2.4x ramp.
-                # MTOW guess from the class payload via a whole-aircraft
-                # factor -- handbook numbers, deliberately coarse.
-                _MTOW_g = 750e3        # N, single-aisle class
-                _Fc = _MTOW_g / (17.0 * 2.0)
-                _rF = (2.35, 1.85, 1.3, 1.0, 0.89)
-                _Fn_seg = [_Fc * _rF[min(_i, 4)] for _i in range(N)]
-            except Exception:
-                pass
             eng, c = add_engine_sp(f, N, st, tech=_SP_TECHS[_SP_ENGINE],
-                                   prefix="Eng_", Nclimb=Nclimb,
-                                   Fn_seg_g=_Fn_seg)
+                                   prefix="Eng_", Nclimb=Nclimb)
             cons += c
         else:
             eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
@@ -473,6 +431,12 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     # scalars against a CG that moves over the mission).
     x_vt_le = V("x_vt_le", 27.0, "m", "fin root leading-edge station")
     x_ht_le = V("x_ht_le", 27.0, "m", "HT root leading-edge station, centreline")
+    # The fin's spanwise mount station. The fins sit on the TAILCONE's upper
+    # corners, and the cone tapers -- evaluating the pi-tail join at the max
+    # cabin half-width (w_fuse) put the attachment 0.7+ m outboard of any
+    # body corner the fin could stand on, which the renderer measured as a
+    # 140 mm spar-join gap (or a phantom 13 deg of fin cant closing it).
+    y_vt = V("y_vt", 1.7, "m", "fin mount half-width at the fin spar station")
     y_eng = V("y_eng", 2.0, "m", "engine moment arm")
     # Lateral clearance between the retracted main gear and the inboard edge
     # of the nacelle, as a multiple of the fan radius. 1.2 puts the engine
@@ -2069,7 +2033,10 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         # so the variables never dangle.
         *([] if pi_tail else
           [x_vt_le + vt.c_root_vt == fu.l_fuse,
-           x_ht_le + ht.c_root_ht == fu.l_fuse]),
+           x_ht_le + ht.c_root_ht == fu.l_fuse,
+           # y_vt defined on this branch too (definition-only, consumed by
+           # nothing conventional): the fin is on the centreline.
+           y_vt == 1e-3 * fu.w_fuse]),
         *([xCG + vt.dx_trail_vt <= fu.l_fuse] if not pi_tail else
           # PI-TAIL: CONNECTED, not merely bounded. The renderer caught the
           # fins floating 1.57 m ahead of the hull end and the horizontal
@@ -2094,11 +2061,20 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           [x_vt_le + vt.c_root_vt == fu.l_fuse,             # [SP] SigEq
            xCG + vt.dx_lead_vt <= x_vt_le,
            xCG + vt.dx_trail_vt <= x_vt_le + vt.c_root_vt,
-           # SPAR CENTRES coincide at the attachment -- the box axis rides
-           # at 0.40c (TASOPT's Xaxis), not the quarter chord; aligning at
-           # c/4 left the HT spar 0.29 m aft of the fin-tip spar because
-           # the HT root chord dwarfs the fin tip chord.
-           x_ht_le + fu.w_fuse * wing.tan_Lambda + 0.40 * ht.c_root_ht
+           # The fin stands on the cone corner: half-width from the linear
+           # radius taper (w_fuse at x_shell2 down to lambda_cone*w_fuse at
+           # the cone end), evaluated at the fin's 0.40c spar station --
+           # written all-positive.
+           y_vt * fu.l_cone
+               + fu.w_fuse * (1.0 - fu.lambda_cone) * x_vt_le
+               + fu.w_fuse * (1.0 - fu.lambda_cone) * 0.40 * vt.c_root_vt
+               == fu.w_fuse * fu.l_cone
+                + fu.w_fuse * (1.0 - fu.lambda_cone) * fu.x_shell2,
+                                                            # [SP] SigEq
+           # SPAR CENTRES coincide AT THE FIN STATION y_vt -- the box axis
+           # rides at 0.40c (TASOPT's Xaxis). Outboard of y_vt the
+           # horizontal legitimately overhangs the fins.
+           x_ht_le + y_vt * wing.tan_Lambda + 0.40 * ht.c_root_ht
                == x_vt_le + 0.40 * vt.c_root_vt
                 + vt.b_vt * tan(SWEEP_VT * pi / 180),       # [SP] SigEq
            xCG + ht.dx_lead_ht <= x_ht_le]),
