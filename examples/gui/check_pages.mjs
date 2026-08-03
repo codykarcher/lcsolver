@@ -46,9 +46,21 @@ const deckOf = (f) => A.deckFromSolve(
  * on the two pages it had no builder for.
  */
 const PAGES = {
+  /**
+   * BOTH aft treatments, because the page reads a different object for each.
+   *
+   * The lofted deck and the carve are alternatives -- one publishes `aftDeck`
+   * and the other `duct` -- so a check that built only the default would call
+   * every field of the other one missing, and, worse, would stop watching the
+   * one that is off today.
+   */
   'd8_aircraft_test.html': {
-    build: [() => D.d8Aircraft(deckOf('b737_d8_solve.json'), { sitOnGround: false })],
-    vars: ['u.parts.fuselage.userData.duct', 'dz'],
+    build: [() => D.d8Aircraft(deckOf('b737_d8_solve.json'),
+                               { sitOnGround: false, aftFollowsDucts: true }),
+            () => D.d8Aircraft(deckOf('b737_d8_solve.json'),
+                               { sitOnGround: false, aftFollowsDucts: false })],
+    vars: ['u.parts.fuselage.userData.duct', 'dz',
+           'u.parts.fuselage.userData.aftDeck', 'ad'],
   },
   'b737_test.html': {
     build: [() => A.conventionalAircraft(deckOf('b737_conventional_solve.json'),
@@ -153,16 +165,28 @@ for (const file of readdirSync(HERE).filter((f) => f.endsWith('_test.html'))) {
     const re = new RegExp(`\\b${v.replace(/\./g, '\\.')}\\.([A-Za-z_$][\\w$]*)`, 'g');
     return [...src.matchAll(re)].map((m) => m[1]);
   }))];
+  /**
+   * A field has to appear in SOME variant, not in every one.
+   *
+   * The variants are alternatives, not repeats: the D8 either lofts its aft
+   * deck or carves a duct out of it, and each publishes its own object for the
+   * page to report from. Requiring every field of every variant marked each
+   * one's fields missing from the other, which is a check that can only pass
+   * if the page has no branches in it.
+   */
+  const seen = new Set();
   for (const make of page.build) {
     const built = make().userData;
-    // `dz` is the page's own name for the duct, so those fields are looked for
-    // there rather than on the aeroplane.
+    // `dz` and `ad` are the page's own names for the duct and the lofted deck,
+    // so those fields are looked for there rather than on the aeroplane.
+    const fu = built.parts?.fuselage?.userData;
     const u = page.vars.includes('dz')
-      ? { ...built, ...(built.parts?.fuselage?.userData?.duct ?? {}) }
+      ? { ...built, ...(fu?.duct ?? {}), ...(fu?.aftDeck ?? {}) }
       : built;
-    const missing = fields.filter((f) => u[f] === undefined);
-    if (missing.length) { bad++; console.log(`  ${file}: MISSING ${missing.join(', ')}`); }
+    for (const f of fields) if (u[f] !== undefined) seen.add(f);
   }
+  const missing = fields.filter((f) => !seen.has(f));
+  if (missing.length) { bad++; console.log(`  ${file}: MISSING ${missing.join(', ')}`); }
   console.log(`${file.padEnd(24)} ${String(fields.length).padStart(2)} fields, `
               + `${page.build.length} variant(s)`);
 }

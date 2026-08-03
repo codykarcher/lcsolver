@@ -361,6 +361,90 @@ function tailFall(s, p) {
   return 1 - Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
 }
 
+/**
+ * Smooth minimum: `min(a, b)` with the corner rounded off over `k`.
+ *
+ * The quadratic one, not `-log(exp(-ka)+exp(-kb))/k`, because it is EXACT
+ * outside the band. A roof that is nowhere near the body has to leave it alone,
+ * and the exponential form shaves a little off everywhere forever.
+ */
+function smin(a, b, k) {
+  if (!(k > 0)) return Math.min(a, b);
+  const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (b - a) / k));
+  return b + (a - b) * h - k * h * (1 - h);
+}
+
+/**
+ * The afterbody's envelope -- crown, keel and half-width -- in closed form.
+ *
+ * The channel section is built by travelling its own PARAMETERS from the
+ * cabin's values to the channel's, and those parameters are absolute heights
+ * and radii, so the shape they describe does not depend on the taper law at
+ * all. Its outer bounds are therefore three straight interpolations, which is
+ * why they can be written down here rather than searched for: at the trailing
+ * edge this reproduces the built body's own keel to 4 mm and its half-width to
+ * 2 mm.
+ *
+ * Returns null where the run has not started, meaning "the body is still
+ * whatever it was".
+ */
+function aftEnvelope(p, radius) {
+  if (!p.channel) return null;
+  const cabinHalfW = radius * p.cabinWidth;
+  const k = (p.aftRoofBlend ?? 0) * radius;
+  return (z) => {
+    const x = -z;
+    const t = (x - p.channelFromX) / Math.max(p.channelToX - p.channelFromX, 1e-6);
+    const f = Math.pow(Math.min(1, Math.max(0, t)), p.channelEase);
+    if (f <= 0) return null;
+    const lerp = (a, b) => a + (b - a) * f;
+    const rr = lerp(radius, p.channel.r + p.channelGap);
+    const ax = lerp(0, p.channel.y);
+    const cp = lerp(radius, p.channel.y);            // the flat top of the cradle
+    /**
+     * The deck closes UNDER what it carries, if it is given a roof.
+     *
+     * Rounded on rather than clipped on: the roof comes down to meet a crown
+     * that is still up at the cabin, and without this the station where it
+     * takes over reads as a line right across the top of the body.
+     */
+    let crown = Math.min(cp, ax + rr);
+    if (p.aftRoof) {
+      const y = p.aftRoof(z);
+      if (isFinite(y)) crown = smin(crown, y, k);
+    }
+    const keel = ax - rr;
+    return {
+      f, crown, keel: Math.min(keel, crown - 1e-3),
+      halfW: lerp(Math.max(cabinHalfW - radius, 0), p.channel.x) + rr,
+    };
+  };
+}
+
+/**
+ * Re-close the afterbody on the envelope instead of on the taper law.
+ *
+ * A section is a radius about a centre, so the only way to hold a crown and a
+ * keel that move independently is to move the centre between them. That is all
+ * this does: the section spans exactly the envelope, and the centreline goes
+ * wherever it has to. The plan view comes out untouched for free -- the section
+ * quotes its aspect against the local half-height, so a shallower body is a
+ * proportionally wider section and the two cancel.
+ */
+function envelopeShape(shape, env) {
+  if (!env) return shape;
+  return {
+    ...shape,
+    at(z) {
+      const s = shape.at(z);
+      const e = env(z);
+      if (!e) return s;
+      const half = Math.max((e.crown - e.keel) / 2, 1e-4);
+      return { ...s, r: half, yc: e.keel + half };
+    },
+  };
+}
+
 function jetShape({ length, radius, p = JET }) {
   const lNose = p.noseD * 2 * radius;
   const lTail = p.tailD * 2 * radius;
@@ -803,7 +887,9 @@ function buildFuselage({
   nStation = 140,
 }) {
   const L = length ?? p.fineness * 2 * radius;
-  const shape = jetShape({ length: L, radius, p });
+  const shape = p.aftPlain
+    ? envelopeShape(jetShape({ length: L, radius, p }), aftEnvelope(p, radius))
+    : jetShape({ length: L, radius, p });
   // A section may need to know how big the body is at a station -- the D8's aft
   // holds its width while its height collapses, which cannot be said as a
   // multiple of the height. Handing it the shape is the only way to say it
@@ -1056,6 +1142,32 @@ const D8 = {
    * closing wedge, which is what a body with nothing on the back of it wants.
    */
   channel:      null,
+  /**
+   * Loft the afterbody as a plain superellipse instead of as a channel.
+   *
+   * Same envelope -- the crown, the keel and the half-width are the channel's
+   * own, to the millimetre -- but the section between them is the body's usual
+   * one rather than a flat-topped stadium. What goes is the SHOULDERS: the
+   * corners where the cradle's flat top turned down into the sides, which is
+   * where every hard edge back there came from, and the trough between them
+   * that the engines used to sit in.
+   *
+   * They now sit ON the body rather than in it, which is the point: a trough
+   * needs material on both sides of a ray and no section can say that, so it
+   * had to be cut out of the mesh afterwards. This is just a section. It lofts
+   * with everything else and it shades smooth.
+   */
+  aftPlain:     false,
+  /**
+   * A ceiling on the lofted afterbody: `y = aftRoof(z)`, or null for none.
+   *
+   * This is what puts the engines ON the deck instead of IN it. Without it the
+   * body closes over them at the cradle's own cap and swallows the inlets --
+   * two metres of nacelle, the whole intake, inside solid fuselage.
+   */
+  aftRoof:      null,
+  /** How far the roof is rounded into the crown it takes over from, in radii. */
+  aftRoofBlend: 0.20,
   channelGap:   0.02,  // clearance between the skin and what it holds
   /**
    * Where the run begins and ends, as stations aft of the nose in METRES.
@@ -1191,6 +1303,14 @@ export function d8Fuselage({
       const sp = lerp(Math.max(cabinHalfW - radius, 0), p.channel.x);
       const rr = lerp(radius, p.channel.r + p.channelGap);
       const ax = lerp(0, p.channel.y);
+      /**
+       * The cap is its OWN height, not the circles' axis.
+       *
+       * They were one number, which is right when the channel is a cradle open
+       * at the axis of what it holds. It is wrong when the afterbody is meant
+       * to close UNDER what it holds -- the roof then wants to be the bottom of
+       * those circles, not their centre -- and that is a different number.
+       */
       const cp = lerp(radius, p.channel.y);
       // Straight to the closed form rather than through `channelSection`,
       // which would build an object and a closure on EVERY ray. This runs about
@@ -1200,7 +1320,33 @@ export function d8Fuselage({
                            (ax - sh.yc) / sh.r, (cp - sh.yc) / sh.r, th);
     };
 
-    return (th, z) => {
+    /**
+     * The lofted afterbody: the body's own section, on the envelope.
+     *
+     * `shape` has already been re-closed on the same envelope, so the local
+     * half-height IS the envelope's, and quoting the width against it gives the
+     * plan view back exactly. Nothing here knows about the channel except the
+     * three numbers bounding it.
+     */
+    const env = p.aftPlain ? aftEnvelope(p, radius) : null;
+    const plainAft = (th, z, e) => {
+      const sh = shape.at(z);
+      const halfH = sh.r / radius;
+      const base = stadiumRadius(
+        (e.halfW / radius) / Math.max(halfH, 1e-6), p.cabinCrown, th);
+      if (!(p.tailTrough > 0)) return base;
+      const s2 = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
+      const depth = p.tailTrough * s2 * s2 * (3 - 2 * s2);
+      const dth = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+      const gg = dth / p.troughWidth;
+      return base * (1 - depth * Math.exp(-gg * gg));
+    };
+
+    const section = (th, z) => {
+      if (env) {
+        const e = env(z);
+        if (e) return plainAft(th, z, e);
+      }
       // The channel reaches forward of the tailcone, so it has to be applied to
       // the cabin's own section too, not only to the closing one.
       if (z > shape.zTail) return asChannel(th, z, morph(th, z));
@@ -1226,6 +1372,8 @@ export function d8Fuselage({
       const gg = dth / p.troughWidth;
       return base * (1 - depth * Math.exp(-gg * gg));
     };
+
+    return section;
   };
 
   const g = buildFuselage({ radius, length: L, p, sectionFor, ...rest });
