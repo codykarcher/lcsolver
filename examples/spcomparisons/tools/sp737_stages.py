@@ -189,7 +189,10 @@ cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
                                    seed="reference"))
 
 n_set_A = n_set_B = 0
+_COLD = bool(os.environ.get("COLD"))
 for v in cm.component_data_objects(pyo.Var):
+    if _COLD:
+        break
     n = v.name
     if n.startswith("Eng_cyc_s3_") and n[len("Eng_cyc_s3_"):] in vals_B:
         # the restructured engine adds an s3_ off-design point at cruise
@@ -245,6 +248,8 @@ for i in range(5):
     seg_iface[f"Eng_m_fan[{i}]"] = vals_B[t + "W"]
     seg_iface[f"Eng_T_t_4[{i}]"] = vals_B[t + "Tt4"]
 for v in cm.component_data_objects(pyo.Var):
+    if _COLD:
+        break
     n = v.name
     if n.startswith("Eng_TSFC["):
         i = int(n[len("Eng_TSFC["):-1])
@@ -301,7 +306,7 @@ opts.trust_radius = 0.1
 opts.trust_max = 0.5
 opts.phase2_restore = True
 opts.ipopt_options = dict(opts.ipopt_options, tol=1e-9,
-                          constr_viol_tol=1e-9)
+                          constr_viol_tol=1e-9, max_iter=6000)
 
 # assemble the initial warm source from A + B (already set on cm)
 warm0 = {v.name: float(pyo.value(v))
@@ -336,18 +341,37 @@ passes = [
 ]
 if os.environ.get("SWEEP"):
     passes = passes[:2]     # settle the coupled pinned basin, then sweep
+if os.environ.get("SINGLE"):
+    passes = [("free", None)]   # ONE pass, no pins, no ladder
+if os.environ.get("PIND"):
+    # consistency check: same single pass, levers row-pinned at the deck
+    # cycle (pi_lc follows through the split-ratio row -- pinning it too
+    # would duplicate an equality)
+    for v in cm.component_data_objects(pyo.Var):
+        if v.name == "Eng_cyc_pi_f_D":
+            v.set_value(1.685)
+        elif v.name == "Eng_cyc_pi_hc_D":
+            v.set_value(9.369)
+        elif v.name == "Eng_cyc_BPR_D":
+            v.set_value(5.105)
+    _PINDVALS = {"Eng_cyc_pi_f_D": 1.685, "Eng_cyc_pi_hc_D": 9.369,
+                 "Eng_cyc_BPR_D": 5.105}
+    passes = [("pinD", lambda n: n in _PINDVALS)]
 # the restructured engine's s3_ OD point has no stage-B source for its
 # OD-only variables (map coordinates, PR, eff, prm1); seg_warm supplies
 # forward-consistent values exactly as the accretive stage-B steps do
-warm0.update({f"Eng_cyc_{k}": v for k, v in seg_warm(3, "s3_").items()})
+if not _COLD:
+    warm0.update({f"Eng_cyc_{k}": v
+                  for k, v in seg_warm(3, "s3_").items()})
 
 # ---- SEED REPAIR: rows the A+B name-mapping leaves violated ----------
+# (external stage-B info; the COLD path self-seeds inside sp_engine)
 # tfcool block (sp_engine-only, no stage-B source): solve the three-row
 # chain at the stage-B takeoff state with 2% margin.
-_Tt3TO = vals_B["s0_hpc_Tt"]
+_Tt3TO = vals_B["s0_hpc_Tt"] if not _COLD else None
 _Trr = 1.0 / (1.0 + 0.5 * (1.313 - 1.0) * 1.0 ** 2)
 _ef, _tf, _StA = 0.7, 0.30, 0.09
-for _r in (1, 2, 3):
+for _r in (1, 2, 3) if not _COLD else ():
     _Tg = (1833.0 + 200.0) if _r == 1 else 1833.0 * _Trr ** (_r - 1)
     _th = min(0.999, (_Tg - 1280.0) / (_Tg - _Tt3TO) * 1.02)
     _e0 = max(_StA * (_th * (1 - _ef * _tf) - _tf * (1 - _ef))
@@ -465,6 +489,17 @@ for label, pred in passes:
             print("  (stable, residual localized -- continuing ladder)")
         else:
             sys.exit(1)
+    try:
+        sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
+                           "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
+        from kkt_verify import verify_kkt
+        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        _stat, _feas, _m = verify_kkt(_bpv(st, sp_form=True), res.x)
+        print(f"  VERIFIER (unsplit, least-squares duals): "
+              f"stationarity {_stat:.3e}  feasibility {_feas:.3e}",
+              flush=True)
+    except Exception as _e:
+        print(f"  (verifier failed: {_e})", flush=True)
     src = snapshot(cm, st, res.x)
 
 json.dump(src if isinstance(src, dict) else {},

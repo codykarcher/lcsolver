@@ -147,7 +147,7 @@ class _EnginePins:
 
 def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
                   Nclimb=3, seg_choked=None, debug_float_conds=None,
-                  debug_skip=frozenset()):
+                  debug_skip=frozenset(), Fn_seg_g=None):
     """Add the rubber engine. Returns ``(group, cons)`` with the same
     attribute surface the aircraft reads from the deck engine."""
     eng = f.group("eng_sp", prefix=prefix)
@@ -160,8 +160,10 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # cyc_ so they cannot collide with the unit-ful interface names.
     # Bounds become ROWS -- the aircraft build path drops variable bounds
     # (see sp_cycle._point).
+    _seed = {}      # filled by the self-seeding block below, read by V
+
     def V(n, gs, d, bounds=None):
-        v = eng.Variable(f"cyc_{n}", gs, "-", d)
+        v = eng.Variable(f"cyc_{n}", _seed.get(n, gs), "-", d)
         if bounds is not None:
             lo, hi = bounds
             if lo is not None and lo > 0:
@@ -174,10 +176,18 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # ---- free design cycle variables --------------------------------------
     FPR = V("pi_f_D", tech.FPR_g, "fan design pressure ratio, FREE",
             bounds=(1.2, 2.2))
+    # MAP-FAMILY VALIDITY on the core split: the NPSS scaling convention
+    # pretends any design PR rescales the same table, but a booster map
+    # stretched to PR 4 is not a booster (measured: with generic travel
+    # bounds the free coupled solve ran pi_lc to 4.0 -- nothing in the
+    # physics prices the lc/hc split, exactly why TASOPT carries the split
+    # as a DECK INPUT). The technology statement here is +/-30% around the
+    # tech level's reference split -- the credible rescaling range of the
+    # map families -- not a solved-from-first-principles split.
     PIlc = V("pi_lc_D", tech.LPC_PR_g, "LPC design pressure ratio, FREE",
-             bounds=(1.2, 4.0))
+             bounds=(0.70 * tech.LPC_PR_g, 1.30 * tech.LPC_PR_g))
     PIhc = V("pi_hc_D", tech.HPC_PR_g, "HPC design pressure ratio, FREE",
-             bounds=(4.0, 25.0))
+             bounds=(0.70 * tech.HPC_PR_g, 1.30 * tech.HPC_PR_g))
     BPRD = V("BPR_D", tech.BPR_g, "design bypass ratio, FREE",
              bounds=(2.0, 14.0))
     eff_fan = V("eff_fan_D", tech.eff_fan0, "fan design adiabatic eff")
@@ -188,6 +198,16 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
             == tech.eff_fan0 + tech.K_eff_fan * tech.FPRo,  # [SP] SigEq
         # technology OPR bound (pif*pilc*pihc, the cap the deck engine used)
         FPR * PIlc * PIhc <= tech.OPR_max,
+        # CORE SPLIT AS A TECHNOLOGY RATIO: the lc/hc work split is not
+        # priced by any physics in the model (component efficiencies are
+        # tech-level constants; the weight row sees only the OPR product),
+        # and left free it runs to whichever spool the reference
+        # efficiencies favor (measured: pi_lc to its validity ceiling,
+        # eff_lpc 0.9243 vs eff_hpc 0.8707). TASOPT carries the split as
+        # a deck INPUT for the same reason; here it is the equivalent
+        # statement -- the split ratio is part of the technology level,
+        # and the core OPR remains free through pi_hc.
+        PIlc * tech.HPC_PR_g == PIhc * tech.LPC_PR_g,   # monomial
     ]
 
     # ---- per-segment conditions -------------------------------------------
@@ -249,7 +269,14 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
 
     # thrust the aircraft demands, per segment, per engine (interface var)
     F = Vn("F", 24000.0, "N", "total thrust")
-    Fn_des_g = 24000.0
+    Fn_des_g = (float(Fn_seg_g[i_des]) if Fn_seg_g is not None
+                else 24000.0)
+    if Fn_seg_g is not None:
+        try:
+            for _i in range(N):
+                F[_i].set_value(float(Fn_seg_g[_i]))
+        except Exception:
+            pass
     # magnitude heuristic as in cond_for: a SEEDED aircraft build carries
     # SI-corrected Pa magnitudes in the kPa-declared state variable, and
     # blindly multiplying by 1e3 put pins.P0_Pa at 2.4e7 -- every sc-scaled
@@ -260,6 +287,77 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     pins = _EnginePins(tech, FPR, PIlc, PIhc, BPRD, eff_fan,
                        P0_g=_P0raw * 1e3 if _P0raw < 2000.0 else _P0raw,
                        Fn_g=Fn_des_g)
+
+    # ---- SELF-SEEDING DECLARED GUESSES ------------------------------------
+    # A deterministic forward evaluation of the technology-guess cycle at
+    # the airframe's build-time (reference-seed) conditions, per segment,
+    # supplies every cycle variable's declared guess by name. This is guess
+    # DECLARATION, not a warm start: no optimization runs, the values are a
+    # pure function of the model's own inputs, and the model is cold-start
+    # solvable by construction (measured: the coupled free solve from
+    # generic guesses dies in phase 1 at feasibility 6.9 -- the repair
+    # travel wrecks the map rows -- while the same build self-seeded starts
+    # phase 1 at percent-level violations and settles).
+    def _conds_g(i):
+        if debug_float_conds is not None:
+            fc = debug_float_conds[i]
+            return fc['T0'], fc['P0'], fc['V'], fc['M']
+        T0g = float(pyo.value(state.T_atm[i]))
+        Praw = float(pyo.value(state.P_atm[i]))
+        P0g = Praw * 1e3 if Praw < 2000.0 else Praw
+        u0g = float(pyo.value(state.V[i])) * 0.514444
+        return T0g, P0g, u0g, float(pyo.value(state.M[i]))
+
+    try:
+        from .truth import warm_start as _WS
+        import dataclasses as _dcx
+        _T0d, _P0d, _u0d, _MNd = _conds_g(i_des)
+        _pseed = SC.CyclePins(
+            name="seed", T0_K=_T0d, P0_Pa=_P0d, MN=_MNd, V0_m_s=_u0d,
+            Fn_N=Fn_des_g, T4_K=tech.Tt4_CR_K,
+            FPR=tech.FPR_g, LPC_PR=tech.LPC_PR_g, HPC_PR=tech.HPC_PR_g,
+            BPR=tech.BPR_g,
+            eff_fan=tech.eff_fan0
+                - tech.K_eff_fan * (tech.FPR_g - tech.FPRo),
+            eff_lpc=tech.eff_lpc, eff_hpc=tech.eff_hpc,
+            eff_hpt=tech.eff_hpt, eff_lpt=tech.eff_lpt,
+            LP_Nmech=tech.LP_Nmech, HP_Nmech=tech.HP_Nmech,
+            HPX_W=tech.HPX_W,
+            choked_core=True, choked_byp=True)
+        _seed.update(_WS.design_state(_pseed))
+        _Tt0d = _T0d * (1.0 + 0.2 * _MNd * _MNd)
+        _deld = _P0d * (1.0 + 0.2 * _MNd * _MNd) ** 3.5
+        for i in range(N):
+            _T0i, _P0i, _u0i, _MNi = _conds_g(i)
+            _Tt0i = _T0i * (1.0 + 0.2 * _MNi * _MNi)
+            _T4i = min(tech.Tt4_CR_K * _Tt0i / _Tt0d,
+                       tech.Tt4_TO_K if i < Nclimb else tech.Tt4_CR_K)
+            # CORRECTED-THRUST SIMILARITY: seed each segment's thrust as
+            # the design guess scaled by delta0, so every segment's seed
+            # is THE SAME machine at its corrected state -- map
+            # coordinates land on the design point, which is what the
+            # design/OD ratio rows demand. Sizing each segment to the
+            # flat design-thrust guess instead seeded five different
+            # engines (measured: the takeoff seed's core jet at 875 m/s,
+            # a tiny machine flat-out at its rating).
+            _deli = _P0i * (1.0 + 0.2 * _MNi * _MNi) ** 3.5
+            _Fi = (float(Fn_seg_g[i]) if Fn_seg_g is not None
+                   else Fn_des_g * _deli / _deld * (_T4i / tech.Tt4_CR_K))
+            _chc, _chb = (seg_choked[i] if seg_choked is not None
+                          else ((True, True) if i >= Nclimb
+                                else (False, True)))
+            _pi = _dcx.replace(_pseed, T0_K=_T0i, P0_Pa=_P0i, MN=_MNi,
+                               V0_m_s=_u0i, T4_K=_T4i, Fn_N=_Fi,
+                               choked_core=_chc, choked_byp=_chb)
+            try:
+                _wsi = _WS.design_state(_pi)
+            except Exception:
+                _wsi = dict(_seed)
+            _seed.update({f"s{i}_{k}": v for k, v in _wsi.items()})
+            if i == i_des:
+                _seed.update(_wsi)
+    except Exception:
+        _seed.clear()       # heuristic per-variable guesses still apply
 
     out_by_tag = {}
     seg_out = [None] * N
@@ -331,8 +429,24 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     hold25 = Vn("hold_25", 1.06, "-", "HPC face stagnation factor")
     c1v = Vn("c1", 1.1, "-", "freestream stagnation factor")
 
-    # TSFC is WEIGHT-specific (TASOPT 1/hr): Wf*g/Fn.
+    # interface guesses from the self-seed (same declaration-not-warm-start
+    # status as the cycle guesses; generic 400/290/150-style numbers left
+    # the cold coupled start with percent-level interface violations)
     _TSFC_CONV = 9.80665 * 3600.0
+    if _seed:
+        try:
+            for i in range(N):
+                t_ = f"s{i}_"
+                TSFC[i].set_value(_seed[t_ + "TSFC"] * _TSFC_CONV / 3600.0
+                                  * 3600.0)
+                u6[i].set_value(_seed[t_ + "V_core"])
+                u8[i].set_value(_seed[t_ + "V_byp"])
+                mFan[i].set_value(_seed[t_ + "W"])
+                Tt4x[i].set_value(_seed[t_ + "Tt4"])
+        except Exception:
+            pass
+
+    # TSFC is WEIGHT-specific (TASOPT 1/hr): Wf*g/Fn.
     for i in range(N):
         o = seg_out[i]
         tag = f"s{i}_"
@@ -349,24 +463,57 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     if "scalars" in debug_skip:
         return eng, cons
     # ---- interface: engine-level scalars ----------------------------------
-    W_engine = Vu("W_engine", 1e4, "N", "weight of a single turbofan")
-    df = Vu("d_f", 1.5, "m", "fan diameter")
-    dlpc = Vu("d_LPC", 0.8, "m", "LPC diameter")
-    A2 = Vu("A_2", 1.5, "m^2", "fan area")
-    A25 = Vu("A_25", 0.3, "m^2", "HPC area")
-    A5 = Vu("A_5", 0.3, "m^2", "core exhaust nozzle area")
-    A7 = Vu("A_7", 1.0, "m^2", "fan exhaust nozzle area")
-    mFanD = Vu("mbar_fan_D", 300.0, "kg/s", "fan design corrected flow")
+    _fwc = float(_seed.get("fan_Wc", 300.0))
+    _hwc = float(_seed.get("hpc_Wc", 20.0))
+    _A2g = _fwc / _corr_flow_per_area(0.60)
+    _A25g = _hwc / _corr_flow_per_area(0.55)
+    W_engine = Vu("W_engine", 2.2e4, "N", "weight of a single turbofan")
+    df = Vu("d_f", (4.0 * _A2g / (math.pi * (1.0 - tech.HTR_fan**2)))**0.5,
+            "m", "fan diameter")
+    dlpc = Vu("d_LPC",
+              (4.0 * _A25g / (math.pi * (1.0 - tech.HTR_lpc**2)))**0.5,
+              "m", "LPC diameter")
+    A2 = Vu("A_2", _A2g, "m^2", "fan area")
+    A25 = Vu("A_25", _A25g, "m^2", "HPC area")
+    A5 = Vu("A_5", float(_seed.get("A_core", 0.3)), "m^2",
+            "core exhaust nozzle area")
+    A7 = Vu("A_7", float(_seed.get("A_byp", 1.0)), "m^2",
+            "fan exhaust nozzle area")
+    mFanD = Vu("mbar_fan_D", _fwc, "kg/s", "fan design corrected flow")
 
-    # Fitzgerald weight on the design corrected core flow == the LPC's
-    # design corrected flow (map rows carry it), OPR = pilc*pihc.
-    from .model import fitzgerald_coeffs
-    _a, _b, _c = fitzgerald_coeffs(tech.BPR_ref, tech.geared, tech.advanced)
+    # Fitzgerald weight as a 3-D SMA surface with BPR as a COORDINATE
+    # (truth/fits_fitz.py). Two fixes over the deck-style row it replaces:
+    # (1) the correlation's mass flow is the deck's own convention,
+    #     mbar_fan_D / BPR (fan-face design corrected flow over bypass
+    #     ratio, wsize.f:1306) -- the LPC-face locally-corrected flow used
+    #     before floors the weight 42% low (measured: 2,243 vs 3,833 lbf
+    #     at the deck point);
+    # (2) the (a,b,c) coefficients are BPR-dependent, and freezing them at
+    #     BPR_ref makes higher bypass SHRINK the row (the core shrinks,
+    #     the fan is invisible) -- backwards, and why every weighted free
+    #     solve ran BPR to its guard. b(BPR) in an exponent cannot be a GP
+    #     variable; the fitted surface carries the coupling instead
+    #     (max 2.5% over the physical wedge).
+    from . import sp_fitz as FZ
+    _fz = {(False, False): FZ.FITZ, (True, False): FZ.FITZ_GEARED,
+           (False, True): FZ.FITZ_ADV,
+           (True, True): FZ.FITZ_GEARED_ADV}[(tech.geared, tech.advanced)]
     if "fitz" not in debug_skip:
+        _a1 = _fz['a1']
+        _mn = eng.cyc_fan_Wc / (BPRD * FZ.M_REF)       # (mdotc/45.35)
+        _on = PIlc * PIhc / FZ.O_REF                   # (OPR_core/40)
+        _bn = BPRD / FZ.B_REF                          # (BPR/5)
+        _posy = sum((c ** _a1) * _mn ** (_a1 * e[0]) * _on ** (_a1 * e[1])
+                    * _bn ** (_a1 * e[2])
+                    for c, e in zip(_fz['c'], _fz['e']))
         cons += [
-            W_engine / units.N >= _a * 4.44822
-                * (eng.cyc_lpc_Wc / 45.35) ** _b
-                * ((PIlc * PIhc) / 40.0) ** _c,
+            (W_engine / (FZ.W_REF * 4.44822 * units.N)) ** _a1 >= _posy,
+            # fit-window guards as ROWS (validity, not physics)
+            _mn * FZ.M_REF >= FZ.WINDOW['m'][0],
+            _mn * FZ.M_REF <= FZ.WINDOW['m'][1],
+            _on * FZ.O_REF >= FZ.WINDOW['opr'][0],
+            _bn * FZ.B_REF >= FZ.WINDOW['bpr'][0],
+            _bn * FZ.B_REF <= FZ.WINDOW['bpr'][1],
             # W_engine's only other pressure is the airframe weight chain,
             # which is absent from the restoration phases' feasibility
             # subproblems -- leaving a one-sided row's up-direction as a
@@ -410,12 +557,23 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     Tmet = Cu("T_metal", tech.T_metal_K, "K", "design blade metal temp")
     _eps = []
     Tt3_TO = getattr(eng, "cyc_s0_hpc_Tt")  # segment 0 = the rating point
+    # self-seeded guesses: solve the three-row chain at the seeded takeoff
+    # compressor-discharge temperature with 2% margin (same construction
+    # the staged runner used from stage-B data; now a pure function of the
+    # model's own seed)
+    _Tt3g = float(_seed.get("s0_hpc_Tt", 810.0))
     for _r in (1, 2, 3):
-        th = V(f"theta_cool_{_r}", 0.4, f"cooling effectiveness, row {_r}")
-        e0 = V(f"eps0_cool_{_r}", 0.05, f"cooling requirement, row {_r}")
-        ep = V(f"eps_cool_{_r}", 0.04, f"cooling flow ratio, row {_r}")
         Tg = (tech.Tt4_TO_K + tech.dT_streak_K if _r == 1
               else tech.Tt4_TO_K * _Trr ** (_r - 1))
+        _thg = min(0.999, (Tg - tech.T_metal_K) / max(Tg - _Tt3g, 1.0)
+                   * 1.02)
+        _e0g = max(tech.StA * (_thg * (1 - tech.efilm * tech.tfilm)
+                               - tech.tfilm * (1 - tech.efilm))
+                   / (tech.efilm * (1 - _thg)), 1e-4) * 1.02
+        _epg = _e0g / (1.0 + _e0g) * 1.02
+        th = V(f"theta_cool_{_r}", _thg, f"cooling effectiveness, row {_r}")
+        e0 = V(f"eps0_cool_{_r}", _e0g, f"cooling requirement, row {_r}")
+        ep = V(f"eps_cool_{_r}", _epg, f"cooling flow ratio, row {_r}")
         _ef, _tf, _StA = tech.efilm, tech.tfilm, tech.StA
         cons += [
             th * Tg + tech.T_metal_K >= Tg + th * Tt3_TO,   # [SP] SigIneq

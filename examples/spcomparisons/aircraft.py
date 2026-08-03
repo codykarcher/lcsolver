@@ -349,8 +349,31 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         if _SP_ENGINE and not arch.double_bubble and arch.fuel == "jeta":
             from components.turbofan.sp_engine import (add_engine_sp,
                                                        TECHS as _SP_TECHS)
+            # the engine SELF-SEEDS from a forward evaluation at the
+            # flight state's BUILD-TIME values (guess declaration, not a
+            # warm start). The reference's per-segment conditions and
+            # thrust demands are model data; applying the flight-state
+            # part here -- before the engine add -- lets the seed see the
+            # mission instead of five copies of the declared guess.
+            _Fn_seg = None
+            try:
+                from pathlib import Path as _Pth
+                from components.crosscheck import reference_point as _rp
+                _ref0 = _rp(_Pth(__file__).parent / "components"
+                            / "reference.json")
+                for _nm, _vv in (("T_atm", st.T_atm), ("P_atm", st.P_atm),
+                                 ("M", st.M), ("V", st.V), ("a", st.a)):
+                    _rv = _ref0.get(f"FS_{_nm}")
+                    if isinstance(_rv, list):
+                        for _i in range(min(N, len(_rv))):
+                            _vv[_i].set_value(float(_rv[_i]),
+                                              skip_validation=True)
+                _Fn_seg = _ref0.get("Eng_F")
+            except Exception:
+                pass
             eng, c = add_engine_sp(f, N, st, tech=_SP_TECHS[_SP_ENGINE],
-                                   prefix="Eng_", Nclimb=Nclimb)
+                                   prefix="Eng_", Nclimb=Nclimb,
+                                   Fn_seg_g=_Fn_seg)
             cons += c
         else:
             eng, c = add_engine(f, N, st, engine=eng_key, BLI=arch.BLI,
@@ -3208,6 +3231,14 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
 #: Anything the ARCHITECTURE switches should come from the architecture, not
 #: from a seed recorded for a different one.
 _SEED_SKIP = ("HT_", "Fuse_w_db")
+#: With the SP engine active, every Eng_ value in the reference belongs to
+#: the DECK engine -- a different model whose interface magnitudes (u_6,
+#: m_fan, TSFC conventions) do not transfer, exactly the
+#: "architecture-switched" case above. The SP engine SELF-SEEDS at build
+#: (sp_engine.py): importing deck values over that seed re-creates the
+#: inconsistent-interface start the self-seed exists to prevent.
+if _SP_ENGINE:
+    _SEED_SKIP = _SEED_SKIP + ("Eng_",)
 
 
 def _seed_from_reference(f):
