@@ -229,6 +229,91 @@ if (strays.length > skinEdge.length * 0.02) bad(`${strays.length} of ${skinEdge.
   if (wrong > total * 0.02) bad(`${wrong} of ${total} duct faces are wound inside out`);
 }
 
+/* ---- 5. the body still shades smooth ------------------------------------ */
+/**
+ * Clipping unshares every vertex -- the skin's 8,961 become 50,286 -- and a
+ * mesh with no shared vertices gets one normal per FACE if you recompute them,
+ * which shades a smooth body as a field of flat panels. Nothing about the shape
+ * changes, so the carve looks like it wrecked the mesh when the mesh is right.
+ *
+ * Measured as the spread of each triangle's three vertex normals: flat shading
+ * makes them identical, so a mesh where nearly every triangle has a spread of
+ * zero is faceted no matter how fine it is.
+ */
+function flatFraction(geo, where = null) {
+  const n = geo.getAttribute('normal');
+  if (!n) return 1;
+  const pos = geo.getAttribute('position');
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const q = new THREE.Vector3(), cen = new THREE.Vector3();
+  let flat = 0, total = 0;
+  for (let i = 0; i + 2 < n.count; i += 3) {
+    if (where) {
+      cen.set(0, 0, 0);
+      for (let k = 0; k < 3; k++) cen.add(q.fromBufferAttribute(pos, i + k));
+      if (!where(cen.multiplyScalar(1 / 3))) continue;
+    }
+    a.fromBufferAttribute(n, i);
+    b.fromBufferAttribute(n, i + 1);
+    c.fromBufferAttribute(n, i + 2);
+    total++;
+    if (a.distanceTo(b) < 1e-6 && a.distanceTo(c) < 1e-6) flat++;
+  }
+  return total ? flat / total : 1;
+}
+// The duct is measured only on its CORNER ROUNDS. Its floor and its walls are
+// flat by construction, so identical normals there are correct, and counting
+// them made a correctly shaded sheet read as 17% faceted. The arcs are the part
+// that has to be smooth, and the part that shows if it is not.
+const onTheRound = (q) => {
+  const ax = Math.abs(q.x);
+  return ax > fu.duct.halfWidth - fu.duct.cornerR + 0.05 && ax < fu.duct.halfWidth - 0.05;
+};
+for (const [what, geo, where] of [
+  ['skin', cut.userData.parts.fuselage.userData.skinMesh.geometry, null],
+  ['duct corner rounds', fu.duct.mesh.geometry, onTheRound],
+]) {
+  const f = flatFraction(geo, where);
+  console.log(`${what}: ${(100 * f).toFixed(1)}% of triangles are flat-shaded`);
+  if (f > 0.10) bad(`${what} is ${(100 * f).toFixed(0)}% faceted -- normals were not carried through`);
+}
+
+/* ---- 6. the cut runs on through the fins -------------------------------- */
+/**
+ * The fins stand 20 mm outboard of the duct's wall and are 184 mm thick at the
+ * root, so before the cut their inboard face came 92 mm through the wall as a
+ * ridge down the inside of the trough. Nothing should now reach into the void.
+ *
+ * Measured as `min(into the duct, into the body)`, because that product is what
+ * the cut removes: material inside the duct but outside the body was never
+ * there to remove, and material inside the body but outside the duct is buried
+ * and belongs where it is.
+ */
+function finReach(craft) {
+  const cu = craft.userData, cf = cu.parts.fuselage.userData;
+  const vol = cf.duct ? ductVolume(cf.duct) : duct;
+  craft.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(craft.matrixWorld).invert();
+  let worst = 0;
+  for (const vt of cu.parts.verticalTails) {
+    vt.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+      const a = o.geometry.getAttribute('position'), q = new THREE.Vector3();
+      for (let i = 0; i < a.count; i++) {
+        q.fromBufferAttribute(a, i).applyMatrix4(m);
+        worst = Math.max(worst, Math.min(vol.depth(q), cf.depthInside(q.x, q.y, q.z)));
+      }
+    });
+  }
+  return worst;
+}
+const finWas = finReach(plain), finNow = finReach(cut);
+console.log(`fins reach ${(1000 * finWas).toFixed(0)} mm into the trough before, ` +
+            `${(1000 * finNow).toFixed(1)} mm after`);
+if (finNow > 1e-3) bad(`the fins still reach ${(1000 * finNow).toFixed(0)} mm into the trough`);
+if (finWas < 0.02) bad('the fins never reached into the trough -- the test proves nothing');
+
 /* ---- negative controls -------------------------------------------------- */
 /**
  * Each check, run against geometry it is supposed to reject. A check that has
@@ -288,6 +373,17 @@ console.log('\nnegative controls');
   console.log(`  reversing the winding turns ${wrong} of ${total} faces the wrong way` +
               (wrong > total * 0.02 ? '  ok' : '  NOT DETECTED'));
   if (!(wrong > total * 0.02)) bad('control: a reversed winding was not detected');
+}
+
+{
+  // Recomputing normals on the carved mesh -- the thing that caused it -- must
+  // be caught, or the check cannot tell smooth from faceted.
+  const g = cut.userData.parts.fuselage.userData.skinMesh.geometry.clone();
+  g.computeVertexNormals();
+  const f = flatFraction(g);
+  console.log(`  recomputed normals leave ${(100 * f).toFixed(0)}% flat-shaded` +
+              (f > 0.10 ? '  ok' : '  NOT DETECTED'));
+  if (!(f > 0.10)) bad('control: face-normal shading was not detected');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nall checks passed');

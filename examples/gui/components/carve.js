@@ -37,73 +37,113 @@ import * as THREE from 'three';
  *
  * So the guess is only a bracket, and the crossing is then solved for.
  */
-function crossAt(a, b, f, da, db) {
+function crossingT(a, b, f, da) {
   let lo = 0, hi = 1, flo = da;
   for (let i = 0; i < 40; i++) {
     const m = (lo + hi) / 2;
     const fm = f(a.clone().lerp(b, m));
     if ((fm > 0) === (flo > 0)) { lo = m; flo = fm; } else hi = m;
   }
-  return a.clone().lerp(b, (lo + hi) / 2);
+  return (lo + hi) / 2;
 }
 
 /**
- * Split a mesh on a surface, into the parts either side of it.
+ * A vertex, carrying its normal as well as its position.
  *
- * Triangles wholly on one side pass through vertex for vertex -- no resampling,
- * no drift. The ones that straddle are split at the field's own zero, so the
- * edge follows the cutting surface rather than following whichever triangle
- * happened to lie across it.
+ * The normal has to travel with it. Clipping produces an unindexed mesh -- the
+ * skin's 8,961 shared vertices become 50,286 unshared ones -- and recomputing
+ * normals on that gives one per FACE, so a body that was smooth comes back
+ * visibly faceted over its whole length. Nothing about the shape changed; only
+ * the shading did, which is worse, because it looks like the carve wrecked the
+ * mesh when the mesh is exactly right.
+ *
+ * Interpolated at the crossing by the same parameter as the position, so a cut
+ * edge shades continuously with the surface it was cut from.
+ */
+const vert = (p, n) => ({ p, n });
+const lerpVert = (a, b, t) => vert(
+  a.p.clone().lerp(b.p, t),
+  a.n.clone().lerp(b.n, t).normalize());
+
+/** Read a mesh's triangles as vertices carrying their normals. */
+function readTriangles(geometry) {
+  const pos = geometry.getAttribute('position');
+  const nrm = geometry.getAttribute('normal');
+  const index = geometry.getIndex();
+  const count = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const tris = [];
+  for (let t = 0; t + 2 < count; t += 3) {
+    const tri = [];
+    for (let k = 0; k < 3; k++) {
+      const i = at(t + k);
+      tri.push(vert(
+        new THREE.Vector3().fromBufferAttribute(pos, i),
+        nrm ? new THREE.Vector3().fromBufferAttribute(nrm, i) : new THREE.Vector3()));
+    }
+    tris.push(tri);
+  }
+  return { tris, hasNormals: !!nrm };
+}
+
+/** Build a geometry from triangles of vertices, keeping their normals. */
+function fromTriangles(tris, hasNormals) {
+  const pos = [], nrm = [];
+  for (const t of tris) {
+    for (const v of t) {
+      pos.push(v.p.x, v.p.y, v.p.z);
+      nrm.push(v.n.x, v.n.y, v.n.z);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (hasNormals) g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  else g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Cut one triangle on one surface: the part where `field` is negative, and the
+ * part where it is positive.
+ *
+ * A triangle wholly on one side passes through vertex for vertex -- no
+ * resampling, no drift. One that straddles is split at the field's own zero, so
+ * the edge follows the cutting surface rather than whichever triangle happened
+ * to lie across it.
  *
  * `field` has to be signed and continuous, not a predicate: a predicate can
  * only put the boundary on whichever vertex happened to test true, which leaves
  * an edge as ragged as the mesh is coarse.
  */
-export function splitTriangles(geometry, field) {
-  const pos = geometry.getAttribute('position');
-  const index = geometry.getIndex();
-  const count = index ? index.count : pos.count;
-  const at = index ? (i) => index.getX(i) : (i) => i;
-  const above = [], below = [];
-  const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  const emit = (o, a, b, c) => o.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-  const cross = (a, b, da, db) => crossAt(a, b, field, da, db);
-  let cut = 0;
-
-  for (let t = 0; t + 2 < count; t += 3) {
-    for (let k = 0; k < 3; k++) v[k].fromBufferAttribute(pos, at(t + k));
-    const d = [field(v[0]), field(v[1]), field(v[2])];
-    const up = d.filter((x) => x > 0).length;
-
-    if (up === 3) { emit(above, v[0], v[1], v[2]); continue; }
-    if (up === 0) { emit(below, v[0], v[1], v[2]); continue; }
-    cut++;
-
-    // Rotate so the odd vertex out is first, which makes both cases one shape.
-    const o = up === 1 ? d.findIndex((x) => x > 0) : d.findIndex((x) => x <= 0);
-    const p = [v[o], v[(o + 1) % 3], v[(o + 2) % 3]];
-    const q = [d[o], d[(o + 1) % 3], d[(o + 2) % 3]];
-    const m1 = cross(p[0], p[1], q[0], q[1]);
-    const m2 = cross(p[0], p[2], q[0], q[2]);
-    const [one, two] = up === 1 ? [above, below] : [below, above];
-    emit(one, p[0], m1, m2);
-    emit(two, m1, p[1], p[2]);
-    emit(two, m1, p[2], m2);
-  }
-  const make = (arr) => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
-    return g;
-  };
-  return { above: make(above), below: make(below), cut };
+function cutTriangle(tri, field) {
+  const d = tri.map((v) => field(v.p));
+  const up = d.filter((x) => x > 0).length;
+  if (up === 3) return { neg: [], pos: [tri] };
+  if (up === 0) return { neg: [tri], pos: [] };
+  // Rotate so the odd vertex out is first, which makes both cases one shape.
+  const o = up === 1 ? d.findIndex((x) => x > 0) : d.findIndex((x) => x <= 0);
+  const p = [tri[o], tri[(o + 1) % 3], tri[(o + 2) % 3]];
+  const q = [d[o], d[(o + 1) % 3], d[(o + 2) % 3]];
+  const m1 = lerpVert(p[0], p[1], crossingT(p[0].p, p[1].p, field, q[0]));
+  const m2 = lerpVert(p[0], p[2], crossingT(p[0].p, p[2].p, field, q[0]));
+  const corner = [[p[0], m1, m2]];                 // the odd vertex out
+  const quad = [[m1, p[1], p[2]], [m1, p[2], m2]];
+  return up === 1 ? { neg: quad, pos: corner } : { neg: corner, pos: quad };
 }
 
 /** Keep only the part of a mesh where `field` is positive. */
 export function clipTriangles(geometry, field) {
-  const { above, cut } = splitTriangles(geometry, field);
-  above.computeVertexNormals();
-  above.userData.clip = { kept: above.getAttribute('position').count / 3, cut };
-  return above;
+  const { tris, hasNormals } = readTriangles(geometry);
+  const keep = [];
+  let cut = 0;
+  for (const tri of tris) {
+    const r = cutTriangle(tri, field);
+    if (r.neg.length && r.pos.length) cut++;
+    keep.push(...r.pos);
+  }
+  const g = fromTriangles(keep, hasNormals);
+  g.userData.clip = { kept: keep.length, cut };
+  return g;
 }
 
 /**
@@ -124,67 +164,39 @@ export function clipTriangles(geometry, field) {
  * appear on their own, as the seams between pieces.
  */
 export function carveOut(geometry, fields) {
-  const pos = geometry.getAttribute('position');
-  const index = geometry.getIndex();
-  const count = index ? index.count : pos.count;
-  const at = index ? (i) => index.getX(i) : (i) => i;
+  const { tris, hasNormals } = readTriangles(geometry);
   const out = [];
-  const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  const emit = (t) => out.push(
-    t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2].x, t[2].y, t[2].z);
   let whole = 0, split = 0, dropped = 0;
 
-  /** One triangle against one surface: the part outside it, and the part in. */
-  const cutOne = (tri, f) => {
-    // Positive is INSIDE the duct, so the part to keep is the negative side.
-    const d = tri.map(f);
-    const up = d.filter((x) => x > 0).length;
-    if (up === 3) return { out: [], in: [tri] };
-    if (up === 0) return { out: [tri], in: [] };
-    const o = up === 1 ? d.findIndex((x) => x > 0) : d.findIndex((x) => x <= 0);
-    const p = [tri[o], tri[(o + 1) % 3], tri[(o + 2) % 3]];
-    const q = [d[o], d[(o + 1) % 3], d[(o + 2) % 3]];
-    const m1 = crossAt(p[0], p[1], f, q[0], q[1]);
-    const m2 = crossAt(p[0], p[2], f, q[0], q[2]);
-    const corner = [[p[0], m1, m2]];             // the odd vertex out
-    const quad = [[m1, p[1], p[2]], [m1, p[2], m2]];
-    return up === 1 ? { out: quad, in: corner } : { out: corner, in: quad };
-  };
+  for (const tri of tris) {
+    const d = fields.map((f) => tri.map((v) => f(v.p)));
 
-  for (let t = 0; t + 2 < count; t += 3) {
-    for (let k = 0; k < 3; k++) v[k].fromBufferAttribute(pos, at(t + k));
-    const d = fields.map((f) => v.map(f));
-
-    // Clear of the duct entirely -- every vertex outside the same surface --
+    // Clear of the region entirely -- every vertex outside the same surface --
     // so it passes through UNTOUCHED. Not merely unchanged in shape: the same
     // three vertices, in the same order, unsplit. Splitting a triangle far
     // from the duct is invisible but it is still a change to the body, and
     // the whole premise here is that nothing outside the cut moves.
-    if (d.some((row) => row.every((x) => x <= 0))) {
-      whole++; emit(v); continue;
-    }
+    if (d.some((row) => row.every((x) => x <= 0))) { whole++; out.push(tri); continue; }
     if (d.every((row) => row.every((x) => x > 0))) { dropped++; continue; }
 
     // On the boundary: cut against one surface at a time, setting aside what
     // each cut puts outside, and carrying only what is still in question.
     split++;
-    let rest = [[v[0].clone(), v[1].clone(), v[2].clone()]];
+    let rest = [tri];
     for (const f of fields) {
       const next = [];
-      for (const tri of rest) {
-        const r = cutOne(tri, f);
-        for (const keep of r.out) emit(keep);
-        next.push(...r.in);
+      for (const piece of rest) {
+        const r = cutTriangle(piece, f);
+        out.push(...r.neg);                        // outside this surface: kept
+        next.push(...r.pos);                       // inside it: still in question
       }
       rest = next;
       if (!rest.length) break;
     }
   }
 
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  g.computeVertexNormals();
-  g.userData.clip = { kept: out.length / 9, whole, split, dropped };
+  const g = fromTriangles(out, hasNormals);
+  g.userData.clip = { kept: out.length, whole, split, dropped };
   return g;
 }
 
@@ -315,12 +327,39 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
   // reach past the point where the two surfaces cross or the cut edge runs off
   // the end of it.
   const x0 = duct.fromX - 0.5;
+  /** A point on the sheet, from station and normalised position around it. */
+  const point = (x, t) => {
+    const { at, half } = profile(x);
+    const [px, py] = at(half * (2 * t - 1));
+    return new THREE.Vector3(px, py, -x);
+  };
+  /**
+   * The sheet's normal, from the surface itself rather than from its triangles.
+   *
+   * Face normals would face the duct exactly as well and shade it as a set of
+   * flat panels, which is the same fault the skin had: the arc across the
+   * corners would read as a row of chamfers instead of a round.
+   */
+  const nrm = [];
+  const normalAt = (x, t) => {
+    const h = 1e-4;
+    const ds = point(x, Math.min(1, t + h)).sub(point(x, Math.max(0, t - h)));
+    const dx = point(x + h, t).sub(point(x - h, t));
+    const n = new THREE.Vector3().crossVectors(ds, dx).normalize();
+    // Into the void: up off the floor, inboard off the walls.
+    const p = point(x, t);
+    if (n.dot(new THREE.Vector3(-Math.sign(p.x) * 0.3, 1, 0)) < 0) n.negate();
+    return n;
+  };
   for (let i = 0; i <= nx; i++) {
     const x = x0 + (duct.toX - x0) * (i / nx);
     const { at, half } = profile(x);
     for (let j = 0; j <= nu; j++) {
-      const [px, py] = at(half * (-1 + 2 * (j / nu)));
+      const t = j / nu;
+      const [px, py] = at(half * (2 * t - 1));
       pos.push(px, py, -x);
+      const n = normalAt(x, t);
+      nrm.push(n.x, n.y, n.z);
     }
   }
   const row = nu + 1;
@@ -332,6 +371,7 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
   // Keep only what lies within the body. Elsewhere the floor has nothing to be
   // the floor OF, and would read as a shelf hanging in the open air.
@@ -346,6 +386,9 @@ export function ductSurface(duct, depthInside, { nx = 160, nu = 72, wallTop } = 
  * for the same reason the fin art needed it: backface culling makes a wrongly
  * wound patch INVISIBLE rather than wrong-looking, so a silent flip reads as
  * "the carve did nothing" and sends you looking in the wrong place.
+ *
+ * Winding only. The sheet's normals are its own, taken from the surface, and
+ * recomputing them from the faces here would undo that and facet it.
  */
 function faceUp(geo) {
   const pos = geo.getAttribute('position');
@@ -367,7 +410,6 @@ function faceUp(geo) {
       }
     }
     pos.needsUpdate = true;
-    geo.computeVertexNormals();
   }
   return geo;
 }
@@ -445,8 +487,41 @@ function snapRim(geometry, edges, tol = 0.15) {
     if (best) { pos.setXYZ(i, best.x, best.y, best.z); moved++; worst = Math.max(worst, bestD); }
   }
   pos.needsUpdate = true;
-  geometry.computeVertexNormals();
   return { moved, worst };
+}
+
+/**
+ * Cut a region out of every mesh under an object, wherever it sits.
+ *
+ * The fins are built in their own frame -- hung on the body's corners and
+ * canted outboard -- so the duct, which is described in the aeroplane's frame,
+ * has to be asked about in theirs. Each mesh's own transform does that, and the
+ * geometry is then cut where it stands, with no need for anything to agree
+ * about coordinates beforehand.
+ *
+ * `base` is where `root`'s parent sits in that frame -- identity when the root
+ * hangs directly off the aeroplane. Accumulated down the tree from local
+ * matrices rather than read off `matrixWorld`, because this runs while the
+ * aeroplane is still being assembled and nothing has been through a render yet,
+ * so the world matrices are whatever they were left at.
+ */
+export function carveInto(root, fields, base = new THREE.Matrix4()) {
+  const out = [];
+  const walk = (o, parent) => {
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    if (o.isMesh && o.geometry?.getAttribute('position')) {
+      const q = new THREE.Vector3();
+      const local = fields.map((f) => (p) => f(q.copy(p).applyMatrix4(m)));
+      const before = o.geometry;
+      o.geometry = carveOut(before, local);
+      out.push(o.geometry.userData.clip);
+      before.dispose();
+    }
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return out;
 }
 
 export function carveDuct(fuse, spec) {
@@ -468,5 +543,5 @@ export function carveDuct(fuse, spec) {
     skin: kept.userData.clip,
     floorTriangles: sheet.getAttribute('position').count / 3,
   };
-  return fuse;
+  return duct;
 }

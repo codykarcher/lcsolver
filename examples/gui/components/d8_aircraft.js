@@ -17,7 +17,7 @@ import { d8Fuselage } from './fuselage.js';
 import { liftingSurface, verticalTail } from './wing.js';
 import { bareTurbofan } from './engines.js';
 import { landingGear } from './landing_gear.js';
-import { carveDuct } from './carve.js';
+import { carveDuct, carveInto } from './carve.js';
 
 const DEG = Math.PI / 180;
 const IN = 0.0254;
@@ -303,7 +303,7 @@ export function d8Aircraft(deck, opts = {}) {
    * the body is untouched.
    */
   if (opts.ductCarve ?? d.ductCarve) {
-    carveDuct(fuse, {
+    const duct = carveDuct(fuse, {
       floor: engineAxisY - rNac - d.ductGap,
       /**
        * The walls stand exactly on the engines' outer extent -- no clearance,
@@ -334,6 +334,24 @@ export function d8Aircraft(deck, opts = {}) {
       deepFrom: engineNoseX - d.ductGap,
       crown: u.crownAt(u.cabinZ[1]),
     });
+    /**
+     * The cut runs on through the fins.
+     *
+     * The fins stand 20 mm outboard of the duct's wall but they are 184 mm
+     * thick at the root, so their inboard face pokes 92 mm through the wall,
+     * 310 mm tall and 2 m long -- a ridge down the inside of the trough that
+     * belongs to neither surface.
+     *
+     * Cut by the duct AND the body together, not by the duct alone. The duct's
+     * wall is a plane with no top to it, so on its own it would go on slicing
+     * the fin all the way to the tailplane; what wants removing is only what is
+     * inside the body as well, which is exactly the part the carve exposed. The
+     * hole it leaves sits in the plane of the wall, with the wall's own sheet
+     * across it, so there is nothing to see through.
+     */
+    for (const vt of parts.verticalTails) {
+      carveInto(vt, [...duct.faces, (p) => u.depthInside(p.x, p.y, p.z)]);
+    }
   }
 
   /* ---- undercarriage --------------------------------------------------- */
