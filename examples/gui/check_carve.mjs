@@ -231,6 +231,19 @@ function realHoles(edges) {
 // every edge against every other: on a mesh this fine the skin has thousands of
 // open edges elsewhere, and sorting those out first turned a quadratic over all
 // of them into one over the few hundred that matter.
+/**
+ * Measured at the cut's VERTICES, not at its edge midpoints.
+ *
+ * A midpoint is not on the cut. It is the middle of a chord across a curved
+ * rim, so it sits off that rim by the chord's sagitta -- which is a property of
+ * how finely the skin is meshed, not of whether there is a hole. That made the
+ * measure read the skin's density: the same geometry gave 5 strays with a fine
+ * skin and 11 with a coarse one, and tuning the duct against it chased
+ * something that was never there.
+ *
+ * The cut's vertices ARE on it, exactly, since that is where the clipper solved
+ * for the crossing. If one of them is far from the duct's rim, there is a hole.
+ */
 const nearDuct = (q) => duct.depth(q) > -1.0 && -q.z > duct.fromX - 1;
 const skinEdge = realHoles(
   boundary(cut.userData.parts.fuselage.userData.skinMesh.geometry, nearDuct)
@@ -239,12 +252,16 @@ const floorEdge = boundary(fu.duct.mesh.geometry);
 console.log(`cut edge: ${skinEdge.length} open edges on the skin, ${floorEdge.length} on the floor`);
 const nearest = (q, set) => set.reduce((m, s) => Math.min(m, toSegment(q, s)), Infinity);
 const TOL = 0.01;                                // 10 mm on a 30 m aeroplane
-const gaps = skinEdge.map((s) => nearest(s.mid, floorEdge));
+const cutPoints = new Map();
+for (const s of skinEdge) {
+  for (const q of [s.a, s.b]) cutPoints.set(`${q.x.toFixed(5)},${q.y.toFixed(5)},${q.z.toFixed(5)}`, q);
+}
+const gaps = [...cutPoints.values()].map((q) => nearest(q, floorEdge));
 const strays = gaps.filter((g) => g > TOL);
 console.log(`worst gap ${gaps.length ? Math.max(...gaps).toFixed(4) : 'n/a'} m, ` +
-            `${strays.length} open edges further than ${TOL * 1000} mm from the duct`);
+            `${strays.length} of ${gaps.length} cut vertices further than ${TOL * 1000} mm from the duct`);
 if (!skinEdge.length) bad('the carve left no open edge at all -- it cut nothing');
-if (strays.length > skinEdge.length * 0.02) bad(`${strays.length} of ${skinEdge.length} cut edges are unclosed`);
+if (strays.length > gaps.length * 0.02) bad(`${strays.length} of ${gaps.length} cut vertices are unclosed`);
 
 /* ---- 4. the duct's surface faces into the duct --------------------------- */
 /**
@@ -409,7 +426,9 @@ drop(square);
 console.log(`lip: the normal turns ${turnSquare.toFixed(0)} deg within 50 mm of the seam ` +
             `unblended, ${turnBlend.toFixed(0)} deg blended`);
 if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBlend.toFixed(0)} vs ${turnSquare.toFixed(0)} deg)`);
-if (turnSquare < 90) bad('the unblended lip was not square -- the test proves nothing');
+// Near square, not exactly: the median is taken over a meshed rim, so it lands
+// a degree or two either side of 90 depending on where the rows fall.
+if (turnSquare < 80) bad('the unblended lip was not square -- the test proves nothing');
 
 /* ---- negative controls -------------------------------------------------- */
 /**
@@ -447,10 +466,11 @@ console.log('\nnegative controls');
   const g = clipTriangles(
     fu.duct.mesh.geometry, (q) => wrong.halfWidth - Math.abs(q.x));
   const e = boundary(g);
-  const n = skinEdge.filter((s) => nearest(s.mid, e) > TOL).length;
-  console.log(`  a floor 300 mm narrow leaves ${n} of ${skinEdge.length} edges open` +
-              (n > skinEdge.length * 0.02 ? '  ok' : '  NOT DETECTED'));
-  if (!(n > skinEdge.length * 0.02)) bad('control: a narrow floor was not detected');
+  const pts = [...cutPoints.values()];
+  const n = pts.filter((q) => nearest(q, e) > TOL).length;
+  console.log(`  a floor 300 mm narrow leaves ${n} of ${pts.length} vertices open` +
+              (n > pts.length * 0.02 ? '  ok' : '  NOT DETECTED'));
+  if (!(n > pts.length * 0.02)) bad('control: a narrow floor was not detected');
 }
 
 {

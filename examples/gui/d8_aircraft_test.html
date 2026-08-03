@@ -61,6 +61,7 @@
   <select id="art"></select>
   <p class="hint" id="artNote" style="margin-top:5px"></p>
   <div class="check"><input type="checkbox" id="titles" checked><label for="titles">fuselage titles</label></div>
+  <div class="check"><input type="checkbox" id="kanji"><label for="kanji">Mitsubishi in Japanese</label></div>
   <p class="hint" id="titleNote"></p>
   <div class="check"><input type="checkbox" id="windows" checked><label for="windows">cabin windows</label></div>
   <p class="hint" id="windowNote"></p>
@@ -108,7 +109,8 @@ import { deckFromSolve } from './components/aircraft.js';
 import { d8Aircraft } from './components/d8_aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, cabinWindows, windscreen, WINDSCREEN_D8,
+import { surfaceArt, fuselageTitles, FUSELAGE_TITLES, FUSELAGE_TITLES_JA,
+         cabinWindows, windscreen, WINDSCREEN_D8,
          TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -330,7 +332,12 @@ function build() {
   // The row along the body. Onto the fuselage rather than the aircraft, so it
   // travels with the body if that ever moves relative to the rest.
   if (el('titles').checked) {
-    const row = fuselageTitles(u.parts.fuselage, { textureFor, deck });
+    // English is the default mark; the Japanese one is the same row with its
+    // first title swapped, so nothing else about the layout changes.
+    const row = fuselageTitles(u.parts.fuselage, {
+      textureFor, deck,
+      titles: el('kanji').checked ? FUSELAGE_TITLES_JA : FUSELAGE_TITLES,
+    });
     u.parts.fuselage.add(row);
     u.parts.titles = row;
     const [aft, fwd] = row.userData.zRange;
@@ -435,7 +442,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'windows', 'duct'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'duct'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {

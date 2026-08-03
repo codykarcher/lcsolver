@@ -335,7 +335,8 @@ export const TAIL_ART = {
   'beach gold':   { file: 'beach-gold.png',  aspect: 929 / 149,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
   'LB gold':      { file: 'lb-gold.png',     aspect: 1181 / 1272, height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
   'LB black':     { file: 'lb-black.png',    aspect: 1181 / 1272, height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
-  'mitsubishi':   { file: 'mhi.png',         aspect: 156 / 109,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'mitsubishi':   { file: 'mhi.png',         aspect: 847 / 155,   height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
+  'mitsubishi \u65e5\u672c\u8a9e': { file: 'mhi-ja.png', aspect: 250 / 48, height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
   'MIT':          { file: 'mit.png',         aspect: 1400 / 724,  height: TAIL_HEIGHT, chord: 'auto', size: 0.9 },
 };
 
@@ -350,7 +351,7 @@ export const artNames = Object.keys(TAIL_ART);
  * boxed to the same width and each coming out a different visual weight.
  */
 export const FUSELAGE_TITLES = [
-  { file: 'mhi.png',        aspect: 156 / 109 },
+  { file: 'mhi.png',        aspect: 847 / 155 },
   { file: 'mit.png',        aspect: 1400 / 724 },
   { file: 'beach-gold.png', aspect: 929 / 149 },
 ];
@@ -367,6 +368,20 @@ export const FUSELAGE_TITLES = [
  * 0.72 on this body; 1.15 puts the bottom of the artwork clear above it with
  * room left below the crown.
  */
+/**
+ * The same row with the Mitsubishi mark in Japanese.
+ *
+ * Only the first title changes. The two marks are nearly the same proportion --
+ * 5.46 against 5.21 -- so the row repacks itself without anything else moving,
+ * which is the point of setting the titles by cap height and letting the widths
+ * fall out.
+ */
+export const FUSELAGE_TITLES_JA = [
+  { file: 'mhi-ja.png',     aspect: 250 / 48 },
+  { file: 'mit.png',        aspect: 1400 / 724 },
+  { file: 'beach-gold.png', aspect: 929 / 149 },
+];
+
 export const TITLE_LAYOUT = {
   /**
    * The row starts at the front of the WINDOW LINE, so it is referred to the

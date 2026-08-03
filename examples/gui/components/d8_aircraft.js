@@ -93,14 +93,30 @@ export const D8_CHOICES = {
   /**
    * Target triangle edge, in metres, for the body and the duct together.
    *
-   * 0.13 puts about 230 stations along a 30 m body, against the 140 this ran
-   * at. Finer than that stops paying: the body's own curvature is metres, and
-   * past about this the extra triangles only make the CHECKS expensive -- a
-   * quarter-million-triangle aeroplane runs the heap out before they finish.
-   * The duct's sheet is meshed on its own, finer, because what it carries is
-   * small. `quality` scales both for anything that has to keep up with a solver.
+   * 0.18 puts about 170 stations along a 30 m body, against the 140 this ran
+   * at, and gives 276 mm triangles where they were 337.
+   *
+   * Chosen off the measured trade rather than picked. Going to 0.13 with a
+   * matching sheet buys 39 mm triangles on the duct but costs 3.9 seconds a
+   * build against 1.4, and the lip -- the thing the density is FOR -- reads no
+   * better: 52 degrees against 47. The body's own curvature is metres, so past
+   * about here the extra triangles are spent on a surface that was already
+   * smooth. The duct's sheet is meshed on its own, finer, because what it
+   * carries is small. `quality` scales both.
    */
-  ductEdge:       0.13,
+  ductEdge:       0.18,
+  /**
+   * The duct sheet's triangle edge, as a fraction of the lip's radius.
+   *
+   * Its own number because the sheet and the skin carry different things: the
+   * body's features are metres, the lip's round is 80 mm. Measured at 0.027,
+   * 0.035, 0.045 and 0.060 m the lip sits between 52 and 67 degrees with no
+   * trend, so there is nothing to buy below about half the radius -- and
+   * plenty to pay, since the sheet is where nearly all the build time goes.
+   * 0.625 of the radius puts the sheet's triangles at 71 mm -- finer than the
+   * 101 mm they were before any of this, and square where they were 2.5:1.
+   */
+  ductSheetGrain: 0.625,
   /**
    * Mesh density, as a multiplier on every count that drives it.
    *
@@ -419,7 +435,8 @@ export function d8Aircraft(deck, opts = {}) {
       // length of zero, which asks for a grid of infinite width. That is what
       // ran the heap out at 4 GB, and it looked exactly like the density being
       // too high, which it was not.
-      edge: blendR > 0 ? Math.min(edge, blendR / 3) : edge,
+      edge: opts.sheetEdge ?? (blendR > 0
+        ? Math.min(edge, blendR * d.ductSheetGrain) : edge),
     });
     /**
      * The cut runs on through the fins.
