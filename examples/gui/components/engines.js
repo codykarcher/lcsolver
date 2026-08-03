@@ -716,6 +716,14 @@ export function turbofan(opts = {}) {
   // ON the nacelle -- an over-mount pylon's forward fairing -- needs the skin,
   // not a guess at it.
   g.userData.cowlOuter = outer;
+  /**
+   * The duct wall's INNER line, published for the same reason as the outer one.
+   *
+   * An engine let into a body is faired to this, not to the outside: the body
+   * closes around the cowl and what shows is the inlet, so anything cutting a
+   * scoop for one needs the line the air sees.
+   */
+  g.userData.cowlInner = inner;
   g.userData.cowlLE = [zLE, meanAt(0)];
   g.userData.cowlLength = zLE - zTE;
   g.userData.rFan = R;

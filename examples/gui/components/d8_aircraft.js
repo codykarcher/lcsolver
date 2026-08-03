@@ -100,7 +100,7 @@ export const D8_CHOICES = {
    * against before the skin's cut edge does: at 0.10 ten of the seam's edges
    * open up and the worst gap goes from 18 to 45 mm.
    */
-  ductBlend:      0.08,
+  ductBlend:      0.0,
   /**
    * Put the engines in nacelles, and cut away the part the body already fills.
    *
@@ -439,7 +439,7 @@ export function d8Aircraft(deck, opts = {}) {
    */
   const nacelleTrough = (() => {
     if (!podded) return {};
-    const cowl = parts.engines[0]?.children[0]?.userData?.cowlOuter;
+    const cowl = parts.engines[0]?.children[0]?.userData?.cowlInner;
     if (!cowl?.length) return {};
     const zOf = (x) => d.engineX - x;
     const rAt = (x) => {
@@ -455,8 +455,9 @@ export function d8Aircraft(deck, opts = {}) {
       return cowl[cowl.length - 1][1];
     };
     return {
-      noseFrom: d.engineX - cowl[0][0],          // the inlet lip's station
-      noseAt: (x) => engineAxisY - rAt(x) - d.ductGap,
+      axisY: engineAxisY,
+      noseFrom: d.engineX - cowl[0][0],           // the inlet lip's station
+      radiusAt: (x) => rAt(x) + d.ductGap,
     };
   })();
 
@@ -503,13 +504,15 @@ export function d8Aircraft(deck, opts = {}) {
        * and a third of the nacelle stayed buried.
        */
       /**
-       * Level from the FAN FACE aft, and following the cowl forward of it.
+       * The trough IS the nacelle's inner line, from the body's trailing edge
+       * all the way forward to the inlet lip.
        *
-       * The fan face is the engine's own origin, so it is `engineX` exactly.
-       * Aft of there the trough is what the afterbody was built around; ahead
-       * of it the floor traces the cowl's outer line out to the inlet lip.
+       * Not the outer line, and not level anywhere. An engine let into a body
+       * is faired to the surface the air sees: the body closes round the cowl,
+       * and what stands open is the inlet. So the U opens and closes along the
+       * body with the duct inside it, and where it reaches the lip it is the
+       * inlet's own dimension.
        */
-      deepFrom: d.engineX,
       ...(podded ? nacelleTrough : { deepFrom: engineNoseX - d.ductGap }),
       crown: u.crownAt(u.cabinZ[1]),
       blend: blendR,
@@ -572,11 +575,24 @@ export function d8Aircraft(deck, opts = {}) {
      * passes the removals add up to the union: inside-and-below-the-floor, then
      * inside-and-outboard-of-the-walls.
      */
+    /**
+     * Twice round, because each pass can undo a little of the other's work.
+     *
+     * The passes cut on different surfaces, and a cut makes new vertices on the
+     * surface it cut against. The wall pass therefore leaves vertices on the
+     * wall plane that can sit below the floor -- a region the floor pass had
+     * already cleared before those vertices existed. Sixteen of them survived,
+     * every one inside the body where its own skin hides them, but they are
+     * still material that was asked to go. A second round takes them, and costs
+     * almost nothing because `wouldCarve` finds nothing left to do.
+     */
     const body = (p) => u.depthInside(p.x, p.y, p.z);
     for (const pod of parts.engines) {
-      for (const face of duct.faces) {
-        const fields = [body, (p) => -face(p)];
-        if (wouldCarve(pod, fields)) carveInto(pod, fields);
+      for (let round = 0; round < 2; round++) {
+        for (const face of duct.faces) {
+          const fields = [body, (p) => -face(p)];
+          if (wouldCarve(pod, fields)) carveInto(pod, fields);
+        }
       }
     }
   } else {

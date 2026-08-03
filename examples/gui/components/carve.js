@@ -232,17 +232,35 @@ export function carveOut(geometry, fields) {
  */
 export function ductVolume({
   floor, halfWidth, cornerR, fromX, toX, deepFrom, crown,
-  noseFrom = null, noseAt = null,
+  axisY = null, noseFrom = null, radiusAt = null,
   blend = 0, depthInside = null,
 }) {
-  const flat = Math.max(halfWidth - cornerR, 0);
   const deep = deepFrom ?? toX;
-  /** The floor's height at a lateral offset: flat across, then rounding up. */
-  const lift = (x) => {
-    const ax = Math.abs(x);
-    if (ax <= flat) return 0;
-    const dx = Math.min(ax - flat, cornerR);
-    return cornerR - Math.sqrt(Math.max(0, cornerR * cornerR - dx * dx));
+  /**
+   * The cradle's radius, station by station.
+   *
+   * Constant when nothing is given, which is the old behaviour: one radius
+   * sized to what the trough holds. Given a profile, the trough IS that
+   * profile -- it opens and closes along the body with whatever it is wrapping,
+   * so at every station the U is exactly the section of the thing inside it.
+   *
+   * Held at its value from the nose station forward, since ahead of that there
+   * is nothing to follow and the trough is on its way out through the roof.
+   */
+  const follows = axisY != null && noseFrom != null && typeof radiusAt === 'function';
+  const rAt = (x) => (follows ? radiusAt(Math.max(x, noseFrom)) : cornerR);
+  const flatAt = (x) => Math.max(halfWidth - rAt(x), 0);
+  const flat = Math.max(halfWidth - cornerR, 0);
+  /**
+   * The floor's height at a lateral offset: flat across, then rounding up at
+   * the local radius.
+   */
+  const lift = (x, px) => {
+    const r = rAt(x), fl = flatAt(x);
+    const ax = Math.abs(px === undefined ? x : px);
+    if (ax <= fl) return 0;
+    const dx = Math.min(ax - fl, r);
+    return r - Math.sqrt(Math.max(0, r * r - dx * dx));
   };
   /**
    * How far the floor has dropped, at a station.
@@ -281,33 +299,14 @@ export function ductVolume({
    * out to the cabin as it always did -- but starting from the lip's height
    * rather than the engine's, so the two meet without a step.
    */
-  const hasNose = noseFrom != null && typeof noseAt === 'function';
-  const noseX = hasNose ? noseFrom : deep;
-  const yNose = hasNose ? noseAt(noseX) : floor;
+  const noseX = follows ? noseFrom : deep;
+  const baseFloor = (x) => (follows ? axisY - rAt(x) : floor);
+  const yNose = baseFloor(noseX);
   const span = Math.max(noseX - fromX, 1e-9);
   const drop = yNose - crown;
   const k = 1;                          // initial slope, in units of drop/span
-  /**
-   * The two run into each other over a short window rather than meeting at a
-   * step.
-   *
-   * The level floor is set by the ENGINE's radius and the following one by the
-   * NACELLE's, which is 18 per cent larger, so at the fan face they differ by
-   * 126 mm. Left as a switch that is a ledge across the trough -- and worse
-   * than cosmetic: a nacelle triangle spanning it can have every corner clear
-   * of solid body while its middle is not, so the clipper leaves it, and 64 mm
-   * of cowl stayed buried.
-   */
-  const knit = 0.30;
   const floorAt = (x) => {
-    if (x >= deep + knit) return floor;
-    if (hasNose && x >= deep) {
-      const f = (x - deep) / knit;
-      const e = f * f * (3 - 2 * f);
-      return noseAt(x) + (floor - noseAt(x)) * e;
-    }
-    if (x >= deep) return floor;
-    if (hasNose && x >= noseX) return noseAt(x);
+    if (x >= noseX) return baseFloor(x);
     const f = (x - fromX) / span;
     if (f <= 0) return crown + drop * k * f;      // climbing out through the roof
     return crown + drop * ((k - 2) * f ** 3 + (3 - 2 * k) * f ** 2 + k * f);
@@ -351,20 +350,20 @@ export function ductVolume({
 
   return {
     fromX, toX, deepFrom: deep, noseFrom: noseX, floor, halfWidth, cornerR,
-    crown, blend, flat, lift, floorAt, flare, lip, eSkin,
+    crown, blend, flat, flatAt, rAt, lift, floorAt, flare, lip, eSkin,
     /**
      * The two surfaces that bound the duct, each on its own and each smooth.
      * Kept separate because anything cutting geometry has to cut on one at a
      * time -- see `carveOut` for what combining them first does to the edge.
      */
     faces: [
-      (p) => p.y - (floorAt(-p.z) + lift(p.x)) + lip(p),   // above the floor
+      (p) => p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),  // above the floor
       (p) => halfWidth + lip(p) - Math.abs(p.x),           // inboard of the walls
     ],
     /** Inside both at once. For asking about a point, not for cutting. */
     depth(p) {
       return Math.min(
-        p.y - (floorAt(-p.z) + lift(p.x)) + lip(p),
+        p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),
         halfWidth + lip(p) - Math.abs(p.x),
       );
     },
@@ -416,7 +415,7 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
     if (wallTop != null) return wallTop;
     if (!depthInside) return duct.crown + 0.1;
     const margin = (duct.eSkin ?? 0) + 0.10;
-    const y0 = duct.floorAt(x) + duct.cornerR;
+    const y0 = duct.floorAt(x) + (duct.rAt ? duct.rAt(x) : duct.cornerR);
     let lo = y0, hi = duct.crown + 0.2;
     if (!(depthInside(duct.halfWidth, lo, -x) > 0)) return y0 + margin;
     for (let i = 0; i < 32; i++) {
@@ -445,8 +444,12 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
   };
   const buildProfile = (x) => {
     const y0 = duct.floorAt(x);
-    const wallH = Math.max(wallTopAt(x) - (y0 + duct.cornerR), 0);
-    const arc = (Math.PI / 2) * duct.cornerR;
+    // The cradle's radius is this station's, not one number for the whole duct:
+    // a trough that follows something opens and closes along the body with it.
+    const cR = duct.rAt ? duct.rAt(x) : duct.cornerR;
+    const fl = duct.flatAt ? duct.flatAt(x) : duct.flat;
+    const wallH = Math.max(wallTopAt(x) - (y0 + cR), 0);
+    const arc = (Math.PI / 2) * cR;
     /**
      * The wall is sampled far more finely than its length deserves, and
      * clustered at its top.
@@ -463,19 +466,17 @@ export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
     // wall five times the sample density of the floor, so the quads went from
     // 18 mm across on the wall to 92 mm on the floor and no single grid count
     // could suit both.
-    const wEff = Math.max(wallH, 0.45 * (arc + duct.flat));
-    const half = wEff + arc + duct.flat;           // one side, floor centre out
+    const wEff = Math.max(wallH, 0.45 * (arc + fl));
+    const half = wEff + arc + fl;                  // one side, floor centre out
     const at = (s) => {                            // s in [-half, half]
       const side = s < 0 ? -1 : 1, a = Math.abs(s);
-      if (a <= duct.flat) return [side * a, y0];
-      if (a <= duct.flat + arc) {
-        const th = (a - duct.flat) / duct.cornerR;
-        return [side * (duct.flat + duct.cornerR * Math.sin(th)),
-                y0 + duct.cornerR * (1 - Math.cos(th))];
+      if (a <= fl) return [side * a, y0];
+      if (a <= fl + arc) {
+        const th = (a - fl) / cR;
+        return [side * (fl + cR * Math.sin(th)), y0 + cR * (1 - Math.cos(th))];
       }
-      const v = Math.min(1, (a - duct.flat - arc) / Math.max(wEff, 1e-9));
-      return [side * duct.halfWidth,
-              y0 + duct.cornerR + wallH * (1 - (1 - v) ** 2.4)];
+      const v = Math.min(1, (a - fl - arc) / Math.max(wEff, 1e-9));
+      return [side * duct.halfWidth, y0 + cR + wallH * (1 - (1 - v) ** 2.4)];
     };
     return { at, half };
   };
@@ -898,7 +899,12 @@ export function carveDuct(fuse, spec) {
   fuse.add(floor);
 
   fuse.userData.duct = {
-    ...spec, mesh: floor, snap, rimNormals: matched,
+    // The spec as given, then the volume's RESOLVED geometry over the top --
+    // `deepFrom` and `noseFrom` default inside `ductVolume`, so a consumer
+    // reading the spec alone sees undefined where the duct has a real station.
+    ...spec,
+    deepFrom: duct.deepFrom, noseFrom: duct.noseFrom, floor: duct.floorAt(spec.toX),
+    mesh: floor, snap, rimNormals: matched,
     skin: kept.userData.clip,
     floorTriangles: sheet.getAttribute('position').count / 3,
   };

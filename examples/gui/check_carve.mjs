@@ -107,8 +107,8 @@ const pod = cut.userData.parts.engines[0];
 pod.updateMatrixWorld(true);
 const box = new THREE.Box3().setFromObject(pod);
 const [xNose, xTail] = [-box.max.z, -box.min.z];
-console.log(`nacelle runs x ${xNose.toFixed(2)} to ${xTail.toFixed(2)}, duct level from ` +
-            `${fu.duct.deepFrom.toFixed(2)} aft`);
+console.log(`nacelle runs x ${xNose.toFixed(2)} to ${xTail.toFixed(2)}; ` +
+            `the trough follows it forward to x ${fu.duct.noseFrom.toFixed(2)}`);
 /**
  * How far the nacelle reaches into solid material, at its worst.
  *
@@ -430,15 +430,31 @@ function lipTurn(craft) {
  * as a broken carve rather than a test that asked for too much.
  */
 drop(plain);
-const square = d8Aircraft(deck, { sitOnGround: false, ductBlend: 0 });
-const turnSquare = lipTurn(square), turnBlend = lipTurn(cut);
-drop(square);
-console.log(`lip: the normal turns ${turnSquare.toFixed(0)} deg within 50 mm of the seam ` +
-            `unblended, ${turnBlend.toFixed(0)} deg blended`);
-if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBlend.toFixed(0)} vs ${turnSquare.toFixed(0)} deg)`);
-// Near square, not exactly: the median is taken over a meshed rim, so it lands
-// a degree or two either side of 90 depending on where the rows fall.
-if (turnSquare < 80) bad('the unblended lip was not square -- the test proves nothing');
+/**
+ * Only meaningful when the deck asks for a blend.
+ *
+ * A sharp lip is a legitimate setting and is the current one -- the flare was
+ * tearing the mesh where it grazed the skin, and a square edge that holds
+ * together beats a rounded one that does not. Asserting that the blend turns
+ * the lip when the blend is switched off is asserting that a thing does what it
+ * has been told not to.
+ */
+const wantsBlend = (cut.userData.deck.ductBlend ?? 0) > 0;
+const square = wantsBlend ? d8Aircraft(deck, { sitOnGround: false, ductBlend: 0 }) : null;
+const turnSquare = square ? lipTurn(square) : null;
+const turnBlend = lipTurn(cut);
+if (square) drop(square);
+if (!wantsBlend) {
+  console.log(`lip: sharp by choice -- the normal turns ${turnBlend.toFixed(0)} deg within ` +
+              `50 mm of the seam`);
+} else {
+  console.log(`lip: the normal turns ${turnSquare.toFixed(0)} deg within 50 mm of the seam ` +
+              `unblended, ${turnBlend.toFixed(0)} deg blended`);
+  if (turnBlend > 0.8 * turnSquare) bad(`the blend barely turns the lip (${turnBlend.toFixed(0)} vs ${turnSquare.toFixed(0)} deg)`);
+  // Near square, not exactly: the median is taken over a meshed rim, so it lands
+  // a degree or two either side of 90 depending on where the rows fall.
+  if (turnSquare < 80) bad('the unblended lip was not square -- the test proves nothing');
+}
 
 /* ---- 8. the nacelles keep only what the body does not already fill ------- */
 /**
