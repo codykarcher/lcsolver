@@ -545,6 +545,7 @@ const NAC = {
  * what you see on an installation anyway.
  */
 export function turbofan(opts = {}) {
+  const { embedded = false } = opts;
   const core = bareTurbofan(opts);
   const R = core.userData.rMax / 1.037;        // recover rFan
   const g = new THREE.Group();
@@ -656,8 +657,50 @@ export function turbofan(opts = {}) {
     return m;
   };
   const lipEnd = NAC.lipFraction;
-  g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
-  g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
+  if (embedded) {
+    // One piece, one colour: see `embeddedTurbofan` for why.
+    g.add(segment(0, 1, M.skin, 'fanCowl'));
+  } else {
+    g.add(segment(0, lipEnd, M.casing, 'nacelleLip'));
+    g.add(segment(lipEnd, 1, M.skin, 'fanCowl'));
+  }
+
+  /**
+   * The inlet duct, lined in metal.
+   *
+   * Each band of the cowl is a closed solid carrying its own outer AND inner
+   * surface, which is what makes it a real division of the geometry rather than
+   * a stripe -- but it also means one material serves both faces. So the duct
+   * forward of the fan came out in the airframe white, and looking down an
+   * inlet at painted fairing is wrong: that surface is bare, anti-iced metal on
+   * anything flying.
+   *
+   * A thin liner just inside the cowl's own inner line does it, the same way
+   * the turbojet darkens its bore. It runs from just aft of the highlight --
+   * far enough in not to show as a rim from outside -- back to the fan plane,
+   * which is where `lipZ` is measured from and so sits at z = 0.
+   */
+  const sFan = zLE / c;                   // chord fraction at the fan plane
+  if (!embedded) {
+  const linerAt = (sv) => {
+    const ro = outerAt(sv);
+    return ro - 2 * halfT(sv);
+  };
+  const liner = [];
+  const NL = 48, s0 = 0.015;
+  for (let i = 0; i <= NL; i++) {
+    const sv = s0 + (sFan - s0) * (i / NL);
+    liner.push([zLE - sv * c, linerAt(sv) * 0.998]);
+  }
+  for (let i = NL; i >= 0; i--) {
+    const sv = s0 + (sFan - s0) * (i / NL);
+    liner.push([zLE - sv * c, linerAt(sv) * 0.990]);
+  }
+  liner.push(liner[0]);
+  const lining = latheZ(liner, M.casing, SEG);
+  lining.name = 'inletLiner';
+  g.add(lining);
+  }
 
   const hi = meanAt(0);
   const zAft = zTE;
@@ -673,6 +716,14 @@ export function turbofan(opts = {}) {
   // ON the nacelle -- an over-mount pylon's forward fairing -- needs the skin,
   // not a guess at it.
   g.userData.cowlOuter = outer;
+  /**
+   * The duct wall's INNER line, published for the same reason as the outer one.
+   *
+   * An engine let into a body is faired to this, not to the outside: the body
+   * closes around the cowl and what shows is the inlet, so anything cutting a
+   * scoop for one needs the line the air sees.
+   */
+  g.userData.cowlInner = inner;
   g.userData.cowlLE = [zLE, meanAt(0)];
   g.userData.cowlLength = zLE - zTE;
   g.userData.rFan = R;
@@ -684,6 +735,23 @@ export function turbofan(opts = {}) {
   return finish(g, core.userData.length,
                 Math.max(...outer.map((q) => q[1])), 'turbofan');
 }
+
+/**
+ * A nacelle for an engine that is let INTO something, rather than hung under a
+ * wing in the open.
+ *
+ * The same cowl, built as one piece in one colour. The standard nacelle is two
+ * closed solids meeting at a station -- a painted fairing with a bare metal lip
+ * -- plus a metal liner down the inlet, and all three of those are right for a
+ * pod you walk past on a ramp. Half-buried in a fuselage they read as clutter:
+ * the seam lands wherever the body happens to cut it, and the metal ring and
+ * duct catch the eye at the exact place the eye should be reading one
+ * continuous surface running out of the body.
+ *
+ * So: no seam, no liner, all of it the airframe skin, which also means the
+ * paint schemes take it as one piece.
+ */
+export const embeddedTurbofan = (opts = {}) => turbofan({ ...opts, embedded: true });
 
 /* ==================================================================== *
  * Turbojet

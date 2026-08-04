@@ -48,36 +48,74 @@ for (const [k, want] of Object.entries(d.solvedAreas)) {
 const backOut = (leSweep, cRoot, taper, span, k) =>
   Math.atan(Math.tan(leSweep * Math.PI / 180) - k * cRoot * (1 - taper) / span)
     * 180 / Math.PI;
-// The wing's leading-edge sweep is in the solve outright, so only the tails go
-// through the conversion -- their sweeps are deck constants, not solved.
-const cases = [
-  ['h tail', u.leadingEdgeSweeps.horizontalTail, d.htRootChord, d.htTaper, d.htSpan, 0.5, d.htSweepC4],
-  ['v tail', u.leadingEdgeSweeps.verticalTail, d.vtRootChord, d.vtTaper, d.vtHeight, 0.25, d.vtSweepC4],
-];
+/**
+ * The tails' sweeps, checked against whatever the deck actually states.
+ *
+ * The solve now publishes `tan_Lambda` for both tails -- the sweep of the SPAR
+ * BOX AXIS at 0.40 chord, TASOPT's `Xaxis`, not the quarter chord. Where that
+ * is present it is the thing to reproduce, and the old hard-coded 25 degrees is
+ * only a fallback for a deck that predates it. Comparing the built surface
+ * against the constant instead reported a fault on a tail that had just been
+ * made MORE faithful: the fin's axis sweep is 25.0 degrees where its quarter
+ * chord is 30.1, and the two are not the same number.
+ */
 if (Math.abs(u.leadingEdgeSweeps.wing - d.wingSweepLE) > 1e-9)
   bad(`wing LE sweep ${u.leadingEdgeSweeps.wing} against the solve's ${d.wingSweepLE}`);
-console.log('\nsweep         LE built    c/4 back out    deck c/4');
-for (const [name, le, c, t, b, k, want] of cases) {
-  const got = backOut(le, c, t, b, k);
-  if (Math.abs(got - want) > 1e-6) bad(`${name} c/4 comes back as ${got.toFixed(4)}, deck says ${want}`);
-  console.log(`  ${name.padEnd(10)} ${le.toFixed(3).padStart(8)} ${got.toFixed(4).padStart(14)} ` +
-              `${String(want).padStart(11)}`);
+const P = d.sparAxisFraction ?? 0.40;
+const axisFrom = (le, c, t, s) => Math.tan(le * Math.PI / 180) - (P * c * (1 - t)) / s;
+const cases = [
+  ['h tail', u.leadingEdgeSweeps.horizontalTail, d.htRootChord, d.htTaper,
+   d.htSpan / 2, d.htSweepAxisTan],
+  ['v tail', u.leadingEdgeSweeps.verticalTail, d.vtRootChord, d.vtTaper,
+   d.vtHeight, d.vtSweepAxisTan],
+];
+console.log('\nsweep         LE built   0.40c axis back out   solve says');
+for (const [name, le, c, t, s, want] of cases) {
+  if (want == null) { console.log(`  ${name.padEnd(10)} ${le.toFixed(3).padStart(8)}   (deck states no axis sweep)`); continue; }
+  const got = axisFrom(le, c, t, s);
+  if (Math.abs(got - want) > 1e-9) {
+    bad(`${name} axis sweep comes back as tan ${got.toFixed(6)}, solve says ${want.toFixed(6)}`);
+  }
+  console.log(`  ${name.padEnd(10)} ${le.toFixed(3).padStart(8)} ${got.toFixed(6).padStart(21)} ` +
+              `${want.toFixed(6).padStart(12)}`);
 }
 
 /* placements are consistent -------------------------------------------- */
 g.updateMatrixWorld(true);
 const box = new THREE.Box3().setFromObject(g);
 const len = box.max.z - box.min.z, span = box.max.x - box.min.x;
-// The tails sit inside the fuselage, so the aeroplane is no longer than its
-// body -- and the wing sets the span, since nothing reaches further out.
-//
-// Tolerances are float32-sized, not exact. Positions live in a
-// Float32BufferAttribute, so a coordinate 36 m from the origin carries about
-// 4e-6 of representation error and a bounding box built from them cannot be
-// tighter than that. An exact test here fails by 3e-4 and means nothing.
+/**
+ * The wing sets the span, since nothing reaches further out.
+ *
+ * Length is reported rather than bounded. This used to assert that the
+ * aeroplane is no longer than its body, on the reasoning that the tails sit
+ * inside it -- which was true of every deck seen up to now and is not a
+ * requirement. A solve that grows the tailplane's span from 10.8 m to 14.7 m
+ * puts the swept tips 1.15 m aft of the tailcone, and that is the deck talking,
+ * not a fault: plenty of aeroplanes carry an elevator tip aft of the fuselage.
+ *
+ * What IS a requirement is that each surface's ROOT is on the body, since that
+ * is where it attaches to structure. Both roots end exactly on the fuselage's
+ * trailing end here, which is the solve placing them, not this file.
+ *
+ * Tolerances are float32-sized, not exact. Positions live in a
+ * Float32BufferAttribute, so a coordinate 36 m from the origin carries about
+ * 4e-6 of representation error and a bounding box built from them cannot be
+ * tighter than that. An exact test here fails by 3e-4 and means nothing.
+ */
 const eps = 1e-5 * d.fuseLength;
-if (len > d.fuseLength + eps)
-  bad(`overall length ${len.toFixed(4)} exceeds the fuselage's ${d.fuseLength}`);
+console.log(`\noverall length ${len.toFixed(3)} against the body's ${d.fuseLength.toFixed(3)}` +
+            (len > d.fuseLength + eps
+              ? ` -- the tail overhangs by ${(len - d.fuseLength).toFixed(3)}` : ''));
+for (const [what, le, chord] of [['horizontal tail', d.htLE, d.htRootChord],
+                                 ['vertical tail', d.vtLE, d.vtRootChord]]) {
+  if (le == null || chord == null) continue;
+  if (le + chord > d.fuseLength + eps) {
+    bad(`the ${what}'s root trailing edge is ${(le + chord).toFixed(3)}, past the body's ` +
+        `${d.fuseLength.toFixed(3)} -- its root has nothing to attach to`);
+  }
+  if (le < 0) bad(`the ${what}'s root leading edge is ${le.toFixed(3)}, ahead of the nose`);
+}
 if (Math.abs(span - d.wingSpan) > eps)
   bad(`overall span ${span.toFixed(4)} is not the wing's ${d.wingSpan}`);
 

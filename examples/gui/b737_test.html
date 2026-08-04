@@ -61,6 +61,7 @@
   <select id="art"></select>
   <p class="hint" id="artNote" style="margin-top:5px"></p>
   <div class="check"><input type="checkbox" id="titles" checked><label for="titles">fuselage titles</label></div>
+  <div class="check"><input type="checkbox" id="kanji"><label for="kanji">Mitsubishi in Japanese</label></div>
   <p class="hint" id="titleNote"></p>
   <div class="check"><input type="checkbox" id="windows" checked><label for="windows">cabin windows</label></div>
   <p class="hint" id="windowNote"></p>
@@ -105,7 +106,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { conventionalAircraft, deckFromSolve } from './components/aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, cabinWindows, windscreen,
+import { surfaceArt, fuselageTitles, FUSELAGE_TITLES, FUSELAGE_TITLES_JA,
+         cabinWindows, windscreen,
          TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -234,7 +236,11 @@ function applyGear() {
 // The deck is READ, not written here. Nothing between the solve and the drawing
 // is retyped, which is why the areas below agree to machine precision rather
 // than to however carefully I copied them.
-const SOLVE_FILE = './decks/b737_conventional_solve.json';
+// `?deck=<url>` overrides it, which is how the show_* scripts point the page
+// at a solve that lives anywhere on disk: they serve it at a fixed URL rather
+// than copying it in here, so the file being drawn is the file you named.
+const SOLVE_FILE = new URLSearchParams(location.search).get('deck')
+  ?? './decks/b737_conventional_solve.json';
 let deck = null;
 
 /**
@@ -318,7 +324,12 @@ function build() {
   // The row along the body. Onto the fuselage rather than the aircraft, so it
   // travels with the body if that ever moves relative to the rest.
   if (el('titles').checked) {
-    const row = fuselageTitles(u.parts.fuselage, { textureFor, deck });
+    // English is the default mark; the Japanese one is the same row with its
+    // first title swapped, so nothing else about the layout changes.
+    const row = fuselageTitles(u.parts.fuselage, {
+      textureFor, deck,
+      titles: el('kanji').checked ? FUSELAGE_TITLES_JA : FUSELAGE_TITLES,
+    });
     u.parts.fuselage.add(row);
     u.parts.titles = row;
     const [aft, fwd] = row.userData.zRange;
@@ -423,7 +434,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'windows'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {

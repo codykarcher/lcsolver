@@ -234,15 +234,14 @@ def add_landing_gear(f, *, prefix="LG_"):
 
     cons = [
         # Track and base geometry.
-        # EQUALITY: the aircraft SITS LEVEL, so the nose leg is the main leg
-        # less the wing-attach drop (z_wing plus the dihedral rise at the
-        # track) -- geometry, not a design freedom. As a one-sided floor the
-        # nose leg could be arbitrarily LONG, and the moment the nose-gear
-        # bay rule (x_n <= 3 l_n, aircraft.py) made length valuable the D8
-        # promptly paid strut weight for it: l_n came out 1.15x the MAIN leg
-        # -- a nose-high stance on the ramp -- to carry its gear bay aft.
-        # The 737 already sat ON the floor (its pressure was always
-        # downward), so the equality is bit-neutral there.
+        # EQUALITY -- the aircraft SITS LEVEL. The main leg hangs from the
+        # wing (z_wing above the belly, plus the dihedral rise at the track);
+        # the nose leg hangs from the belly. On flat ground the two reach the
+        # same plane, so this is geometry, not a freedom: as a one-sided
+        # floor the nose leg could be arbitrarily long, and the bay rule
+        # (x_n <= k l_n) promptly paid strut weight for aft station -- the
+        # D8 solved with a nose leg 1.15x its MAIN leg, nose-high on the
+        # ramp.
         l_n + zwing + y_m * tan_gam == l_m,                  # [SP] SigEq
         T == 2 * y_m,
         # EQUALITY: B is the wheelbase, which IS the distance from the nose gear

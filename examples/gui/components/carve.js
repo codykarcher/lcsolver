@@ -1,0 +1,1541 @@
+/**
+ * Cutting a duct out of a finished body.
+ *
+ * This exists because of one hard limit in `fuselage.js`: a section there is a
+ * single radius per angle about the body's own centre, and a duct is not
+ * expressible that way. A duct has a wall with void on both sides, so a ray out
+ * of the section crosses skin, opening, then skin again -- two spans of
+ * material on one ray -- and one radius cannot say that. Every way of asking
+ * the section for it was tried and measured: a trough over a deepened floor
+ * left 54 rays that needed two spans, a straight prismatic U left 168 to 294
+ * from every candidate origin, and shortening the walls to 141 mm still left
+ * 46. Only walls of no height at all -- a flat lid, not a duct -- came out
+ * clean.
+ *
+ * But the limit belongs to the SECTION, not to geometry. A mesh has no such
+ * constraint: nothing ever asks a triangle for its radius. So the body is built
+ * exactly as it was, and the duct is taken out of the mesh afterwards. Outside
+ * the cut not one parameter, station, or vertex moves -- which is the whole
+ * point, because that shape was hard-won and this must not disturb it.
+ *
+ * Two surfaces, two cuts, one clipper. The skin is cut on the duct's surface;
+ * the duct's floor is cut on the body's. They meet on the curve where the two
+ * surfaces cross, which both cuts converge to from their own side.
+ */
+import * as THREE from 'three';
+
+/**
+ * Where a segment crosses a surface.
+ *
+ * Interpolating the field linearly gets the crossing only if the field is
+ * linear along the segment, and none of these are. The duct's corner is a
+ * circular arc that turns through vertical, so the field's gradient changes by
+ * an order of magnitude across one skin triangle, and the linear guess lands
+ * well off the surface -- 34 mm off at the worst, which is a 34 mm crack
+ * between the skin's cut edge and the duct's own rim. It does not improve with
+ * a finer sheet, because the sheet was never the problem.
+ *
+ * So the guess is only a bracket, and the crossing is then solved for.
+ */
+function crossingT(a, b, f, da) {
+  let lo = 0, hi = 1, flo = da;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    const fm = f(a.clone().lerp(b, m));
+    if ((fm > 0) === (flo > 0)) { lo = m; flo = fm; } else hi = m;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * A vertex, carrying its normal as well as its position.
+ *
+ * The normal has to travel with it. Clipping produces an unindexed mesh -- the
+ * skin's 8,961 shared vertices become 50,286 unshared ones -- and recomputing
+ * normals on that gives one per FACE, so a body that was smooth comes back
+ * visibly faceted over its whole length. Nothing about the shape changed; only
+ * the shading did, which is worse, because it looks like the carve wrecked the
+ * mesh when the mesh is exactly right.
+ *
+ * Interpolated at the crossing by the same parameter as the position, so a cut
+ * edge shades continuously with the surface it was cut from.
+ */
+const vert = (p, n) => ({ p, n });
+const lerpVert = (a, b, t) => vert(
+  a.p.clone().lerp(b.p, t),
+  a.n.clone().lerp(b.n, t).normalize());
+
+/** Read a mesh's triangles as vertices carrying their normals. */
+function readTriangles(geometry) {
+  const pos = geometry.getAttribute('position');
+  const nrm = geometry.getAttribute('normal');
+  const index = geometry.getIndex();
+  const count = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const tris = [];
+  for (let t = 0; t + 2 < count; t += 3) {
+    const tri = [];
+    for (let k = 0; k < 3; k++) {
+      const i = at(t + k);
+      tri.push(vert(
+        new THREE.Vector3().fromBufferAttribute(pos, i),
+        nrm ? new THREE.Vector3().fromBufferAttribute(nrm, i) : new THREE.Vector3()));
+    }
+    tris.push(tri);
+  }
+  return { tris, hasNormals: !!nrm };
+}
+
+/** Build a geometry from triangles of vertices, keeping their normals. */
+function fromTriangles(tris, hasNormals) {
+  const pos = [], nrm = [];
+  for (const t of tris) {
+    for (const v of t) {
+      pos.push(v.p.x, v.p.y, v.p.z);
+      nrm.push(v.n.x, v.n.y, v.n.z);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (hasNormals) g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  else g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Cut one triangle on one surface: the part where `field` is negative, and the
+ * part where it is positive.
+ *
+ * A triangle wholly on one side passes through vertex for vertex -- no
+ * resampling, no drift. One that straddles is split at the field's own zero, so
+ * the edge follows the cutting surface rather than whichever triangle happened
+ * to lie across it.
+ *
+ * `field` has to be signed and continuous, not a predicate: a predicate can
+ * only put the boundary on whichever vertex happened to test true, which leaves
+ * an edge as ragged as the mesh is coarse.
+ */
+function cutTriangle(tri, field) {
+  const d = tri.map((v) => field(v.p));
+  const up = d.filter((x) => x > 0).length;
+  if (up === 3) return { neg: [], pos: [tri] };
+  if (up === 0) return { neg: [tri], pos: [] };
+  // Rotate so the odd vertex out is first, which makes both cases one shape.
+  const o = up === 1 ? d.findIndex((x) => x > 0) : d.findIndex((x) => x <= 0);
+  const p = [tri[o], tri[(o + 1) % 3], tri[(o + 2) % 3]];
+  const q = [d[o], d[(o + 1) % 3], d[(o + 2) % 3]];
+  const m1 = lerpVert(p[0], p[1], crossingT(p[0].p, p[1].p, field, q[0]));
+  const m2 = lerpVert(p[0], p[2], crossingT(p[0].p, p[2].p, field, q[0]));
+  const corner = [[p[0], m1, m2]];                 // the odd vertex out
+  const quad = [[m1, p[1], p[2]], [m1, p[2], m2]];
+  return up === 1 ? { neg: quad, pos: corner } : { neg: corner, pos: quad };
+}
+
+/** Keep only the part of a mesh where `field` is positive. */
+export function clipTriangles(geometry, field) {
+  const { tris, hasNormals } = readTriangles(geometry);
+  const keep = [];
+  let cut = 0;
+  for (const tri of tris) {
+    const r = cutTriangle(tri, field);
+    if (r.neg.length && r.pos.length) cut++;
+    keep.push(...r.pos);
+  }
+  const g = fromTriangles(keep, hasNormals);
+  g.userData.clip = { kept: keep.length, cut };
+  return g;
+}
+
+/**
+ * Remove from a mesh everything inside a region, where the region is the
+ * intersection of several smooth surfaces' interiors.
+ *
+ * Given as a LIST of surfaces rather than as one field, and this is not a
+ * convenience. Combining them with `min` first and clipping on that once puts
+ * the cut in the wrong place: `min` has a crease wherever two surfaces trade
+ * places, and a triangle straddling that crease has no linear crossing to find,
+ * so the interpolated point lands well inside the region. Measured on the
+ * corner where the duct's floor meets its side wall, the cut edge came out
+ * 114 mm inboard of the wall it was supposed to be on, leaving a real hole.
+ *
+ * Splitting one surface at a time avoids it: each cut is against a single
+ * smooth field, so each crossing is where it should be, and the pieces that
+ * survive early cuts are set aside rather than tested again. The creases then
+ * appear on their own, as the seams between pieces.
+ */
+export function carveOut(geometry, fields) {
+  const { tris, hasNormals } = readTriangles(geometry);
+  const out = [];
+  let whole = 0, split = 0, dropped = 0;
+
+  /**
+   * Does this triangle cross the region between its corners?
+   *
+   * The corners alone are exact for a plane and not for an arc, so the centroid
+   * and the three edge midpoints get a vote: a bulge across one EDGE shows up
+   * at that midpoint and nowhere else, since a triangle with one bowed side can
+   * still have a clear centroid.
+   */
+  const bulgesInto = (t) => {
+    const pts = [
+      t[0].p.clone().add(t[1].p).add(t[2].p).multiplyScalar(1 / 3),
+      t[0].p.clone().lerp(t[1].p, 0.5),
+      t[1].p.clone().lerp(t[2].p, 0.5),
+      t[2].p.clone().lerp(t[0].p, 0.5),
+    ];
+    // A THRESHOLD, not any crossing at all. Every triangle that merely grazes
+    // the region would otherwise be quartered, and the extra edges cost more
+    // than they fix -- the seam went from 12 unclosed vertices to 92 and the
+    // build from 2.5 s to 4. The strays that started this were 48 and 65 mm.
+    return pts.some((q) => {
+      let least = Infinity;
+      for (const f of fields) { const v = f(q); if (v < least) least = v; }
+      return least > 0.02;
+    });
+  };
+
+  // A queue rather than a loop over the list, so a quartered triangle's pieces
+  // come back round and are asked again.
+  const queue = tris;
+  for (let qi = 0; qi < queue.length; qi++) {
+    const tri = queue[qi];
+    const depth = tri.depth ?? 0;
+    const mid = vert(
+      tri[0].p.clone().add(tri[1].p).add(tri[2].p).multiplyScalar(1 / 3),
+      tri[0].n.clone().add(tri[1].n).add(tri[2].n).normalize());
+    /**
+     * Asked one surface at a time, and stopped as soon as one settles it.
+     *
+     * Every field here is expensive -- the duct's faces flare against the body,
+     * so all three ask the section where the skin is -- and evaluating all of
+     * them on all three vertices before looking at any was most of what the fin
+     * carve cost: nine section queries on every triangle, when the first three
+     * already showed the triangle was nowhere near. Order matters for the same
+     * reason, which is why the caller puts the field that rules out the most
+     * first.
+     */
+    const d = [];
+    let clear = false;
+    for (const f of fields) {
+      const row = [f(tri[0].p), f(tri[1].p), f(tri[2].p)];
+      d.push(row);
+      if (row[0] <= 0 && row[1] <= 0 && row[2] <= 0) { clear = true; break; }
+    }
+    /**
+     * A triangle can straddle a CURVED surface with every corner outside it.
+     *
+     * The test above -- clear if some field is negative at all three corners --
+     * is exact for a plane and not for an arc. On the body's trailing-edge cap,
+     * whose triangles are large, three had every corner clear of the cut and
+     * their middles 65 mm inside it, and they survived as slivers hanging in
+     * the duct.
+     *
+     * So the centroid gets a vote. Where it disagrees with the corners the
+     * triangle is quartered and the pieces asked again: the disagreement is a
+     * sagitta, and quartering halves the span, so two rounds settle it.
+     */
+    const h = clear && depth < 3
+      ? [lerpVert(tri[0], tri[1], 0.5),
+         lerpVert(tri[1], tri[2], 0.5),
+         lerpVert(tri[2], tri[0], 0.5)]
+      : null;
+    // The centroid alone caught one of the three. The edge midpoints catch the
+    // rest: a bulge across one EDGE shows up there and nowhere else, since the
+    // centroid of a triangle with one bowed side can still be clear.
+    if (h != null && bulgesInto(tri)) {
+      for (const piece of [[tri[0], h[0], h[2]], [h[0], tri[1], h[1]],
+                           [h[2], h[1], tri[2]], [h[0], h[1], h[2]]]) {
+        piece.depth = depth + 1;
+        queue.push(piece);
+      }
+      continue;
+    }
+    if (clear) { whole++; out.push(tri); continue; }
+
+    // Clear of the region entirely -- handled above -- passes through
+    // UNTOUCHED. Not merely unchanged in shape: the same three vertices, in the
+    // same order, unsplit. Splitting a triangle far from the duct is invisible
+    // but it is still a change to the body, and the whole premise here is that
+    // nothing outside the cut moves.
+    if (d.every((row) => row.every((x) => x > 0))) { dropped++; continue; }
+
+    // On the boundary: cut against one surface at a time, setting aside what
+    // each cut puts outside, and carrying only what is still in question.
+    split++;
+    let rest = [tri];
+    for (const f of fields) {
+      const next = [];
+      for (const piece of rest) {
+        const r = cutTriangle(piece, f);
+        /**
+         * A kept piece goes back round rather than straight out.
+         *
+         * The bulge test above only runs on triangles that arrive clear of
+         * everything. A piece the cutter has just made is not one of those, and
+         * it can bulge exactly as its parent could -- which is where the last
+         * two strays on the trailing-edge cap came from, both of them pieces
+         * rather than whole triangles. Re-queued, they meet the same test.
+         */
+        for (const k of r.neg) {
+          // Only a piece that actually bulges goes back round. Re-queuing all
+          // of them cuts every piece again, and the extra edges cost more than
+          // they fix: the seam went from 12 unclosed vertices to 86 and the
+          // build from 2.5 s to 5.
+          if (depth < 2 && bulgesInto(k)) { k.depth = depth + 1; queue.push(k); }
+          else out.push(k);
+        }
+        next.push(...r.pos);                       // inside it: still in question
+      }
+      rest = next;
+      if (!rest.length) break;
+    }
+  }
+
+  const g = fromTriangles(out, hasNormals);
+  g.userData.clip = { kept: out.length, whole, split, dropped };
+  return g;
+}
+
+/**
+ * The duct, as a solid.
+ *
+ * A flat floor with its corners rounding up at the radius of what it holds --
+ * so the walls cannot be the wrong curve for the engines, because they ARE the
+ * engines' curve -- running from the trailing edge, where it is deepest, up to
+ * the crown at the end of the cabin, where it has no depth left and the body is
+ * untouched. Everything above that floor and between those walls is void.
+ *
+ * Given as a signed depth rather than as a surface. That is all the clipping
+ * needs, and it frees the duct from having to be star-shaped about anything,
+ * which is the entire reason this works where the section could not.
+ */
+export function ductVolume({
+  floor, halfWidth, cornerR, fromX, toX, deepFrom, crown,
+  axisY = null, noseFrom = null, radiusAt = null, spacing = null,
+  blend = 0, depthInside = null,
+}) {
+  const deep = deepFrom ?? toX;
+  /**
+   * The cradle's radius, station by station.
+   *
+   * Constant when nothing is given, which is the old behaviour: one radius
+   * sized to what the trough holds. Given a profile, the trough IS that
+   * profile -- it opens and closes along the body with whatever it is wrapping,
+   * so at every station the U is exactly the section of the thing inside it.
+   *
+   * Held at its value from the nose station forward, since ahead of that there
+   * is nothing to follow and the trough is on its way out through the roof.
+   */
+  const follows = axisY != null && noseFrom != null && typeof radiusAt === 'function';
+  const rAt = (x) => (follows ? radiusAt(Math.max(x, noseFrom)) : cornerR);
+  /**
+   * The FLAT between the two rounds is what stays fixed, and the walls move.
+   *
+   * It is the spacing of the things being cradled, so it cannot change along
+   * the body -- the engines do not converge. Holding the WALL fixed instead and
+   * letting the flat absorb the varying radius, which is what this did, walks
+   * the cradle's circles inboard as the duct narrows: measured, the flat drifted
+   * from 1.030 to 0.886 where the engines sit at 1.007, so the trough's rounds
+   * were centred up to 120 mm off the nacelles and left body inside them.
+   */
+  const flat = follows ? Math.max(halfWidth - radiusAt(noseFrom), 0)
+                       : Math.max(halfWidth - cornerR, 0);
+  /**
+   * Given outright rather than derived. Backing it out of `halfWidth - cornerR`
+   * is off by whatever clearance is folded into the radius -- 40 mm here, which
+   * put the cradle's rounds 40 mm inboard of the engines they hold.
+   */
+  const spacingHalf = follows ? (spacing ?? Math.max(halfWidth - cornerR, 0)) : flat;
+  const flatAt = () => spacingHalf;
+  const halfWidthAt = (x) => (follows ? spacingHalf + rAt(x) : halfWidth);
+  /**
+   * The floor's height at a lateral offset: flat across, then rounding up at
+   * the local radius.
+   */
+  const lift = (x, px) => {
+    const r = rAt(x), fl = flatAt(x);
+    const ax = Math.abs(px === undefined ? x : px);
+    if (ax <= fl) return 0;
+    const dx = Math.min(ax - fl, r);
+    return r - Math.sqrt(Math.max(0, r * r - dx * dx));
+  };
+  /**
+   * How far the floor has dropped, at a station.
+   *
+   * Level from `deepFrom` aft -- the engines lie along there and the floor has
+   * to be clear beneath the whole of them, not just under their tail. Forward
+   * of that it climbs to the crown at the cabin, and then keeps climbing, out
+   * through the roof and clear of the body, which is what closes the duct at
+   * the front.
+   *
+   * The climb does NOT ease in. A smoothstep leaves the roof tangentially,
+   * which sounds better and is much worse: the body's own crown falls away at
+   * a slope of 0.1 there, so a floor leaving flat runs within millimetres of
+   * the skin for a third of a metre, and the two surfaces cross at a grazing
+   * angle over that whole stretch instead of at a curve. The carve came out as
+   * a hairline slot right across the crown that nothing could close -- 227 mm
+   * from the nearest edge of anything. Leaving at a slope of 0.55 instead, five
+   * times the roof's own, the surfaces cross cleanly and the opening starts at
+   * a point and widens.
+   *
+   * Cubic, with that slope at the start and level at the end, so the join into
+   * the deep part -- where smoothness is actually visible -- is still smooth.
+   */
+  /**
+   * Between the fan face and the inlet lip the floor follows the NACELLE.
+   *
+   * Level aft of `deepFrom`, as before -- that stretch cradles the engine and
+   * is what the afterbody was shaped against. Forward of it the trough used to
+   * start climbing immediately on its own curve, which cut across the inlet:
+   * the cowl is at its widest just ahead of the fan, and the ramp was already
+   * rising there, so the carve sliced the very part of the nacelle that ought
+   * to have been sitting in it.
+   *
+   * Over that stretch the floor IS the nacelle's own outer line, offset by the
+   * clearance. Ahead of the lip there is nothing left to follow and it sweeps
+   * out to the cabin as it always did -- but starting from the lip's height
+   * rather than the engine's, so the two meet without a step.
+   */
+  const noseX = follows ? noseFrom : deep;
+  const baseFloor = (x) => (follows ? axisY - rAt(x) : floor);
+  const yNose = baseFloor(noseX);
+  const span = Math.max(noseX - fromX, 1e-9);
+  const drop = yNose - crown;
+  const k = 1;                          // initial slope, in units of drop/span
+  const floorAt = (x) => {
+    if (x >= noseX) return baseFloor(x);
+    const f = (x - fromX) / span;
+    if (f <= 0) return crown + drop * k * f;      // climbing out through the roof
+    return crown + drop * ((k - 2) * f ** 3 + (3 - 2 * k) * f ** 2 + k * f);
+  };
+  /**
+   * The lip, rounded rather than square.
+   *
+   * Left alone the duct meets the skin at a hard crease -- a right angle along
+   * the median of the rim, and folded back on itself at 158 degrees at the
+   * worst. This flares the duct outward as it nears the skin, by an amount that
+   * depends only on how deep into the body a point is. The rim is exactly where
+   * that depth is zero, everywhere it runs, so one profile rounds the whole lip
+   * -- walls, forward closure, trailing edge -- without ever having to find the
+   * rim or follow it.
+   *
+   * The flare has to be in the FACES, not in the sheet alone. A fillet moves
+   * the line where the two surfaces meet: it is tangent to the skin a distance
+   * out from the old corner, not at it. Scooping only the sheet and leaving the
+   * cut where it was cannot be tangent to anything -- tried, and it turned the
+   * median crease from 90 to 48 degrees by undercutting the wall, which softens
+   * the shading but leaves an overhang rather than a round.
+   *
+   * The arc is truncated at 70 degrees instead of running to tangency. A fillet
+   * that meets the skin flat meets it at a grazing angle, and trimming one
+   * surface against another along a graze is exactly what left a hairline slot
+   * across the crown 227 mm from anything. Stopping at 70 leaves the surfaces
+   * crossing at 20 degrees -- shallow, but a crossing.
+   */
+  const LIP = 70 * Math.PI / 180;
+  const aKnee = blend * (1 - Math.sin(LIP));      // where the arc is truncated
+  const eKnee = blend * (1 - Math.cos(LIP));
+  const eSkin = eKnee + Math.tan(LIP) * aKnee;    // the flare at the skin itself
+  const flare = (a) => {
+    if (!(blend > 0)) return 0;
+    if (a >= blend) return 0;
+    if (a <= aKnee) return eKnee + Math.tan(LIP) * (aKnee - Math.max(a, 0));
+    const w = blend - a;
+    return blend - Math.sqrt(Math.max(0, blend * blend - w * w));
+  };
+  const lip = depthInside ? (p) => flare(depthInside(p.x, p.y, p.z)) : () => 0;
+
+  return {
+    fromX, toX, deepFrom: deep, noseFrom: noseX, floor, halfWidth, cornerR,
+    crown, blend, flat, flatAt, rAt, halfWidthAt, lift, floorAt, flare, lip, eSkin,
+    /**
+     * The two surfaces that bound the duct, each on its own and each smooth.
+     * Kept separate because anything cutting geometry has to cut on one at a
+     * time -- see `carveOut` for what combining them first does to the edge.
+     */
+    faces: [
+      (p) => p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),  // above the floor
+      (p) => halfWidthAt(-p.z) + lip(p) - Math.abs(p.x),   // inboard of the walls
+    ],
+    /** Inside both at once. For asking about a point, not for cutting. */
+    depth(p) {
+      return Math.min(
+        p.y - (floorAt(-p.z) + lift(-p.z, p.x)) + lip(p),
+        halfWidthAt(-p.z) + lip(p) - Math.abs(p.x),
+      );
+    },
+  };
+}
+
+/**
+ * The duct's own surface, over just the part of it that is inside the body.
+ *
+ * Without this the body is a shell with a hole in it, and you look through the
+ * opening straight at the back of the far wall. With it the duct reads as a
+ * duct: a floor sweeping down out of the cabin roof and two walls rounding up
+ * to hold the engines.
+ *
+ * Built on the volume's own definition and then clipped on the body's, so it
+ * ends exactly where the skin's cut began -- both cuts run to the curve where
+ * the two surfaces meet.
+ */
+export function ductSurface(duct, depthInside, { edge, nx, nu, wallTop } = {}) {
+  const pos = [], nrm = [], idx = [];
+  /**
+   * One station's profile: down one wall, round the corner, across the floor,
+   * and back up the other.
+   *
+   * The WALLS are here as well as the floor, which they were not at first, and
+   * that is the whole difference between a closed shell and a leaking one. The
+   * duct is bounded laterally as well as from below, so where the body runs
+   * wider than the duct there is a vertical strip of material between the top
+   * of the corner round and the skin. Meshing only the floor left that strip
+   * with no face on it: 50 of 238 cut edges had nothing to close them, the
+   * worst 450 mm from anything.
+   *
+   * Sampled by ARC LENGTH along the profile rather than by segment, so the
+   * quads stay near-square instead of bunching at the corners.
+   */
+  /**
+   * How high this station's walls are meshed: just past where they leave the
+   * body, found by asking the body.
+   *
+   * A single height for the whole duct -- the cabin's crown, which is what this
+   * used -- wastes almost all of the samples. The afterbody is 0.9 m lower at
+   * the engines than at the cabin, so at those stations two thirds of every
+   * wall was meshed in open air and thrown away by the clip, leaving three rows
+   * across the part that is actually there. The lip's round then fell inside a
+   * single row and did not appear at all: the sheet stepped 180 mm sideways in
+   * one quad and read exactly as square as before.
+   */
+  const wallTopAt = (x) => {
+    if (wallTop != null) return wallTop;
+    if (!depthInside) return duct.crown + 0.1;
+    const margin = (duct.eSkin ?? 0) + 0.10;
+    const y0 = duct.floorAt(x) + (duct.rAt ? duct.rAt(x) : duct.cornerR);
+    const hw = duct.halfWidthAt ? duct.halfWidthAt(x) : duct.halfWidth;
+    let lo = y0, hi = duct.crown + 0.2;
+    if (!(depthInside(hw, lo, -x) > 0)) return y0 + margin;
+    for (let i = 0; i < 32; i++) {
+      const m = (lo + hi) / 2;
+      if (depthInside(hw, m, -x) > 0) lo = m; else hi = m;
+    }
+    return lo + margin;
+  };
+  /**
+   * One station's profile, remembered.
+   *
+   * `wallTopAt` bisects against the body to find where the wall leaves it --
+   * 32 section queries -- and this was being rebuilt for every point AROUND the
+   * profile rather than once per station. That alone was 376,000 of the 572,000
+   * queries the sheet made, two thirds of the most expensive stage in the
+   * build, all of it recomputing the same number 73 times in a row.
+   *
+   * One slot is all it needs: the grid walks the whole profile at one station
+   * before moving to the next.
+   */
+  let lastX = NaN, lastProfile = null;
+  const profile = (x) => {
+    if (x === lastX) return lastProfile;
+    lastX = x; lastProfile = buildProfile(x);
+    return lastProfile;
+  };
+  const buildProfile = (x) => {
+    const y0 = duct.floorAt(x);
+    // The cradle's radius is this station's, not one number for the whole duct:
+    // a trough that follows something opens and closes along the body with it.
+    const cR = duct.rAt ? duct.rAt(x) : duct.cornerR;
+    const fl = duct.flatAt ? duct.flatAt(x) : duct.flat;
+    const wallH = Math.max(wallTopAt(x) - (y0 + cR), 0);
+    const arc = (Math.PI / 2) * cR;
+    /**
+     * The wall is sampled far more finely than its length deserves, and
+     * clustered at its top.
+     *
+     * Straight arc length gives every part of the profile the same spacing,
+     * which is right for quad aspect and wrong for what is happening here: the
+     * wall is a tenth of the profile and the lip's round lives in its top few
+     * centimetres, so the round fell inside a single quad and the sheet stepped
+     * 180 mm sideways in one go. It shaded exactly as square as an unblended
+     * cut, because as far as the mesh was concerned it was one.
+     */
+    // Enough extra to resolve the lip's round, and no more. Boosting it to a
+    // fixed share of the whole profile -- which is what this did -- gave the
+    // wall five times the sample density of the floor, so the quads went from
+    // 18 mm across on the wall to 92 mm on the floor and no single grid count
+    // could suit both.
+    const wEff = Math.max(wallH, 0.45 * (arc + fl));
+    const half = wEff + arc + fl;                  // one side, floor centre out
+    const at = (s) => {                            // s in [-half, half]
+      const side = s < 0 ? -1 : 1, a = Math.abs(s);
+      if (a <= fl) return [side * a, y0];
+      if (a <= fl + arc) {
+        const th = (a - fl) / cR;
+        return [side * (fl + cR * Math.sin(th)), y0 + cR * (1 - Math.cos(th))];
+      }
+      const v = Math.min(1, (a - fl - arc) / Math.max(wEff, 1e-9));
+      const hw = duct.halfWidthAt ? duct.halfWidthAt(x) : duct.halfWidth;
+      return [side * hw, y0 + cR + wallH * (1 - (1 - v) ** 2.4)];
+    };
+    return { at, half };
+  };
+  // Runs past the duct at BOTH ends. Forward of the cabin the floor is already
+  // climbing out through the roof, and aft of the trailing edge there is no
+  // body left -- nothing there survives the clip either way. But the sheet has
+  // to reach past the point where the two surfaces cross or the cut edge runs
+  // off the end of it, and stopping dead on the trailing edge left the last
+  // three edges of the seam with nothing to close them, the worst 30 mm.
+  const x0 = duct.fromX - 0.5;
+  const x1 = duct.toX + 0.2;
+
+  /**
+   * The grid, from a target EDGE LENGTH rather than from two fixed counts.
+   *
+   * Fixed counts cannot know the sheet's proportions. 160 by 72 across a duct
+   * 5.7 m long and 6.7 m around the profile makes quads 36 mm by 93 mm -- two
+   * and a half to one -- and that ratio IS the tessellation the eye objects to:
+   * area over longest-edge-squared came out at 0.168, where a right isoceles
+   * triangle, the best a quad grid can do, is 0.250.
+   *
+   * Derived from the geometry, so it holds at any size of aeroplane and any
+   * shape of duct, which two hand-set numbers never could.
+   */
+  const midProfile = profile((x0 + x1) / 2);
+  const target = edge ?? 0.045;
+  const even = (n) => 2 * Math.max(3, Math.round(n / 2));
+  nx = nx ?? even((x1 - x0) / target);
+  nu = nu ?? even((2 * midProfile.half) / target);
+
+  /**
+   * The lip, blended rather than square.
+   *
+   * Left alone the duct meets the skin at a hard crease -- a right angle at the
+   * median of the rim, and folded back on itself at 158 degrees at the worst.
+   * The blend scoops the sheet away from the rim so it leaves ALONG the skin
+   * and turns down into the wall over a band, which is what a fillet does.
+   *
+   * The scoop is a function of depth into the body, and that is what makes it
+   * simple: the rim is exactly where that depth is zero, everywhere it runs,
+   * so one profile softens the whole lip -- walls, forward closure, trailing
+   * edge -- without ever having to find the rim or follow it.
+   *
+   * It also has to vanish AT the rim, which is why a bulge and not a ramp. The
+   * skin's cut is on the unblended duct and must not move: the two meshes were
+   * brought into agreement to 7.4 mm and a lip that shifted the sheet's edge
+   * would open all of that back up.
+   *
+   * `sin` gives both ends for free -- zero and steep at the rim, zero and level
+   * where it rejoins the wall -- and its slope at the rim is the angle the
+   * crease is turned through.
+   *
+   * That angle is worked out AT EACH POINT, not fixed. Turning every point
+   * through the same 55 degrees brought the median crease down from 90 to 56
+   * and made the tail worse -- the 90th percentile went from 129 to 159 and the
+   * worst from 158 to 178 -- because much of the rim was already shallow and
+   * the scoop drove it straight past flat into a fold. Each point turns by what
+   * it actually needs, capped, and a point that needs nothing gets nothing.
+   */
+  /**
+   * A point of the sheet: on the duct's profile, then pushed out to wherever
+   * the flared face actually is.
+   *
+   * SOLVED for rather than offset. The flare depends on depth into the body,
+   * and moving a point changes its depth, so the displacement that satisfies it
+   * is a fixed point of that relation -- and iterating it diverges near the rim,
+   * where the flare's slope exceeds one. Walking in from the outside and
+   * bisecting the first sign change finds the OUTERMOST root, which is the
+   * fillet; a plain bisection over the whole span can land on an inner one and
+   * put the sheet inside the wall it is supposed to be rounding.
+   */
+  const wallAt = duct.flat + (Math.PI / 2) * duct.cornerR;
+  const reach = (duct.eSkin ?? 0) + 0.02;
+  const point = (x, t) => {
+    const { at, half } = profile(x);
+    const s = half * (2 * t - 1);
+    const [px, py] = at(s);
+    const p = new THREE.Vector3(px, py, -x);
+    if (!(reach > 0.02) || !depthInside) return p;
+    // Away from the lip there is nothing to solve, and this is most of the
+    // sheet: the round only reaches `blend` in from the skin, so a point deeper
+    // than that is already where it belongs and the search would spend two
+    // dozen section evaluations confirming it. A point well OUTSIDE the body is
+    // the same story from the other side -- the solve can only push it further
+    // out, and the clip throws it away regardless.
+    //
+    // Well outside means several grid steps outside, not merely outside. A
+    // vertex just past the skin is still one END of the segment the clip
+    // interpolates the rim along, so leaving it unsolved moves the rim: cutting
+    // at the flare's own reach, 140 mm, took the lip's blend from 65 back
+    // towards 55 degrees. Half a metre is past anything the grid can reach
+    // across.
+    const a0 = depthInside(px, py, -x);
+    if (a0 > duct.blend || a0 < -0.5) return p;
+    /**
+     * Out into the material, along the face's OWN gradient.
+     *
+     * Along an axis was the obvious thing and is wrong on the corner rounds.
+     * The round turns through ninety degrees, so near its top the surface is
+     * nearly vertical and stepping in y barely moves you off it -- the solve
+     * finds no crossing, returns the unflared point, and the sheet stops short
+     * of where the skin was cut. That is the 55 mm gap at the body's aft
+     * corner: not a resolution problem, a direction one.
+     *
+     * The gradient is the direction the face actually changes in, so it is
+     * never degenerate on the face's own surface.
+     */
+    const onWall = Math.abs(s) > wallAt;
+    const face = onWall ? duct.faces[1] : duct.faces[0];
+    const h = 1e-5;
+    const gx = (face(new THREE.Vector3(px + h, py, -x)) - face(new THREE.Vector3(px - h, py, -x))) / (2 * h);
+    const gy = (face(new THREE.Vector3(px, py + h, -x)) - face(new THREE.Vector3(px, py - h, -x))) / (2 * h);
+    const gl = Math.hypot(gx, gy);
+    const dx = gl > 1e-9 ? -gx / gl : (onWall ? Math.sign(s) : 0);
+    const dy = gl > 1e-9 ? -gy / gl : (onWall ? 0 : -1);
+    const step = (u) => new THREE.Vector3(px + dx * u, py + dy * u, -x);
+    const N = 24;
+    let hi = reach, fHi = face(step(hi));
+    for (let k = N - 1; k >= 0; k--) {
+      const lo = reach * (k / N), fLo = face(step(lo));
+      if ((fLo > 0) !== (fHi > 0)) {
+        let a = lo, b = hi;
+        for (let it = 0; it < 30; it++) {
+          const m = (a + b) / 2;
+          if ((face(step(m)) > 0) === (fLo > 0)) a = m; else b = m;
+        }
+        return step((a + b) / 2);
+      }
+      hi = lo; fHi = fLo;
+    }
+    return p;
+  };
+  const rows = [];
+  for (let i = 0; i <= nx; i++) {
+    const x = x0 + (x1 - x0) * (i / nx);
+    const row = [];
+    for (let j = 0; j <= nu; j++) row.push(point(x, j / nu));
+    rows.push(row);
+  }
+  /**
+   * Normals from the finished grid, by central differences on its neighbours.
+   *
+   * Taken from the grid rather than analytically because the blend is not
+   * analytic -- it asks the body how deep it is -- and because differencing the
+   * grid gives the normals of the surface that is actually there, blend
+   * included, rather than of the one it started as.
+   */
+  for (let i = 0; i <= nx; i++) {
+    for (let j = 0; j <= nu; j++) {
+      const ds = rows[i][Math.min(nu, j + 1)].clone().sub(rows[i][Math.max(0, j - 1)]);
+      const dx = rows[Math.min(nx, i + 1)][j].clone().sub(rows[Math.max(0, i - 1)][j]);
+      const n = new THREE.Vector3().crossVectors(ds, dx);
+      if (n.lengthSq() < 1e-18) n.set(0, 1, 0); else n.normalize();
+      const p = rows[i][j];
+      if (n.dot(new THREE.Vector3(-Math.sign(p.x) * 0.3, 1, 0)) < 0) n.negate();
+      pos.push(p.x, p.y, p.z);
+      nrm.push(n.x, n.y, n.z);
+    }
+  }
+  const row = nu + 1;
+  for (let i = 0; i < rows.length - 1; i++) {
+    for (let j = 0; j < nu; j++) {
+      const a = i * row + j, b = a + 1, c = a + row, e = c + 1;
+      idx.push(a, c, b, b, c, e);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  /**
+   * Keep what lies within the body -- and a little beyond it.
+   *
+   * Elsewhere the floor has nothing to be the floor OF and would read as a
+   * shelf hanging in the open air, so it has to be trimmed. But trimming
+   * exactly at the skin puts the sheet's rim on a knife edge: the lip is built
+   * nearly tangent to the skin, so whether a vertex near it falls inside or out
+   * turns on millimetres, and where it fell outside the sheet simply stopped
+   * short of the cut. At the body's aft corner it stopped 55 mm short, and a
+   * coarse skin only hid that by having few cut edges there to notice.
+   *
+   * So the sheet is cut slightly PROUD of the skin and `snapRim` then pulls the
+   * overshoot back onto the skin's own cut. Overshoot and snap, rather than try
+   * to land on a tangency.
+   */
+  const clipped = clipTriangles(g, (p) => depthInside(p.x, p.y, p.z));
+  return faceUp(clipped);
+}
+
+/**
+ * Wind a sheet so its visible side faces up, into the duct.
+ *
+ * Votes area-weighted face normals against +y and flips the lot if they lose,
+ * for the same reason the fin art needed it: backface culling makes a wrongly
+ * wound patch INVISIBLE rather than wrong-looking, so a silent flip reads as
+ * "the carve did nothing" and sends you looking in the wrong place.
+ *
+ * Winding only. The sheet's normals are its own, taken from the surface, and
+ * recomputing them from the faces here would undo that and facet it.
+ */
+function faceUp(geo) {
+  const pos = geo.getAttribute('position');
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  let vote = 0;
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i);
+    b.fromBufferAttribute(pos, i + 1);
+    c.fromBufferAttribute(pos, i + 2);
+    n.crossVectors(b.sub(a), c.sub(a));
+    vote += n.y;
+  }
+  if (vote < 0) {
+    const arr = pos.array;
+    for (let i = 0; i + 8 < arr.length; i += 9) {
+      for (let k = 0; k < 3; k++) {
+        const t = arr[i + 3 + k]; arr[i + 3 + k] = arr[i + 6 + k]; arr[i + 6 + k] = t;
+      }
+    }
+    pos.needsUpdate = true;
+  }
+  return geo;
+}
+
+/**
+ * Cut the duct out of a built fuselage, in place.
+ *
+ * Replaces the skin's geometry with the clipped one and adds the duct's floor
+ * beside it, both as children of the same group, so everything mounted to the
+ * body -- decals, windows, the fins, the engines -- is untouched and still sits
+ * where it did.
+ */
+/** The edges of a mesh used by only one triangle -- where it is open. */
+export function openEdges(geometry) {
+  const pos = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  const n = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const v = new THREE.Vector3();
+  const key = (i) => {
+    v.fromBufferAttribute(pos, at(i));
+    return `${v.x.toFixed(5)},${v.y.toFixed(5)},${v.z.toFixed(5)}`;
+  };
+  const uses = new Map(), ends = new Map();
+  for (let t = 0; t + 2 < n; t += 3) {
+    const k = [key(t), key(t + 1), key(t + 2)];
+    for (let e = 0; e < 3; e++) {
+      const a = k[e], b = k[(e + 1) % 3];
+      const id = a < b ? `${a}/${b}` : `${b}/${a}`;
+      uses.set(id, (uses.get(id) || 0) + 1);
+      if (!ends.has(id)) {
+        ends.set(id, [new THREE.Vector3(...a.split(',').map(Number)),
+                      new THREE.Vector3(...b.split(',').map(Number))]);
+      }
+    }
+  }
+  return [...uses].filter(([, c]) => c === 1).map(([id]) => ends.get(id));
+}
+
+/**
+ * Pull a sheet's rim onto another mesh's open edge.
+ *
+ * The two sheets are cut on different surfaces and meshed at different
+ * densities, so each approximates the curve where those surfaces cross with its
+ * own polyline -- and between shared endpoints one runs as a chord where the
+ * other follows the curve. The lens between them is a real crack, up to 39 mm
+ * here, and it does not close by refining either sheet: the coarse one is the
+ * skin, and the skin is the thing that must not be touched.
+ *
+ * So the sheet, which may be moved, is brought to the skin, which may not.
+ * Only its rim moves, and only where there is something within `tol` to move
+ * it to, which leaves the sheet's genuinely free edges alone.
+ */
+function snapRim(geometry, edges, tol = 0.15) {
+  const pos = geometry.getAttribute('position');
+  const rim = new Map();
+  for (const [a, b] of openEdges(geometry)) {
+    for (const q of [a, b]) rim.set(`${q.x.toFixed(5)},${q.y.toFixed(5)},${q.z.toFixed(5)}`, true);
+  }
+  const p = new THREE.Vector3(), ab = new THREE.Vector3(), c = new THREE.Vector3();
+  let moved = 0, worst = 0;
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    if (!rim.has(`${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)}`)) continue;
+    let best = null, bestD = tol;
+    for (const [a, b] of edges) {
+      ab.subVectors(b, a);
+      const l2 = ab.lengthSq();
+      const t = l2 < 1e-18 ? 0
+        : Math.min(1, Math.max(0, c.subVectors(p, a).dot(ab) / l2));
+      c.copy(a).addScaledVector(ab, t);
+      const dd = c.distanceTo(p);
+      if (dd < bestD) { bestD = dd; best = c.clone(); }
+    }
+    if (best) { pos.setXYZ(i, best.x, best.y, best.z); moved++; worst = Math.max(worst, bestD); }
+  }
+  pos.needsUpdate = true;
+  return { moved, worst };
+}
+
+/**
+ * Cut a region out of every mesh under an object, wherever it sits.
+ *
+ * The fins are built in their own frame -- hung on the body's corners and
+ * canted outboard -- so the duct, which is described in the aeroplane's frame,
+ * has to be asked about in theirs. Each mesh's own transform does that, and the
+ * geometry is then cut where it stands, with no need for anything to agree
+ * about coordinates beforehand.
+ *
+ * `base` is where `root`'s parent sits in that frame -- identity when the root
+ * hangs directly off the aeroplane. Accumulated down the tree from local
+ * matrices rather than read off `matrixWorld`, because this runs while the
+ * aeroplane is still being assembled and nothing has been through a render yet,
+ * so the world matrices are whatever they were left at.
+ */
+/**
+ * Would `carveInto` remove anything? One pass over the vertices, not the
+ * triangles.
+ *
+ * Worth asking first because the answer is often no and the carve is not cheap.
+ * The nacelles are the case in point: the duct's cradle was built to hold a
+ * cylinder of exactly their diameter, so with the duct carved they clear it
+ * entirely and the carve is a no-op -- but it still costs 0.8 s to establish
+ * that by cutting 35,840 triangles against three surfaces. Testing the vertices
+ * first is about ten times cheaper.
+ *
+ * A triangle whose corners are all outside can still bulge through, so this can
+ * say "nothing" when a sliver would have gone. That sliver is inside the body
+ * either way, where the body's own skin hides it.
+ */
+export function wouldCarve(root, fields, base = new THREE.Matrix4()) {
+  let hit = false;
+  const walk = (o, parent) => {
+    if (hit) return;
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    const a = o.isMesh && o.geometry?.getAttribute('position');
+    if (a) {
+      const q = new THREE.Vector3();
+      for (let i = 0; i < a.count; i++) {
+        q.fromBufferAttribute(a, i).applyMatrix4(m);
+        if (fields.every((f) => f(q) > 0)) { hit = true; return; }
+      }
+    }
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return hit;
+}
+
+export function carveInto(root, fields, base = new THREE.Matrix4()) {
+  const out = [];
+  const walk = (o, parent) => {
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    if (o.isMesh && o.geometry?.getAttribute('position')) {
+      const q = new THREE.Vector3();
+      const local = fields.map((f) => (p) => f(q.copy(p).applyMatrix4(m)));
+      const before = o.geometry;
+      o.geometry = carveOut(before, local);
+      out.push(o.geometry.userData.clip);
+      before.dispose();
+    }
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return out;
+}
+
+/**
+ * Close the hole a carve leaves in a shell.
+ *
+ * `carveOut` trims triangles; it does not know the difference between a surface
+ * and a solid. On the body that is fine, because the duct's own sheet is built
+ * to stand in the opening. On a fin it is not: the fin is a closed shell, the
+ * cut takes a bite out of its root, and what is left is open along the bite --
+ * 147 edges over a metre and a half of it -- so you see straight into the
+ * inside of the fin.
+ *
+ * The hole is filled from the LOOP, not from the surfaces that made it. The
+ * first attempt triangulated it in the duct's own coordinates, which is exact
+ * where the boundary is the duct -- but a fin loses what is inside the body AND
+ * inside the cut, so most of that boundary is the body's skin and only the rest
+ * is the duct's. A chart belonging to one of them cannot describe a loop that
+ * runs along both. Its own smallest extent can: the bite is 1.5 m long, half a
+ * metre deep and 110 mm thick, so dropping the thin axis flattens it into a
+ * simple polygon, and an ear clip on that gives triangles whose corners are the
+ * boundary's own, still exactly where the clipper solved for them.
+ *
+ * Winding comes from the shell, not from a vote. A boundary edge is walked once
+ * by the one triangle that owns it, so the patch that closes the surface has to
+ * walk it the other way -- fill the loop reversed and the normals come out
+ * right by construction.
+ *
+ * ONLY FOR SHELLS THAT WERE CLOSED BEFORE THE CARVE. Every loop gets filled,
+ * because a filter that asked whether a loop lay on the cut is what failed
+ * above. A nacelle has 1491 open edges before anything touches it -- it is
+ * built from rings and discs, and the biggest of those holes is the intake --
+ * so calling this on one would weld the engine shut.
+ */
+export function capCut(root, base = new THREE.Matrix4()) {
+  let added = 0;
+  const walk = (o, parent) => {
+    o.updateMatrix();
+    const m = new THREE.Matrix4().multiplyMatrices(parent, o.matrix);
+    if (o.isMesh && o.geometry?.getAttribute('position')) added += capMesh(o.geometry);
+    for (const c of o.children) walk(c, m);
+  };
+  walk(root, base);
+  return added;
+}
+
+function capMesh(geometry) {
+  const pos = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  const n = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const key = (p) => `${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)}`;
+  const V = (i) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+
+  // Edges used by exactly one triangle, kept in the direction that triangle
+  // walks them -- which is what lets the loops chain without a search, and what
+  // says which way round the patch goes.
+  const once = new Map();
+  for (let t = 0; t + 2 < n; t += 3) {
+    const v = [V(at(t)), V(at(t + 1)), V(at(t + 2))];
+    for (let e = 0; e < 3; e++) {
+      const a = v[e], b = v[(e + 1) % 3];
+      const ka = key(a), kb = key(b);
+      if (ka === kb) continue;                          // a degenerate edge
+      const k = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      if (once.has(k)) once.delete(k); else once.set(k, [a, b, ka, kb]);
+    }
+  }
+  if (once.size < 3) return 0;
+
+  /**
+   * Chained by consuming EDGES, not by marking vertices off.
+   *
+   * Two loops can meet at a single vertex -- the bite is pinched in the middle
+   * where the body's skin and the duct's wall cross -- and a walk that retires
+   * the vertex on first use strands the second loop. It left three edges open,
+   * a 20 mm hole, out of the 147 this closes.
+   */
+  const edges = [...once.values()];
+  const byStart = new Map();
+  edges.forEach((e, i) => {
+    if (!byStart.has(e[2])) byStart.set(e[2], []);
+    byStart.get(e[2]).push(i);
+  });
+  const used = new Array(edges.length).fill(false);
+  const take = (k) => {
+    const list = byStart.get(k);
+    if (!list) return -1;
+    while (list.length) { const i = list.pop(); if (!used[i]) return i; }
+    return -1;
+  };
+
+  const tris = [];
+  for (let s0 = 0; s0 < edges.length; s0++) {
+    if (used[s0]) continue;
+    const loop = [];
+    let i = s0;
+    const startKey = edges[s0][2];
+    while (i >= 0) {
+      used[i] = true;
+      loop.push(edges[i][0]);
+      const k = edges[i][3];
+      if (k === startKey) break;
+      i = take(k);
+    }
+    if (loop.length < 3) continue;
+    loop.reverse();                                     // the way the patch goes
+    earClip(loop, tris);
+  }
+  if (!tris.length) return 0;
+
+  const oldN = geometry.getAttribute('normal');
+  const flat = [], flatN = [];
+  for (let t = 0; t < n; t++) {
+    const i = at(t);
+    flat.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+    if (oldN) flatN.push(oldN.getX(i), oldN.getY(i), oldN.getZ(i));
+  }
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
+  for (const t of tris) {
+    // Flat, and the triangle's own: a cut face is a cut face, and averaging it
+    // into the fin's aerofoil would smear the two into each other.
+    e1.subVectors(t[1], t[0]); e2.subVectors(t[2], t[0]);
+    nrm.crossVectors(e1, e2);
+    // A sliver with no area still gets written. It draws nothing -- that is
+    // what no area means -- but leaving it out leaves its three edges open, and
+    // the whole point of the patch is that nothing is open. One of them was:
+    // three collinear points, 27 mm long, the last hole of 147.
+    if (nrm.lengthSq() < 1e-20) nrm.set(0, 0, 1); else nrm.normalize();
+    for (const q of t) { flat.push(q.x, q.y, q.z); flatN.push(nrm.x, nrm.y, nrm.z); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+  if (oldN) g.setAttribute('normal', new THREE.Float32BufferAttribute(flatN, 3));
+  const keep = geometry.userData;
+  geometry.copy(g);
+  geometry.userData = keep;
+  g.dispose();
+  return tris.length;
+}
+
+/** Ear clip, flattened down the loop's own thinnest direction. */
+function earClip(loop, out) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of loop) {
+    const c = [p.x, p.y, p.z];
+    for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], c[i]); hi[i] = Math.max(hi[i], c[i]); }
+  }
+  let drop = 0;
+  for (let i = 1; i < 3; i++) if (hi[i] - lo[i] < hi[drop] - lo[drop]) drop = i;
+  const ax = [0, 1, 2].filter((i) => i !== drop);
+  const uv = loop.map((p) => {
+    const c = [p.x, p.y, p.z];
+    return [c[ax[0]], c[ax[1]]];
+  });
+  const idx = loop.map((_, i) => i);
+  const area2 = (a, b, c) => (uv[b][0] - uv[a][0]) * (uv[c][1] - uv[a][1])
+                           - (uv[b][1] - uv[a][1]) * (uv[c][0] - uv[a][0]);
+  let sign = 0;
+  for (let i = 1; i + 1 < idx.length; i++) sign += area2(idx[0], idx[i], idx[i + 1]);
+  const ccw = sign >= 0 ? 1 : -1;
+  const inside = (a, b, c, q) =>
+    ccw * area2(a, b, q) >= 0 && ccw * area2(b, c, q) >= 0 && ccw * area2(c, a, q) >= 0;
+  let guard = idx.length * idx.length + 8;
+  while (idx.length > 3 && guard-- > 0) {
+    let cut = false;
+    for (let i = 0; i < idx.length; i++) {
+      const a = idx[(i + idx.length - 1) % idx.length];
+      const b = idx[i];
+      const c = idx[(i + 1) % idx.length];
+      if (ccw * area2(a, b, c) <= 0) continue;                 // reflex or flat
+      let clean = true;
+      for (const q of idx) {
+        if (q === a || q === b || q === c) continue;
+        if (inside(a, b, c, q)) { clean = false; break; }
+      }
+      if (!clean) continue;
+      out.push([loop[a], loop[b], loop[c]]);
+      idx.splice(i, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) return;                        // self-intersecting once flattened
+  }
+  if (idx.length === 3) out.push([loop[idx[0]], loop[idx[1]], loop[idx[2]]]);
+}
+
+/**
+ * Give the sheet the body's own normal where the two meet.
+ *
+ * The blend is in the geometry, but shading is what the eye reads as an edge,
+ * and two meshes that meet along a curve shade as a crease unless their normals
+ * agree there. The skin's normals at its cut are the body's, unchanged; the
+ * sheet's at its rim are the fillet's. Setting the second equal to the first is
+ * not a cheat -- the fillet is built tangent to the skin, truncated at 70
+ * degrees of its arc, so the body's normal is what the sheet's normal is
+ * approaching anyway, to within the 20 degrees that truncation left.
+ *
+ * Only the rim vertices, so the fillet still carries the turn.
+ */
+function matchRimNormals(geometry, depthInside, tol = 1e-3) {
+  const pos = geometry.getAttribute('position');
+  const nrm = geometry.getAttribute('normal');
+  if (!nrm) return 0;
+  const p = new THREE.Vector3();
+  const h = 1e-4;
+  let n = 0;
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    if (Math.abs(depthInside(p.x, p.y, p.z)) > tol) continue;
+    const g = new THREE.Vector3(
+      depthInside(p.x + h, p.y, p.z) - depthInside(p.x - h, p.y, p.z),
+      depthInside(p.x, p.y + h, p.z) - depthInside(p.x, p.y - h, p.z),
+      depthInside(p.x, p.y, p.z + h) - depthInside(p.x, p.y, p.z - h));
+    if (g.lengthSq() < 1e-18) continue;
+    g.normalize().negate();                       // the body's OUTWARD normal
+    nrm.setXYZ(i, g.x, g.y, g.z);
+    n++;
+  }
+  nrm.needsUpdate = true;
+  return n;
+}
+
+export function carveDuct(fuse, spec) {
+  const duct = ductVolume({ ...spec, depthInside: fuse.userData.depthInside });
+  const skin = fuse.userData.skinMesh;
+  const before = skin.geometry;
+  const kept = carveOut(before, duct.faces);
+  skin.geometry = kept;
+  before.dispose();
+
+  const sheet = ductSurface(duct, fuse.userData.depthInside,
+                            { edge: spec.edge });
+  const snap = snapRim(sheet, openEdges(kept));
+  const matched = matchRimNormals(sheet, fuse.userData.depthInside);
+  const floor = new THREE.Mesh(sheet, skin.material);
+  floor.name = 'ductFloor';
+  fuse.add(floor);
+
+  fuse.userData.duct = {
+    // The spec as given, then the volume's RESOLVED geometry over the top --
+    // `deepFrom` and `noseFrom` default inside `ductVolume`, so a consumer
+    // reading the spec alone sees undefined where the duct has a real station.
+    ...spec,
+    deepFrom: duct.deepFrom, noseFrom: duct.noseFrom, floor: duct.floorAt(spec.toX),
+    mesh: floor, snap, rimNormals: matched,
+    skin: kept.userData.clip,
+    floorTriangles: sheet.getAttribute('position').count / 3,
+  };
+  return duct;
+}
+
+/* ---- the nacelle duct: a hull aft, a rectangle forward ------------------ */
+
+/**
+ * The cutout an embedded pair of nacelles wants, in two pieces.
+ *
+ * AFT, from the body's trailing edge forward to the nacelles' narrowest
+ * station: the convex hull of the two inner circles. Two circles side by side
+ * hull to a stadium -- flat top and bottom joined by arcs of exactly their
+ * radius -- so the cut is the section of the two ducts and the flat span
+ * between them, and nothing else. It opens and closes along the body with the
+ * ducts, because at every station it IS them.
+ *
+ * FORWARD of that station, up to the end of the cabin: a straight rectangle,
+ * the section the hull had at its narrowest, run forward unchanged.
+ *
+ * The two are given as separate regions rather than one field. Their union is
+ * not convex -- the rectangle is the hull's bounding box, so the corners appear
+ * at the join -- and `carveOut` removes an intersection, so a union has to be
+ * two passes. `step` is the face between them at the join.
+ */
+export function nacelleDuct({
+  axisY, spacing, radiusAt, throatX, fromX, toX, crown,
+}) {
+  const rT = radiusAt(throatX);
+  /**
+   * Forward of the throat the cut STRETCHES upward rather than translating.
+   *
+   * Translating it -- the whole pair of circles rising together -- is what it
+   * used to do, and the trouble is what that leaves in the upper surface. A
+   * circle rising through a roof cuts an opening that starts wide, narrows as
+   * the circle clears, and closes to a point: the slot's edges curve inward and
+   * it tapers away to nothing. There is no station where you could say the cut
+   * has a left side and a right side.
+   *
+   * Stretching keeps them. The section becomes the hull of FOUR circles rather
+   * than two -- the same pair, plus a copy lifted to the roof line -- so its
+   * outer edge is a straight vertical line running up from the widest point of
+   * each, at a half-width that does not change with height. The slot those
+   * leave in the crown has two straight parallel edges. It is still convex, it
+   * is still smooth where the arcs meet the flats and the verticals, and with
+   * both lift heights at zero it is exactly the old pair of circles, so there
+   * is no join at the throat to mesh or to close.
+   *
+   * Floor and roof are lifted by different laws because they are doing
+   * different jobs. The FLOOR climbs slowly, all the way to the end of the
+   * cabin, and where it meets the crown is where the cut ends -- so it must not
+   * arrive tangentially, or the two surfaces graze along half a metre instead
+   * of crossing, and nothing closes. The ROOF climbs fast and only has to get
+   * clear of the body; it never meets anything, so it can ease out at both ends
+   * and leave no crease at the throat.
+   */
+  const climb = Math.max(0, (crown + rT + 0.06) - axisY);
+  const span = Math.max(throatX - fromX, 1e-9);
+  const riseFloor = (x) => {
+    if (x >= throatX) return 0;
+    const f = Math.max(0, (x - fromX) / span);       // 0 at the cabin, 1 at the throat
+    const k = 1;                                     // slope leaving the cabin
+    return climb * ((2 - k) * f ** 3 + (2 * k - 3) * f ** 2 - k * f + 1);
+  };
+  /**
+   * The roof is up and out of the body within this much of the run.
+   *
+   * Short, and measured off the throat rather than off the run, because what it
+   * has to beat is the arc: until the roof is above the crown the section is
+   * still circling back over the widest point, and what shows in the upper
+   * surface is the top of a circle rather than two straight lines. Over a third
+   * of the run that took 400 mm to establish. Four tenths of the throat radius
+   * has it done by the first station past the nacelle's front face.
+   *
+   * It can be this abrupt because none of it happens in the skin: the nacelles
+   * stand proud of the aft crown, so the closed hull's own roof is already
+   * outside the body at the throat and the entire rise is in open air.
+   */
+  const roofSpan = Math.min(span, Math.max(0.4 * rT, 1e-9));
+  const riseRoof = (x) => {
+    if (x >= throatX) return 0;
+    const f = Math.min(1, Math.max(0, (x - (throatX - roofSpan)) / roofSpan));
+    return climb * (1 - f * f * (3 - 2 * f));        // eased at both ends
+  };
+  const loAt = (x) => axisY + riseFloor(x);
+  const hiAt = (x) => axisY + riseRoof(x);
+  /** The middle of the lifted rectangle -- what the section is star-shaped about. */
+  const centreY = (x) => (loAt(x) + hiAt(x)) / 2;
+
+  /**
+   * Distance from a point to the RECTANGLE the four circle centres span.
+   *
+   * The two circles' joining segment when nothing is lifted, which is what this
+   * replaces, and the same closed form: clamp into the rectangle, measure what
+   * is left over.
+   */
+  const toAxis = (p) => {
+    const x = -p.z;
+    return Math.hypot(
+      Math.max(Math.abs(p.x) - spacing, 0),
+      Math.max(loAt(x) - p.y, 0, p.y - hiAt(x)));
+  };
+  const hull = (p) => radiusAt(Math.max(-p.z, throatX)) - toAxis(p);
+
+  /**
+   * One region, one pass: the hull, aft of the narrowest station.
+   *
+   * A rectangle running forward from there to the cabin was tried and dropped.
+   * Its union with the hull is not convex -- the rectangle is the hull's
+   * bounding box, so four corners appear at the join -- and the face between
+   * them is a real surface that has to be meshed and closed against the skin.
+   * It was not closing: 56 cut vertices with nothing within 1.6 m of them, all
+   * of them along that join. Lifting the circles gets the straight sides that
+   * rectangle was for, with no join at all.
+   */
+  const passes = [[hull, (p) => -p.z - fromX]];
+
+  const inside = (p) => -p.z >= fromX && hull(p) > 0;
+
+  /** The outline at a station, as a closed 2-D loop, sampled by arc length. */
+  const outlineAt = (x, n = 160) => {
+    const r = radiusAt(Math.max(x, throatX));
+    const lo = loAt(x), hi = hiAt(x), h = Math.max(hi - lo, 0);
+    const flat = 2 * spacing, quarter = (Math.PI * r) / 2;
+    /**
+     * The eight pieces, in order, anticlockwise from the bottom-left corner.
+     *
+     * Written out rather than solved for so that a station with no lift is the
+     * same loop as before, sampled the same way: the two vertical runs simply
+     * have zero length and the quarters pair back up into the half-arcs the
+     * stadium had.
+     */
+    const segs = [
+      [flat,    (t) => [-spacing + t, lo - r]],
+      [quarter, (t) => arcPt(spacing, lo, r, -Math.PI / 2, t / quarter)],
+      [h,       (t) => [spacing + r, lo + t]],
+      [quarter, (t) => arcPt(spacing, hi, r, 0, t / quarter)],
+      [flat,    (t) => [spacing - t, hi + r]],
+      [quarter, (t) => arcPt(-spacing, hi, r, Math.PI / 2, t / quarter)],
+      [h,       (t) => [-spacing - r, hi - t]],
+      [quarter, (t) => arcPt(-spacing, lo, r, Math.PI, t / quarter)],
+    ];
+    const total = segs.reduce((a, sg) => a + sg[0], 0);
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      let sLen = total * (i / n);
+      for (const [len, at] of segs) {
+        if (sLen < len || len === total) { pts.push(at(sLen)); break; }
+        sLen -= len;
+      }
+      if (pts.length < i + 1) pts.push(segs[segs.length - 1][1](0));
+    }
+    return pts;
+  };
+
+  /**
+   * Which way is INTO the cut, from a point on its surface.
+   *
+   * Toward the nearest point of the rectangle, which on a vertical wall is
+   * straight inboard and on the floor is straight up. A single centre cannot
+   * say this once the section is tall: from the top of a wall the centre is a
+   * long way DOWN, and a face there would be judged by its height rather than
+   * by the side of the duct it is on.
+   */
+  const toInward = (px, py, x) => [
+    Math.max(-spacing, Math.min(spacing, px)) - px,
+    Math.max(loAt(x), Math.min(hiAt(x), py)) - py,
+  ];
+
+  /**
+   * Signed depth into the cut: positive inside, negative outside.
+   *
+   * The union of the two regions, so it is the greater of them -- each region
+   * being the least of its own bounding surfaces. Not for cutting, which goes
+   * one surface at a time through `passes`; this is for asking about a point.
+   */
+  const depth = (p) => Math.min(hull(p), -p.z - fromX);
+  return { axisY, spacing, rT, throatX, fromX, toX, crown, climb, roofSpan,
+           radiusAt, centreY, loAt, hiAt, toInward,
+           passes, inside, depth, outlineAt, hull };
+}
+
+/** A point on a circle, `f` of the way through a quarter turn from `th0`. */
+function arcPt(cx, cy, r, th0, f) {
+  const th = th0 + f * (Math.PI / 2);
+  return [cx + r * Math.cos(th), cy + r * Math.sin(th)];
+}
+
+/**
+ * The duct's own surface, over just the part of it inside the body.
+ *
+ * A closed outline swept along the body, rather than the open U the earlier
+ * trough needed: this cut has a roof as well as a floor, so the sheet has to
+ * carry both or the body is left open above the nacelles.
+ *
+ * The step at the narrowest station is meshed too. The rectangle forward is the
+ * hull's bounding box, so where they meet the rectangle has four corners the
+ * hull does not, and the face between them is real material with a real
+ * surface. Built as a ring: both outlines are star-shaped about the middle of
+ * the flat, so one ray finds a point on each.
+ */
+export function nacelleDuctSurface(duct, depthInside, { edge = 0.05, nu = null } = {}) {
+  const pos = [], idx = [];
+  const x0 = duct.fromX, x1 = duct.toX + 0.2;
+  const nx = 2 * Math.max(8, Math.round((x1 - x0) / edge / 2));
+  /**
+   * Samples around the section, from the LONGEST section there is.
+   *
+   * It was a fixed 160, set when every station was two circles and a flat. The
+   * verticals put another three and a half metres into the perimeter without
+   * putting anything into the count, so the sheet went from 50 mm chords to
+   * 76 mm while the body around it stayed at 50. This is for that and nothing
+   * else: it does not close the seam, which was measured before and after and
+   * did not move. The wall is visible down the whole slot and it should be
+   * tessellated like everything else that is.
+   *
+   * One count for all the rows, because the sweep joins sample j of one row to
+   * sample j of the next; sizing it per row would shear the sheet.
+   */
+  if (nu == null) {
+    let perim = 0;
+    for (let i = 0; i <= 24; i++) {
+      const loop = duct.outlineAt(x0 + (x1 - x0) * (i / 24), 96);
+      let p = 0;
+      for (let j = 0; j < loop.length; j++) {
+        const a = loop[j], b = loop[(j + 1) % loop.length];
+        p += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      perim = Math.max(perim, p);
+    }
+    nu = 2 * Math.max(8, Math.round(perim / edge / 2));
+  }
+  /**
+   * Stations: even, but crowded where the roof goes up.
+   *
+   * Everywhere else the outline changes slowly enough that rows a skin
+   * triangle apart describe it. Across the roof's rise it does not: the
+   * section goes from closed to a metre and a half of vertical wall in a
+   * third of a metre, and evenly spaced rows there give a sheet whose rim is a
+   * coarse polygon where the skin was cut on the exact curve. Worth four of
+   * the seam's unclosed vertices, 26 down to 22 -- not the whole of it, but
+   * the part that was the drawing of the cut rather than the cut.
+   */
+  const stations = [];
+  for (let i = 0; i <= nx; i++) stations.push(x0 + (x1 - x0) * (i / nx));
+  if (duct.roofSpan > 0) {
+    const a = duct.throatX - duct.roofSpan, b = duct.throatX;
+    const fine = Math.max(6, Math.round((b - a) / (edge / 6)));
+    for (let i = 0; i <= fine; i++) stations.push(a + (b - a) * (i / fine));
+  }
+  stations.sort((p, q) => p - q);
+  const rows = [];
+  for (let i = 0; i < stations.length; i++) {
+    // A station is nudged off the join so a row never lands exactly on the
+    // step, where the outline is two different loops depending on the side.
+    let x = stations[i];
+    if (Math.abs(x - duct.throatX) < 1e-6) x += 1e-6;
+    if (i && Math.abs(x - stations[i - 1]) < 1e-9) continue;   // no zero-height band
+    rows.push(duct.outlineAt(x, nu).map(([px, py]) => new THREE.Vector3(px, py, -x)));
+  }
+  const vid = new Map();
+  const id = (r, c) => {
+    const k = r * 8192 + c;
+    if (vid.has(k)) return vid.get(k);
+    const p = rows[r][c];
+    const n = pos.length / 3;
+    pos.push(p.x, p.y, p.z);
+    vid.set(k, n);
+    return n;
+  };
+  for (let i = 0; i < rows.length - 1; i++) {
+    for (let j = 0; j < nu; j++) {
+      const j2 = (j + 1) % nu;
+      const a = id(i, j), b = id(i, j2), c = id(i + 1, j), e = id(i + 1, j2);
+      idx.push(a, c, b, b, c, e);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  faceInward(g, duct);
+  g.computeVertexNormals();
+
+  /**
+   * The forward end, capped.
+   *
+   * The cut stops at the nacelles' narrowest station, and a cut that stops
+   * leaves a hole: the skin is opened right up to it and there is nothing
+   * across it, so you see into the body. Worth saying plainly because the
+   * failure reads as a seam problem -- cut vertices with nothing within a metre
+   * of them -- when it is not a gap, it is a missing face.
+   */
+  const cap = [], capIdx = [];
+  const loop = duct.outlineAt(duct.fromX, nu);
+  cap.push(0, duct.centreY(duct.fromX), -duct.fromX);   // fan from the middle
+  for (const [px, py] of loop) cap.push(px, py, -duct.fromX);
+  for (let j = 0; j < nu; j++) capIdx.push(0, 1 + j, 1 + ((j + 1) % nu));
+  const front = new THREE.BufferGeometry();
+  front.setAttribute('position', new THREE.Float32BufferAttribute(cap, 3));
+  front.setIndex(capIdx);
+  front.computeVertexNormals();
+
+  // All trimmed to what is actually inside the body.
+  const keep = (geo) => clipTriangles(geo, (p) => depthInside(p.x, p.y, p.z));
+  return { wall: keep(g), front: keep(front) };
+}
+
+
+/**
+ * Wind a closed cut's surface so its visible side faces INTO the cut.
+ *
+ * The old trough was a U -- open at the top -- and "into the void" was up and
+ * inboard everywhere on it. This cut has a roof, where into the void is DOWN,
+ * so a single direction cannot say which way a face should look. What holds
+ * everywhere is that the void is around the two duct axes: a face is right way
+ * out when its normal points toward the nearer of them.
+ *
+ * Votes by area and flips the lot, rather than per face, because a closed sweep
+ * is already consistent with itself -- the only question is which way round.
+ */
+function faceInward(geo, duct) {
+  const pos = geo.getAttribute('position');
+  const index = geo.getIndex();
+  const n = index ? index.count : pos.count;
+  const at = index ? (i) => index.getX(i) : (i) => i;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const nrm = new THREE.Vector3(), cen = new THREE.Vector3(), toIn = new THREE.Vector3();
+  let vote = 0;
+  for (let t = 0; t + 2 < n; t += 3) {
+    a.fromBufferAttribute(pos, at(t));
+    b.fromBufferAttribute(pos, at(t + 1));
+    c.fromBufferAttribute(pos, at(t + 2));
+    cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+    nrm.crossVectors(b.clone().sub(a), c.clone().sub(a));      // 2 x area x normal
+    // Toward the nearest point of the duct's axis, in the section plane.
+    const [ix, iy] = duct.toInward(cen.x, cen.y, -cen.z);
+    toIn.set(ix, iy, 0);
+    vote += nrm.dot(toIn);
+  }
+  if (vote < 0) {
+    if (index) {
+      const arr = index.array;
+      for (let t = 0; t + 2 < arr.length; t += 3) {
+        const s = arr[t + 1]; arr[t + 1] = arr[t + 2]; arr[t + 2] = s;
+      }
+      index.needsUpdate = true;
+    }
+  }
+  return geo;
+}

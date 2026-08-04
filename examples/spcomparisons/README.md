@@ -4,6 +4,9 @@ Twenty aircraft, sized as signomial programs from one shared component
 library. The point is to change **one thing at a time**: rows 1 and 2 differ
 only in the airframe, rows 1, 3, 4 and 5 only in what carries the energy.
 
+To solve one case by hand -- for debugging, sweeps, or the geometry
+visualizer -- see [RUNNING.md](RUNNING.md).
+
 ## Layout
 
 ```

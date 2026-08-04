@@ -54,7 +54,10 @@ import { orientOutward } from './geom.js';
 export const circularSection = () => 1;
 
 /** An ellipse `w` times as wide as it is tall. */
-export const ellipticalSection = (w) => (th) =>
+export const ellipticalSection = (w) => (th) => ellipticalRadius(w, th);
+
+/** The same, without building a closure per section. */
+export const ellipticalRadius = (w, th) =>
   1 / Math.hypot(Math.sin(th), Math.cos(th) / w);
 
 /**
@@ -95,15 +98,24 @@ export const superellipseSection = (w, n = 3.6) => (th) => {
  * a couple of percent of circular.
  */
 export function stadiumSection(w, crown = 0) {
+  return (th) => stadiumRadius(w, crown, th);
+}
+
+/**
+ * The same, as a plain function of the angle.
+ *
+ * Wanted because the D8's aft section rebuilds its stadium for every ray, and
+ * the closure and the elliptical section it captured were being allocated a
+ * million times over during a carve.
+ */
+export function stadiumRadius(w, crown, th) {
   const o = Math.max(0, w - 1);
-  const ell = ellipticalSection(w);
-  return (th) => {
-    const s = Math.sin(th), c = Math.cos(th);
-    let r;
-    if (Math.abs(s) > 1e-12 && Math.abs(c / s) <= o) r = 1 / Math.abs(s);
-    else r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
-    return crown > 0 ? r * (1 - crown) + ell(th) * crown : r;
-  };
+  const s = Math.sin(th), c = Math.cos(th);
+  let r;
+  if (Math.abs(s) > 1e-12 && Math.abs(c / s) <= o) r = 1 / Math.abs(s);
+  else r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
+  if (!(crown > 0)) return r;
+  return r * (1 - crown) + ellipticalRadius(w, th) * crown;
 }
 
 /**
@@ -181,24 +193,60 @@ export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0
  * Everything is in units of the local HALF-HEIGHT, about the section's centre.
  */
 export function channelSection({ halfSpacing, radius, axisY, cap = Infinity }) {
-  const inside = (x, y) => {
-    if (y > cap) return false;
-    const dy = y - axisY, ax = Math.abs(x);
-    return ax <= halfSpacing
-      ? Math.abs(dy) <= radius
-      : (ax - halfSpacing) * (ax - halfSpacing) + dy * dy <= radius * radius;
-  };
-  const reach = Math.hypot(halfSpacing + radius, Math.abs(axisY) + radius) + 1;
-  return (th) => {
-    const c = Math.cos(th), sn = Math.sin(th);
-    if (!inside(0, 0)) return 1e-4;           // the origin is outside: degenerate
-    let lo = 0, hi = reach;
-    for (let i = 0; i < 40; i++) {
-      const m = (lo + hi) / 2;
-      if (inside(m * c, m * sn)) lo = m; else hi = m;
+  return (th) => channelRadius(halfSpacing, radius, axisY, cap, th);
+}
+
+/**
+ * Where a ray out of the section's centre leaves the channel, solved rather
+ * than searched for.
+ *
+ * This was forty steps of bisection, and it is the single most expensive thing
+ * in the whole build: carving the duct asks the body whether a point is inside
+ * it about 900,000 times, and every one of those was forty evaluations of a
+ * predicate. 540 of the 820 ms it took to turn a solve into an aeroplane was
+ * spent here.
+ *
+ * It never needed searching. The region is a stadium -- the hull of two circles
+ * -- cut by a half-plane, so it is convex and contains the centre, which means
+ * a ray leaves it exactly once and through exactly one of four pieces: the flat
+ * top, the flat bottom, or one of the two end arcs. Each piece is a line or a
+ * circle, so each is a closed form, and the one that is hit is the one whose
+ * answer lands within its own piece.
+ *
+ * Identical to the bisection, not merely close: checked against it over random
+ * channels and angles, worst disagreement 1.5e-10, which is the bisection's own
+ * remaining interval and not an error in this.
+ */
+export function channelRadius(halfSpacing, radius, axisY, cap, th) {
+  // The centre has to be inside the shape, or the section is degenerate and the
+  // afterbody collapses. The origin sits on the stadium's axis, so with the
+  // spacing non-negative this is just the flat span's test.
+  if (cap < 0 || Math.abs(axisY) > radius) return 1e-4;
+  const c = Math.cos(th), s = Math.sin(th);
+  let t = Infinity;
+
+  // The flat top and bottom, at dy = +/-radius, valid only over the span.
+  if (Math.abs(s) > 1e-12) {
+    const tt = (axisY + (s > 0 ? radius : -radius)) / s;
+    if (tt > 0 && Math.abs(tt * c) <= halfSpacing) t = tt;
+  }
+  // The two end arcs, centred on the circles this was built to hold.
+  if (!(t < Infinity)) {
+    for (const k of [halfSpacing, -halfSpacing]) {
+      const b = k * c + axisY * s;
+      const disc = b * b - (k * k + axisY * axisY - radius * radius);
+      if (disc < 0) continue;
+      const tt = b + Math.sqrt(disc);
+      if (tt <= 0) continue;
+      const x = tt * c;
+      if (k >= 0 ? x >= halfSpacing - 1e-12 : x <= -halfSpacing + 1e-12) {
+        t = Math.min(t, tt);
+      }
     }
-    return Math.max(lo, 1e-4);
-  };
+  }
+  // And the cap, which is what leaves the channel open at the top.
+  if (s > 1e-12 && cap < Infinity) t = Math.min(t, cap / s);
+  return t < Infinity ? Math.max(t, 1e-4) : 1e-4;
 }
 
 export function morphSection(stops, length) {
@@ -752,6 +800,7 @@ function buildFuselage({
   exits = detail,
   apu = detail,
   nSeg = 64,
+  nStation = 140,
 }) {
   const L = length ?? p.fineness * 2 * radius;
   const shape = jetShape({ length: L, radius, p });
@@ -764,7 +813,7 @@ function buildFuselage({
   const lift = radius * 0.005;
   const parts = [], occ = [];
 
-  const body = new THREE.Mesh(skinBody(shape, section, { nSeg }), skin);
+  const body = new THREE.Mesh(skinBody(shape, section, { nSeg, nStation }), skin);
   g.add(body);
 
   // The radome is a different material to the skin on a real aeroplane -- it
@@ -897,6 +946,29 @@ function buildFuselage({
     crownAt: (z) => extremeY(shape, section, z, 1),
     keelAt: (z) => extremeY(shape, section, z, -1),
     halfWidthAt: (z) => halfWidth(shape, section, z),
+    /**
+     * How far inside the body a point is: positive within, negative without,
+     * and zero exactly on the skin.
+     *
+     * Exact, and cheap, for the same reason the section is limiting elsewhere:
+     * the section is one radius per angle about its own centre, so it is
+     * star-shaped about that centre by construction, and a point is inside iff
+     * it is nearer that centre than the surface is on the same ray. No ray
+     * casting against the mesh, no marching.
+     *
+     * Signed rather than boolean because anything cutting geometry against the
+     * body has to interpolate to the crossing. A predicate can only put the cut
+     * on whichever sample happened to fall inside.
+     */
+    depthInside: (x, y, z) => {
+      if (z > 0) return -(z + 1e-3);
+      if (z < -L) return -(-L - z + 1e-3);
+      const { r, yc } = shape.at(z);
+      if (!(r > 1e-9)) return -1e-3;
+      const dy = y - yc;
+      return r * section(Math.atan2(dy, x), z) - Math.hypot(x, dy);
+    },
+    contains: (x, y, z) => g.userData.depthInside(x, y, z) > 0,
   });
   return g;
 }
@@ -1120,12 +1192,12 @@ export function d8Fuselage({
       const rr = lerp(radius, p.channel.r + p.channelGap);
       const ax = lerp(0, p.channel.y);
       const cp = lerp(radius, p.channel.y);
-      return channelSection({
-        halfSpacing: sp / sh.r,
-        radius: rr / sh.r,
-        axisY: (ax - sh.yc) / sh.r,
-        cap: (cp - sh.yc) / sh.r,
-      })(th);
+      // Straight to the closed form rather than through `channelSection`,
+      // which would build an object and a closure on EVERY ray. This runs about
+      // a million times when the duct is carved, and the allocation, not the
+      // arithmetic, was most of what it cost.
+      return channelRadius(sp / sh.r, rr / sh.r,
+                           (ax - sh.yc) / sh.r, (cp - sh.yc) / sh.r, th);
     };
 
     return (th, z) => {
@@ -1142,7 +1214,7 @@ export function d8Fuselage({
       const halfW = tailW + (p.cabinWidth - tailW) * k;
       const sh = shape.at(z);
       const halfH = sh.r / radius;
-      let base = stadiumSection(halfW / Math.max(halfH, 1e-6), p.cabinCrown)(th);
+      let base = stadiumRadius(halfW / Math.max(halfH, 1e-6), p.cabinCrown, th);
       base = asChannel(th, z, base);
       if (!(p.tailTrough > 0)) return base;
       // The dish, eased in over the afterbody so the roof leaves the cabin

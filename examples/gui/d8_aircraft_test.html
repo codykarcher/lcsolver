@@ -61,11 +61,15 @@
   <select id="art"></select>
   <p class="hint" id="artNote" style="margin-top:5px"></p>
   <div class="check"><input type="checkbox" id="titles" checked><label for="titles">fuselage titles</label></div>
+  <div class="check"><input type="checkbox" id="kanji"><label for="kanji">Mitsubishi in Japanese</label></div>
   <p class="hint" id="titleNote"></p>
   <div class="check"><input type="checkbox" id="windows" checked><label for="windows">cabin windows</label></div>
   <p class="hint" id="windowNote"></p>
 
   <h2>view</h2>
+  <div class="check"><input type="checkbox" id="duct" checked><label for="duct">carve the engine duct</label></div>
+  <div class="check"><input type="checkbox" id="nac" checked><label for="nac">nacelles round the engines</label></div>
+  <p class="hint" id="ductNote"></p>
   <div class="check"><input type="checkbox" id="ground" checked><label for="ground">ground plane</label></div>
   <div class="check"><input type="checkbox" id="sit" checked><label for="sit">sit on the gear</label></div>
   <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
@@ -106,7 +110,8 @@ import { deckFromSolve } from './components/aircraft.js';
 import { d8Aircraft } from './components/d8_aircraft.js';
 import { paintRoles, paint, schemeNames, SCHEMES, painted }
   from './components/paint.js';
-import { surfaceArt, fuselageTitles, cabinWindows, windscreen, WINDSCREEN_D8,
+import { surfaceArt, fuselageTitles, FUSELAGE_TITLES, FUSELAGE_TITLES_JA,
+         cabinWindows, windscreen, WINDSCREEN_D8,
          TAIL_ART, TITLE_LAYOUT, artNames } from './components/decals.js';
 import { disposeTree } from './components/geom.js';
 import { all as MATERIALS } from './components/materials.js';
@@ -235,7 +240,11 @@ function applyGear() {
 // The deck is READ, not written here. Nothing between the solve and the drawing
 // is retyped, which is why the areas below agree to machine precision rather
 // than to however carefully I copied them.
-const SOLVE_FILE = './decks/b737_d8_solve.json';
+// `?deck=<url>` overrides it, which is how the show_* scripts point the page
+// at a solve that lives anywhere on disk: they serve it at a fixed URL rather
+// than copying it in here, so the file being drawn is the file you named.
+const SOLVE_FILE = new URLSearchParams(location.search).get('deck')
+  ?? './decks/b737_d8_solve.json';
 let deck = null;
 
 /**
@@ -281,9 +290,20 @@ function build() {
   craft = d8Aircraft(deck, {
     detail: false,
     sitOnGround: el('sit').checked,
+    ductCarve: el('duct').checked,
+    nacelles: el('nac').checked,
   });
   scene.add(craft);
   const u = craft.userData;
+  // What the carve actually did, in the numbers that say whether it worked:
+  // how much of the body went, and how far the walls stand off the engines.
+  const dz = u.parts.fuselage.userData.duct;
+  el('ductNote').textContent = dz
+    ? `${dz.skin.before - dz.skin.after} of ${dz.skin.before} triangles removed `
+      + `\u2014 the hull of the two ducts, ${(2 * dz.spacing).toFixed(2)} m apart, `
+      + `${(2 * dz.rThroat).toFixed(2)} m across at the throat `
+      + `${dz.throatX.toFixed(1)} m aft of the nose`
+    : 'off \u2014 the body is exactly as the section law builds it';
   u.parts.engines.forEach((p, i) => { p.userData.spinning = spinning[i]; });
   applyGear();
   applyGearVisible();
@@ -319,7 +339,12 @@ function build() {
   // The row along the body. Onto the fuselage rather than the aircraft, so it
   // travels with the body if that ever moves relative to the rest.
   if (el('titles').checked) {
-    const row = fuselageTitles(u.parts.fuselage, { textureFor, deck });
+    // English is the default mark; the Japanese one is the same row with its
+    // first title swapped, so nothing else about the layout changes.
+    const row = fuselageTitles(u.parts.fuselage, {
+      textureFor, deck,
+      titles: el('kanji').checked ? FUSELAGE_TITLES_JA : FUSELAGE_TITLES,
+    });
     u.parts.fuselage.add(row);
     u.parts.titles = row;
     const [aft, fwd] = row.userData.zRange;
@@ -424,7 +449,7 @@ function ortho(which) {
   controls.update();
 }
 
-for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'windows'])
+for (const id of ['ground', 'sit', 'wire', 'axes', 'scheme', 'art', 'titles', 'kanji', 'windows', 'duct', 'nac'])
   el(id).addEventListener('change', build);
 
 for (const [id, names] of [['scheme', schemeNames], ['art', artNames]]) {

@@ -150,8 +150,22 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
   if (Math.abs(roof - u.engineAxisY) > 0.02) {
     bad(`the channel is open at ${roof.toFixed(3)}, the engine axis is ${u.engineAxisY.toFixed(3)}`);
   }
-  if (Math.abs(wall - (d.engineY + rN + gap)) > 0.03) {
-    bad(`the walls reach ${wall.toFixed(3)}, the engines reach ${(d.engineY + rN).toFixed(3)}`);
+  /**
+   * The walls reach the FINS, not the engines.
+   *
+   * They used to be the same test, because the fins were placed by the model
+   * at the body's own corner and the corner was sized to the engines -- both
+   * ends of the comparison came from one guess. The solve names `y_vt` now, and
+   * the body has to end where the fins stand: they sit on that corner, and a
+   * body sized to the engines instead ends 87 mm inboard of its own fins.
+   *
+   * The engines are then inboard of the trailing edge rather than flush with
+   * it, which is the right way round -- the carved trough holds them, the
+   * corner holds the fins.
+   */
+  const wantWall = d.finY ?? (d.engineY + rN + gap);
+  if (Math.abs(wall - wantWall) > 0.03) {
+    bad(`the walls reach ${wall.toFixed(3)} where the fins stand at ${wantWall.toFixed(3)}`);
   }
 
   /**
@@ -213,8 +227,21 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     if (worst) bad(`the lower surface pinches at x/L ${worstAt.toFixed(2)} -- ${worst} reversals`);
   }
 
-  // Seated: the engines stand proud of the channel and are not hanging below it.
-  const b2 = new THREE.Box3().setFromObject(u.parts.engines[0]);
+  /**
+   * Seated: the engine stands proud of the channel and does not hang below it.
+   *
+   * Measured on the ENGINE, not on the whole pod. A pod may carry a nacelle
+   * wrapped round the engine, and that cowl is deliberately wider than the
+   * channel was cut for -- the channel holds the engine, the cowl wraps it, and
+   * whatever of the cowl ends up inside the body is carved away. Measuring the
+   * pod's bounding box called that a fault: the nacelle's underside sits 68 mm
+   * below the floor before the carve takes it.
+   */
+  const core = [];
+  u.parts.engines[0].traverse((o) => { if (o.isMesh && o.name === 'core') core.push(o); });
+  const b2 = new THREE.Box3();
+  for (const c of core) b2.expandByObject(c);
+  if (b2.isEmpty()) b2.setFromObject(u.parts.engines[0]);
   if (b2.max.y <= roof) bad('the engines do not stand above the channel -- they are buried');
   if (b2.min.y < floor - 1e-6) bad('the engines hang below the channel floor');
   console.log(`     engines stand ${(b2.max.y - roof).toFixed(3)} m above the open top`);
@@ -237,13 +264,17 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
         `fins top out at ${fin.max.y.toFixed(2)}`);
   }
   /**
-   * The fins hang by their root TRAILING EDGE, on the body's back upper
-   * corners -- all three coordinates, not just the station.
+   * The fins stand where the SOLVE puts them, laterally and longitudinally.
    *
-   * The station is the solve's doing: it puts the fin's trailing edge on the
-   * body's own. The other two are the channel's: it puts the body's upper
-   * corners there. So the corner is one point that both already own, and the
-   * fin either sits on it or does not.
+   * `y_vt` is the lateral station and it is the number that matters, because
+   * the tailplane rides on the fin tips and the solve aligns its 0.40c spar
+   * with the tip's at one spanwise station. Anywhere else and the tailplane
+   * slides along its own sweep -- 140 mm out when the fins sat on the body's
+   * back corner, which is where this used to require them.
+   *
+   * The corner is still reported, because a fin standing well clear of the body
+   * would be hanging in the air, but it is no longer the thing being asserted:
+   * the solve owns the station and it is 87 mm outboard of the corner here.
    */
   const vt = u.parts.verticalTails.find((f) => f.position.x > 0) ?? u.parts.verticalTails[0];
   const corner = {
@@ -252,11 +283,22 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     z: -d.fuseLength,
   };
   const rootTE = { x: vt.position.x, y: vt.position.y, z: vt.position.z - u.fin.rootChord };
-  const off = Math.hypot(rootTE.x - corner.x, rootTE.y - corner.y, rootTE.z - corner.z);
   console.log(`     fin root trailing edge (${rootTE.x.toFixed(3)}, ${rootTE.y.toFixed(3)}, ` +
-              `${rootTE.z.toFixed(3)}) against the body's back upper corner ` +
+              `${rootTE.z.toFixed(3)}); the body's back upper corner is at ` +
               `(${corner.x.toFixed(3)}, ${corner.y.toFixed(3)}, ${corner.z.toFixed(3)})`);
-  if (off > 2e-3) bad(`the fin root trailing edge is ${(1000 * off).toFixed(0)} mm off the corner`);
+  if (d.finY != null && Math.abs(rootTE.x - d.finY) > 1e-6) {
+    bad(`the fin stands at ${rootTE.x.toFixed(4)} where the solve's y_vt is ${d.finY.toFixed(4)}`);
+  }
+  if (Math.abs(rootTE.z - corner.z) > 2e-3) {
+    bad(`the fin root trailing edge is at ${rootTE.z.toFixed(3)}, not the body's own ${corner.z.toFixed(3)}`);
+  }
+  if (Math.abs(rootTE.y - corner.y) > 2e-3) {
+    bad(`the fin root sits at ${rootTE.y.toFixed(3)}, not on the body's crown ${corner.y.toFixed(3)}`);
+  }
+  // Outboard of the body it would be hanging in the air rather than mounted.
+  if (rootTE.x > corner.x + 0.25) {
+    bad(`the fin stands ${(rootTE.x - corner.x).toFixed(3)} m outboard of the body's corner`);
+  }
 }
 
 /* ---- how it sits ------------------------------------------------------- */
@@ -285,7 +327,27 @@ for (const [key, want] of Object.entries(d.solvedAreas)) {
     highest = Math.max(highest, new THREE.Box3().setFromObject(lg).min.y);
   }
   const spread = highest - lowest;
-  console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg; the wheels lie within ` +
+  /**
+ * Where the solved gear attachment ended up.
+ *
+ * The height is solved from the requirement that the wheels are coplanar, so
+ * the attitude below is zero by construction and says nothing on its own. What
+ * is worth checking is that the answer is a place an aeroplane could carry a
+ * leg from -- inside the body's own depth at that station, rather than hanging
+ * in the air above the crown.
+ */
+{
+  const a = u.mainGearAttach;
+  console.log(`\nmain gear attaches ${a.aboveKeel.toFixed(3)} m above the keel ` +
+              `(the body is ${a.bodyDepth.toFixed(3)} deep there), ` +
+              `${a.aboveWing >= 0 ? '+' : ''}${a.aboveWing.toFixed(3)} m from the wing`);
+  if (a.aboveKeel < -0.05 || a.aboveKeel > a.bodyDepth + 0.05) {
+    bad(`the gear attaches ${a.aboveKeel.toFixed(2)} m above the keel, outside the body's ` +
+        `${a.bodyDepth.toFixed(2)} m depth -- the deck's struts do not fit this body`);
+  }
+}
+
+console.log(`\nstatic attitude ${u.groundAttitude.toFixed(3)} deg; the wheels lie within ` +
               `${(1000 * spread).toFixed(0)} mm of one plane`);
   if (Math.abs(lowest) > 0.01) bad(`sat down, the lowest wheel is ${lowest.toFixed(3)} off the ground`);
   if (spread > 0.25) {
