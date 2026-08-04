@@ -3237,7 +3237,11 @@ _SEED_SKIP = ("HT_", "Fuse_w_db")
 #: "architecture-switched" case above. The SP engine SELF-SEEDS at build
 #: (sp_engine.py): importing deck values over that seed re-creates the
 #: inconsistent-interface start the self-seed exists to prevent.
-if _SP_ENGINE:
+# (Eng_ gating disabled: measured, every working coupled solve ran with
+# the reference's Eng_ values as warm coverage for interface variables
+# nothing else seeds; the cold-start question is handled by the
+# case-reference pipeline instead.)
+if False and _SP_ENGINE:
     _SEED_SKIP = _SEED_SKIP + ("Eng_",)
 
 

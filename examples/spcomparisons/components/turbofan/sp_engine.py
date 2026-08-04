@@ -326,29 +326,13 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
             choked_core=True, choked_byp=True)
         _seed.update(_WS.design_state(_pseed))
         _Tt0d = _T0d * (1.0 + 0.2 * _MNd * _MNd)
-        _deld = _P0d * (1.0 + 0.2 * _MNd * _MNd) ** 3.5
         for i in range(N):
             _T0i, _P0i, _u0i, _MNi = _conds_g(i)
             _Tt0i = _T0i * (1.0 + 0.2 * _MNi * _MNi)
             _T4i = min(tech.Tt4_CR_K * _Tt0i / _Tt0d,
                        tech.Tt4_TO_K if i < Nclimb else tech.Tt4_CR_K)
-            # CORRECTED-THRUST SIMILARITY: seed each segment's thrust as
-            # the design guess scaled by delta0, so every segment's seed
-            # is THE SAME machine at its corrected state -- map
-            # coordinates land on the design point, which is what the
-            # design/OD ratio rows demand. Sizing each segment to the
-            # flat design-thrust guess instead seeded five different
-            # engines (measured: the takeoff seed's core jet at 875 m/s,
-            # a tiny machine flat-out at its rating).
-            _deli = _P0i * (1.0 + 0.2 * _MNi * _MNi) ** 3.5
-            _Fi = (float(Fn_seg_g[i]) if Fn_seg_g is not None
-                   else Fn_des_g * _deli / _deld * (_T4i / tech.Tt4_CR_K))
-            _chc, _chb = (seg_choked[i] if seg_choked is not None
-                          else ((True, True) if i >= Nclimb
-                                else (False, True)))
             _pi = _dcx.replace(_pseed, T0_K=_T0i, P0_Pa=_P0i, MN=_MNi,
-                               V0_m_s=_u0i, T4_K=_T4i, Fn_N=_Fi,
-                               choked_core=_chc, choked_byp=_chb)
+                               V0_m_s=_u0i, T4_K=_T4i)
             try:
                 _wsi = _WS.design_state(_pi)
             except Exception:

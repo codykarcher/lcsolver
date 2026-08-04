@@ -8,9 +8,10 @@ C: build the SP-engined aircraft, load stage-A values into every matching
 """
 import os, sys, time, json, warnings
 warnings.filterwarnings("ignore")
-HERE = "/Users/codykarcher/Dropbox/research/edi/examples/spcomparisons"
+import pathlib
+HERE = str(pathlib.Path(__file__).resolve().parents[1])
 sys.path.insert(0, HERE); sys.path.insert(0, HERE + "/components")
-sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 os.chdir(HERE)
 os.environ.pop("SP_ENGINE", None)
 
@@ -307,6 +308,10 @@ opts.trust_max = 0.5
 opts.phase2_restore = True
 opts.ipopt_options = dict(opts.ipopt_options, tol=1e-9,
                           constr_viol_tol=1e-9, max_iter=6000)
+for kv in os.environ.get("SIA_OPTS", "").split(","):
+    if "=" in kv:
+        k, v = kv.split("=", 1)
+        setattr(opts, k, eval(v))
 
 # assemble the initial warm source from A + B (already set on cm)
 warm0 = {v.name: float(pyo.value(v))
@@ -341,6 +346,62 @@ passes = [
 ]
 if os.environ.get("SWEEP"):
     passes = passes[:2]     # settle the coupled pinned basin, then sweep
+if os.environ.get("REF_CASE"):
+    ref_case = json.load(open("b737_case_reference.json"))
+    cm = build_warmed(ref_case)
+    st = structure_detector(cm)
+    res = solve_sia(st, options=opts, presolve=False,
+                    split_equalities=True)
+    feas = float(getattr(res, "max_violation", float("nan")))
+    print(f"  REF_CASE free solve: converged={res.converged} "
+          f"it={res.iterations}  feas={feas:.2e}", flush=True)
+    rep = getattr(res, "report", None)
+    if rep:
+        print(str(rep)[:1500])
+    try:
+        sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
+                           "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
+        from kkt_verify import verify_kkt
+        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        _s3, _f3, _m3 = verify_kkt(_bpv(st, sp_form=True), res.x)
+        print(f"  REF_CASE VERIFIER: stationarity {_s3:.3e} "
+              f"feasibility {_f3:.3e}", flush=True)
+    except Exception as _e:
+        print(f"  (verifier failed: {_e})")
+    snapR = snapshot(cm, st, res.x)
+    json.dump(snapR, open("b737_stageC_ladder.json", "w"))
+    for k in ("Eng_cyc_pi_f_D", "Eng_cyc_pi_lc_D", "Eng_cyc_pi_hc_D",
+              "Eng_cyc_BPR_D", "W_f_total", "W_total"):
+        print(f"    {k} = {snapR.get(k)}")
+    sys.exit(0)
+
+if os.environ.get("POLISH"):
+    # load the settled raw snapshot and re-solve UNSPLIT from rest: the
+    # split-equality representation is a travel device, and from a settled
+    # point plain equalities should verify/converge without it
+    snap0 = json.load(open("b737_stageC_ladder.json"))
+    cm = build_warmed(snap0)
+    st = structure_detector(cm)
+    opts.max_iterations = 60
+    res = solve_sia(st, options=opts, presolve=False,
+                    split_equalities=False)
+    print(f"  POLISH (unsplit, from rest): converged={res.converged} "
+          f"it={res.iterations}  stat="
+          f"{float(getattr(res,'stationarity',float('nan'))):.3e}  "
+          f"feas={float(getattr(res,'max_violation',float('nan'))):.3e}",
+          flush=True)
+    try:
+        sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
+                           "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
+        from kkt_verify import verify_kkt
+        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        _s2, _f2, _m2 = verify_kkt(_bpv(st, sp_form=True), res.x)
+        print(f"  POLISH VERIFIER: stationarity {_s2:.3e} "
+              f"feasibility {_f2:.3e}", flush=True)
+    except Exception as _e:
+        print(f"  (verifier failed: {_e})")
+    sys.exit(0)
+
 if os.environ.get("SINGLE"):
     passes = [("free", None)]   # ONE pass, no pins, no ladder
 if os.environ.get("PIND"):
@@ -504,6 +565,10 @@ for label, pred in passes:
 
 json.dump(src if isinstance(src, dict) else {},
           open("b737_stageC_ladder.json", "w"))
+if os.environ.get("PIND"):
+    json.dump(src if isinstance(src, dict) else {},
+              open("b737_case_reference.json", "w"))
+    print("  wrote b737_case_reference.json (baseline design snapshot)")
 
 if os.environ.get("SWEEP"):
     # milestone-5 continuation: coupled PINNED solves along the lever
