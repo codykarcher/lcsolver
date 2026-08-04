@@ -172,7 +172,7 @@ json.dump(vals_B, open("b737_stageB_engine.json", "w"))
 
 # ---- stage C ------------------------------------------------------------
 print("=== stage C: SP-engined aircraft, warm ===", flush=True)
-os.environ["SP_ENGINE"] = "cfm56_era"
+os.environ["SP_ENGINE"] = os.environ.get("SP_TECH", "cfm56_era")
 import importlib
 for mod in ("components.technology", "components.turbofan.model",
             "components.wing", "aircraft"):

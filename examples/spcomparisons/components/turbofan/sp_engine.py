@@ -84,6 +84,11 @@ class SPTech:
     StA: float = 0.09
     dT_streak_K: float = 200.0
     M_t_exit: float = 1.0
+    #: cooled-turbine efficiency debit, d(eta_HPT) per unit total
+    #: cooling-flow fraction (N+3-era rule of thumb ~0.4-0.5 per unit;
+    #: APPROXIMATE -- flag in any acceptance statement). Priced about the
+    #: truth-cycle cooling level, so anchors are untouched at s_cool = 1.
+    K_cool_eff: float = 0.45
     #: shaft power extraction, W
     HPX_W: float = 186425.0
     cust_frac_W: float = 0.0445
@@ -105,6 +110,11 @@ TECHS = {
         Tt4_TO_K=1833.0, Tt4_CR_K=1587.0, T_metal_K=1280.0,
         OPR_max=32.0, BPR_ref=5.1,
         FPR_g=1.65, LPC_PR_g=1.9, HPC_PR_g=9.5, BPR_g=5.2),
+    # WHAT-IF: CFM56-era technology with the OPR bound lifted past the
+    # thermal-efficiency peak -- exists to demonstrate the interior OPR
+    # optimum that variable cooling prices (same metal temperature, so
+    # the cooling requirement is what pushes back).
+    "cfm56_hiopr": None,   # filled below from cfm56_era
     # GEnx-era: the genx_class anchor's efficiencies (ETAS GE90 row
     # converted poly->adiabatic), 1900 K takeoff rating, modern OPR bound.
     "genx_era": SPTech(
@@ -120,6 +130,11 @@ TECHS = {
 }
 
 
+import dataclasses as _dc_mod
+TECHS["cfm56_hiopr"] = _dc_mod.replace(TECHS["cfm56_era"],
+                                       name="cfm56_hiopr", OPR_max=45.0)
+
+
 class _EnginePins:
     """Duck-typed CyclePins whose PR/eff/BPR entries are pyomo VARIABLES.
 
@@ -128,7 +143,7 @@ class _EnginePins:
     design pin may be a variable.
     """
     def __init__(self, tech: SPTech, FPR, LPC_PR, HPC_PR, BPR, eff_fan,
-                 P0_g, Fn_g):
+                 P0_g, Fn_g, s_cool=None, eff_hpt=None):
         d = SC.CyclePins.__dataclass_fields__  # defaults for the rest
         base = SC.CyclePins(
             name=f"rubber_{tech.name}", T0_K=218.8, P0_Pa=P0_g, MN=0.785,
@@ -143,6 +158,22 @@ class _EnginePins:
             setattr(self, f_, getattr(base, f_))
         self.FPR, self.LPC_PR, self.HPC_PR = FPR, LPC_PR, HPC_PR
         self.BPR, self.eff_fan = BPR, eff_fan
+        if s_cool is not None:
+            # VARIABLE COOLING FLOW: every cooling stream's flow fraction
+            # scales with one design variable (stream proportions and
+            # extraction locations stay at the truth-cycle hardware
+            # values). The (1 - sum f) flow rows in sp_cycle become
+            # signomial with s_cool in them, which is the established
+            # pattern; only frac_W entries scale -- frac_P and frac_work
+            # are geometry.
+            self.cool1 = SC.Bleed(base.cool1.frac_W * s_cool,
+                                  base.cool1.frac_P, base.cool1.frac_work)
+            self.cool2 = SC.Bleed(base.cool2.frac_W * s_cool,
+                                  base.cool2.frac_P, base.cool2.frac_work)
+            self.frac_cool3 = base.frac_cool3 * s_cool
+            self.frac_cool4 = base.frac_cool4 * s_cool
+        if eff_hpt is not None:
+            self.eff_hpt = eff_hpt
 
 
 def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
@@ -191,6 +222,20 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     BPRD = V("BPR_D", tech.BPR_g, "design bypass ratio, FREE",
              bounds=(2.0, 14.0))
     eff_fan = V("eff_fan_D", tech.eff_fan0, "fan design adiabatic eff")
+    # VARIABLE COOLING: one design variable scales every cooling stream's
+    # flow fraction; the tfcool block below closes it against the metal-
+    # temperature requirement, and the cycle pays the real TSFC cost of
+    # the bleed. This is what turns the OPR technology cap from a cliff
+    # into a smooth trade (OPR raises Tt3, Tt3 raises the required
+    # cooling, cooling costs fuel).
+    _cool_free = "cool" not in debug_skip
+    if _cool_free:
+        s_cool = V("s_cool_D", 1.0, "cooling-flow scale, FREE",
+                   bounds=(0.5, 2.2))
+        eff_hpt_v = V("eff_hpt_D", tech.eff_hpt,
+                      "HPT adiabatic eff, cooled (debit row in tfcool)")
+    else:
+        s_cool, eff_hpt_v = None, None
     cons += [
         # fan efficiency lapse about FPRo -- linearized K_epf. Mixed signs:
         # written with every term positive on its side.
@@ -286,7 +331,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     _P0raw = float(pyo.value(state.P_atm[i_des]))
     pins = _EnginePins(tech, FPR, PIlc, PIhc, BPRD, eff_fan,
                        P0_g=_P0raw * 1e3 if _P0raw < 2000.0 else _P0raw,
-                       Fn_g=Fn_des_g)
+                       Fn_g=Fn_des_g, s_cool=s_cool, eff_hpt=eff_hpt_v)
 
     # ---- SELF-SEEDING DECLARED GUESSES ------------------------------------
     # A deterministic forward evaluation of the technology-guess cycle at
@@ -530,13 +575,31 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # ---- tfcool.f at the takeoff rating, against the fixed budget ---------
     # Total cooling budget as a fraction of core flow, from the validated
     # cycle's bleed fractions (cool1+cool2 of core, cool3+cool4 of W3):
+    # SUPPLIED cooling as a fraction of core flow. With the flow
+    # fractions scaled by the s_cool design variable this is a signomial
+    # expression in s_cool (quadratic through the (1 - sum f) factor);
+    # alpha_v carries it as a variable so the requirement row and the
+    # efficiency debit read one column.
+    # truth-cycle bleed fractions (CyclePins defaults; the s_cool scale
+    # is priced about this point)
+    _c1, _c2 = 0.050708, 0.020274
+    _f3, _f4 = 0.067214, 0.101256
+    _alpha_ref = (_c1 + _c2 + (1.0 - _c1 - _c2 - tech.cust_frac_W)
+                  * (_f3 + _f4))
     p_ = pins
     _budget = (p_.cool1.frac_W + p_.cool2.frac_W
                + (1.0 - p_.cool1.frac_W - p_.cool2.frac_W
                   - tech.cust_frac_W)
                * (p_.frac_cool3 + p_.frac_cool4))
-    alpha_c = Cu("alpha_cool_budget", _budget, "-",
-                 "cooling budget, fraction of core flow")
+    alpha_v = V("alpha_cool", _alpha_ref,
+                "supplied cooling, fraction of core flow")
+    cons += [
+        alpha_v == _budget,                              # [SP] SigEq
+        # cooled-turbine efficiency debit about the truth cooling level:
+        # anchors sit at s_cool = 1 where the debit vanishes exactly.
+        eff_hpt_v + tech.K_cool_eff * alpha_v
+            == tech.eff_hpt + tech.K_cool_eff * _alpha_ref,  # [SP] SigEq
+    ]
     _Trr = 1.0 / (1.0 + 0.5 * (1.313 - 1.0) * tech.M_t_exit ** 2)
     Tmet = Cu("T_metal", tech.T_metal_K, "K", "design blade metal temp")
     _eps = []
@@ -568,7 +631,9 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
             ep + ep * e0 >= e0,                             # [SP] SigIneq
         ]
         _eps.append(ep)
-    cons += [_budget >= _eps[0] + _eps[1] + _eps[2]]
+    # closure: the cooling system is sized by the requirement -- the
+    # objective pushes s_cool down (bleed costs fuel) until this binds.
+    cons += [alpha_v >= _eps[0] + _eps[1] + _eps[2]]
 
     return eng, cons
 
