@@ -220,6 +220,24 @@ class SIAOptions:
         self.trust_shrink = 0.25
         self.ratio_accept = 1e-4       # accept the step if ratio exceeds this
         self.ratio_expand = 0.75
+        # A filter cannot break a two-point cycle: if A beats B on violation
+        # and B beats A on objective, neither dominates, both stay acceptable
+        # forever, and every flip is an ACCEPTED step -- so nothing ever
+        # shrinks the radius. Measured on the free coupled 737 case: pi_f
+        # 1.796 <-> 1.672, BPR 4.49 <-> 5.39 (|d| = 0.184 log, right at the
+        # radius), net drift 1e-4/iteration, 100+ iterations burned. Detect
+        # the signature -- two sizeable accepted steps whose SUM is small --
+        # and shrink the radius, forcing the linearization to localize.
+        self.zigzag_damp = True
+        # net/step below this = a cycle. 0.5 with equal step lengths is a
+        # 151-degree reversal; a healthy curved descent turning 90 degrees
+        # has net/step = 1.41, so this cannot fire on valley-following.
+        # (0.25 was measured too strict: the wide early orbit on the free
+        # coupled case ran at net/step = 0.49 and was never damped.)
+        self.zigzag_net_frac = 0.5
+        self.zigzag_cooldown = 4       # accepted steps with expansion held
+                                       # off after a detection, so the radius
+                                       # cannot re-inflate into the same flip
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
         self.expand_past_blackbox = False
@@ -742,7 +760,8 @@ def _kkt(problem, x, mults, x_min=None, bound_tol=1e-6):
     return float(np.max(np.abs(g))), viol, comp
 
 
-def _restore(problem, x, options, has_blackbox, cache, done, k, why):
+def _restore(problem, x, options, has_blackbox, cache, done, k, why,
+             targets=None):
     """Re-enter Phase I from inside Phase II. Returns ``(x, done, ok)``.
 
     The filter deliberately accepts steps that worsen feasibility, on the
@@ -779,6 +798,25 @@ def _restore(problem, x, options, has_blackbox, cache, done, k, why):
     ok = bool(np.all(np.isfinite(x_r)) and np.all(x_r > 0)
               and v_after < v_before
               and v_after <= options.feasibility_tolerance)
+    # A restoration that returns a point it has ALREADY returned to is a
+    # loop, not a recovery: Phase I is deterministic, so from anywhere in
+    # the same neighbourhood it lands in the same feasible well, the filter
+    # is then cleared, and the descent replays byte-identically. Measured
+    # on the free coupled 737 case: a 7-state cycle (f 472182.4 -> ... ->
+    # 218126.2 -> restore) repeated until all restoration credits burned,
+    # ~56 iterations of deterministic replay. Refusing the repeat costs one
+    # Phase I call and lets Phase II continue from where it is.
+    if ok and targets is not None:
+        lx_r = np.log(x_r)
+        for t in targets:
+            if float(np.abs(lx_r - t).max()) < 1e-3:
+                ok = False
+                if options.verbose:
+                    print("       restoration returned an already-visited "
+                          "point; refusing (restoration loop)")
+                break
+        else:
+            targets.append(lx_r)
     if options.verbose:
         print(f"       restoration {'OK' if ok else 'insufficient'}: "
               f"viol {v_before:.3e} -> {v_after:.3e}")
@@ -2450,6 +2488,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     x_prev_for_curv = x.copy()
 
     _trust_forced = False       # a step was rejected with the box off -> re-arm
+    _zz_prev = None             # last ACCEPTED iterate, for zigzag detection
+    _zz_cool = 0                # expansion hold-off after a zigzag detection
+    _zz_hits = 0                # detections, reported on the result
     _fg_trips = 0               # times the feasibility guard condition HELD
                                 # (counted whether or not it was applied)
     # TANGENT EQUALITIES get the same treatment as the linearized class:
@@ -2463,6 +2504,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                    and (has_blackbox or _has_tangent_eq))
                else None)
     _restorations = 0
+    _restore_targets = []       # log-points restoration has returned; a
+                                # repeat is a restoration loop, refused
     _infeas_best = np.inf       # best violation seen since going infeasible
     _infeas_stall = 0           # iterations infeasible without improving it
     _subfail = 0                # consecutive unsolvable/unreachable sub-problems
@@ -2504,7 +2547,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                                    or 0), 1):
                 x_r, _restorations, _ok = _restore(
                     problem, x, options, has_blackbox, cache, _restorations, k,
-                    f'sub-problem unsolvable for {_subfail} iterations')
+                    f'sub-problem unsolvable for {_subfail} iterations', targets=_restore_targets)
                 _subfail = 0
                 if _ok:
                     x = x_r
@@ -2512,6 +2555,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     _reject_radius = np.inf
                     if _filter is not None:
                         _filter.entries.clear()
+                        _zz_prev = None          # new basin: stale geometry
                     continue
             # An INFEASIBLE sub-problem is not a bad step -- it means the
             # trust region is too tight for the relaxed feasible set to be
@@ -2530,13 +2574,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     # cannot represent the problem here.
                     x_r, _restorations, _ok = _restore(
                         problem, x, options, has_blackbox, cache,
-                        _restorations, k, 'the trust region bracketed')
+                        _restorations, k, 'the trust region bracketed',
+                        targets=_restore_targets)
                     if _ok:
                         x = x_r
                         radius = options.trust_radius
                         _reject_radius = np.inf
                         if _filter is not None:
                             _filter.entries.clear()
+                            _zz_prev = None          # new basin: stale geometry
                         continue
                     res.status = (
                         f"trust region bracketed at iteration {k + 1}: the "
@@ -2655,7 +2701,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if _infeas_stall >= int(getattr(options, 'restoration_patience', 0) or 0) > 0:
             x_r, _restorations, _ok = _restore(
                 problem, x, options, has_blackbox, cache, _restorations, k,
-                f'infeasible for {_infeas_stall} iterations without progress')
+                f'infeasible for {_infeas_stall} iterations without progress', targets=_restore_targets)
             _infeas_best, _infeas_stall = np.inf, 0
             if _ok:
                 x = x_r
@@ -2663,6 +2709,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _reject_radius = np.inf
                 if _filter is not None:
                     _filter.entries.clear()
+                    _zz_prev = None          # new basin: stale geometry
                 continue
 
         if (viol <= options.feasibility_tolerance
@@ -2723,6 +2770,19 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if curvature is not None:
             _curv_step = np.log(x_new) - np.log(x)
 
+        # Acceptance state shared by the black-box cascade and the tangent-
+        # equality path: everything from the feasibility guard down runs for
+        # BOTH. It used to live inside `if has_blackbox:`, which left pure-
+        # signomial problems with NO acceptance test at all -- every Phase II
+        # step was taken unconditionally, the filter and the trust-region
+        # ratio logic were dead code, and the radius never adapted. Measured
+        # on the free coupled 737 case: a two-point limit cycle (f 201853 <->
+        # 202080, |d| byte-stable at 2.315) ran for 100+ iterations with
+        # zero filter rejections because rejection was unreachable.
+        ratio = None
+        va_seen = None
+        v0 = None
+        _rejected_by_guard = False
         if has_blackbox:
             # Globalize the linearized block only: compare the true objective
             # reduction against the model's prediction, and size the region by
@@ -2817,130 +2877,172 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                                                           options.feasibility_tolerance)):
                         ratio = -1.0
 
-            # --- feasibility guard, applied to EVERY level of the cascade ---
-            # It used to sit inside the objective-ratio fallback only, which is
-            # the branch almost never taken: measured on the 2t+2c section,
-            # _violation() was called ONCE in 300 iterations. So the guard was
-            # effectively dead, and levels 1 and 2 accepted steps that left the
-            # feasible set. Level 2 is the hole -- it scores model ACCURACY,
-            # `ratio = scale/err` with `scale = max(feas_tol, 0.1*||d||)`, and
-            # with ratio_accept = 1e-4 it only rejects when err > 1e4 * scale.
-            #
-            # Measured on 3t+3c: iterate 0 feasible at 9.98e-09, ONE accepted
-            # step to 2.69e-01 -- all of it on the black-box rows, the structured
-            # rows exact to 1.1e-15 -- buying the objective 1619.14 -> 1519.20.
-            # The solve never recovered and aborted at iteration 7.
-            #
-            # va_seen is the true violation over the linearized rows at x_new,
-            # which levels 1 and 2 have already computed, so this costs no extra
-            # black-box calls. The structured rows cannot be violated by the step
-            # (they are exact or conservative in the sub-problem), so the
-            # linearized block IS the feasibility question here.
-            if (_filter is not None and va_seen is None
-                    and _has_tangent_eq and not has_blackbox):
-                # tangent equalities can be violated by the step, so the
-                # feasibility question is the TRUE violation over all rows
-                va_seen = float(_violation(problem, x_new))
-                if v0 is None:
-                    v0 = float(_violation(problem, x))
-            if _filter is not None and va_seen is not None:
-                # Dominance, not an exchange rate. A trial is refused only if a
-                # point already seen was better in BOTH objective and violation.
-                h_new = Filter.h_of(va_seen)
-                f_new = math.log(max(problem.objective_value(x_new), 1e-300))
-                if not _filter.acceptable(h_new, f_new):
-                    _filter.rejections += 1
+        # --- feasibility guard, applied to EVERY level of the cascade ---
+        # It used to sit inside the objective-ratio fallback only, which is
+        # the branch almost never taken: measured on the 2t+2c section,
+        # _violation() was called ONCE in 300 iterations. So the guard was
+        # effectively dead, and levels 1 and 2 accepted steps that left the
+        # feasible set. Level 2 is the hole -- it scores model ACCURACY,
+        # `ratio = scale/err` with `scale = max(feas_tol, 0.1*||d||)`, and
+        # with ratio_accept = 1e-4 it only rejects when err > 1e4 * scale.
+        #
+        # Measured on 3t+3c: iterate 0 feasible at 9.98e-09, ONE accepted
+        # step to 2.69e-01 -- all of it on the black-box rows, the structured
+        # rows exact to 1.1e-15 -- buying the objective 1619.14 -> 1519.20.
+        # The solve never recovered and aborted at iteration 7.
+        #
+        # va_seen is the true violation over the linearized rows at x_new,
+        # which levels 1 and 2 have already computed, so this costs no extra
+        # black-box calls. The structured rows cannot be violated by the step
+        # (they are exact or conservative in the sub-problem), so the
+        # linearized block IS the feasibility question here.
+        if (_filter is not None and va_seen is None
+                and _has_tangent_eq and not has_blackbox):
+            # tangent equalities can be violated by the step, so the
+            # feasibility question is the TRUE violation over all rows
+            va_seen = float(_violation(problem, x_new))
+            if v0 is None:
+                v0 = float(_violation(problem, x))
+        if _filter is not None and va_seen is not None:
+            # Dominance, not an exchange rate. A trial is refused only if a
+            # point already seen was better in BOTH objective and violation.
+            h_new = Filter.h_of(va_seen)
+            f_new = math.log(max(problem.objective_value(x_new), 1e-300))
+            if not _filter.acceptable(h_new, f_new):
+                _filter.rejections += 1
+                ratio = -1.0
+                _rejected_by_guard = True
+            elif h_new > options.feasibility_tolerance:
+                # An accepted step that worsened feasibility: record the point
+                # being LEFT so the iterates cannot cycle back to it.
+                _filter.add(Filter.h_of(v0),
+                            math.log(max(f_old, 1e-300)))
+        else:
+            _fg = getattr(options, 'feasibility_guard', _FEAS_GUARD)
+            _fga = float(getattr(options, 'feasibility_guard_abs', 0.0) or 0.0)
+            if (va_seen is not None and v0 is not None
+                    and va_seen > options.feasibility_tolerance
+                    and va_seen > _fga
+                    and va_seen > max(float(_fg or 0.0), 1e-300)
+                    * max(v0, options.feasibility_tolerance)):
+                _fg_trips += 1
+                if _fg:
                     ratio = -1.0
                     _rejected_by_guard = True
-                elif h_new > options.feasibility_tolerance:
-                    # An accepted step that worsened feasibility: record the point
-                    # being LEFT so the iterates cannot cycle back to it.
-                    _filter.add(Filter.h_of(v0),
-                                math.log(max(f_old, 1e-300)))
-            else:
-                _fg = getattr(options, 'feasibility_guard', _FEAS_GUARD)
-                _fga = float(getattr(options, 'feasibility_guard_abs', 0.0) or 0.0)
-                if (va_seen is not None and v0 is not None
-                        and va_seen > options.feasibility_tolerance
-                        and va_seen > _fga
-                        and va_seen > max(float(_fg or 0.0), 1e-300)
-                        * max(v0, options.feasibility_tolerance)):
-                    _fg_trips += 1
-                    if _fg:
-                        ratio = -1.0
-                        _rejected_by_guard = True
 
-            if ratio < options.ratio_accept:
-                if _released:
-                    # Rejected with the box OFF. Shrinking a radius that is not
-                    # being applied would re-solve an identical sub-problem and
-                    # spin, so re-arm permanently, seeded from the step that just
-                    # failed rather than from a stale radius.
-                    _trust_forced = True
-                    radius = max(options.trust_min,
-                                 min(radius, float(np.abs(d).max()))
-                                 * options.trust_shrink)
-                    if options.verbose:
-                        print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} with the "
-                              f"trust box released; re-arming at {radius:.3e}")
-                    continue
-                # A FEASIBILITY rejection is not evidence that the linearized
-                # model is wrong -- only that this step was too long to stay in
-                # the feasible set. _reject_radius exists to detect the former,
-                # and letting the guard write to it conflates the two: measured
-                # on 2t+2c, three guard rejections were enough to bracket the
-                # region and abort the whole solve at iteration 8 (W 1605, viol
-                # 2e-04) on a problem that converges in 192 iterations untouched.
-                # Shrink and retry, but leave the bracket alone.
-                if not _rejected_by_guard:
-                    _reject_radius = min(_reject_radius, radius)
-                radius = max(options.trust_min, radius * options.trust_shrink)
+        if ratio is None:
+            ratio = 1.0     # nothing measured this step; accept it
+        if ratio < options.ratio_accept:
+            if _released:
+                # Rejected with the box OFF. Shrinking a radius that is not
+                # being applied would re-solve an identical sub-problem and
+                # spin, so re-arm permanently, seeded from the step that just
+                # failed rather than from a stale radius.
+                _trust_forced = True
+                radius = max(options.trust_min,
+                             min(radius, float(np.abs(d).max()))
+                             * options.trust_shrink)
                 if options.verbose:
-                    print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} "
-                          f"radius -> {radius:.3e}")
-                if radius <= options.trust_min:
-                    x_r, _restorations, _ok = _restore(
-                        problem, x, options, has_blackbox, cache,
-                        _restorations, k, 'the trust region collapsed')
-                    if _ok:
-                        x = x_r
-                        radius = options.trust_radius
-                        _reject_radius = np.inf
-                        if _filter is not None:
-                            _filter.entries.clear()   # the old trade-offs are
-                        continue                      # about a basin we have left
-                    res.status = ("trust region collapsed at iteration "
-                                  f"{k + 1}; the linearized constraints are "
-                                  "not modelling the problem")
-                    res.x, res.objective = x, f_old
-                    res.iterations = k + 1
-                    break
+                    print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} with the "
+                          f"trust box released; re-arming at {radius:.3e}")
                 continue
-            # Once the curvature models are TRAINED the trust region has done its
-            # job and should get out of the way. It exists only to substitute for
-            # a conservative model, and B supplies that as soon as it has data --
-            # so past warm-up, expand on every accepted step rather than only on a
-            # good ratio. Without this the radius ratchets: each early rejection
-            # divides it by four, nothing multiplies it back on a merely-adequate
-            # ratio, and the solve crawls at whatever radius an early rejection
-            # set (measured on the 16-variable ROM section: stationarity pinned at
-            # 1.37e-02 with |d| ~ 1e-03 and radius 2.4e-04, feasible to 3e-08 but
-            # unable to take the step that would make it stationary).
-            if ratio > options.ratio_expand:
-                radius = min(options.trust_max, radius * options.trust_expand)
-            elif _curv_trained:
-                # Trained, but the step was only adequate. Grow GENTLY rather than
-                # by the full factor: doubling from a radius that works lands
-                # squarely on one that does not, and the region then oscillates
-                # accept-accept-reject forever (measured on the ROM section: a
-                # period-3 cycle, 9.8e-04 -> 2.0e-03 -> 3.9e-03 -> REJECT, ratio
-                # exactly -3.004 every time, a third of the iterations wasted and
-                # the objective creeping 0.04 kg per cycle). The square root of the
-                # expansion factor walks up to the usable radius instead of
-                # vaulting past it.
-                radius = min(options.trust_max,
-                             radius * math.sqrt(options.trust_expand))
+            # A FEASIBILITY rejection is not evidence that the linearized
+            # model is wrong -- only that this step was too long to stay in
+            # the feasible set. _reject_radius exists to detect the former,
+            # and letting the guard write to it conflates the two: measured
+            # on 2t+2c, three guard rejections were enough to bracket the
+            # region and abort the whole solve at iteration 8 (W 1605, viol
+            # 2e-04) on a problem that converges in 192 iterations untouched.
+            # Shrink and retry, but leave the bracket alone.
+            if not _rejected_by_guard:
+                _reject_radius = min(_reject_radius, radius)
+            radius = max(options.trust_min, radius * options.trust_shrink)
+            if options.verbose:
+                print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} "
+                      f"radius -> {radius:.3e}")
+            if radius <= options.trust_min:
+                x_r, _restorations, _ok = _restore(
+                    problem, x, options, has_blackbox, cache,
+                    _restorations, k, 'the trust region collapsed',
+                    targets=_restore_targets)
+                if _ok:
+                    x = x_r
+                    radius = options.trust_radius
+                    _reject_radius = np.inf
+                    if _filter is not None:
+                        _filter.entries.clear()   # the old trade-offs are
+                        _zz_prev = None          # new basin: stale geometry
+                    continue                      # about a basin we have left
+                res.status = ("trust region collapsed at iteration "
+                              f"{k + 1}; the linearized constraints are "
+                              "not modelling the problem")
+                res.x, res.objective = x, f_old
+                res.iterations = k + 1
+                break
+            continue
+        # Once the curvature models are TRAINED the trust region has done its
+        # job and should get out of the way. It exists only to substitute for
+        # a conservative model, and B supplies that as soon as it has data --
+        # so past warm-up, expand on every accepted step rather than only on a
+        # good ratio. Without this the radius ratchets: each early rejection
+        # divides it by four, nothing multiplies it back on a merely-adequate
+        # ratio, and the solve crawls at whatever radius an early rejection
+        # set (measured on the 16-variable ROM section: stationarity pinned at
+        # 1.37e-02 with |d| ~ 1e-03 and radius 2.4e-04, feasible to 3e-08 but
+        # unable to take the step that would make it stationary).
+        # --- zigzag damping (see the option's comment for the measured
+        # cycle this exists for). Two sizeable accepted steps that cancel
+        # mean the linearization is flipping between wells the filter
+        # cannot arbitrate; only a smaller radius localizes it.
+        _zz_hit = False
+        if (getattr(options, 'zigzag_damp', True)
+                and (_has_tangent_eq or has_blackbox)
+                and _zz_prev is not None):
+            # L2 over the WHOLE vector, not the max component: a single
+            # lever flipping while the other 1600 variables advance is
+            # progress, not a cycle. Measured with the max-norm version:
+            # false detections during a healthy well-descent collapsed
+            # the radius, tripped restoration to the same feasible point
+            # every time, and the solve replayed a byte-identical 7-state
+            # loop (f 472182.4 -> ... -> 218126.2 -> restore, twice).
+            _d1 = float(np.linalg.norm(x_new - x))
+            _d0 = float(np.linalg.norm(x - _zz_prev))
+            _net = float(np.linalg.norm(x_new - _zz_prev))
+            _s = max(_d1, _d0)
+            if options.verbose:
+                print(f"       zz: d1={_d1:.3e} d0={_d0:.3e} "
+                      f"net={_net:.3e} ratio={_net / max(_s, 1e-300):.3f}")
+            if (_s > 8 * options.trust_min
+                    and _net < float(getattr(
+                        options, 'zigzag_net_frac', 0.25)) * _s):
+                _zz_hit = True
+                _zz_hits += 1
+                _zz_cool = int(getattr(options, 'zigzag_cooldown', 4))
+                radius = max(options.trust_min,
+                             min(radius, _s) * options.trust_shrink)
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  ZIGZAG net={_net:.2e} vs "
+                          f"step={_s:.2e}; radius -> {radius:.3e}")
+        if _zz_cool > 0 and not _zz_hit:
+            _zz_cool -= 1
+        if _zz_hit or _zz_cool > 0:
+            pass                    # hold the radius; no expansion
+        elif ratio > options.ratio_expand:
+            radius = min(options.trust_max, radius * options.trust_expand)
+        elif _curv_trained:
+            # Trained, but the step was only adequate. Grow GENTLY rather than
+            # by the full factor: doubling from a radius that works lands
+            # squarely on one that does not, and the region then oscillates
+            # accept-accept-reject forever (measured on the ROM section: a
+            # period-3 cycle, 9.8e-04 -> 2.0e-03 -> 3.9e-03 -> REJECT, ratio
+            # exactly -3.004 every time, a third of the iterations wasted and
+            # the objective creeping 0.04 kg per cycle). The square root of the
+            # expansion factor walks up to the usable radius instead of
+            # vaulting past it.
+            radius = min(options.trust_max,
+                         radius * math.sqrt(options.trust_expand))
 
+        _zz_prev = x.copy()
         x = x_new
         _reject_radius = np.inf              # progress: the bracket is stale
         if (getattr(options, 'phase2_restore', False) and n_eq_p2
@@ -3080,6 +3182,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     res.feas_guard_trips = _fg_trips     # times the guard CONDITION held, whether
                                          # or not feasibility_guard applied it
     res.restorations = _restorations     # Phase I re-entries from within Phase II
+    res.zigzag_hits = _zz_hits
     res.filter_rejections = (_filter.rejections if _filter is not None else 0)
     res.filter_size = len(_filter) if _filter is not None else 0
     try:
