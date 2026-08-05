@@ -383,6 +383,13 @@ class SIAOptions:
         self.polish_ipopt = False
         self.polish_box = 3.0
         self.polish_max_iter = 3000
+        # --- trajectory log (DIAGNOSTIC, off) ----------------------------
+        # Path to a jsonl file; each ACCEPTED iterate appends one line with
+        # iteration, objective, violation, stationarity, |d|, and the
+        # values of every variable whose name contains one of the
+        # substrings in traj_vars. The failure movie, replayable.
+        self.traj_log = None
+        self.traj_vars = ()
         # Condense the NUMERATOR of p/q <= 1 as well, making the constraint a
         # monomial -- linear in log space. This is what PCCP does for an
         # equality, and it is the whole reason PCCP takes larger steps: since
@@ -2474,7 +2481,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
                 use_slacks=use_slacks, cache=cache,
-                force_trust=_has_tangent_eq and _filter is None)
+                force_trust=_has_tangent_eq)
+            # NOTE: the filter does NOT supersede the trust region -- it
+            # cannot size steps, only accept them. Measured without the
+            # cap: tangent-equality subproblems have near-zero curvature
+            # along the design levers, and the steps thrashed +-0.5 log
+            # units in alternating directions from iteration 2 (pi_f
+            # 1.69->1.82->1.57->2.16->1.43->2.20), then froze 35
+            # iterations in filter rejection. Filter for recoverable
+            # excursions, trust region for scale: complementary.
         except RuntimeError as exc:
             # A sub-problem that cannot be SOLVED is the strongest possible
             # signal that the linearization here is unusable -- and this path
@@ -2586,6 +2601,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # stationarity stuck near 0.57 no matter how converged the meaningful
         # variables were.
         stat, viol, comp = _kkt(problem, x, mults, options.x_min)
+        if getattr(options, 'traj_log', None):
+            try:
+                import json as _json
+                _tv = {problem.names[j]: float(x[j])
+                       for j in range(problem.n)
+                       if any(s in problem.names[j]
+                              for s in options.traj_vars)}
+                with open(options.traj_log, 'a') as _fh:
+                    _fh.write(_json.dumps(dict(
+                        k=k + 1, f=float(problem.objective_value(x)),
+                        viol=float(viol), stat=float(stat),
+                        dnorm=float(np.linalg.norm(d)), **_tv)) + "\n")
+            except Exception:
+                pass
         if (options.kkt_min_norm
                 and viol <= options.feasibility_tolerance
                 and (stat > options.stationarity_tolerance
