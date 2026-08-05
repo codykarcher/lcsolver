@@ -71,5 +71,6 @@ for k in ("Eng_cyc_pi_f_D", "Eng_cyc_pi_lc_D", "Eng_cyc_pi_hc_D",
           "Eng_cyc_BPR_D", "Eng_cyc_s_cool_D", "Eng_cyc_eff_fan_D",
           "W_f_total", "W_total", "Eng_W_engine"):
     print(f"  {k} = {out.get(k)}")
-json.dump(out, open("b737_free_solution.json", "w"))
-print("wrote b737_free_solution.json")
+out_path = os.environ.get("OUT", "b737_free_solution.json")
+json.dump(out, open(out_path, "w"))
+print(f"wrote {out_path}")
