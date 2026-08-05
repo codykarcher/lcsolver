@@ -184,13 +184,14 @@ class SIAOptions:
         # back onto the manifold. Cheap, since a step from a nearly-feasible
         # point converges in one or two Newton iterations.
         #
-        # OFF by default. Measured on the E175 it does what it says -- the
+        # ON by default. Measured on the E175 it does what it says -- the
         # worst violation after the first step drops from 2.257 to 0.271 and
-        # the converged value from 4.2e-08 to 1.7e-08 -- but it does NOT move
-        # stationarity, which is what actually gates convergence there, and it
-        # costs about 50% more wall time. Worth switching on when you need
-        # every iterate to be a usable design rather than only the last one.
-        self.phase2_restore = False
+        # the converged value from 4.2e-08 to 1.7e-08. It does NOT move
+        # stationarity there, and it costs about 50% more wall time, but a
+        # signomial equality is the one row type that can push Phase II off the
+        # feasible set from an exactly feasible start, and every iterate being a
+        # usable design is worth that. Set False to reproduce the drift.
+        self.phase2_restore = True
 
 
         self.phase1_max_iterations = 50
@@ -226,7 +227,14 @@ class SIAOptions:
         #: subproblem holds a convex quadratic rather than a plane. See
         #: :class:`Curvature`. The model stays convex either way; this makes it
         #: conservative wherever the curvature estimate is good enough.
-        self.curvature = False
+        #:
+        #: ON by default. A linearized row is the one place SIA gives up its
+        #: guarantee, and B is what restores it -- leaving this off means the
+        #: black-box block is bounded only by the trust region, which is a step
+        #: limit, not a model. Costs nothing on a problem with no black box:
+        #: the models are only built when ``has_blackbox``, so a pure SP is
+        #: bit-identical either way.
+        self.curvature = True
         self.step_expansion = 1.0      # >1 enables the feasibility-verified
         self.step_expansion_max = 1e4  # step extension described in solve_sia.
                                        # Set to 1.0 to take the sub-problem's
@@ -291,6 +299,60 @@ class SIAOptions:
         # step. Below the feasibility tolerance a "change in violation" is not a
         # signal about the model, so no ratio should be formed from it.
         self.ratio_gate_rel = 1.0
+        # How much worse the TRUE violation of the linearized block may get on an
+        # accepted step, as a multiple of max(current violation, feasibility
+        # tolerance). Set 0/None to disable the guard entirely.
+        #
+        # This is a backstop against walking out of the feasible set, not a
+        # feasibility filter, so it should fire rarely. If it is firing on a large
+        # fraction of iterations the threshold is too tight, not the steps too bad:
+        # near a solution the current violation sits far below the tolerance, so
+        # max(v0, tol) pins to the TOLERANCE and the absolute bar becomes
+        # factor*tol -- 1e-05 at the defaults -- which ordinary sub-problem noise
+        # can exceed without the step being remotely unsafe.
+        self.feasibility_guard = _FEAS_GUARD          # module default, 10.0
+        # ...AND an absolute floor, without which the relative test above is not
+        # relative at all. Measured on the 2t+2c section: at a converged iterate
+        # v0 sits at ~1e-09, so max(v0, tol) pins to the TOLERANCE and the bar
+        # becomes factor*tol = 1e-05. Ordinary sub-problem noise clears that
+        # constantly -- 101 of 192 steps tripped it, 53%, each one quartering the
+        # radius, and the solve went from 192 iterations to 802 for exactly the
+        # same answer (1503.021 either way).
+        #
+        # An absolute floor SOUNDS like the fix for that and is not -- measured,
+        # it breaks the solve outright. At 1e-03 on 2t+2c the guard stops
+        # rejecting the two large early steps (|d| = 2.34, 1.13) that are how the
+        # run reaches its basin at all; the smaller step it takes instead lands at
+        # viol 2.12e-04, above the tolerance but below the floor, and Phase II has
+        # no way back from there -- every later step is rejected and the run dies
+        # at iteration 8 with W 1605 against the 1503.021 it reaches untouched.
+        #
+        # So the floor defaults OFF. The plain relative guard converges both
+        # 2t+2c (802 it) and 3t+3c (911 it); the cost is real -- 192 iterations
+        # without any guard -- but 3t+3c cannot be solved cold without it at all.
+        self.feasibility_guard_abs = 0.0
+        # --- Fletcher-Leyffer filter acceptance (replaces the guard) --------
+        # ON by default; it supersedes feasibility_guard, which is left in place
+        # only so the old behaviour can be reproduced (set filter_acceptance
+        # False). See :class:`Filter` for why a scalar guard cannot work.
+        self.filter_acceptance = True
+        self.filter_gamma_h = 1e-5
+        self.filter_gamma_f = 1e-5
+        # --- restoration ----------------------------------------------------
+        # A filter accepts steps that worsen feasibility, which is only sound if
+        # such a step is RECOVERABLE. Phase I already minimises the worst
+        # violation; this re-enters it from inside Phase II when the region is
+        # about to collapse or bracket while the iterate is infeasible, instead
+        # of aborting. Without it Phase II's only response to an excursion is to
+        # reject and shrink forever.
+        self.restoration = True
+        self.restoration_max = 8          # re-entries allowed per solve
+        # Iterations the run may sit infeasible WITHOUT reducing the violation by
+        # at least 10% before restoration is triggered. This, not trust-region
+        # collapse, is the trigger that matters: measured on 3t+3c the filter
+        # accepted an excursion to 2.69e-01 and the run then held that violation
+        # for all 1500 iterations while the region stayed perfectly healthy.
+        self.restoration_patience = 5
         # --- min-norm-dual KKT termination (EXPERIMENTAL, off by default) --
         # Splitting an equality into two always-active one-sided rows makes
         # the dual set unbounded (any common increment to the pair cancels),
@@ -671,6 +733,110 @@ def _kkt(problem, x, mults, x_min=None, bound_tol=1e-6):
             if x[j] >= hi * (1.0 - bound_tol):
                 g[j] = max(g[j], 0.0)
     return float(np.max(np.abs(g))), viol, comp
+
+
+def _restore(problem, x, options, has_blackbox, cache, done, k, why):
+    """Re-enter Phase I from inside Phase II. Returns ``(x, done, ok)``.
+
+    The filter deliberately accepts steps that worsen feasibility, on the
+    understanding that such a step is RECOVERABLE. This is what makes that true.
+    Phase I already solves exactly the right sub-problem -- minimise the worst
+    violation, ignore the objective -- it was simply only ever called once, at
+    the start, so Phase II's only response to an excursion was to reject and
+    shrink until the region died.
+
+    Restoration is accepted only if it actually restores feasibility; a Phase I
+    that comes back still infeasible tells us the problem is infeasible HERE,
+    which is worth reporting rather than papering over.
+    """
+    if not getattr(options, 'restoration', False):
+        return x, done, False
+    if done >= int(getattr(options, 'restoration_max', 0) or 0):
+        return x, done, False
+    v_before = _violation(problem, x)
+    if v_before <= options.feasibility_tolerance:
+        return x, done, False           # feasible already; nothing to restore
+    if options.verbose:
+        print(f"  itr {k + 1:3d}  RESTORATION ({why}, viol {v_before:.3e}) "
+              f"-> re-entering Phase I")
+    try:
+        x_r = _phase1(problem, x.copy(), options, has_blackbox, cache=cache)
+        if isinstance(x_r, tuple):
+            x_r = x_r[0]
+        x_r = np.asarray(x_r, dtype=float)
+    except Exception as exc:                                  # noqa: BLE001
+        if options.verbose:
+            print(f"       restoration failed: {type(exc).__name__}: {exc}")
+        return x, done + 1, False
+    v_after = _violation(problem, x_r)
+    ok = bool(np.all(np.isfinite(x_r)) and np.all(x_r > 0)
+              and v_after < v_before
+              and v_after <= options.feasibility_tolerance)
+    if options.verbose:
+        print(f"       restoration {'OK' if ok else 'insufficient'}: "
+              f"viol {v_before:.3e} -> {v_after:.3e}")
+    return (x_r if ok else x), done + 1, ok
+
+
+class Filter:
+    """A Fletcher-Leyffer filter over ``(violation, objective)`` pairs.
+
+    Replaces the scalar feasibility guard, which could not be tuned. That guard
+    asked "is the violation more than K times worse than it was", and K is an
+    exchange rate between feasibility and objective -- there is no correct value,
+    because the right trade depends on where you are. Measured on the ROM
+    section, K = 10 rejected 101 of 192 steps (near a solution the comparator
+    pins to the TOLERANCE, so the relative test silently becomes an absolute bar
+    at K*tol), while raising it let a step run from 1e-08 to 2.69e-01.
+
+    A filter asks a different question, with no exchange rate in it: is this
+    trial DOMINATED -- worse in objective AND worse in feasibility than a point
+    already seen? If not, it is acceptable. Formally, for every entry
+    ``(h_j, f_j)``::
+
+        h < (1 - gamma_h) * h_j    OR    f < f_j - gamma_f * h_j
+
+    ``gamma_h`` and ``gamma_f`` are anti-cycling margins, not exchange rates:
+    they only stop the iterates converging onto the filter boundary, and any
+    small value does that. That is the robustness the scalar guard lacked.
+
+    A filter is only sound with a RESTORATION phase, because it deliberately
+    accepts steps that worsen feasibility -- the point being that such a step is
+    recoverable, not that it is harmless. See the restoration hook in
+    ``solve_sia``, which re-enters Phase I.
+
+    ``h`` must be non-negative, so it is ``max(log_violation, 0)``: a row with
+    slack contributes no infeasibility.
+    """
+
+    def __init__(self, gamma_h=1e-5, gamma_f=1e-5, h_max=None):
+        self.entries = []                      # [(h, f)]
+        self.gamma_h = float(gamma_h)
+        self.gamma_f = float(gamma_f)
+        self.h_max = h_max                     # hard cap on violation, or None
+        self.rejections = 0
+
+    @staticmethod
+    def h_of(log_viol):
+        """Violation measure: non-negative, zero when the block has slack."""
+        return max(float(log_viol), 0.0)
+
+    def acceptable(self, h, f):
+        if self.h_max is not None and h > self.h_max:
+            return False
+        for hj, fj in self.entries:
+            if not (h < (1.0 - self.gamma_h) * hj or f < fj - self.gamma_f * hj):
+                return False
+        return True
+
+    def add(self, h, f):
+        """Record a point, dropping any entry it dominates."""
+        self.entries = [(hj, fj) for hj, fj in self.entries
+                        if not (hj >= h and fj >= f)]
+        self.entries.append((float(h), float(f)))
+
+    def __len__(self):
+        return len(self.entries)
 
 
 class Curvature:
@@ -1564,12 +1730,26 @@ def _posy_loggrad(posy, x, n):
 
 
 def _con_loggrad(con, x, n):
-    """``(log g, d log g / d log x)`` for any constraint body."""
+    """``(log g, d log g / d log x)`` for any constraint body.
+
+    Black-box bodies are first-class here: a Signomial carries exactly the
+    value and log-gradient this needs, so a black-box EQUALITY can be restored
+    by the same Gauss--Newton step as a structured one. Before this case was
+    added, restore_equalities crashed on the first problem that reached Phase I
+    with a black-box equality present (the Hoburg UAV with the ROM section's
+    tau coupling) -- the helicopter never hit the path because its start was
+    seeded feasible.
+    """
     b = con.body
     if getattr(b, 'p', None) is not None:          # ratio / condensed equality
         lp, gp = _posy_loggrad(b.p, x, n)
         lq, gq = _posy_loggrad(b.q, x, n)
         return lp - lq, gp - gq
+    if not hasattr(b, 'terms'):                    # black box: value + gradient
+        v = float(b(x))
+        if v <= 0:
+            return -700.0, np.zeros(n)
+        return float(np.log(v)), np.asarray(b.log_grad(x), dtype=float)
     return _posy_loggrad(b, x, n)
 
 
@@ -2263,16 +2443,23 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     x_prev_for_curv = x.copy()
 
     _trust_forced = False       # a step was rejected with the box off -> re-arm
-    # TANGENT EQUALITIES VOID THE UNBOUNDED-STEP PREMISE: Phase II steps
-    # are documented safe at any length because its rows are "exact or
-    # conservative" -- but a CondensedEquality is TANGENT, neither inner
-    # nor outer (the Phase I docstring says so itself), and with UNSPLIT
-    # equalities Phase II is full of them. Measured on the coupled
-    # aircraft: trust_radius=0.05 requested, |d| = 5-23 log units taken,
-    # feasibility 4e-7 -> 0.7 in eight iterations. When tangent
-    # equalities are present the trust region applies in Phase II too.
+    _fg_trips = 0               # times the feasibility guard condition HELD
+                                # (counted whether or not it was applied)
+    # TANGENT EQUALITIES get the same treatment as the linearized class:
+    # a CondensedEquality is tangent -- neither inner nor outer -- so a
+    # Phase II step CAN violate it, recoverably. That is exactly the
+    # filter-plus-restoration situation, and it needs no exchange rate.
     _has_tangent_eq = any(isinstance(c.body, CondensedEquality)
                           for c in problem.constraints)
+    _filter = (Filter(options.filter_gamma_h, options.filter_gamma_f)
+               if (getattr(options, 'filter_acceptance', False)
+                   and (has_blackbox or _has_tangent_eq))
+               else None)
+    _restorations = 0
+    _infeas_best = np.inf       # best violation seen since going infeasible
+    _infeas_stall = 0           # iterations infeasible without improving it
+    _subfail = 0                # consecutive unsolvable/unreachable sub-problems
+    # (_has_tangent_eq hoisted above the filter init; see there.)
     for k in range(options.max_iterations):
         _tgt = float(getattr(options, 'blackbox_step_target', 0.0) or 0.0)
         _radius_eff = radius
@@ -2287,8 +2474,30 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
                 use_slacks=use_slacks, cache=cache,
-                force_trust=_has_tangent_eq)
+                force_trust=_has_tangent_eq and _filter is None)
         except RuntimeError as exc:
+            # A sub-problem that cannot be SOLVED is the strongest possible
+            # signal that the linearization here is unusable -- and this path
+            # `continue`s, so it used to skip the restoration trigger entirely.
+            # Measured on 6t+6c: one huge first step (|d| = 3.17 in log space),
+            # then "unreachable / failed" cycling 2.5 -> 5 -> 10 -> 2.5 for all
+            # 1500 iterations with restorations = 0. _reject_radius also stays
+            # inf here (no ratio-test rejection ever happened), so the bracket
+            # hook below could never fire either. Restoration was unreachable.
+            _subfail += 1
+            if _subfail >= max(int(getattr(options, 'restoration_patience', 0)
+                                   or 0), 1):
+                x_r, _restorations, _ok = _restore(
+                    problem, x, options, has_blackbox, cache, _restorations, k,
+                    f'sub-problem unsolvable for {_subfail} iterations')
+                _subfail = 0
+                if _ok:
+                    x = x_r
+                    radius = options.trust_radius
+                    _reject_radius = np.inf
+                    if _filter is not None:
+                        _filter.entries.clear()
+                    continue
             # An INFEASIBLE sub-problem is not a bad step -- it means the
             # trust region is too tight for the relaxed feasible set to be
             # reachable from here, which happens on the first pass from a
@@ -2304,6 +2513,16 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     # small to be reachable, too large to be believed. Stop rather
                     # than cycle -- the honest report is that the linearised model
                     # cannot represent the problem here.
+                    x_r, _restorations, _ok = _restore(
+                        problem, x, options, has_blackbox, cache,
+                        _restorations, k, 'the trust region bracketed')
+                    if _ok:
+                        x = x_r
+                        radius = options.trust_radius
+                        _reject_radius = np.inf
+                        if _filter is not None:
+                            _filter.entries.clear()
+                        continue
                     res.status = (
                         f"trust region bracketed at iteration {k + 1}: the "
                         f"sub-problem is infeasible at radius {radius:.3g} but the "
@@ -2385,6 +2604,38 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
                   f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
                   f"viol={viol:.3e}  comp={comp:.3e}  tau={tau:.1e}")
+        # --- restoration trigger: infeasible and not fixing it ---------------
+        # Hooking restoration only to trust-region collapse/bracket was wrong.
+        # Measured on 3t+3c: the filter (correctly) accepted an excursion to
+        # viol 2.69e-01, and the run then sat there for all 1500 iterations
+        # WITHOUT the region ever collapsing or bracketing, so restoration never
+        # fired. The condition that matters is not "the region died", it is "we
+        # are infeasible and not getting closer".
+        # CONSECUTIVE iterations infeasible, reset only by reaching feasibility --
+        # NOT by making progress. Excusing the counter whenever the violation
+        # dropped 10% was wrong: measured on the ladder, rungs 3/6/7/8 all ran the
+        # full 1500 iterations at viol 1.1e-01 .. 3.3e+00 with restorations = 0,
+        # because a creeping violation kept resetting the counter while never
+        # reaching feasibility. Phase II's contract IS feasible iterates, so
+        # sustained infeasibility is the signal regardless of its trend.
+        if viol > options.feasibility_tolerance:
+            _infeas_stall += 1
+            _infeas_best = min(_infeas_best, viol)
+        else:
+            _infeas_best, _infeas_stall = np.inf, 0
+        if _infeas_stall >= int(getattr(options, 'restoration_patience', 0) or 0) > 0:
+            x_r, _restorations, _ok = _restore(
+                problem, x, options, has_blackbox, cache, _restorations, k,
+                f'infeasible for {_infeas_stall} iterations without progress')
+            _infeas_best, _infeas_stall = np.inf, 0
+            if _ok:
+                x = x_r
+                radius = options.trust_radius
+                _reject_radius = np.inf
+                if _filter is not None:
+                    _filter.entries.clear()
+                continue
+
         if (viol <= options.feasibility_tolerance
                 and stat <= options.stationarity_tolerance
                 and comp <= options.complementarity_tolerance):
@@ -2395,6 +2646,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             res.iterations = k + 1
             break
 
+        _subfail = 0                 # the sub-problem solved; the run is healthy
         f_old = problem.objective_value(x)
         x_new = x * np.exp(d)
 
@@ -2466,6 +2718,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                       if problem.constraints[i].operator == '==' else curv_pred[i]
                       for i in lin_idx if i in curv_pred), default=None)
             ratio = None
+            va_seen = None       # worst TRUE violation over the linearized rows
+                                 # at x_new, whenever a level computed it
+            _rejected_by_guard = False
             # Only measure a ratio when the predicted improvement is big
             # enough to mean something. On the helicopter the linearized
             # constraints sit at about 1e-8 and successive predictions differ
@@ -2482,6 +2737,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 try:
                     va = max(_log_viol(problem.constraints[i], x_new)
                              for i in lin_idx)
+                    va_seen = va
                     ratio = (v0 - va) / (v0 - vp)
                 except Exception:
                     ratio = None
@@ -2504,6 +2760,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     try:
                         va = max(_log_viol(problem.constraints[i], x_new)
                                  for i in lin_idx)
+                        va_seen = va
                         err = abs(va - vp)
                     except Exception:
                         err = None
@@ -2531,6 +2788,59 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                                                           options.feasibility_tolerance)):
                         ratio = -1.0
 
+            # --- feasibility guard, applied to EVERY level of the cascade ---
+            # It used to sit inside the objective-ratio fallback only, which is
+            # the branch almost never taken: measured on the 2t+2c section,
+            # _violation() was called ONCE in 300 iterations. So the guard was
+            # effectively dead, and levels 1 and 2 accepted steps that left the
+            # feasible set. Level 2 is the hole -- it scores model ACCURACY,
+            # `ratio = scale/err` with `scale = max(feas_tol, 0.1*||d||)`, and
+            # with ratio_accept = 1e-4 it only rejects when err > 1e4 * scale.
+            #
+            # Measured on 3t+3c: iterate 0 feasible at 9.98e-09, ONE accepted
+            # step to 2.69e-01 -- all of it on the black-box rows, the structured
+            # rows exact to 1.1e-15 -- buying the objective 1619.14 -> 1519.20.
+            # The solve never recovered and aborted at iteration 7.
+            #
+            # va_seen is the true violation over the linearized rows at x_new,
+            # which levels 1 and 2 have already computed, so this costs no extra
+            # black-box calls. The structured rows cannot be violated by the step
+            # (they are exact or conservative in the sub-problem), so the
+            # linearized block IS the feasibility question here.
+            if (_filter is not None and va_seen is None
+                    and _has_tangent_eq and not has_blackbox):
+                # tangent equalities can be violated by the step, so the
+                # feasibility question is the TRUE violation over all rows
+                va_seen = float(_violation(problem, x_new))
+                if v0 is None:
+                    v0 = float(_violation(problem, x))
+            if _filter is not None and va_seen is not None:
+                # Dominance, not an exchange rate. A trial is refused only if a
+                # point already seen was better in BOTH objective and violation.
+                h_new = Filter.h_of(va_seen)
+                f_new = math.log(max(problem.objective_value(x_new), 1e-300))
+                if not _filter.acceptable(h_new, f_new):
+                    _filter.rejections += 1
+                    ratio = -1.0
+                    _rejected_by_guard = True
+                elif h_new > options.feasibility_tolerance:
+                    # An accepted step that worsened feasibility: record the point
+                    # being LEFT so the iterates cannot cycle back to it.
+                    _filter.add(Filter.h_of(v0),
+                                math.log(max(f_old, 1e-300)))
+            else:
+                _fg = getattr(options, 'feasibility_guard', _FEAS_GUARD)
+                _fga = float(getattr(options, 'feasibility_guard_abs', 0.0) or 0.0)
+                if (va_seen is not None and v0 is not None
+                        and va_seen > options.feasibility_tolerance
+                        and va_seen > _fga
+                        and va_seen > max(float(_fg or 0.0), 1e-300)
+                        * max(v0, options.feasibility_tolerance)):
+                    _fg_trips += 1
+                    if _fg:
+                        ratio = -1.0
+                        _rejected_by_guard = True
+
             if ratio < options.ratio_accept:
                 if _released:
                     # Rejected with the box OFF. Shrinking a radius that is not
@@ -2545,12 +2855,31 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} with the "
                               f"trust box released; re-arming at {radius:.3e}")
                     continue
-                _reject_radius = min(_reject_radius, radius)
+                # A FEASIBILITY rejection is not evidence that the linearized
+                # model is wrong -- only that this step was too long to stay in
+                # the feasible set. _reject_radius exists to detect the former,
+                # and letting the guard write to it conflates the two: measured
+                # on 2t+2c, three guard rejections were enough to bracket the
+                # region and abort the whole solve at iteration 8 (W 1605, viol
+                # 2e-04) on a problem that converges in 192 iterations untouched.
+                # Shrink and retry, but leave the bracket alone.
+                if not _rejected_by_guard:
+                    _reject_radius = min(_reject_radius, radius)
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} "
                           f"radius -> {radius:.3e}")
                 if radius <= options.trust_min:
+                    x_r, _restorations, _ok = _restore(
+                        problem, x, options, has_blackbox, cache,
+                        _restorations, k, 'the trust region collapsed')
+                    if _ok:
+                        x = x_r
+                        radius = options.trust_radius
+                        _reject_radius = np.inf
+                        if _filter is not None:
+                            _filter.entries.clear()   # the old trade-offs are
+                        continue                      # about a basin we have left
                     res.status = ("trust region collapsed at iteration "
                                   f"{k + 1}; the linearized constraints are "
                                   "not modelling the problem")
@@ -2719,6 +3048,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # Attached to every result, not just the failures: the same text explains
     # why a run that DID converge converged, and the degenerate-block warning
     # is worth seeing either way.
+    res.feas_guard_trips = _fg_trips     # times the guard CONDITION held, whether
+                                         # or not feasibility_guard applied it
+    res.restorations = _restorations     # Phase I re-entries from within Phase II
+    res.filter_rejections = (_filter.rejections if _filter is not None else 0)
+    res.filter_size = len(_filter) if _filter is not None else 0
     try:
         res.report = convergence_report(problem, res, options)
     except Exception as exc:                     # never let a diagnostic
