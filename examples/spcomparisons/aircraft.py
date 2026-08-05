@@ -2348,7 +2348,11 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
         theta * st.V == RC,
         dhft == tmin * RC,
         Rseg == thr * st.V,
-        numeng * eng.F >= D + W_avg * theta,
+        # `numeng*F >= D + W_avg*theta` REMOVED: with theta*V == RC and
+        # RC == excessP/W_avg it is IDENTICALLY the excess-power row
+        # divided by V -- the same constraint stated twice, and the pair
+        # sat exactly active-parallel at the solution (redundancy audit:
+        # cos = +1.0000), leaving the duals on both undetermined.
 
         # ---- CG ----------------------------------------------------------------
         xCG * W_avg >= (

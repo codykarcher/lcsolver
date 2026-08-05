@@ -232,6 +232,42 @@ class SIAOptions:
                                        # Set to 1.0 to take the sub-problem's
                                        # step exactly as returned.
         self.condense_numerator = False
+        # Seed for the black-box curvature model, in units of |d log g / d log x|.
+        # B is built by BFGS from SUCCESSIVE gradients, so it is ZERO on the first
+        # iteration and the linearized rows are then not conservative at all --
+        # see Curvature.observe. A prior of order one restores the property on the
+        # step that has no history to learn from. 0.0 reproduces the old behaviour.
+        self.curvature_prior = 1.0
+        # --- min-norm-dual KKT termination (EXPERIMENTAL, off by default) --
+        # Splitting an equality into two always-active one-sided rows makes
+        # the dual set unbounded (any common increment to the pair cancels),
+        # so the sub-problem's returned multipliers can carry arbitrarily
+        # large components in the null direction and the stationarity test
+        # reads garbage at a genuinely optimal point (measured on the
+        # coupled aircraft: duals to 1e13 with the objective stable to
+        # 3e-8). With this flag, whenever the iterate is feasible but the
+        # dual-based stationarity fails, the test is repeated with the
+        # MINIMUM-NORM multipliers over the active rows -- the certificate
+        # the point actually earns -- every `kkt_min_norm_every` iterations
+        # and always on the final one.
+        self.kkt_min_norm = False
+        self.kkt_min_norm_every = 25
+        self.kkt_min_norm_act_tol = 1e-6
+        # --- Ipopt polish of the TRUE problem (EXPERIMENTAL, off) --------
+        # The sequential method's conservative first-order steps crawl in
+        # shallow curved valleys (measured on the coupled aircraft: the
+        # design settles to <0.1% and the objective then creeps ~0.06% per
+        # 400 iterations through flat trim blocks). From a settled feasible
+        # point, hand the ORIGINAL problem -- rebuilt symbolically in log
+        # space, every row exact, no condensation -- to Ipopt, whose exact
+        # second-order steps finish shallow valleys in a handful of
+        # iterations. The result is adopted only if it verifies: feasible
+        # on the true rows and objective no worse. polish_box bounds the
+        # excursion in log units so the polish is local to the basin the
+        # sequential phase found.
+        self.polish_ipopt = False
+        self.polish_box = 3.0
+        self.polish_max_iter = 3000
         # Condense the NUMERATOR of p/q <= 1 as well, making the constraint a
         # monomial -- linear in log space. This is what PCCP does for an
         # equality, and it is the whole reason PCCP takes larger steps: since
@@ -385,6 +421,139 @@ def _violation_structured(problem, x):
     return worst
 
 
+def _min_norm_mults(problem, x, act_tol=1e-6):
+    """Minimum-norm multipliers over the ACTIVE rows at ``x``.
+
+    Solves ``min ||g0 + A lam||`` with ``lam >= 0`` over the rows whose
+    log-residual is within ``act_tol`` of active (every row is a <= row
+    by the time the problem is built; split equalities appear as two
+    opposed active rows, whose nonnegative pair spans the free-sign
+    equality dual). Column scaling is what makes this work at aircraft
+    size -- gradient columns span ~8 decades and unscaled bounded
+    least-squares stalls. Returns a full-length multiplier vector with
+    zeros on inactive rows, suitable for ``_kkt``.
+    """
+    from scipy.optimize import lsq_linear
+    g0 = np.asarray(problem.objective.log_grad(x), dtype=float)
+    idx, cols, free_sign = [], [], []
+    for i, con in enumerate(problem.constraints):
+        if con.operator == '==':
+            idx.append(i)
+            cols.append(np.asarray(con.body.log_grad(x), dtype=float))
+            free_sign.append(True)
+        elif _log_g(con, x) >= -act_tol:
+            idx.append(i)
+            cols.append(np.asarray(con.body.log_grad(x), dtype=float))
+            free_sign.append(False)
+    mults = np.zeros(len(problem.constraints))
+    if not cols:
+        return mults
+    A = np.column_stack(cols)
+    scale = np.maximum(np.linalg.norm(A, axis=0), 1e-12)
+    lo = np.array([-np.inf if fs else 0.0 for fs in free_sign])
+    r = lsq_linear(A / scale, -g0, bounds=(lo, np.inf),
+                   tol=1e-12, max_iter=3000, lsq_solver="lsmr",
+                   lsmr_tol=1e-12)
+    lam = r.x / scale
+    for j, i in enumerate(idx):
+        mults[i] = lam[j]
+    return mults
+
+
+def _polish_ipopt(problem, x, options):
+    """Solve the TRUE problem locally with Ipopt from ``x``.
+
+    Rebuilds every row symbolically in log space (posynomials as
+    sum-of-exponentials; ratio and condensed-equality rows as p <= q and
+    p == q), so Ipopt sees the exact nonconvex NLP with exact second
+    derivatives -- the ingredient the sequential phase's first-order
+    conservative steps lack in shallow valleys. Returns the polished x,
+    or None if the model contains black-box rows, Ipopt fails, or the
+    result does not verify.
+    """
+    from edi.solvers.ipopt.slcp import (Posynomial, PosynomialRatio,
+                                        CondensedEquality)
+
+    def _sumexp(m, terms):
+        return sum(c * pyo.exp(sum(float(a[j]) * m.y[j]
+                                   for j in range(problem.n)
+                                   if a[j] != 0.0))
+                   for c, a in terms)
+
+    import os as _os
+    _dbg = (print if _os.environ.get("SIA_POLISH_DEBUG")
+            else (lambda *a, **k: None))
+    x = np.asarray(x, dtype=float)
+    y0 = np.log(np.maximum(x, 1e-300))
+    m = pyo.ConcreteModel()
+    m.y = pyo.Var(range(problem.n))
+    for j in range(problem.n):
+        m.y[j].set_value(float(y0[j]))
+        m.y[j].setlb(float(y0[j]) - options.polish_box)
+        m.y[j].setub(float(y0[j]) + options.polish_box)
+    lo_floor = math.log(options.x_min) if options.x_min else None
+    if problem.bounds is not None:
+        for j, pair in enumerate(problem.bounds[:problem.n]):
+            if pair:
+                lo, hi = pair
+                if lo is not None and lo > 0:
+                    m.y[j].setlb(max(m.y[j].lb, math.log(lo)))
+                if hi is not None:
+                    m.y[j].setub(min(m.y[j].ub, math.log(hi)))
+    if lo_floor is not None:
+        for j in range(problem.n):
+            m.y[j].setlb(max(m.y[j].lb, lo_floor))
+    m.cons = pyo.ConstraintList()
+    for con in problem.constraints:
+        b = con.body
+        if isinstance(b, Posynomial):
+            e = _sumexp(m, b.terms)
+            m.cons.add(e == 1.0 if con.operator == '==' else e <= 1.0)
+        elif isinstance(b, (PosynomialRatio, CondensedEquality)):
+            pe, qe = _sumexp(m, b.p.terms), _sumexp(m, b.q.terms)
+            m.cons.add(pe == qe if con.operator == '==' else pe <= qe)
+        else:
+            _dbg(f"  [polish] black-box row {type(b).__name__}: cannot polish")
+            return None
+    if not isinstance(problem.objective, Posynomial):
+        _dbg(f"  [polish] objective is {type(problem.objective).__name__}")
+        return None
+    m.obj = pyo.Objective(expr=_sumexp(m, problem.objective.terms),
+                          sense=pyo.minimize)
+    opt = pyo.SolverFactory('ipopt')
+    if not opt.available(exception_flag=False):
+        return None
+    for k, v in (options.ipopt_options or {}).items():
+        opt.options[k] = v
+    opt.options['max_iter'] = options.polish_max_iter
+    opt.options['warm_start_init_point'] = 'yes'
+    try:
+        r = opt.solve(m, tee=False, load_solutions=False)
+        tc = str(r.solver.termination_condition)
+        if tc not in ('optimal', 'locallyOptimal', 'feasible'):
+            _dbg(f"  [polish] ipopt: {tc}")
+            return None
+        m.solutions.load_from(r)
+    except Exception as exc:
+        _dbg(f"  [polish] ipopt raised: {exc}")
+        return None
+    xn = np.exp(np.array([pyo.value(m.y[j]) for j in range(problem.n)]))
+    # verify on the TRUE rows before adopting
+    if _violation(problem, xn) > options.feasibility_tolerance:
+        _dbg(f"  [polish] rejected: violation "
+             f"{_violation(problem, xn):.2e}")
+        return None
+    if problem.objective_value(xn) > problem.objective_value(x) \
+            * (1.0 + 1e-9):
+        _dbg(f"  [polish] rejected: objective "
+             f"{problem.objective_value(xn):.6g} vs "
+             f"{problem.objective_value(x):.6g}")
+        return None
+    _dbg(f"  [polish] ADOPTED: objective {problem.objective_value(x):.6g} "
+         f"-> {problem.objective_value(xn):.6g}")
+    return xn
+
+
 def _kkt(problem, x, mults, x_min=None, bound_tol=1e-6):
     """``(stationarity, violation, complementarity)`` on the TRUE problem.
 
@@ -476,10 +645,11 @@ class Curvature:
     thousand.
     """
 
-    def __init__(self, n, damping=0.2, cap=1e3):
+    def __init__(self, n, damping=0.2, cap=1e3, prior=0.0):
         self.n = n
         self.damping = damping
         self.cap = cap
+        self.prior = float(prior)
         self.support = []          # variable indices this constraint touches
         self._pos = {}             # variable index -> row in B
         self.B = np.zeros((0, 0))
@@ -488,9 +658,28 @@ class Curvature:
         self.relaxations = 0
 
     def observe(self, grad):
-        """Extend the support to cover whatever the gradient touches."""
-        new = [j for j in np.nonzero(np.abs(np.asarray(grad)) > 0)[0]
-               if j not in self._pos]
+        """Extend the support to cover whatever the gradient touches.
+
+        New directions are seeded with ``prior * |grad_j|`` on the diagonal, not
+        with zero. B is built by BFGS from SUCCESSIVE gradients, so on the first
+        iteration there is no history and a zero seed leaves the model a bare
+        linearization -- the one thing the class exists to avoid. The guarantee
+        is "conservative wherever B dominates the true log-curvature", and B = 0
+        dominates nothing: the first step is then bounded only by the trust
+        region, and on a black box that step can leave the feasible set outright
+        (measured on the helicopter: 9.975e-09 -> 5.070e-01 in one step, after
+        which the sub-problem is unsolvable and the solve aborts).
+
+        |grad_j| is the right scale because in log space a smooth function's
+        second derivative runs with its first: measured on that model's drag
+        black box, |lambda|max / |grad| sits at 2.5-6.6. So a prior of order one
+        is genuinely conservative for a unit log step, and where it is still
+        optimistic ``inflate`` raises it from the next iteration's data. This is
+        the standard quasi-Newton ``B0 = gamma I`` seeding, scaled per variable
+        because the sensitivities here span two orders of magnitude.
+        """
+        g = np.asarray(grad, dtype=float)
+        new = [j for j in np.nonzero(np.abs(g) > 0)[0] if j not in self._pos]
         if not new:
             return
         for j in new:
@@ -500,6 +689,10 @@ class Curvature:
         B = np.zeros((m, m))
         if self.B.size:
             B[:self.B.shape[0], :self.B.shape[1]] = self.B
+        if self.prior > 0.0:
+            for j in new:
+                a = self._pos[j]
+                B[a, a] = min(self.prior * abs(float(g[j])), self.cap)
         self.B = B
 
     def quad(self, d):
@@ -1977,7 +2170,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # there is nothing to linearize, so a structured problem is untouched.
     curvature = None
     if options.curvature and has_blackbox:
-        curvature = {i: Curvature(problem.n)
+        curvature = {i: Curvature(problem.n,
+                                  prior=getattr(options, 'curvature_prior', 0.0))
                      for i, con in enumerate(problem.constraints)
                      if isinstance(con.body, Signomial)
                      and not isinstance(con.body, (Posynomial, PosynomialRatio))}
@@ -2009,6 +2203,18 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  sub-problem unreachable, "
                           f"widening radius -> {radius:.3g}")
+                continue
+            # Any OTHER sub-problem failure is a numerical one, not a statement
+            # about the feasible set: Ipopt returning internalSolverError on a
+            # model built at a badly-scaled iterate. The trust-region response to
+            # that is the same as to a bad step -- shrink and re-form the model --
+            # not to abandon a solve that is otherwise converging. Only give up
+            # once the radius has collapsed.
+            if has_blackbox and radius > options.trust_min:
+                radius = max(options.trust_min, radius * options.trust_shrink)
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  sub-problem failed ({type(exc).__name__}), "
+                          f"shrinking radius -> {radius:.3g}")
                 continue
             res.status = f"sub-problem failure at iteration {k}: {exc}"
             res.x, res.objective = x, problem.objective_value(x)
@@ -2048,6 +2254,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # stationarity stuck near 0.57 no matter how converged the meaningful
         # variables were.
         stat, viol, comp = _kkt(problem, x, mults, options.x_min)
+        if (options.kkt_min_norm
+                and viol <= options.feasibility_tolerance
+                and (stat > options.stationarity_tolerance
+                     or comp > options.complementarity_tolerance)
+                and ((k + 1) % options.kkt_min_norm_every == 0
+                     or k + 1 >= options.max_iterations)):
+            m2 = _min_norm_mults(problem, x, options.kkt_min_norm_act_tol)
+            s2, v2, c2 = _kkt(problem, x, m2, options.x_min)
+            if max(s2 / max(options.stationarity_tolerance, 1e-300),
+                   c2 / max(options.complementarity_tolerance, 1e-300)) < \
+               max(stat / max(options.stationarity_tolerance, 1e-300),
+                   comp / max(options.complementarity_tolerance, 1e-300)):
+                stat, viol, comp = s2, v2, c2
+                mults = m2
         if options.verbose:
             print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
                   f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
@@ -2275,6 +2495,48 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     if res.x is None:
         res.x, res.objective = x, problem.objective_value(x)
     stat, viol, comp = _kkt(problem, res.x, mults, options.x_min)
+    if (options.kkt_min_norm and not res.converged
+            and viol <= options.feasibility_tolerance
+            and (stat > options.stationarity_tolerance
+                 or comp > options.complementarity_tolerance)):
+        # the run stopped short with the sub-problem's duals failing the
+        # KKT test -- ask whether MINIMUM-NORM multipliers certify the
+        # point before reporting failure (split equalities make the
+        # returned duals' stationarity meaningless; see kkt_min_norm)
+        m2 = _min_norm_mults(problem, res.x, options.kkt_min_norm_act_tol)
+        s2, v2, c2 = _kkt(problem, res.x, m2, options.x_min)
+        if s2 <= max(stat, options.stationarity_tolerance) \
+                and c2 <= max(comp, options.complementarity_tolerance):
+            stat, viol, comp, mults = s2, v2, c2, m2
+            if (s2 <= options.stationarity_tolerance
+                    and c2 <= options.complementarity_tolerance):
+                res.converged = True
+                res.status = ("converged: KKT certificate with minimum-norm "
+                              "multipliers (sub-problem duals were "
+                              "degenerate)")
+    if (options.polish_ipopt
+            and viol <= options.feasibility_tolerance
+            and (stat > options.stationarity_tolerance
+                 or comp > options.complementarity_tolerance)):
+        xn = _polish_ipopt(problem, res.x, options)
+        if xn is not None:
+            m3 = _min_norm_mults(problem, xn, options.kkt_min_norm_act_tol)
+            s3, v3, c3 = _kkt(problem, xn, m3, options.x_min)
+            if v3 <= options.feasibility_tolerance and s3 <= stat:
+                res.x = xn
+                res.objective = problem.objective_value(xn)
+                res.polished = True
+                stat, viol, comp, mults = s3, v3, c3, m3
+                if (s3 <= options.stationarity_tolerance
+                        and c3 <= options.complementarity_tolerance):
+                    res.converged = True
+                    res.status = ("converged: Ipopt polish of the true "
+                                  "problem, certified with minimum-norm "
+                                  "multipliers")
+                else:
+                    res.status = (res.status or "") + \
+                        "  [polished: objective improved, certificate " \
+                        f"{s3:.2e}]"
     res.stationarity, res.max_violation, res.complementarity = stat, viol, comp
     res.multipliers = mults
     res.slacks_active = viol > options.feasibility_tolerance

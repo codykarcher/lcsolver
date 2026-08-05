@@ -382,9 +382,10 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
                 _wsi = _WS.design_state(_pi)
             except Exception:
                 _wsi = dict(_seed)
-            _seed.update({f"s{i}_{k}": v for k, v in _wsi.items()})
             if i == i_des:
                 _seed.update(_wsi)
+            else:
+                _seed.update({f"s{i}_{k}": v for k, v in _wsi.items()})
     except Exception:
         _seed.clear()       # heuristic per-variable guesses still apply
 
@@ -418,8 +419,19 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     des = SC._point(V, cons, "", cond, pins, None, out_by_tag)
     out_by_tag[""] = des
 
-    # off-design points: EVERY segment, thrust-driven, rating-capped
+    # off-design points: every segment EXCEPT the design-conditions one.
+    # The square anchor (T4 == Tt4_CR and Fn == F[i_des]) IS segment
+    # i_des's operating point under this sizing convention, and carrying
+    # a separate s{i_des} point made ~300 rows an exact duplicate of the
+    # anchor's -- a consistent-but-redundant manifold on which the
+    # multipliers are non-unique. Measured fingerprints: s3_Tt4 was the
+    # top stationarity carrier in nearly every stalled report, and the
+    # certificate OSCILLATED (2.5e-3..1.3e-2) instead of decreasing while
+    # the objective crept.
+    seg_out[i_des] = des
     for i in range(N):
+        if i == i_des:
+            continue
         cond = cond_for(i, 'F')
         cond['F'] = F[i] / units.N
         cond['T4'] = None
@@ -465,7 +477,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     if _seed:
         try:
             for i in range(N):
-                t_ = f"s{i}_"
+                t_ = "" if i == i_des else f"s{i}_"
                 TSFC[i].set_value(_seed[t_ + "TSFC"] * _TSFC_CONV / 3600.0
                                   * 3600.0)
                 u6[i].set_value(_seed[t_ + "V_core"])
@@ -478,7 +490,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # TSFC is WEIGHT-specific (TASOPT 1/hr): Wf*g/Fn.
     for i in range(N):
         o = seg_out[i]
-        tag = f"s{i}_"
+        tag = "" if i == i_des else f"s{i}_"
         # group attribute lookup by full internal name
         g_ = lambda nme: getattr(eng, f"cyc_{tag}{nme}")
         cons += [

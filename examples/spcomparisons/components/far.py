@@ -275,7 +275,11 @@ def add_far(f, *, n_eng, ruleset="FAR25", prefix="FAR_",
         # engine-out balance at an arbitrary speed. Lower V_MC is harder (less
         # dynamic pressure over the fin), so the requirement is an upper bound
         # and the fin must cope at the worst permitted value.
-        Vmc <= 1.13 * Vs_to,
+        # `Vmc <= 1.13 Vs_to` (25.149(c)) REMOVED as a row: aircraft.py
+        # imposes V_MC == 1.13 V_s_TO -- the fin must cope at the worst
+        # permitted speed -- which makes this cap exactly redundant-active
+        # (redundancy audit: cos = +1.0000 with undetermined duals). The
+        # rule lives on through that equality.
         # FAR 25.149(e): V_MCG, the minimum control speed ON THE GROUND. This
         # is the case that actually sizes a transport fin, and it is harder
         # than the airborne one for two reasons: it happens at a LOWER speed,
