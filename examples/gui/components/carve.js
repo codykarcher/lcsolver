@@ -48,27 +48,40 @@ function crossingT(a, b, f, da) {
 }
 
 /**
- * A vertex, carrying its normal as well as its position.
+ * A vertex, carrying its normal and its texture coordinate as well as its
+ * position.
  *
- * The normal has to travel with it. Clipping produces an unindexed mesh -- the
- * skin's 8,961 shared vertices become 50,286 unshared ones -- and recomputing
- * normals on that gives one per FACE, so a body that was smooth comes back
- * visibly faceted over its whole length. Nothing about the shape changed; only
- * the shading did, which is worse, because it looks like the carve wrecked the
- * mesh when the mesh is exactly right.
+ * Both have to travel with it, for the same reason and with the same symptom:
+ * clipping produces an unindexed mesh -- the skin's 8,961 shared vertices
+ * become 50,286 unshared ones -- and anything not carried across is gone.
  *
- * Interpolated at the crossing by the same parameter as the position, so a cut
- * edge shades continuously with the surface it was cut from.
+ * For the NORMAL, recomputing afterwards gives one per FACE, so a body that was
+ * smooth comes back visibly faceted over its whole length. Nothing about the
+ * shape changed; only the shading did, which is worse, because it looks like
+ * the carve wrecked the mesh when the mesh is exactly right.
+ *
+ * For the UV there is no recomputing it at all -- a texture coordinate is not a
+ * property of the shape, it is a property of how the shape was BUILT, and the
+ * lathe that built it is long gone by the time anything is cut. Dropped, every
+ * vertex reads the same texel and a painted mark simply disappears. That is
+ * what happened to the D8's spinner swirl: the nacelles are let into the body,
+ * so the pods are carved against it, and the swirl went with the UVs. The
+ * geometry was never the problem and neither was the paint.
+ *
+ * Both interpolated at the crossing by the same parameter as the position, so a
+ * cut edge shades and maps continuously with the surface it was cut from.
  */
-const vert = (p, n) => ({ p, n });
+const vert = (p, n, uv = null) => ({ p, n, uv });
 const lerpVert = (a, b, t) => vert(
   a.p.clone().lerp(b.p, t),
-  a.n.clone().lerp(b.n, t).normalize());
+  a.n.clone().lerp(b.n, t).normalize(),
+  a.uv && b.uv ? a.uv.clone().lerp(b.uv, t) : null);
 
-/** Read a mesh's triangles as vertices carrying their normals. */
+/** Read a mesh's triangles as vertices carrying their normals and UVs. */
 function readTriangles(geometry) {
   const pos = geometry.getAttribute('position');
   const nrm = geometry.getAttribute('normal');
+  const uvs = geometry.getAttribute('uv');
   const index = geometry.getIndex();
   const count = index ? index.count : pos.count;
   const at = index ? (i) => index.getX(i) : (i) => i;
@@ -79,26 +92,29 @@ function readTriangles(geometry) {
       const i = at(t + k);
       tri.push(vert(
         new THREE.Vector3().fromBufferAttribute(pos, i),
-        nrm ? new THREE.Vector3().fromBufferAttribute(nrm, i) : new THREE.Vector3()));
+        nrm ? new THREE.Vector3().fromBufferAttribute(nrm, i) : new THREE.Vector3(),
+        uvs ? new THREE.Vector2().fromBufferAttribute(uvs, i) : null));
     }
     tris.push(tri);
   }
-  return { tris, hasNormals: !!nrm };
+  return { tris, hasNormals: !!nrm, hasUVs: !!uvs };
 }
 
-/** Build a geometry from triangles of vertices, keeping their normals. */
-function fromTriangles(tris, hasNormals) {
-  const pos = [], nrm = [];
+/** Build a geometry from triangles of vertices, keeping normals and UVs. */
+function fromTriangles(tris, hasNormals, hasUVs = false) {
+  const pos = [], nrm = [], uvs = [];
   for (const t of tris) {
     for (const v of t) {
       pos.push(v.p.x, v.p.y, v.p.z);
       nrm.push(v.n.x, v.n.y, v.n.z);
+      if (hasUVs) uvs.push(v.uv ? v.uv.x : 0, v.uv ? v.uv.y : 0);
     }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   if (hasNormals) g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   else g.computeVertexNormals();
+  if (hasUVs) g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   return g;
 }
 
@@ -133,7 +149,7 @@ function cutTriangle(tri, field) {
 
 /** Keep only the part of a mesh where `field` is positive. */
 export function clipTriangles(geometry, field) {
-  const { tris, hasNormals } = readTriangles(geometry);
+  const { tris, hasNormals, hasUVs } = readTriangles(geometry);
   const keep = [];
   let cut = 0;
   for (const tri of tris) {
@@ -141,7 +157,7 @@ export function clipTriangles(geometry, field) {
     if (r.neg.length && r.pos.length) cut++;
     keep.push(...r.pos);
   }
-  const g = fromTriangles(keep, hasNormals);
+  const g = fromTriangles(keep, hasNormals, hasUVs);
   g.userData.clip = { kept: keep.length, cut };
   return g;
 }
@@ -164,7 +180,7 @@ export function clipTriangles(geometry, field) {
  * appear on their own, as the seams between pieces.
  */
 export function carveOut(geometry, fields) {
-  const { tris, hasNormals } = readTriangles(geometry);
+  const { tris, hasNormals, hasUVs } = readTriangles(geometry);
   const out = [];
   let whole = 0, split = 0, dropped = 0;
 
@@ -291,7 +307,7 @@ export function carveOut(geometry, fields) {
     }
   }
 
-  const g = fromTriangles(out, hasNormals);
+  const g = fromTriangles(out, hasNormals, hasUVs);
   g.userData.clip = { kept: out.length, whole, split, dropped };
   return g;
 }
@@ -1054,11 +1070,13 @@ function capMesh(geometry) {
   if (!tris.length) return 0;
 
   const oldN = geometry.getAttribute('normal');
-  const flat = [], flatN = [];
+  const oldUV = geometry.getAttribute('uv');
+  const flat = [], flatN = [], flatUV = [];
   for (let t = 0; t < n; t++) {
     const i = at(t);
     flat.push(pos.getX(i), pos.getY(i), pos.getZ(i));
     if (oldN) flatN.push(oldN.getX(i), oldN.getY(i), oldN.getZ(i));
+    if (oldUV) flatUV.push(oldUV.getX(i), oldUV.getY(i));
   }
   const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
   for (const t of tris) {
@@ -1071,11 +1089,20 @@ function capMesh(geometry) {
     // the whole point of the patch is that nothing is open. One of them was:
     // three collinear points, 27 mm long, the last hole of 147.
     if (nrm.lengthSq() < 1e-20) nrm.set(0, 0, 1); else nrm.normalize();
-    for (const q of t) { flat.push(q.x, q.y, q.z); flatN.push(nrm.x, nrm.y, nrm.z); }
+    for (const q of t) {
+      flat.push(q.x, q.y, q.z);
+      flatN.push(nrm.x, nrm.y, nrm.z);
+      // A cut face is a new surface with no coordinate in the old map, but the
+      // ATTRIBUTE has to stay the same length as the others or every vertex
+      // past it reads the wrong texel. So it takes a corner of the texture and
+      // the rest of the mesh keeps its own.
+      if (oldUV) flatUV.push(0, 0);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
   if (oldN) g.setAttribute('normal', new THREE.Float32BufferAttribute(flatN, 3));
+  if (oldUV) g.setAttribute('uv', new THREE.Float32BufferAttribute(flatUV, 2));
   const keep = geometry.userData;
   geometry.copy(g);
   geometry.userData = keep;

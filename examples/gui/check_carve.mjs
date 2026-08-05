@@ -17,8 +17,8 @@ import { readFileSync } from 'fs';
 import * as THREE from 'three';
 import { deckFromSolve } from './components/aircraft.js';
 import { d8Aircraft } from './components/d8_aircraft.js';
-import { bareTurbofan, turbofan } from './components/engines.js';
-import { ductVolume, clipTriangles } from './components/carve.js';
+import { bareTurbofan, turbofan, embeddedTurbofan } from './components/engines.js';
+import { ductVolume, clipTriangles, carveOut } from './components/carve.js';
 
 const sol = JSON.parse(readFileSync(new URL('./decks/b737_d8_solve.json', import.meta.url), 'utf8'));
 const deck = deckFromSolve(sol);
@@ -275,6 +275,59 @@ const floorEdge = [
   ...(fu.duct.front ? boundary(fu.duct.front.geometry) : []),
 ];
 console.log(`cut edge: ${skinEdge.length} open edges on the skin, ${floorEdge.length} on the floor`);
+
+/**
+ * A carved mesh keeps its TEXTURE COORDINATES.
+ *
+ * They are not recoverable afterwards. A normal can be recomputed -- badly, but
+ * recomputed -- because it is a property of the shape; a UV is a property of
+ * how the shape was BUILT, and the lathe that built it is long gone by the time
+ * anything is cut. Dropped, every vertex reads the same texel and a painted
+ * mark simply disappears, with the geometry and the material both perfectly
+ * fine. That is how the D8 lost its spinner swirl: the nacelles are let into
+ * the body, so the pods are carved against it, and the UVs went with the cut.
+ *
+ * Checked by matching each surviving vertex back to its own position in the
+ * original and comparing. Against the SET of UVs the original had there, not
+ * one of them: a lathe's wrap seam legitimately gives one position both u = 0
+ * and u = 1, and picking either at random reported 128 false failures.
+ */
+{
+  const eng = embeddedTurbofan({ rFan: 0.8, bypassRatio: 9 });
+  const field = (p) => p.y - 0.05;                 // a plane through the middle
+  let textured = 0, lost = 0, checked = 0, wrong = 0;
+  eng.traverse((o) => {
+    if (!o.isMesh) return;
+    const uv0 = o.geometry.getAttribute('uv');
+    if (!uv0) return;
+    textured++;
+    const p0 = o.geometry.getAttribute('position'), ix = o.geometry.getIndex();
+    const N = ix ? ix.count : p0.count, at = ix ? (i) => ix.getX(i) : (i) => i;
+    const orig = new Map();
+    for (let t = 0; t < N; t++) {
+      const i = at(t);
+      const k = `${p0.getX(i).toFixed(6)},${p0.getY(i).toFixed(6)},${p0.getZ(i).toFixed(6)}`;
+      if (!orig.has(k)) orig.set(k, []);
+      orig.get(k).push([uv0.getX(i), uv0.getY(i)]);
+    }
+    const g = carveOut(o.geometry, [field]);
+    const p1 = g.getAttribute('position'), uv1 = g.getAttribute('uv');
+    if (!uv1) { lost++; return; }
+    for (let i = 0; i < p1.count; i++) {
+      const k = `${p1.getX(i).toFixed(6)},${p1.getY(i).toFixed(6)},${p1.getZ(i).toFixed(6)}`;
+      const was = orig.get(k);
+      if (!was) continue;                          // made at a crossing; nothing to compare
+      checked++;
+      if (!was.some(([a, b]) => Math.abs(a - uv1.getX(i)) < 1e-6
+                             && Math.abs(b - uv1.getY(i)) < 1e-6)) wrong++;
+    }
+  });
+  console.log(`\ntexture: ${textured} textured meshes carved, ` +
+              `${checked} surviving vertices compared`);
+  if (!textured) bad('nothing textured to carve -- this check is not looking at anything');
+  if (lost) bad(`${lost} of ${textured} carved meshes came back with no UVs at all`);
+  if (wrong) bad(`${wrong} of ${checked} surviving vertices lost their texture coordinate`);
+}
 
 /**
  * The FINS come out of it closed.
