@@ -132,6 +132,13 @@ def fit_sma(X, y, K=8, alphas=(1., 2., 4., 8., 16., 32.),
             a = max(1.0, 80.0 / max(emax0, 1.0))
             B0a = B0 - _np.log(max(len(B0), 1)) / a
             E, B, err = lm(E0.copy(), B0a.copy(), a, w)
+            # the fallback must obey the SAME post-refinement slope guard
+            # as the main loop: it once emitted a1=61.85 with slope 162
+            # (row exponent 10,003; c**a1 underflowed to exactly 0.0 and
+            # the surface raised OverflowError at its own window top)
+            if float(_np.max(_np.abs(E))) * a > 80.0:
+                a = 1.0
+                E, B, err = lm(E0.copy(), B0.copy(), 1.0, w)
             best = (err, a, E, B)
         err, a, E, B = best
         fit = {'ftype': 'SMA', 'K': E.shape[0], 'd': dd, 'a1': float(a),

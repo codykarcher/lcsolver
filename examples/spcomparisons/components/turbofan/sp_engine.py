@@ -84,11 +84,16 @@ class SPTech:
     StA: float = 0.09
     dT_streak_K: float = 200.0
     M_t_exit: float = 1.0
-    #: cooled-turbine efficiency debit, d(eta_HPT) per unit total
-    #: cooling-flow fraction (N+3-era rule of thumb ~0.4-0.5 per unit;
-    #: APPROXIMATE -- flag in any acceptance statement). Priced about the
-    #: truth-cycle cooling level, so anchors are untouched at s_cool = 1.
-    K_cool_eff: float = 0.45
+    #: cooled-turbine efficiency debit, d(eta_HPT) per unit HPT
+    #: cooling-flow fraction, BEYOND the mixing loss the cycle already
+    #: pays explicitly (the streams mix with pressure/work bookkeeping).
+    #: Published cooled-stage totals run ~0.1-0.3 per unit INCLUDING
+    #: mixing (Young & Wilcock-type analyses); the film/profile share on
+    #: top of explicit mixing is the smaller part. 0.45 double-priced it
+    #: and made under-cooling lucrative. APPROXIMATE -- flag in any
+    #: acceptance statement. Priced about the truth cooling level, so
+    #: anchors are untouched at s_cool = 1.
+    K_cool_eff: float = 0.15
     #: shaft power extraction, W
     HPX_W: float = 186425.0
     cust_frac_W: float = 0.0445
@@ -109,7 +114,7 @@ TECHS = {
         K_eff_fan=0.077, FPRo=1.685,
         Tt4_TO_K=1833.0, Tt4_CR_K=1587.0, T_metal_K=1280.0,
         OPR_max=32.0, BPR_ref=5.1,
-        FPR_g=1.65, LPC_PR_g=1.9, HPC_PR_g=9.5, BPR_g=5.2),
+        FPR_g=1.65, LPC_PR_g=1.935, HPC_PR_g=9.369, BPR_g=5.2),
     # WHAT-IF: CFM56-era technology with the OPR bound lifted past the
     # thermal-efficiency peak -- exists to demonstrate the interior OPR
     # optimum that variable cooling prices (same metal temperature, so
@@ -126,7 +131,7 @@ TECHS = {
         OPR_max=47.0, BPR_ref=9.0,
         LP_Nmech=2400.0, HP_Nmech=10600.0,
         HPX_W=372850.0, cust_frac_W=0.001,
-        FPR_g=1.55, LPC_PR_g=1.9, HPC_PR_g=15.0, BPR_g=9.0),
+        FPR_g=1.55, LPC_PR_g=1.9, HPC_PR_g=15.6, BPR_g=9.0),
 }
 
 
@@ -313,7 +318,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         return c
 
     # thrust the aircraft demands, per segment, per engine (interface var)
-    F = Vn("F", 24000.0, "N", "total thrust")
+    F = Vn("F", 24000.0, "N", "net thrust, per engine")
     Fn_des_g = (float(Fn_seg_g[i_des]) if Fn_seg_g is not None
                 else 24000.0)
     if Fn_seg_g is not None:
@@ -478,8 +483,7 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         try:
             for i in range(N):
                 t_ = "" if i == i_des else f"s{i}_"
-                TSFC[i].set_value(_seed[t_ + "TSFC"] * _TSFC_CONV / 3600.0
-                                  * 3600.0)
+                TSFC[i].set_value(_seed[t_ + "TSFC"] * _TSFC_CONV)
                 u6[i].set_value(_seed[t_ + "V_core"])
                 u8[i].set_value(_seed[t_ + "V_byp"])
                 mFan[i].set_value(_seed[t_ + "W"])
@@ -539,9 +543,23 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     _fz = {(False, False): FZ.FITZ, (True, False): FZ.FITZ_GEARED,
            (False, True): FZ.FITZ_ADV,
            (True, True): FZ.FITZ_GEARED_ADV}[(tech.geared, tech.advanced)]
+    # the >= row below assumes a DIRECT fit; a regeneration that flipped
+    # to inverse would silently invert the bound's direction
+    assert not _fz.get('inv', False), "FITZ fit flipped to inverse"
+
     if "fitz" not in debug_skip:
         _a1 = _fz['a1']
-        _mn = eng.cyc_fan_Wc / (BPRD * FZ.M_REF)       # (mdotc/45.35)
+        # mdotc is the CORE-stream corrected flow. fan_Wc is corrected
+        # TOTAL inlet flow (comp_maps(fan, W) with W == Wcore*(1+BPR)),
+        # so the divisor is (1+BPR): the earlier /BPR fed core*(1+B)/B
+        # -- +19.7% weight at BPR 5.1, and the (1+B)/B factor FLATTENED
+        # the weight-vs-BPR slope, partially resurrecting the
+        # run-to-the-guard defect this surface exists to kill (review
+        # finding, float-verified 4,724 vs 3,946 lbf).
+        _mn = eng.cyc_fan_Wc / ((1.0 + BPRD) * FZ.M_REF)
+        # fit-validity wedge: the surface excluded box corners via
+        # m*BPR in [120, 1500] kg/s; guard it on the consumed quantities
+        _wlo, _whi = 120.0, 1500.0
         _on = PIlc * PIhc / FZ.O_REF                   # (OPR_core/40)
         _bn = BPRD / FZ.B_REF                          # (BPR/5)
         _posy = sum((c ** _a1) * _mn ** (_a1 * e[0]) * _on ** (_a1 * e[1])
@@ -553,6 +571,9 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
             _mn * FZ.M_REF >= FZ.WINDOW['m'][0],
             _mn * FZ.M_REF <= FZ.WINDOW['m'][1],
             _on * FZ.O_REF >= FZ.WINDOW['opr'][0],
+            _on * FZ.O_REF <= FZ.WINDOW['opr'][1],
+            _mn * FZ.M_REF * BPRD >= _wlo,
+            _mn * FZ.M_REF * BPRD <= _whi,
             _bn * FZ.B_REF >= FZ.WINDOW['bpr'][0],
             _bn * FZ.B_REF <= FZ.WINDOW['bpr'][1],
             # W_engine's only other pressure is the airframe weight chain,
@@ -596,31 +617,49 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
     # is priced about this point)
     _c1, _c2 = 0.050708, 0.020274
     _f3, _f4 = 0.067214, 0.101256
-    _alpha_ref = (_c1 + _c2 + (1.0 - _c1 - _c2 - tech.cust_frac_W)
-                  * (_f3 + _f4))
+    # CLOSURE REMAP (review finding, float-verified): the tfcool 3-row
+    # requirement models the HPT vane/rotor rows ONLY, so the supply it
+    # closes against is the HPT streams -- cool3+cool4, the bld3 flows
+    # that enter the HPT -- NOT cool1/cool2, which are HPC->LPT streams.
+    # Counting the LPT streams as HPT supply left the closure 30-56%
+    # slack at the truth level; nothing pinned s_cool, the optimizer
+    # drove it to ~0.64, and the symmetric efficiency debit then PAID
+    # ~+3.4 points of HPT efficiency for under-cooling. The HPT-stream
+    # supply fraction of core flow, with all streams scaled by s_cool:
+    _alpha_hpt_ref = (1.0 - _c1 - _c2 - tech.cust_frac_W) * (_f3 + _f4)
     p_ = pins
-    _budget = (p_.cool1.frac_W + p_.cool2.frac_W
-               + (1.0 - p_.cool1.frac_W - p_.cool2.frac_W
-                  - tech.cust_frac_W)
-               * (p_.frac_cool3 + p_.frac_cool4))
-    alpha_v = V("alpha_cool", _alpha_ref,
-                "supplied cooling, fraction of core flow")
+    _hpt_supply = ((1.0 - p_.cool1.frac_W - p_.cool2.frac_W
+                    - tech.cust_frac_W)
+                   * (p_.frac_cool3 + p_.frac_cool4))
+    alpha_v = V("alpha_cool", _alpha_hpt_ref,
+                "supplied HPT cooling, fraction of core flow")
     cons += [
-        alpha_v == _budget,                              # [SP] SigEq
+        alpha_v == _hpt_supply,                          # [SP] SigEq
         # cooled-turbine efficiency debit about the truth cooling level:
         # anchors sit at s_cool = 1 where the debit vanishes exactly.
         eff_hpt_v + tech.K_cool_eff * alpha_v
-            == tech.eff_hpt + tech.K_cool_eff * _alpha_ref,  # [SP] SigEq
+            == tech.eff_hpt + tech.K_cool_eff * _alpha_hpt_ref,  # SigEq
     ]
     _Trr = 1.0 / (1.0 + 0.5 * (1.313 - 1.0) * tech.M_t_exit ** 2)
     Tmet = Cu("T_metal", tech.T_metal_K, "K", "design blade metal temp")
     _eps = []
-    Tt3_TO = getattr(eng, "cyc_s0_hpc_Tt")  # segment 0 = the rating point
+    # Tt3 AT THE SLS TAKEOFF RATING, not at a mission point: segment 0
+    # is mid-climb at part rating (measured: Tt3 ~741 K there vs ~810 K
+    # at SLS-TO), which under-stated the cooling requirement ~16% and
+    # weakened the OPR->Tt3->cooling coupling this block exists to
+    # price (the deck has the same defect). With a choked NGV, Tt4/Tt3
+    # is nearly constant along the running line, and the design anchor
+    # runs at the cruise rating -- so the rating-point Tt3 is the
+    # design Tt3 scaled by the rating ratio. One monomial row.
+    Tt3_TO = V("Tt3_TO", 810.0, "HPC exit Tt at the SLS takeoff rating")
+    cons += [Tt3_TO * tech.Tt4_CR_K
+             == getattr(eng, "cyc_hpc_Tt") * tech.Tt4_TO_K]
     # self-seeded guesses: solve the three-row chain at the seeded takeoff
     # compressor-discharge temperature with 2% margin (same construction
     # the staged runner used from stage-B data; now a pure function of the
     # model's own seed)
-    _Tt3g = float(_seed.get("s0_hpc_Tt", 810.0))
+    _Tt3g = float(_seed.get("hpc_Tt", 700.0)) \
+        * tech.Tt4_TO_K / tech.Tt4_CR_K
     for _r in (1, 2, 3):
         Tg = (tech.Tt4_TO_K + tech.dT_streak_K if _r == 1
               else tech.Tt4_TO_K * _Trr ** (_r - 1))

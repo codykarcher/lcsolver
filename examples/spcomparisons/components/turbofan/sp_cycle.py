@@ -52,6 +52,13 @@ from . import sp_maps as MAPS
 
 R_UNIV = TH.R_UNIV            # J/(mol K)
 H_SHIFT = 1.5e6               # J/kg; see module docstring
+# REGENERATION TRAPS: conventions hard-coded into rows below (row_G's
+# '+1.0' assumes the c0 boundary fit is INVERSE; the enthalpy shift
+# must match the generated fits). Fail loudly if a refit flips them.
+assert abs(TH.G_VIT.get('H_SHIFT', 1.5e6) - H_SHIFT) < 1e-6
+assert abs(TH.AIR_H_SMA.get('H_SHIFT', 1.5e6) - H_SHIFT) < 1e-6
+assert TH.G_VIT.get('c0_inv', True) is True, 'row_G needs INVERSE c0'
+
 N_SCALE = 1.0e6               # species mole-number scaling; see burner block
 P_REF_PA = TH.P_REF_BAR * 1e5
 T_STD = 288.15                # map corrected-flow reference, K (518.67 R)
@@ -513,13 +520,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                     bounds=tuple(wNc))
             Rl = V(n("R"), M['RlineMap_d'], f"{key} map R-line",
                    bounds=tuple(wR))
-            # Window guards as ROWS: the fits are free-sign signomials that
-            # go NEGATIVE off-window, and an iterate that wanders there makes
-            # the eff/PR rows unclosable in log space (subproblem infeasible
-            # at it 3-4 in every free-design run).  Variable bounds are
-            # silently dropped by the detector, so they guard nothing.
-            cons.extend([NcM >= wNc[0], NcM <= wNc[1],
-                         Rl >= wR[0], Rl <= wR[1]])
+            # (window guards: the bounds= arguments above BECOME rows
+            # through this module's V wrapper -- an earlier explicit
+            # cons.extend here duplicated all four exactly, and the
+            # duplicate pairs degenerate the active set whenever a
+            # window binds. The stale comment claiming bounds are
+            # dropped described the AIRCRAFT build path's variable
+            # bounds, not this wrapper.)
             prm1 = V(n("prm1"), at['PR'] - 1.0, f"{key} map PR - 1")
             WcM = V(n("WcMv"), at['Wc'], f"{key} map corrected-flow value")
             cons.extend([
@@ -580,7 +587,12 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
     # restoration phases found an unbounded ray through (far, Wf, species)
     # on the climb-segment builds, the same guard-rail story as the nozzle
     # and turbine blocks.
-    far = V(P("far"), 0.025, "burner fuel-air ratio", bounds=(0.008, 0.048))
+    # far guards ARE the vitiated-surface fit window: the G fit's
+    # boundary term carries far^23 and extrapolates violently outside
+    # [0.012, 0.042] (measured: -100%+ G error by far 0.046 against
+    # equilibrium truth), so the wider (0.008, 0.048) band admitted
+    # corrupt enthalpies inside its own guards.
+    far = V(P("far"), 0.025, "burner fuel-air ratio", bounds=(0.012, 0.042))
     Wf = V(P("Wf"), 0.5 * sc, "fuel flow, kg/s",
            bounds=(0.5 * sc / 300.0, 0.5 * sc * 300.0))
     W4 = V(P("W4"), 18.0 * sc, "burner exit flow, kg/s")
@@ -611,8 +623,13 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
         T4 = V(P("Tt4"), cond['T4'], "burner exit Tt, K")
         cons += [T4 == cond['T4']]
     else:
+        # fit-validity guards on free T4 (thrust/PC modes): T4 feeds the
+        # Kp posynomials, species enthalpy cubics, and psi_vit -- all
+        # windowed fits that carry guards everywhere else. A restoration
+        # ray through unguarded T4 is exactly the family those guards
+        # exist for.
         T4 = V(P("Tt4"), _gval(pins.T4_K, 1550.0) * 0.95,
-               "burner exit Tt, K")
+               "burner exit Tt, K", bounds=(1100.0, 2150.0))
 
     # Species are scaled by N_SCALE: trace radicals sit at 2.5e-10 kmol/kg
     # at cruise T4, BELOW the solver's 1e-9 positivity floor, and the
@@ -765,10 +782,8 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                     bounds=tuple(wNp))
             PRm = V(nm("PRmap"), M['PRmap_d'], f"{key} map PR",
                     bounds=tuple(wPR))
-            # Window guards as ROWS (see comp_maps): off-window the map
-            # surfaces are invalid/negative and the rows cannot close.
-            cons.extend([NpM >= wNp[0], NpM <= wNp[1],
-                         PRm >= wPR[0], PRm <= wPR[1]])
+            # (window guards come from the bounds= rows above; see the
+            # comp_maps note -- explicit duplicates removed.)
             WpM = V(nm("WpMv"), at['Wp'], f"{key} map referred-flow value")
             effM = V(nm("effMv"), at['eff'], f"{key} map efficiency value")
             cons.extend([
@@ -860,7 +875,21 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
             A * rho * Vx == Wn,
         ])
         if not choked:
-            cons.extend([Ps == P0 * 1.0, Fg == Cv * Wn * Vx])
+            # BRANCH-CONSISTENCY GUARD: the unchoked closure is only
+            # valid subsonic. Off-anchor (an optimizer crossing NPR ~
+            # 1.85 with the flag fixed) the closure would otherwise go
+            # silently wrong; this row makes it INFEASIBLE instead.
+            cpu_ = V(P(f"cpu_{key}"), 1010.0,
+                     f"{key} exit cp (branch guard), J/(kg K)")
+            if vit:
+                cons.extend([row_cp_vit(cpu_, farv, Ts)])
+            else:
+                cons.extend([row_cp_air(cpu_, Ts)])
+            cons.extend([
+                Ps == P0 * 1.0, Fg == Cv * Wn * Vx,
+                # Vx^2 <= a^2 = (cp/cv) R Ts = cp R Ts / (cp - R)
+                Vx**2 * (cpu_ - Rgas) <= cpu_ * Rgas * Ts,  # [SP] SigIneq
+            ])
         else:
             cp_ = V(P(f"cp_{key}"), 1010.0, f"{key} throat cp, J/(kg K)")
             cv_ = V(P(f"cv_{key}"), 723.0, f"{key} throat cv, J/(kg K)")
@@ -872,6 +901,11 @@ def _point(V, cons, tag, cond, pins, shared, out_by_tag, warm=None):
                 cv_ + Rgas == cp_,                          # SigEq (posy)
                 Vx**2 * cv_ == cp_ * Rgas * Ts,   # sonic; monomial equality
                 Fg == Cv * Wn * Vx + A * (Ps - P0),         # [SP] SigEq
+                # BRANCH-CONSISTENCY GUARD: choked requires the throat
+                # static at or above ambient; below it the (Ps - P0)
+                # pressure-thrust term flips sign and the closure is the
+                # wrong branch. Infeasible beats silently wrong.
+                Ps >= P0 * 1.0,
             ])
         return Fg, A
 
