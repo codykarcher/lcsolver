@@ -61,8 +61,7 @@ def main():
                         ("FITZ_ADV", (False, True)),
                         ("FITZ_GEARED_ADV", (True, True))):
         X, y = sample(*flags)
-        fit, inv, err = fit_sma(X, y, K=10,
-                        alphas=(2., 4., 8., 16., 32., 64.))
+        fit, inv, err = fit_sma(X, y, K=12, alphas=(1., 2., 4.))
         print(f"{name}: geared={flags[0]} advanced={flags[1]} "
               f"K={fit['K']} a1={fit['a1']} inv={inv} "
               f"max|log err|={err:.2e}")

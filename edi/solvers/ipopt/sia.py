@@ -238,6 +238,59 @@ class SIAOptions:
         # see Curvature.observe. A prior of order one restores the property on the
         # step that has no history to learn from. 0.0 reproduces the old behaviour.
         self.curvature_prior = 1.0
+        # Iterations of BFGS data per black-box row after which the curvature
+        # model is treated as TRAINED and the trust region is released -- see the
+        # expand path below. The trust region substitutes for a conservative
+        # model; B IS the conservative model once it has data, so keeping a
+        # ratcheting radius past that point only traps the solve.
+        self.curvature_warmup = 6
+        # Warm-up step control for the linearized (black-box) rows. Until the
+        # curvature models have data their model is only as conservative as the
+        # prior, so bound the step by what it can actually PREDICT rather than by
+        # a fixed radius: cap |grad . d| <= this for every black-box row. Because
+        # an inf-norm trust region gives |grad . d| <= ||grad||_1 * r, the cap is
+        # r <= target / max_i ||grad_i||_1 -- self-scaling, so a parameterisation
+        # whose gradients are 4x larger automatically gets a 4x smaller first step.
+        # That is the difference between two ROM bases surviving the same radius
+        # or not, and it is not something a user should have to tune per basis.
+        # Applied for the FIRST blackbox_warm_iters iterations only, then released
+        # unconditionally. Gating it on "curvature is trained" instead deadlocks:
+        # the capped steps are too small for the BFGS secant to accept an update,
+        # so training never completes and the cap never lifts -- measured, the
+        # reference case then sat at its warm start for all 300 iterations.
+        # 0 disables either field.
+        self.blackbox_step_target = 0.15
+        self.blackbox_warm_iters = 0
+        # Apply the trust box for the FIRST this-many Phase II iterations only,
+        # then drop it entirely. None keeps it on for the whole solve.
+        #
+        # Growing the radius is not the same as removing it. Measured on the 2t+2c
+        # ROM section: the radius cycles 1.7e-04 .. 1.0e-03 for ~290 iterations with
+        # ||d*||inf/radius = 1.000 EVERY time -- the box, not any constraint, is the
+        # binding row. Six of the nine black-box drag rows then come back with
+        # lambda ~ 1e-12, so the dual that should oppose the structured rows on the
+        # cd variables is carried by the trust region instead. The trust region is
+        # not part of the original problem, so its multiplier cannot appear in the
+        # KKT test, and stationarity froze at 1.7e-02 -- entirely on cdm, P0cr and
+        # the cd_i, all one sign -- while feasibility sat at 1e-08. Shrink beats
+        # growth arithmetically (x0.25 per rejection against x2 / x sqrt(2)), so the
+        # radius can never climb back out on its own.
+        self.trust_iterations = None
+        # Floor, as a multiple of feasibility_tolerance, on the PREDICTED
+        # improvement in the linearized block before a violation ratio is formed
+        # at all. See the gate in the ratio test.
+        #
+        # 0.01 was too low by two orders of magnitude on the ROM section. Measured
+        # there: v0 = -1.7e-09, the model predicted vp ~ -1e-08, the step landed at
+        # va ~ +2.8e-08, and the ratio came out at -3.004 -- from three numbers all
+        # at 1e-08, a hundredth of the feasibility tolerance the run is trying to
+        # meet and squarely inside Ipopt's own interior-point noise. That rejected
+        # 90 of 300 iterations in a period-3 limit cycle, pinned the radius at
+        # ~5e-04, and left cdm 8.3% and cd_4/cd_7 ~11% ABOVE the drag the black box
+        # actually returns -- slack rows the solve could not close at 0.05% per
+        # step. Below the feasibility tolerance a "change in violation" is not a
+        # signal about the model, so no ratio should be formed from it.
+        self.ratio_gate_rel = 1.0
         # --- min-norm-dual KKT termination (EXPERIMENTAL, off by default) --
         # Splitting an equality into two always-active one-sided rows makes
         # the dual set unbounded (any common increment to the pair cancels),
@@ -404,6 +457,12 @@ def _agm(posy, x_k, weight_params, n):
             coeff *= (c / w) ** w
             expo = expo + w * a
     return coeff, expo
+
+
+#: How much worse the violation may get on a step judged only by its objective
+#: ratio before that step is rejected outright. Generous -- this is a backstop
+#: against walking out of the feasible set, not a feasibility filter.
+_FEAS_GUARD = 10.0
 
 
 def _violation_structured(problem, x):
@@ -656,6 +715,7 @@ class Curvature:
         self.updates = 0
         self.inflations = 0
         self.relaxations = 0
+        self.last_grad = None
 
     def observe(self, grad):
         """Extend the support to cover whatever the gradient touches.
@@ -679,6 +739,7 @@ class Curvature:
         because the sensitivities here span two orders of magnitude.
         """
         g = np.asarray(grad, dtype=float)
+        self.last_grad = g
         new = [j for j in np.nonzero(np.abs(g) > 0)[0] if j not in self._pos]
         if not new:
             return
@@ -1345,7 +1406,8 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     # Trust region -- ONLY when something had to be linearized. With every
     # constraint exact or conservative the step is safe by construction and a
     # region would only slow it down.
-    if has_blackbox or force_trust:
+    # radius None means the caller has RELEASED the box (see trust_iterations).
+    if (has_blackbox or force_trust) and radius is not None:
         for j in range(n):
             tighten(j, lo=-radius, hi=radius)
 
@@ -2177,6 +2239,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                      and not isinstance(con.body, (Posynomial, PosynomialRatio))}
 
     curv_grad, curv_pred, lin_here = {}, {}, {}
+    _curv_trained = False
+    _bb_g1 = 0.0                    # max_i ||grad log g_i||_1 over black-box rows
+    if curvature:
+        for _i in curvature:
+            try:
+                _g = np.asarray(problem.constraints[_i].body.log_grad(x), dtype=float)
+                _bb_g1 = max(_bb_g1, float(np.abs(_g).sum()))
+            except Exception:
+                pass
+    # Smallest radius at which a step has been REJECTED since the last accepted
+    # one. The 'unreachable -> widen' and 'bad step -> shrink' branches otherwise
+    # fight: shrink to r, find the sub-problem infeasible there, widen back to 2r,
+    # take the same rejected step, shrink to r again -- a deterministic cycle that
+    # burns the whole iteration budget re-evaluating cached points (measured on the
+    # 4-variable ROM section: 300 iterations, 27 distinct black-box evaluations).
+    _reject_radius = np.inf
     #: Which constraints are linearized -- the block the trust region and the
     #: ratio test exist for.
     lin_idx = [i for i, con in enumerate(problem.constraints)
@@ -2184,11 +2262,32 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                and not isinstance(con.body, (Posynomial, PosynomialRatio))]
     x_prev_for_curv = x.copy()
 
+    _trust_forced = False       # a step was rejected with the box off -> re-arm
+    # TANGENT EQUALITIES VOID THE UNBOUNDED-STEP PREMISE: Phase II steps
+    # are documented safe at any length because its rows are "exact or
+    # conservative" -- but a CondensedEquality is TANGENT, neither inner
+    # nor outer (the Phase I docstring says so itself), and with UNSPLIT
+    # equalities Phase II is full of them. Measured on the coupled
+    # aircraft: trust_radius=0.05 requested, |d| = 5-23 log units taken,
+    # feasibility 4e-7 -> 0.7 in eight iterations. When tangent
+    # equalities are present the trust region applies in Phase II too.
+    _has_tangent_eq = any(isinstance(c.body, CondensedEquality)
+                          for c in problem.constraints)
     for k in range(options.max_iterations):
+        _tgt = float(getattr(options, 'blackbox_step_target', 0.0) or 0.0)
+        _radius_eff = radius
+        _wi = int(getattr(options, 'blackbox_warm_iters', 0) or 0)
+        if has_blackbox and k < _wi and _tgt > 0.0 and _bb_g1 > 0.0:
+            _radius_eff = min(radius, _tgt / _bb_g1)
+        _ti = getattr(options, 'trust_iterations', None)
+        _released = (_ti is not None and k >= int(_ti) and not _trust_forced)
+        if _released:
+            _radius_eff = None
         try:
             d, s, mults, model_obj = _subproblem(
-                problem, x, tau, radius, options, has_blackbox, curvature=curvature,
-                use_slacks=use_slacks, cache=cache)
+                problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
+                use_slacks=use_slacks, cache=cache,
+                force_trust=_has_tangent_eq)
         except RuntimeError as exc:
             # An INFEASIBLE sub-problem is not a bad step -- it means the
             # trust region is too tight for the relaxed feasible set to be
@@ -2198,8 +2297,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # opposite. Widen and retry before giving up.
             if (has_blackbox and "infeasible" in str(exc).lower()
                     and radius < options.trust_max):
-                radius = min(options.trust_max,
-                             radius * options.trust_expand)
+                grown = min(options.trust_max, radius * options.trust_expand)
+                if grown >= _reject_radius:
+                    # Widening would return to a radius whose step was already
+                    # rejected from this iterate. The region is bracketed: too
+                    # small to be reachable, too large to be believed. Stop rather
+                    # than cycle -- the honest report is that the linearised model
+                    # cannot represent the problem here.
+                    res.status = (
+                        f"trust region bracketed at iteration {k + 1}: the "
+                        f"sub-problem is infeasible at radius {radius:.3g} but the "
+                        f"step at {_reject_radius:.3g} was rejected; the linearized "
+                        "constraints are not modelling the problem")
+                    res.x, res.objective = x, problem.objective_value(x)
+                    res.iterations = k + 1
+                    break
+                radius = grown
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  sub-problem unreachable, "
                           f"widening radius -> {radius:.3g}")
@@ -2363,7 +2476,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # the tolerance the run is actually trying to meet, those
             # differences are correctly treated as "no predicted change" and
             # the model is judged on its accuracy instead.
-            gate = 0.01 * options.feasibility_tolerance
+            gate = (float(getattr(options, 'ratio_gate_rel', 0.01) or 0.0)
+                    * options.feasibility_tolerance)
             if v0 is not None and vp is not None and v0 - vp > gate:
                 try:
                     va = max(_log_viol(problem.constraints[i], x_new)
@@ -2402,8 +2516,36 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     actual = math.log(max(f_old, 1e-300)) \
                         - math.log(max(problem.objective_value(x_new), 1e-300))
                     ratio = actual / pred if abs(pred) > 1e-300 else 1.0
+                    # The objective ratio alone is not an acceptance test: a step
+                    # that buys objective by walking out of the feasible set scores
+                    # well on it and is taken. Measured on the free-form ROM
+                    # section, iteration 1 dropped the objective 1619 -> 1521 while
+                    # feasibility went 9.975e-09 -> 2.074, and the solve never
+                    # recovered. Guard it: if the step made the violation materially
+                    # worse than the model implied, that is a rejection regardless
+                    # of what happened to the objective.
+                    v_old = _violation(problem, x)
+                    v_new = _violation(problem, x_new)
+                    if (v_new > options.feasibility_tolerance
+                            and v_new > _FEAS_GUARD * max(v_old,
+                                                          options.feasibility_tolerance)):
+                        ratio = -1.0
 
             if ratio < options.ratio_accept:
+                if _released:
+                    # Rejected with the box OFF. Shrinking a radius that is not
+                    # being applied would re-solve an identical sub-problem and
+                    # spin, so re-arm permanently, seeded from the step that just
+                    # failed rather than from a stale radius.
+                    _trust_forced = True
+                    radius = max(options.trust_min,
+                                 min(radius, float(np.abs(d).max()))
+                                 * options.trust_shrink)
+                    if options.verbose:
+                        print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} with the "
+                              f"trust box released; re-arming at {radius:.3e}")
+                    continue
+                _reject_radius = min(_reject_radius, radius)
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} "
@@ -2416,10 +2558,33 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     res.iterations = k + 1
                     break
                 continue
+            # Once the curvature models are TRAINED the trust region has done its
+            # job and should get out of the way. It exists only to substitute for
+            # a conservative model, and B supplies that as soon as it has data --
+            # so past warm-up, expand on every accepted step rather than only on a
+            # good ratio. Without this the radius ratchets: each early rejection
+            # divides it by four, nothing multiplies it back on a merely-adequate
+            # ratio, and the solve crawls at whatever radius an early rejection
+            # set (measured on the 16-variable ROM section: stationarity pinned at
+            # 1.37e-02 with |d| ~ 1e-03 and radius 2.4e-04, feasible to 3e-08 but
+            # unable to take the step that would make it stationary).
             if ratio > options.ratio_expand:
                 radius = min(options.trust_max, radius * options.trust_expand)
+            elif _curv_trained:
+                # Trained, but the step was only adequate. Grow GENTLY rather than
+                # by the full factor: doubling from a radius that works lands
+                # squarely on one that does not, and the region then oscillates
+                # accept-accept-reject forever (measured on the ROM section: a
+                # period-3 cycle, 9.8e-04 -> 2.0e-03 -> 3.9e-03 -> REJECT, ratio
+                # exactly -3.004 every time, a third of the iterations wasted and
+                # the objective creeping 0.04 kg per cycle). The square root of the
+                # expansion factor walks up to the usable radius instead of
+                # vaulting past it.
+                radius = min(options.trust_max,
+                             radius * math.sqrt(options.trust_expand))
 
         x = x_new
+        _reject_radius = np.inf              # progress: the bracket is stale
         if (getattr(options, 'phase2_restore', False) and n_eq_p2
                 and not has_blackbox):
             x_r, _heq = restore_equalities(
@@ -2463,6 +2628,17 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                             cv.relax()
                 except Exception:
                     pass
+            # Trained once EVERY black-box row has enough BFGS data for its B to
+            # be a real curvature estimate rather than the seeded prior. Taking
+            # the minimum, not the mean, is deliberate: one untrained row is one
+            # row whose model is still only as conservative as the prior, and the
+            # step is bounded by the worst of them.
+            _bb_g1 = max((float(np.abs(cv.last_grad).sum())
+                          for cv in curvature.values() if cv.last_grad is not None),
+                         default=_bb_g1)
+            _warm = int(getattr(options, 'curvature_warmup', 0) or 0)
+            if _warm and curvature:
+                _curv_trained = min(cv.updates for cv in curvature.values()) >= _warm
 
         # --- escalate the slack penalty -----------------------------------
         # Two reasons to raise tau, and the second is easy to miss.

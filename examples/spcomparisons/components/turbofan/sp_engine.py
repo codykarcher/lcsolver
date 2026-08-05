@@ -278,9 +278,15 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         KT2MS = 0.514444
         u0g = float(pyo.value(state.V[i])) * KT2MS
         MNg = float(pyo.value(state.M[i]))
+        # EVERY in-flight mission segment runs a CHOKED core: the branch-
+        # consistency guard caught the old 'climb cores unchoked'
+        # heuristic with s2, then s1, then s0 all supersonic under the
+        # unchoked closure at their warm states (this mission's lowest
+        # point is 72.7 kPa at M 0.665 -- nothing like the static cases
+        # the heuristic was borrowed from). Static/low-speed points need
+        # seg_choked overrides.
         ch_core, ch_byp = (seg_choked[i] if seg_choked is not None
-                           else ((True, True) if i >= Nclimb
-                                 else (False, True)))
+                           else (True, True))
         if debug_float_conds is not None:
             # bisection hook: pin conditions as plain numbers, exactly the
             # validated standalone structure
@@ -556,7 +562,15 @@ def add_engine_sp(f, N, state, *, tech: SPTech, prefix="Eng_", n_eng=2.0,
         # the weight-vs-BPR slope, partially resurrecting the
         # run-to-the-guard defect this surface exists to kill (review
         # finding, float-verified 4,724 vs 3,946 lbf).
-        _mn = eng.cyc_fan_Wc / ((1.0 + BPRD) * FZ.M_REF)
+        # (1+BPR) cannot sit inside a base raised to the fit's real
+        # exponents -- a signomial base to a non-integer power is outside
+        # the GP algebra and the detector rightly refuses it. An
+        # auxiliary CORE corrected-flow variable carries the division
+        # through one clean posynomial equality instead.
+        mdotc_v = V("mdotc_D", 55.0,
+                    "design core-stream corrected flow, kg/s")
+        cons += [mdotc_v + mdotc_v * BPRD == eng.cyc_fan_Wc]  # SigEq(posy)
+        _mn = mdotc_v / FZ.M_REF
         # fit-validity wedge: the surface excluded box corners via
         # m*BPR in [120, 1500] kg/s; guard it on the consumed quantities
         _wlo, _whi = 120.0, 1500.0

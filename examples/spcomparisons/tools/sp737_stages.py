@@ -92,7 +92,7 @@ for i in range(5):
         MN=segs[i]['M'], V0_m_s=segs[i]['V'],
         mode='F', F_N=segs[i]['F'],
         T4_cap_K=1833.0 if i == 0 else 1587.0,
-        choked_core=(i >= 3), choked_byp=True))
+        choked_core=True, choked_byp=True))
 
 # Accretive continuation with FORWARD-EVALUATED warm states: each mission
 # point gets its own design_state() at its own conditions, thrust and a
@@ -109,7 +109,7 @@ def seg_warm(i, tag):
     p_i = _dc.replace(pins, T0_K=segs[i]['T0'], P0_Pa=segs[i]['P0'],
                       MN=segs[i]['M'], V0_m_s=segs[i]['V'],
                       Fn_N=segs[i]['F'], T4_K=T4_i,
-                      choked_core=(i >= 3), choked_byp=True)
+                      choked_core=True, choked_byp=True)
     ws = WSTART.design_state(p_i)
     outw = {f"{tag}{k}": v for k, v in ws.items()
             if not k.startswith("_")}
@@ -149,7 +149,7 @@ for step, add in enumerate(order):
         MN=segs[i]['M'], V0_m_s=segs[i]['V'],
         mode='F', F_N=segs[i]['F'],
         T4_cap_K=1833.0 if i < 3 else 1587.0,
-        choked_core=(i >= 3), choked_byp=True) for i in active]
+        choked_core=True, choked_byp=True) for i in active]
     if vals_B is not None:
         warm = dict(vals_B)
         if add is not None:
@@ -351,7 +351,7 @@ if os.environ.get("REF_CASE"):
     cm = build_warmed(ref_case)
     st = structure_detector(cm)
     res = solve_sia(st, options=opts, presolve=False,
-                    split_equalities=True)
+                    split_equalities=not bool(os.environ.get("NOSPLIT")))
     feas = float(getattr(res, "max_violation", float("nan")))
     print(f"  REF_CASE free solve: converged={res.converged} "
           f"it={res.iterations}  feas={feas:.2e}", flush=True)
@@ -532,7 +532,7 @@ for label, pred in passes:
         n_p = 0
     st = structure_detector(cm)
     res = solve_sia(st, options=opts, presolve=False,
-                    split_equalities=True)
+                    split_equalities=not bool(os.environ.get("NOSPLIT")))
     feas = float(getattr(res, "max_violation", float("nan")))
     print(f"  pass {label:5s} ({n_p} pinned): converged={res.converged} "
           f"it={res.iterations}  feas={feas:.2e}", flush=True)
@@ -605,7 +605,7 @@ if os.environ.get("SWEEP"):
             p_i = _dc.replace(p_t, T0_K=segs[i]['T0'], P0_Pa=segs[i]['P0'],
                               MN=segs[i]['M'], V0_m_s=segs[i]['V'],
                               Fn_N=segs[i]['F'], T4_K=T4_i,
-                              choked_core=(i >= 3), choked_byp=True)
+                              choked_core=True, choked_byp=True)
             try:
                 ws_i = WSTART.design_state(p_i)
             except Exception:
@@ -639,7 +639,7 @@ if os.environ.get("SWEEP"):
         n_p = add_pins(cm, lambda n: _prof(n) or n in _DESIGN)
         st = structure_detector(cm)
         res = solve_sia(st, options=opts, presolve=False,
-                        split_equalities=True)
+                        split_equalities=not bool(os.environ.get("NOSPLIT")))
         feas = float(getattr(res, "max_violation", float("nan")))
         snap = snapshot(cm, st, res.x)
         # snapshot magnitudes for these variables are ALREADY lbf

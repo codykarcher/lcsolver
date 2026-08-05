@@ -41,7 +41,7 @@ if sys_path_root not in _sys.path:
 from edi.fitting import fit_max_affine, evaluate_fit
 
 
-def fit_sma(X, y, K=8, alphas=(1., 2., 4., 8., 16., 32.),
+def fit_sma(X, y, K=8, alphas=(1., 2., 4.),
             force_direct=False):
     """SMA fit of a positive 2-D surface, trying both y and 1/y.
 
@@ -126,8 +126,15 @@ def fit_sma(X, y, K=8, alphas=(1., 2., 4., 8., 16., 32.),
             E, B, err = lm(E0.copy(), B0a.copy(), a, w)
             if float(_np.max(_np.abs(E))) * a > 80.0:
                 continue      # refined slopes would overflow the rows
-            if best is None or err < best[0]:
-                best = (err, a, E, B)
+            # parsimony tie-break: a smaller softness within 10% of
+            # the best error wins -- log-gradients scale with a, so a
+            # high-a fit that is only epsilon better costs a-fold
+            # smaller solver steps for nothing
+            if best is None or err < 0.9 * best[0] \
+                    or (err < 1.1 * best[0] and a < best[1]):
+                if best is None or err < 1.1 * best[0]:
+                    if best is None or a < best[1] or err < 0.9 * best[0]:
+                        best = (err, a, E, B)
         if best is None:
             a = max(1.0, 80.0 / max(emax0, 1.0))
             B0a = B0 - _np.log(max(len(B0), 1)) / a
