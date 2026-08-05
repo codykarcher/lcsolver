@@ -25,15 +25,36 @@ from edi.solvers.ipopt.sia import SIAOptions
 ar = dataclasses.replace(architectures.ARCHS["conventional"],
                          lock_mach=True)
 t0 = time.time()
-cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,
-                                   seed="reference"))
+cls_key = os.environ.get("CLASS", "b737")
+_kw = ({"polar": os.environ["POLAR"]} if os.environ.get("POLAR") else {})
+cm = unit_corrector(aircraft.build(classes.CLASSES[cls_key], ar,
+                                   seed="reference", **_kw))
 ref_path = os.environ.get("CASE_REF", "b737_case_reference.json")
 ref = json.load(open(ref_path)) if os.path.exists(ref_path) else {}
+_skip = tuple(s for s in os.environ.get("SEED_SKIP", "").split(",") if s)
 n_set = 0
 for v in cm.component_data_objects(pyo.Var):
+    if _skip and v.name.startswith(_skip):
+        continue
     val = ref.get(v.name)
     if val and val > 0:
         v.set_value(float(val)); n_set += 1
+# PIN="pi_f_D=1.55,BPR_D=9.0,..." adds v == value ROWS (pins must be
+# rows -- var.fix() and bounds are both ignored by the detector). Used
+# to manufacture a pinned-cycle case reference for a new airframe class.
+_pins = {}
+for kv in os.environ.get("PIN", "").split(","):
+    if "=" in kv:
+        k, val = kv.split("=", 1)
+        _pins[k.strip()] = float(val)
+if _pins:
+    cm.pin_rows = pyo.ConstraintList()
+    for v in cm.component_data_objects(pyo.Var):
+        for k, val in _pins.items():
+            if v.name == k or v.name.endswith("_" + k):
+                cm.pin_rows.add(v == val)
+                v.set_value(val)
+                print(f"pinned {v.name} == {val}", flush=True)
 st = structure_detector(cm)
 print(f"built+seeded ({n_set} from {ref_path}) in {time.time()-t0:.0f}s",
       flush=True)
