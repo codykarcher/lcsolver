@@ -42,6 +42,16 @@ jobs:
       - name: Install the package
         run: pip install -e ".[test]"
 
+      - name: Complete the solver install
+        # The conda environment brings ipopt and cyipopt, but not
+        # Pyomo's PyNumero ASL library, which the in-process route
+        # needs to build an NLP at all -- without it every black-box
+        # test dies on "Cannot load the PyNumero ASL interface".
+        # Running the documented bootstrap rather than the one command
+        # it would run: if `lcsolver-install-solvers` does not leave a
+        # working environment, that is a bug worth failing on.
+        run: lcsolver-install-solvers --yes
+
       - name: Confirm the solvers are really here
         # If this prints no IPOPT, the coverage number below is measuring a
         # broken environment and the floor would fail for the wrong reason.

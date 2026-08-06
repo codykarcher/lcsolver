@@ -52,6 +52,14 @@ dependencies = [
   "scipy",
   "pint",
   "cvxopt",
+  # Pyomo declares no install requirements of its own -- numpy, scipy and
+  # packaging are all optional to it -- and gates its deferred numpy import
+  # behind `packaging.version`. lcsolver imports pyomo.contrib.pynumero at
+  # package import time for the black-box interface, so without packaging the
+  # chain is: no packaging -> pyomo reports numpy unavailable -> pynumero
+  # fails -> `import lcsolver` raises. A fresh `pip install lcsolver` was
+  # unimportable because of it.
+  "packaging",
 ]
 
 # Optional extras. mpi4py in particular requires a working MPI installation and

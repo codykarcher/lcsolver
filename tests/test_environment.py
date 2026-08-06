@@ -268,7 +268,7 @@ def _report(cvxopt=True, ipopt=None, cyipopt=True):
                   'ma27': None, 'mumps': None, 'shadowed_by': None,
                   'all_on_path': []},
         'cyipopt': {'available': cyipopt, 'version': '1.7.0',
-                    'ma27': None, 'mumps': None},
+                    'pynumero_asl': True, 'ma27': None, 'mumps': None},
         'probed': True,
         'warnings': [],
     }
@@ -337,6 +337,46 @@ def test_missing_cvxopt_is_planned_even_though_it_is_a_hard_dependency():
         _report(cvxopt=False, ipopt='/usr/bin/ipopt'), conda=None,
         args=_Args())
     assert any('cvxopt' in step.command for step in steps if step.command)
+
+
+def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch):
+    """Installing cyipopt is not enough for the in-process route.
+
+    Pyomo builds the NLP through PyNumero, whose compiled ASL library ships
+    with neither pyomo nor cyipopt. Without it every black-box solve dies on
+    "Cannot load the PyNumero ASL interface" -- which is what a conda
+    environment built from environment.yml does, and it is the case that
+    reaches the early return in the planner, so it is the one worth pinning.
+    """
+    exe = _fake_ipopt(str(tmp_path))
+    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: False)
+
+    report = _report(ipopt=exe)          # ipopt and cyipopt both already here
+    steps, _ = install._plan_default(report, conda=None, args=_Args())
+
+    assert len(steps) == 1
+    assert 'download-extensions' in ' '.join(steps[0].command)
+
+
+def test_the_asl_library_is_not_refetched_when_present(tmp_path, monkeypatch):
+    exe = _fake_ipopt(str(tmp_path))
+    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: True)
+
+    steps, _ = install._plan_default(_report(ipopt=exe), conda=None,
+                                     args=_Args())
+    assert steps == []
+
+
+def test_a_missing_asl_library_is_reported_not_silent(monkeypatch):
+    """It has to appear in the report too: the error it causes at solve time
+    names a component the user has never heard of."""
+    monkeypatch.setattr(environment, '_pynumero_asl_available', lambda: False)
+    report = environment.check_solvers(probe=False)
+
+    if report['cyipopt']['available']:   # nothing to say if cyipopt is absent
+        assert report['cyipopt']['pynumero_asl'] is False
+        assert any('PyNumero ASL' in w for w in report['warnings'])
+        assert 'MISSING' in environment._fmt(report)
 
 
 def test_relink_targets_the_build_the_executable_came_from(tmp_path):

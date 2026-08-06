@@ -84,6 +84,16 @@ jobs:
       - name: Install lcsolver
         run: python -m pip install -e ".[test]"
 
+      - name: Complete the solver install
+        # The conda environment brings ipopt and cyipopt, but not
+        # Pyomo's PyNumero ASL library, which the in-process route
+        # needs to build an NLP at all -- without it every black-box
+        # test dies on "Cannot load the PyNumero ASL interface".
+        # Running the documented bootstrap rather than the one command
+        # it would run: if `lcsolver-install-solvers` does not leave a
+        # working environment, that is a bug worth failing on.
+        run: lcsolver-install-solvers --yes
+
       - name: Show what the solver environment actually is
         run: lcsolver-check-solvers
 
@@ -92,9 +102,9 @@ jobs:
 
       - name: Run the cross-path integration suite
         # Only meaningful with IPOPT: four of its five paths are IPOPT paths.
-        run: |
-          python -m pytest tests/ -m "slow and not veryslow" -q
-          python -m pytest tests/ -m veryslow -q
+        # One selection covers both markers -- `-m veryslow` alone currently
+        # matches nothing and would exit 5.
+        run: python -m pytest tests/ -m "slow or veryslow" -q
 
       - name: No test may be skipped for a missing IPOPT here
         # The point of this job. If a test skips because IPOPT is missing on a

@@ -36,9 +36,14 @@ jobs:
           activate-environment: lcsolver
           auto-activate-base: false
       - run: pip install -e ".[test]"
+      - run: lcsolver-install-solvers --yes    # brings the PyNumero ASL library
       - run: lcsolver-check-solvers
-      - run: pytest -m "slow and not veryslow" -q
-      - run: pytest -m veryslow -q          # SPaircraft, about half a minute
+      # One selection, not two. `pytest -m veryslow` was its own step back when
+      # SPaircraft carried that marker; the model has since left the repo and
+      # nothing carries it, so that step collected zero tests and exited 5 --
+      # a red build reporting that a marker is unused. This form runs whatever
+      # heavy tests exist and picks a veryslow one back up automatically.
+      - run: pytest -m "slow or veryslow" -q
         timeout-minutes: 15
 
 # Coverage lives in its own workflow, coverage.yml, rather than as a third job

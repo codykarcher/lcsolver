@@ -7,13 +7,11 @@
 [![cross-platform](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml)
 [![coverage](https://github.com/codykarcher/lcsolver/actions/workflows/coverage.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/coverage.yml)
 
-LCsolver is a lightweight wrapper on the Pyomo language that is targeted at composing engineering design optimization problems.  The language and interface have been designed to mimic many of the features found in [GPkit](https://github.com/convexengineering/gpkit) and [CVXPY](https://github.com/cvxpy/cvxpy) while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
+LCsolver is a package targeted at formulating and solving optimization problems that exploit Log Convexity to achieve solutions.  LCsolver (abbreviated as LCS) consists of three major components:
 
-## Statement of Need
-
-Design optimization in aerospace, energy, and mechanical engineering is characterized by models that mix closed-form physics with legacy analysis codes, and by quantities that carry units whose mismatch is a common and expensive source of error.  Disciplined convex modeling packages such as CVXPY and geometric-programming packages such as GPkit give excellent ergonomics and strong guarantees, but only within their problem class, and neither accommodates an arbitrary external solver in the constraint set.  General algebraic modeling languages such as Pyomo impose no such restriction, but leave the engineer to manage units manually and to hand-roll the interface to any external analysis code.
-
-LCsolver targets the gap: an engineer writes a single unit-annotated model in which some constraints are algebraic and others are evaluated by external codes; LCsolver checks unit consistency, detects the mathematical structure of the algebraic portion, and routes the problem to a solver appropriate to that structure.
+1. A lightweight wrapper around the Pyomo modeling language that has been designed to mimicmany of the features found in [GPkit](https://github.com/convexengineering/gpkit) and [CVXPY](https://github.com/cvxpy/cvxpy) while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
+2. A set of methods that detect the structure of the optimization problem and classifies it for sorting to the appropriate optimization algorithm
+3. Two novel algorithms for solving particularly complex optimization problems (SLCP and SIA)
 
 ## Installation
 

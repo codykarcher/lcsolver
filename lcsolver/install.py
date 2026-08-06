@@ -217,6 +217,21 @@ def _plan_default(report, conda, args):
     steps = []
     source_root = None
 
+    def finish(collected):
+        """Append the PyNumero ASL fetch, whatever else was decided.
+
+        It goes through a helper rather than being written at the end of the
+        function because there are several early returns above it, and the case
+        that matters most reaches one of them: an environment that already has
+        ipopt and cyipopt (a conda env from environment.yml, say) has nothing
+        else to do, returns early, and is exactly the environment where the
+        missing ASL library is the only thing standing between it and a
+        working black-box solve.
+        """
+        if not args.skip_cyipopt and not _pynumero_asl_available():
+            collected.append(_plan_pynumero_asl())
+        return collected
+
     if not report['cvxopt']['available'] and not args.skip_cvxopt:
         steps.append(Step(
             'install cvxopt (wheels exist for every supported platform)',
@@ -240,7 +255,7 @@ def _plan_default(report, conda, args):
         want_cyipopt = False
 
     if not (want_ipopt or want_cyipopt):
-        return steps, source_root
+        return finish(steps), source_root
 
     if conda:
         packages = []
@@ -252,7 +267,7 @@ def _plan_default(report, conda, args):
             f'install {" and ".join(packages)} from conda-forge into '
             f'{conda["prefix"]}',
             command=[conda['exe'], 'install', '-y', '-c', 'conda-forge'] + packages))
-        return steps, source_root
+        return finish(steps), source_root
 
     # No conda. IPOPT then has to come from the system package manager, and
     # cyipopt has to compile against it.
@@ -300,7 +315,41 @@ def _plan_default(report, conda, args):
                 'above; needs a C compiler and pkg-config)',
                 command=[sys.executable, '-m', 'pip', 'install', 'cyipopt']))
 
-    return steps, source_root
+    return finish(steps), source_root
+
+
+def _pynumero_asl_available():
+    """Can Pyomo's in-process NLP interface actually load its ASL library?
+
+    Installing cyipopt is not enough to use the in-process route. Pyomo builds
+    the NLP through PyNumero, which needs a compiled ``pynumero_ASL`` shared
+    library that ships with neither pyomo nor cyipopt --- it is fetched
+    separately by ``pyomo download-extensions``. Without it, every black-box
+    solve dies with "Cannot load the PyNumero ASL interface", which names a
+    component the user has never heard of and gives no hint that one command
+    fixes it.
+    """
+    try:
+        from pyomo.contrib.pynumero.asl import AmplInterface
+        return bool(AmplInterface.available())
+    except Exception:
+        return False
+
+
+def _plan_pynumero_asl():
+    """Fetch the PyNumero ASL library.
+
+    ``download-extensions`` rather than the conda-forge ``pynumero_libraries``
+    package: that package has no osx-arm64 build, and Apple Silicon is not a
+    platform to leave out. This route is part of Pyomo itself and works
+    everywhere.
+    """
+    return Step(
+        "download Pyomo's PyNumero ASL library (cyipopt cannot evaluate a "
+        "model without it)",
+        command=[sys.executable, '-c',
+                 'from pyomo.scripting.pyomo_main import main; '
+                 'raise SystemExit(main(["download-extensions"]))'])
 
 
 def _ma27_build_root(args):

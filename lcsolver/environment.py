@@ -387,6 +387,15 @@ def cyipopt_linear_solver_available(name):
     return probe.get(name)
 
 
+def _pynumero_asl_available():
+    """Is the compiled PyNumero ASL library present and loadable?"""
+    try:
+        from pyomo.contrib.pynumero.asl import AmplInterface
+        return bool(AmplInterface.available())
+    except Exception:
+        return False
+
+
 def _ipopt_version(executable):
     try:
         import subprocess
@@ -416,7 +425,7 @@ def check_solvers(probe=True):
         'ipopt': {'executable': None, 'pinned': False, 'version': None,
                   'ma27': None, 'mumps': None, 'shadowed_by': None,
                   'all_on_path': [], 'reason': None},
-        'cyipopt': {'available': False, 'version': None,
+        'cyipopt': {'available': False, 'version': None, 'pynumero_asl': None,
                     'ma27': None, 'mumps': None},
         'probed': bool(probe),
         'warnings': [],
@@ -482,6 +491,20 @@ def check_solvers(probe=True):
         import cyipopt
         report['cyipopt']['available'] = True
         report['cyipopt']['version'] = getattr(cyipopt, '__version__', 'unknown')
+
+        # cyipopt alone is not a working in-process route. Pyomo builds the
+        # NLP through PyNumero, whose ASL shared library ships separately from
+        # both packages; without it every black-box solve fails with "Cannot
+        # load the PyNumero ASL interface", which names a component most users
+        # have never heard of.
+        report['cyipopt']['pynumero_asl'] = _pynumero_asl_available()
+        if not report['cyipopt']['pynumero_asl']:
+            report['warnings'].append(
+                "cyipopt is installed but Pyomo's PyNumero ASL library is "
+                'not, so black-box (grey-box) models cannot be solved at all. '
+                'Fix with `pyomo download-extensions`, or '
+                '`lcsolver-install-solvers`, which does it for you.')
+
         if probe:
             report['cyipopt']['ma27'] = cyipopt_linear_solver_available('ma27')
             report['cyipopt']['mumps'] = cyipopt_linear_solver_available('mumps')
@@ -539,6 +562,9 @@ def _fmt(report):
     y = report['cyipopt']
     if y['available']:
         add(f"cyipopt       yes  {y['version']}")
+        if y.get('pynumero_asl') is False:
+            add('              PyNumero ASL library: MISSING '
+                '(black-box models cannot solve)')
         if report['probed']:
             if y['ma27'] is None and y['mumps'] is None:
                 add('              linear solvers: could not probe '
