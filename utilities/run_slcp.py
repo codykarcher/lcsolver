@@ -8,9 +8,9 @@
 
 Usage::
 
-    python examples/run_slcp.py            # all implemented cases
-    python examples/run_slcp.py simple     # one case
-    python examples/run_slcp.py --trend    # small multi-start trend check
+    python utilities/run_slcp.py            # all implemented cases
+    python utilities/run_slcp.py simple     # one case
+    python utilities/run_slcp.py --trend    # small multi-start trend check
 
 Each case runs from a single starting point, which is enough to demonstrate
 feasibility. The paper's published results are averages over 1000 random starts
@@ -27,7 +27,7 @@ import numpy as np
 sys.path.insert(0, __file__.rsplit('/', 2)[0])
 
 from lcsolver.solvers.ipopt import slcp                      # noqa: E402
-from examples.slcp_cases import CASES                   # noqa: E402
+from slcp_cases import CASES                   # noqa: E402
 
 METHODS = ('slcp', 'lsqp', 'sqp')
 

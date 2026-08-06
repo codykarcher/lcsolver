@@ -128,8 +128,8 @@ def main():
     ap.add_argument('--repeats', type=int, default=5)
     args = ap.parse_args()
 
-    from examples.slcp_cases import hoburg, kirschen_ozturk_gp, simple_example
-    from examples.slcp_formulations import hoburg_gp, ko_gp, simple_gp
+    from slcp_cases import hoburg, kirschen_ozturk_gp, simple_example
+    from slcp_formulations import hoburg_gp, ko_gp, simple_gp
 
     print('Every backend below solves the SAME model. Objectives must agree;')
     print('the timings are therefore a like-for-like cost comparison.')

@@ -272,7 +272,7 @@ def ko_gp():
     18 variables, sitting between the 2-variable example and the 61-variable
     Hoburg model, which is where the backend crossover shows up.
     """
-    from examples.slcp_cases import KO_X0, kirschen_ozturk_gp
+    from slcp_cases import KO_X0, kirschen_ozturk_gp
 
     problem, _, _ = kirschen_ozturk_gp()
     return problem_to_formulation(problem, KO_X0)
