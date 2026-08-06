@@ -13,17 +13,39 @@ LCsolver is a package targeted at formulating and solving optimization problems 
 2. A set of methods that detect the structure of the optimization problem and classifies it for sorting to the appropriate optimization algorithm
 3. Two novel algorithms for solving particularly complex optimization problems (SLCP and SIA)
 
+## Dependencies
+
+LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  Ipopt can be installed through the cyipopt package, but ships by default with the MUMPS linear algebra package, which is known to have performance difficulties.  We strongly encourage that users obtain MA27 and build IPOPT on this solver as opposed to the default MUMPS.  LCS is able to build and run without MA27 by default and provides easy options to upgrade later, described below.  
+
 ## Installation
 
-LCsolver began as a contribution to Pyomo itself — the Engineering Design Interface, [`pyomo.contrib.edi`](https://github.com/Pyomo/pyomo/pull/2937), public since August 2023 — and is now distributed as a standalone package so that it can evolve independently of the Pyomo release cycle.
+Installation takes two steps due to the IPOPT dependency.
 
-Install from GitHub for now — `pip install lcsolver` is coming once the PyPI release is published.
+Quickstart TLDR:  First obtain MA27 which is free for individual use
 
-It takes two steps, because one of the solvers cannot come from pip at all. The package and its Python dependencies install normally; IPOPT does not. There is no IPOPT executable on PyPI under any name, and cyipopt is published there as source only, so `pip install cyipopt` compiles against an IPOPT that has to be on the machine already. Getting one is what `lcsolver-install-solvers` is for.
+```
+https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
+```
+
+Then run the following commands
+```
+pip install git+https://github.com/codykarcher/lcsolver.git
+lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
+```
+
+However, more detailed build instructions are below
 
 ### 1. The package
 
-**Everything in one command (recommended)** — conda can supply IPOPT, so this covers most of step 2 as well:
+Installing via pip is the simplest method
+
+```
+pip install git+https://github.com/codykarcher/lcsolver.git
+```
+
+or, from a clone, `pip install -e .`.
+
+**If you wish to build in an environment** run the following
 
 ```
 git clone https://github.com/codykarcher/lcsolver.git
@@ -33,15 +55,11 @@ conda activate lcsolver
 pip install -e .
 ```
 
-**Or with pip alone:**
-
-```
-pip install git+https://github.com/codykarcher/lcsolver.git
-```
-
-or, from a clone, `pip install -e .`.
+Pypi support is coming soon.
 
 ### 2. The solvers
+
+After installing the core package, run the following to install the solvers:
 
 ```
 lcsolver-install-solvers
@@ -59,103 +77,22 @@ lcsolver-check-solvers
 
 **You do not need IPOPT to try LCsolver.** With the package alone, a detected LP, QP, GP or SP solves through cvxopt — `solve()` falls back on its own and says so — and the test suite passes, skipping what it cannot run. IPOPT is needed for general nonlinear programs, for black-box constraints, and for the SLCP and SIA routes.
 
-### 3. MA27, if you want it
+### 3. MA27, if you want it (you do, trust me)
 
-Either route above leaves you on a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs MA27 is markedly more robust; it is free for academic use, but it has to be fetched by hand and IPOPT rebuilt against it:
+Either route above leaves you on a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs MA27 is markedly more robust; it is free for individual use, but it has to be fetched by hand and IPOPT rebuilt against it.  You can request a download of MA27 here:
 
+```
+https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
+```
+
+and then install LCS with MA27 using the following command
 ```
 lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
 ```
 
-That serves as a first install and as an upgrade on top of an existing MUMPS one: it rebuilds IPOPT, relinks cyipopt to match, and records where the build went. Nothing needs to go in a shell profile — LCsolver finds a build it installed even when that build is on no `PATH`, and prefers an MA27 build over a MUMPS one whatever `PATH` order says. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
+This command serves as both a first install and as an upgrade on top of an existing MUMPS one: it rebuilds IPOPT, relinks cyipopt to match, and records where the build went. Nothing needs to go in a shell profile — LCsolver finds a build it installed even when that build is on no `PATH`, and prefers an MA27 build over a MUMPS one whatever `PATH` order says. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
 
 For any other environment on the same machine, `lcsolver-install-solvers --relink-cyipopt` points that environment's cyipopt at the MA27 build without rebuilding IPOPT again.
-
-## Solving
-
-LCsolver detects the structure of a formulation and routes it to an appropriate solver.
-
-```python
-from lcsolver.solvers.solver import solve
-
-res = solve(f)                    # auto: IPOPT for LP/QP/GP/SP, and everything else
-res = solve(f, convex_backend='cvxopt')  # structured backends for a detected LP/QP/GP/SP
-res = solve(f, solver='ipopt')    # force IPOPT (general NLP, and black-box models)
-```
-
-After any successful solve the solution is written back onto the model, so
-
-```python
-import pyomo.environ as pyo
-pyo.value(f.x)                    # the optimum, not the initial guess
-```
-
-### Sensitivities
-
-After a solve, LCsolver reports how strongly the optimum responds to each `Constant`,
-the way GPkit does for a geometric program:
-
-```python
-solve(f)
-f.print_sensitivities()
-```
-```
-========================================================================
-Sensitivities to constants    [d log(f*) / d log(c)]
-objective = 254.872    duals: kkt
-========================================================================
-  W_0                             +0.9953   ++++++++++++++++++++
-  e                               -0.4795   ----------
-  k                               +0.4108   +++++++++
-  ...
-```
-
-The numbers are log-log sensitivities (elasticities), so they are unitless and
-can be ranked against each other: `+0.4108` means a 1% increase in `k` costs
-about 0.41% of objective. They come from the constraint duals via the envelope
-theorem, so the cost is one solve regardless of how many constants the model
-has — not the `2N` re-solves a finite difference would need — and every partial
-derivative is taken symbolically, so there is no step size to tune. Available
-for LP, QP, GP and SP on both the cvxopt and IPOPT cores; for a signomial
-program the result is a local approximation from the final convex subproblem and
-is flagged as such. See the [documentation](docs/sensitivities.rst).
-
-### IPOPT
-
-Two routes are supported. `method='pyomo'` uses `SolverFactory('ipopt')`, Pyomo's
-AMPL-based interface, and needs the `ipopt` executable. `method='cyipopt'`
-uses `pyomo.contrib.pynumero` and calls the IPOPT library in-process. The default,
-`method='auto'`, prefers the Pyomo route but switches to cyipopt when the model
-contains black-box (grey-box) constraints, which the AMPL route cannot evaluate.
-
-Which linear solver is underneath matters more than anything else about the
-install, and it is fixed when IPOPT is built. Every prebuilt IPOPT — conda,
-apt, Homebrew — is a MUMPS build, because MUMPS is the only one that may be
-redistributed, and MUMPS is not what you want underneath a geometric or
-signomial program. IPOPT's own default is `ma27`. See
-[docs/ipopt.rst](docs/ipopt.rst) for why, and
-[lcsolver/scripts/install_ipopt.sh](lcsolver/scripts/install_ipopt.sh) (driven
-by `lcsolver-install-solvers --ma27`) to build against HSL MA27.
-
-If you have both a conda IPOPT and a source-built MA27 one, LCsolver uses the
-MA27 build — it prefers MA27 over a MUMPS build regardless of `PATH` order, and
-finds a build it installed even if that build is on no `PATH` at all. This is
-deliberate: `conda activate` prepends `$CONDA_PREFIX/bin` in every new shell, so
-honouring `PATH` strictly would mean the build you made specifically to get MA27
-is silently used by nothing. `lcsolver-check-solvers` always names the binary it
-picked and why.
-
-To override — force one binary, or restore strict `PATH` order:
-
-```
-export LCSOLVER_IPOPT_EXECUTABLE=/path/to/ipopt/build/bin/ipopt
-export LCSOLVER_IPOPT_AUTOSELECT=0
-```
-
-```python
-from lcsolver.solvers.ipopt import ipopt_solve
-res = ipopt_solve(f, options={'tol': 1e-8, 'max_iter': 500}, tee=True)
-```
 
 ## Usage
 
@@ -193,7 +130,6 @@ c = f.Constant(name='c', value=[1.0, 2.0], units='', size=2, description='A cons
 # Declare the Objective
 # =====================
 f.Objective(c[0] / x + c[1] / y)
-
 
 # ===================
 # Declare a Black Box
@@ -271,6 +207,10 @@ or open a pull request, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the
 conduct expected of participants.
 
 ## Acknowledgement
+
+Generative AI was used to assist in the development, documentation, and testing
+of this software package.  Human developers have reviewed and verified the code
+to ensure its quality and accuracy.
 
 This package is spun out of Pyomo, acknowledged below.
 

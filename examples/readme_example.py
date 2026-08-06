@@ -26,7 +26,6 @@ c = f.Constant(name='c', value=[1.0, 2.0], units='', size=2, description='A cons
 # =====================
 f.Objective(c[0] / x + c[1] / y)
 
-
 # ===================
 # Declare a Black Box
 # ===================
