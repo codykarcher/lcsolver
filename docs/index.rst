@@ -29,19 +29,27 @@ LCsolver is installed directly from GitHub:
     pip install git+https://github.com/codykarcher/lcsolver.git
 
 
-Optional extras provide the solver backends and plotting support:
+(``pip install lcsolver`` follows once the PyPI release is published.)
+
+cvxopt comes with it. Optional extras add plotting and MPI support:
 
 ::
 
-    pip install "lcsolver[solvers] @ git+https://github.com/codykarcher/lcsolver.git"     # cvxopt
     pip install "lcsolver[plotting] @ git+https://github.com/codykarcher/lcsolver.git"    # matplotlib, pandas
     pip install "lcsolver[parallel] @ git+https://github.com/codykarcher/lcsolver.git"    # mpi4py
 
-The IPOPT backend additionally requires either the ``ipopt`` executable on your
-``PATH`` or ``pip install cyipopt``. IPOPT is the default convex backend and the
-only one that can evaluate a black-box constraint, so it is worth installing
-properly rather than quickly --- in particular, every prebuilt IPOPT ships with
-the MUMPS linear solver, which is not the one you want. See :doc:`ipopt`.
+IPOPT is the second step, and it cannot come from pip --- see :doc:`ipopt` for
+why not:
+
+::
+
+    lcsolver-install-solvers        # once per environment
+    lcsolver-check-solvers          # what you ended up with
+
+IPOPT is the default convex backend and the only one that can evaluate a
+black-box constraint, so it is worth installing properly rather than quickly:
+every prebuilt IPOPT ships with the MUMPS linear solver, which is not the one
+you want. ``lcsolver-install-solvers --ma27 <path>`` builds one that is.
 
 
 User's Guide
@@ -66,6 +74,15 @@ User's Guide
    sensitivities.rst
    examples.rst
    additionaltips.rst
+
+
+Reference
+---------
+
+.. toctree::
+   :maxdepth: 2
+
+   api.rst
 
 
 Technical Notes

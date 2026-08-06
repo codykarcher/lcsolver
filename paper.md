@@ -20,15 +20,16 @@ affiliations:
     index: 1
   - name: Sandia National Laboratories, Albuquerque, NM, USA
     index: 2
-date: 19 July 2026
+date: 6 August 2026
 bibliography: paper.bib
 ---
 
 <!--
 NOTE TO AUTHORS (delete before submission)
-  REMAINING BLOCKERS: (1) Bynum's ORCID is still a placeholder -- JOSS checks
-  them; (2) a Zenodo DOI, which requires a tagged GitHub release (needed at
-  acceptance, not submission); (3) a SAND number before public release.
+  REMAINING: (1) Bynum's ORCID is still a placeholder -- JOSS checks them, and a
+  contribution statement is still to be added; (2) a Zenodo DOI, which requires a
+  tagged GitHub release (needed at acceptance, not submission); (3) a SAND number
+  before public release.
 -->
 
 # Summary
@@ -45,69 +46,117 @@ constraints, and automatic detection of problem structure so that a model writte
 once can be recognized as linear, quadratic, geometric, or signomial and handed to
 an appropriate solver.
 
-The interface deliberately borrows its ergonomics from `GPkit` [@burnell2020gpkit]
-and `CVXPY` [@diamond2016cvxpy], which are pleasant to write models in but
-restricted to particular problem classes, while retaining the generality and solver
-ecosystem of Pyomo.
-
 # Statement of need
 
 Design optimization in aerospace, energy, and mechanical engineering is
 characterized by models that mix closed-form physics with legacy analysis codes,
 and by quantities that carry units whose mismatch is a common and expensive source
-of error. Existing tools address parts of this problem. Disciplined convex modeling
-packages such as `CVXPY` and geometric-programming packages such as `GPkit` give
-excellent ergonomics and strong guarantees, but only within their problem class,
-and neither accommodates an arbitrary external solver in the constraint set.
-General algebraic modeling languages such as Pyomo impose no such restriction, but
-leave the engineer to manage units manually and to hand-roll the interface to any
-external analysis code.
+of error.
 
-`LCsolver` targets the gap. An engineer writes a single unit-annotated model in which
-some constraints are algebraic and others are evaluated by external codes; `LCsolver`
-checks unit consistency, detects the mathematical structure of the algebraic
-portion, and routes the problem to a solver appropriate to that structure. The same
-model can therefore be solved as a geometric program when it happens to be one, and
-as a general nonlinear program when it is not, without being rewritten.
+`LCsolver` targets that gap. An engineer writes a single unit-annotated model in
+which some constraints are algebraic and others are evaluated by external codes;
+`LCsolver` checks unit consistency, detects the mathematical structure of the
+algebraic portion, and routes the problem to a solver appropriate to that
+structure. The same model can therefore be solved as a geometric program when it
+happens to be one, and as a general nonlinear program when it is not, without
+being rewritten.
 
-`LCsolver` began as a contribution to Pyomo itself and is distributed here as a
+The software began in 2023 as a contributed sub-package of Pyomo itself, the
+Engineering Design Interface [@karcher2023edi], and is distributed here as a
 standalone package so that it can evolve independently of the Pyomo release cycle.
+
+# State of the field
+
+Existing tools address parts of this problem. Disciplined convex modeling packages
+such as `CVXPY` [@diamond2016cvxpy] and geometric-programming packages such as
+`GPkit` [@burnell2020gpkit] give excellent ergonomics and strong guarantees, but
+only within their problem class. A model that is *almost* a geometric program falls
+outside both, and neither accommodates an arbitrary external solver in the
+constraint set — the analysis codes that dominate real engineering practice cannot
+be expressed at all. General algebraic modeling languages such as Pyomo impose no
+such restriction, but leave the engineer to manage units by hand and to write the
+interface to any external analysis code from scratch, and they discard the
+structure that makes a log-convex problem tractable.
+
+`LCsolver` borrows its ergonomics from `GPkit` and `CVXPY` while retaining the
+generality and solver ecosystem of Pyomo. The distinguishing capability is that
+structure is *detected* rather than *declared*: the user is not required to know,
+or to commit to, which problem class their model belongs to.
+
+# Software design
+
+`LCsolver` is a thin layer over Pyomo rather than a fork or a new modeling
+language, and that constraint drove the significant design decisions.
+
+A `Formulation` subclasses Pyomo's `ConcreteModel`, so every existing Pyomo tool,
+solver interface, and transformation continues to work on an `LCsolver` model. The
+alternative — a native model object with a Pyomo exporter — would have bought
+freedom in the API at the cost of the ecosystem, which is most of Pyomo's value.
+
+Structure detection is implemented as an expression-tree walker rather than by
+asking users to declare a problem class, as `CVXPY` and `GPkit` do. Declaration is
+simpler to implement and yields better error messages, but it requires the modeler
+to classify their own problem, which is precisely the expertise the tool exists to
+supply.
+
+Black-box constraints are routed through Pyomo's grey-box interface rather than
+through callbacks or finite differences, so an external code contributes exact
+derivatives to the same KKT system as the algebraic constraints. The cost is that
+the author must supply a Jacobian; the benefit is that the resulting problem is
+solved rather than sampled.
+
+Because a transformation that silently changes the problem is this architecture's
+characteristic failure mode, the package carries an unusual amount of internal
+checking: unit consistency is verified as the model is built, an equivalence
+assertion compares the problem before and after each presolve reduction, and
+post-solve checks report constraints that were declared as validity limits but
+turned out to bind.
 
 # Functionality
 
 - **Unit-aware modeling.** Variables and constants are declared with units, guesses,
   and descriptions; unit consistency is checked as the model is built rather than at
   solve time.
-- **Black-box constraints.** A `BlackBoxFunctionModel` base class provides a
-  structured way to expose an external analysis code, including its derivatives, as
-  a Pyomo constraint via the grey-box interface.
-- **Structure detection.** A model walker classifies the algebraic structure of the
-  formulation, recognizing linear, quadratic, geometric, and signomial forms.
-- **Solver routing.** Detected structure is dispatched to an appropriate backend:
-  linear, quadratic and geometric programs to IPOPT applied to the
-  log-transformed problem, or to `cvxopt`; signomial programs to a solver built on
-  successive monomial approximation with a penalty convex–concave step, or to
-  Sequential Log-Convex Programming; and anything else, including models
-  containing black-box constraints, to IPOPT via Pyomo. Solutions are written
-  back onto the model in every case.
+- **Black-box constraints.** A `BlackBoxFunctionModel` base class exposes an
+  external analysis code, including its derivatives, as a Pyomo constraint.
+- **Structure detection and solver routing.** Linear and quadratic programs go to
+  IPOPT in their natural variables, or to `cvxopt`; geometric programs are solved
+  in log space, where they are convex, so global optimality is preserved.
+  Signomial programs default to sequential inner approximation (SIA), which
+  terminates on a KKT residual for the original problem, with a penalty
+  convex–concave loop and Sequential Log-Convex Programming available as
+  alternatives. Models carrying black-box constraints are routed to SIA, which
+  imposes each box through its linearization inside a trust-region loop while
+  keeping every algebraic constraint exact. Solutions are written back onto the
+  model in every case.
+- **Sequential Log-Convex Programming.** For the common case of a model that is
+  *almost* GP-compatible, `LCsolver` implements SLCP [@karcher2022slcp]. Posynomial
+  and monomial constraints are imposed exactly in a log-convex subproblem while the
+  remainder is linearized in log space, recovering much of the conditioning and
+  reliability of a geometric program without requiring the whole model to be one.
 - **Sensitivities to constants.** After a solve, `LCsolver` reports the log-log
   sensitivity of the optimum to every declared constant, ranking a model's
-  assumptions by how much they actually matter. These are obtained from the
-  constraint duals via the envelope theorem, so they cost one solve rather than
-  the two-per-constant of a finite difference, and each partial derivative is
-  taken symbolically rather than by differencing. They are available for linear,
-  quadratic and geometric programs on either solver core, and as a local
-  approximation from the final convex subproblem of a signomial program.
-- **Sequential Log-Convex Programming.** For the common case of a model that is
-  *almost* GP-compatible, `LCsolver` implements SLCP [@karcher2022slcp]. Posynomial and
-  monomial constraints are imposed exactly in a log-convex subproblem while the
-  remainder — including constraints evaluated by external codes — is linearized
-  in log space. This recovers much of the conditioning and reliability of a
-  geometric program without requiring the whole model to be one.
+  assumptions by how much they actually matter. These come from the constraint
+  duals via the envelope theorem, so they cost one solve rather than the
+  two-per-constant a finite difference would need, and each partial derivative is
+  taken symbolically rather than by differencing. For a signomial program the duals
+  are recovered from the final convex subproblem; `LCsolver` tests them against the
+  stationarity condition and reports them as unreliable when they fail it, rather
+  than presenting an uncertified number as though it were exact.
+
+# Research impact
+
+The software's predecessor has been the basis of two completed master's theses in
+mechanical and aerospace engineering, both of which shaped its direction.
+@avila2025aircraft develops a signomial-programming framework for the conceptual
+design of commercial transport aircraft, minimizing takeoff weight across
+integrated aerodynamic, structural, weight, and mission-performance models.
+@shoda2026liftingline embeds lifting-line aerodynamic analysis directly in
+signomial-programming form, so that wing analysis and design optimization share a
+single formulation. The SLCP algorithm the package implements was developed and
+validated in the peer-reviewed literature [@karcher2022slcp].
 
 # Example
-
-<!-- Keep this short; JOSS wants a taste, not a tutorial. -->
 
 ```python
 from pyomo.environ import units
@@ -131,9 +180,30 @@ replacing `z == x**2 + y**2` with `[z, '==', [x, y], UnitCircle()]`, where
 `UnitCircle` is a `BlackBoxFunctionModel` subclass wrapping the analysis code
 and its derivatives; the repository `README` shows the complete version.
 
+# AI usage disclosure
+
+Generative AI assistance (Anthropic's Claude) was used during the development of
+this software, principally for test authoring, documentation, refactoring, and code
+review. The mathematical formulations, algorithm designs, and solver strategies are
+the authors' own and derive from the peer-reviewed work cited above. All
+AI-assisted contributions were reviewed by the authors before being committed. This
+paper was drafted by the authors with AI assistance for editing.
+
+Correctness is established by verification rather than by inspection alone. The
+package carries a suite of roughly 600 tests, run on Linux, macOS, and Windows
+across four Python versions, with a coverage floor enforced in continuous
+integration. Two categories of test exist specifically because AI-assisted code
+tends toward plausible-looking errors rather than obvious ones. A cross-path
+integration suite solves the same model through five independent routes and asserts
+that they agree, on the principle that a transformation which quietly changes the
+problem shows up as a disagreement between paths rather than as an exception.
+And the documentation is itself executed and checked on every run, so the examples
+in this paper, the `README`, and the documentation cannot drift away from the
+behaviour of the code. Published optima from the literature are used as reference
+values wherever they exist.
+
 # Acknowledgements
 
-<!-- Sandia co-author => the NTESS/DOE disclaimer and a SAND number are required. -->
 Development of portions of this software was conducted at Sandia National
 Laboratories. Sandia National Laboratories is a multimission laboratory managed and
 operated by National Technology and Engineering Solutions of Sandia, LLC., a wholly

@@ -3,7 +3,7 @@
 #  LCsolver: The Engineering Design Interface
 #  A Pyomo-based framework for engineering design optimization.
 #
-#  Originally developed as pyomo.contrib.lcsolver (Pyomo PR #2937) at
+#  Originally developed as pyomo.contrib.edi (Pyomo PR #2937) at
 #  National Technology and Engineering Solutions of Sandia, LLC.
 #  Under the terms of Contract DE-NA0003525 with National Technology and
 #  Engineering Solutions of Sandia, LLC, the U.S. Government retains certain
@@ -23,10 +23,10 @@ A lightweight wrapper on Pyomo targeted at composing engineering design
 optimization problems, with first-class support for units, black-box analysis
 codes, and structure detection (LP/QP/GP/SP).
 
-Note on history: this package began life as ``pyomo.contrib.lcsolver``. When it was
+Note on history: this package began life as ``pyomo.contrib.edi``. When it was
 split into a standalone distribution the modules were reorganized into
 ``lcsolver.objects`` / ``lcsolver.solvers`` / ``lcsolver.presolve``, but the
-package ``__init__`` continued to import from ``pyomo.contrib.lcsolver`` inside a
+package ``__init__`` continued to import from ``pyomo.contrib.edi`` inside a
 bare ``try/except: pass``. Because that module no longer ships with Pyomo, every
 import failed silently and ``import lcsolver`` exposed none of its own API. The
 imports below are local and are deliberately NOT wrapped in a bare except, so
@@ -106,6 +106,15 @@ __all__ = [
     "BBV",
     "BBList",
     "TypeCheckedList",
+    # The solve entry points. These were reachable as `lcsolver.solve` but
+    # missing from __all__, so `from lcsolver import *` -- which the README's
+    # own examples imply -- produced a namespace with no way to solve anything.
+    "solve",
+    "SolveResult",
+    "PresolveError",
+    "presolve_check",
+    "postsolve_check",
+    "check_solvers",
 ]
 
 __version__ = "0.1.0"  # keep in sync with pyproject.toml

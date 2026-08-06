@@ -23,8 +23,22 @@ LCsolver can reach IPOPT two ways, selected by ``method``:
 
 ``method='cyipopt'``
     ``pyomo.contrib.pynumero``, which calls the IPOPT **library** in-process.
-    Needs ``pip install cyipopt``. Required for black-box constraints, which
-    the AMPL route cannot evaluate.
+    Required for black-box constraints, which the AMPL route cannot evaluate.
+
+    It needs two things, and the second one surprises people. cyipopt itself,
+    and Pyomo's compiled **PyNumero ASL library**, which is how PyNumero builds
+    an NLP at all. That library ships with neither pyomo nor cyipopt: it is
+    installed prebuilt from conda-forge's ``pynumero_libraries`` (linux-64,
+    osx-64 and win-64 only) or compiled by ``pyomo build-extensions``, which
+    is the only route on osx-arm64. Note that ``pyomo download-extensions``
+    does *not* provide it --- that command fetches gjh and MC++ and reports
+    success, which is a convincing way to believe the problem is fixed while
+    nothing has changed. Without the library every solve on this route fails
+    with ``Cannot load the PyNumero ASL interface (pynumero_ASL)`` --- a
+    component most users have never heard of, named in an error that does
+    not say how to get it.
+    ``lcsolver-install-solvers`` fetches it, and ``lcsolver-check-solvers``
+    reports it as missing rather than leaving you to decode that message.
 
 ``method='auto'`` (the default) prefers the Pyomo route and switches to cyipopt
 when the model contains a black-box constraint. Installing both is the

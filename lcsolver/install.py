@@ -229,7 +229,7 @@ def _plan_default(report, conda, args):
         working black-box solve.
         """
         if not args.skip_cyipopt and not _pynumero_asl_available():
-            collected.append(_plan_pynumero_asl())
+            collected.append(_plan_pynumero_asl(conda))
         return collected
 
     if not report['cvxopt']['available'] and not args.skip_cvxopt:
@@ -336,20 +336,48 @@ def _pynumero_asl_available():
         return False
 
 
-def _plan_pynumero_asl():
-    """Fetch the PyNumero ASL library.
+#: conda-forge's ``pynumero_libraries`` is prebuilt, but only for these. There
+#: is no osx-arm64 build, which is most current Macs, so it cannot be the only
+#: route.
+_PYNUMERO_CONDA_PLATFORMS = ('linux-64', 'osx-64', 'win-64')
 
-    ``download-extensions`` rather than the conda-forge ``pynumero_libraries``
-    package: that package has no osx-arm64 build, and Apple Silicon is not a
-    platform to leave out. This route is part of Pyomo itself and works
-    everywhere.
+
+def _conda_subdir(conda):
+    """The conda platform string, for deciding whether a package exists."""
+    try:
+        import json
+        out = subprocess.run([conda['exe'], 'info', '--json'],
+                             capture_output=True, text=True, timeout=120)
+        return json.loads(out.stdout).get('platform')
+    except Exception:
+        return None
+
+
+def _plan_pynumero_asl(conda):
+    """Get the PyNumero ASL library, which is not where you would expect.
+
+    ``pyomo download-extensions`` does **not** provide it --- that command
+    fetches gjh and MC++ and reports success, which is a convincing way to
+    believe the problem is solved when nothing has changed. The library is
+    either compiled by ``pyomo build-extensions`` or installed prebuilt from
+    conda-forge's ``pynumero_libraries``.
+
+    Prefer the prebuilt one where it exists, because building needs cmake and
+    a compiler; fall back to building, which is the only route on osx-arm64.
     """
+    if conda and _conda_subdir(conda) in _PYNUMERO_CONDA_PLATFORMS:
+        return Step(
+            "install Pyomo's PyNumero libraries from conda-forge (cyipopt "
+            "cannot evaluate a model without them)",
+            command=[conda['exe'], 'install', '-y', '-c', 'conda-forge',
+                     'pynumero_libraries'])
+
     return Step(
-        "download Pyomo's PyNumero ASL library (cyipopt cannot evaluate a "
-        "model without it)",
+        "build Pyomo's PyNumero ASL library (cyipopt cannot evaluate a model "
+        "without it; needs cmake and a C compiler)",
         command=[sys.executable, '-c',
                  'from pyomo.scripting.pyomo_main import main; '
-                 'raise SystemExit(main(["download-extensions"]))'])
+                 'raise SystemExit(main(["build-extensions"]))'])
 
 
 def _ma27_build_root(args):

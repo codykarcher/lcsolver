@@ -33,6 +33,14 @@ def isolated_environment(tmp_path, monkeypatch):
                         str(tmp_path / 'state' / 'solvers.json'))
     monkeypatch.delenv(environment.IPOPT_EXECUTABLE_ENV, raising=False)
     monkeypatch.delenv(environment.AUTOSELECT_ENV, raising=False)
+
+    # Whether this machine happens to have Pyomo's PyNumero ASL library is not
+    # what any of the planner tests are about, but it changes the plan by one
+    # step -- so left alone, they pass on a developer's machine (which has it)
+    # and fail on a fresh runner (which does not). Pinned to present here; the
+    # two tests that are about the ASL library set it themselves.
+    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: True)
+
     environment._forget_resolution()
     yield
     environment._forget_resolution()
@@ -355,7 +363,12 @@ def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch)
     steps, _ = install._plan_default(report, conda=None, args=_Args())
 
     assert len(steps) == 1
-    assert 'download-extensions' in ' '.join(steps[0].command)
+    # Either route is correct; what must not happen is `download-extensions`,
+    # which fetches gjh and MC++, reports success, and leaves the ASL
+    # library exactly as absent as it was.
+    joined = ' '.join(steps[0].command)
+    assert 'pynumero_libraries' in joined or 'build-extensions' in joined
+    assert 'download-extensions' not in joined
 
 
 def test_the_asl_library_is_not_refetched_when_present(tmp_path, monkeypatch):

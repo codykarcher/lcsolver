@@ -1225,13 +1225,16 @@ class TestEDISnippets(unittest.TestCase):
                 #     returnVal[1]    = jacobian
                 #     returnVal[1][0] = derivative_scalarOutput_wrt_0th_input
                 return y, [dydx]
+                # END: RuntimeConstraints_Snippet_09
 
         # Constructing it is the check that the declaration still parses, and
-        # the names are the ones the documentation shows.
+        # the names are the ones the documentation shows. Deliberately outside
+        # the snippet markers above: the documentation includes that range with
+        # `:dedent: 16`, so assertions at method indentation would both appear
+        # in the rendered snippet and have four characters stripped off them.
         box = Parabola()
         self.assertEqual([i.name for i in box.inputs], ['x'])
         self.assertEqual([o.name for o in box.outputs], ['y'])
-                # END: RuntimeConstraints_Snippet_09
 
     def test_edi_snippet_runtimeconstraints_03(self):
         import pyomo.environ as pyo

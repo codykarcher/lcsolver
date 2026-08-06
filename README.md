@@ -15,13 +15,15 @@ LCsolver is a package targeted at formulating and solving optimization problems 
 
 ## Installation
 
-LCsolver began as a contribution to Pyomo itself (`pyomo.contrib.lcsolver`) and is now distributed as a standalone package.
+LCsolver began as a contribution to Pyomo itself — the Engineering Design Interface, [`pyomo.contrib.edi`](https://github.com/Pyomo/pyomo/pull/2937), public since August 2023 — and is now distributed as a standalone package so that it can evolve independently of the Pyomo release cycle.
 
-Two steps, because one of the solvers cannot come from pip. `pip install lcsolver` gets you the package and cvxopt; it cannot get you IPOPT, which is the default backend — there is no IPOPT executable on PyPI, and cyipopt is published there as source only, so it compiles against an IPOPT that has to exist already.
+Install from GitHub for now — `pip install lcsolver` is coming once the PyPI release is published.
 
-**You do not need IPOPT to try LCsolver.** After `pip install lcsolver` alone, a detected LP, QP, GP or SP solves through cvxopt — `solve()` says so and falls back on its own — and the test suite passes, skipping what it cannot run. IPOPT is needed for general nonlinear programs, for black-box constraints, and for the SLCP and SIA routes.
+It takes two steps, because one of the solvers cannot come from pip at all. The package and its Python dependencies install normally; IPOPT does not. There is no IPOPT executable on PyPI under any name, and cyipopt is published there as source only, so `pip install cyipopt` compiles against an IPOPT that has to be on the machine already. Getting one is what `lcsolver-install-solvers` is for.
 
-**Everything in one command (recommended):**
+### 1. The package
+
+**Everything in one command (recommended)** — conda can supply IPOPT, so this covers most of step 2 as well:
 
 ```
 git clone https://github.com/codykarcher/lcsolver.git
@@ -31,28 +33,43 @@ conda activate lcsolver
 pip install -e .
 ```
 
-**Or pip, then the solver bootstrap:**
+**Or with pip alone:**
 
 ```
-pip install lcsolver
+pip install git+https://github.com/codykarcher/lcsolver.git
+```
+
+or, from a clone, `pip install -e .`.
+
+### 2. The solvers
+
+```
 lcsolver-install-solvers
 ```
 
-`lcsolver-install-solvers` prints exactly what it will run and asks before touching anything. `--dry-run` shows the plan and exits.
+Run this once in every environment you install into, including the conda one above — part of what it fetches is per-environment and cannot be shared. It prints exactly what it will run and asks before touching anything; `--dry-run` shows the plan and exits.
 
-Either way you end up with a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs, MA27 is markedly more robust — it is free for academic use but has to be fetched by hand, and IPOPT rebuilt against it:
+It finds IPOPT wherever it can — conda-forge, else Homebrew or apt, else a source build — installs cyipopt, and installs Pyomo's PyNumero ASL library, which the in-process route needs and which ships with neither pyomo nor cyipopt. Whatever is already present is left alone.
+
+Then confirm what you ended up with — which `ipopt` binary will actually run, which linear solver it carries, and whether cyipopt agrees:
+
+```
+lcsolver-check-solvers
+```
+
+**You do not need IPOPT to try LCsolver.** With the package alone, a detected LP, QP, GP or SP solves through cvxopt — `solve()` falls back on its own and says so — and the test suite passes, skipping what it cannot run. IPOPT is needed for general nonlinear programs, for black-box constraints, and for the SLCP and SIA routes.
+
+### 3. MA27, if you want it
+
+Either route above leaves you on a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs MA27 is markedly more robust; it is free for academic use, but it has to be fetched by hand and IPOPT rebuilt against it:
 
 ```
 lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
 ```
 
-That works both as a first install and as an upgrade on top of an existing MUMPS one; it rebuilds IPOPT, relinks cyipopt to match, and prints the environment to export. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
+That serves as a first install and as an upgrade on top of an existing MUMPS one: it rebuilds IPOPT, relinks cyipopt to match, and records where the build went. Nothing needs to go in a shell profile — LCsolver finds a build it installed even when that build is on no `PATH`, and prefers an MA27 build over a MUMPS one whatever `PATH` order says. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
 
-To see what you actually have — which `ipopt` binary wins, which linear solver it carries, whether cyipopt agrees:
-
-```
-lcsolver-check-solvers
-```
+For any other environment on the same machine, `lcsolver-install-solvers --relink-cyipopt` points that environment's cyipopt at the MA27 build without rebuilding IPOPT again.
 
 ## Solving
 
