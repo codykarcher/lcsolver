@@ -1,5 +1,5 @@
 ---
-title: 'LCsolver: An Engineering Design Interface for Pyomo'
+title: 'LCsolver: A Python Package for Exploiting Log-Convexity in Engineering Design Optimization'
 tags:
   - Python
   - optimization
@@ -26,199 +26,142 @@ bibliography: paper.bib
 
 <!--
 NOTE TO AUTHORS (delete before submission)
-  REMAINING: (1) Bynum's ORCID is still a placeholder -- JOSS checks them, and a
-  contribution statement is still to be added; (2) a Zenodo DOI, which requires a
+  REMAINING: (1) Bynum's ORCID is still a placeholder -- JOSS checks them; (2) a Zenodo DOI, which requires a
   tagged GitHub release (needed at acceptance, not submission); (3) a SAND number
   before public release.
 -->
 
 # Summary
 
-Engineering design optimization problems are usually assembled by hand from three
-awkwardly-fitting pieces: an algebraic modeling language, a set of physical units,
-and one or more external analysis codes that cannot be expressed algebraically at
-all. `LCsolver` is a lightweight layer over the
-Pyomo modeling language [@bynum2021pyomo] that makes these three pieces fit
-together. It provides a `Formulation` object that behaves exactly like a Pyomo
-`ConcreteModel` while adding unit-aware variable and constant declarations, a
-structured interface for wrapping black-box analysis codes as differentiable
-constraints, and automatic detection of problem structure so that a model written
-once can be recognized as linear, quadratic, geometric, or signomial and handed to
-an appropriate solver.
+Engineering design optimization often takes the form of designing a product that
+maximizes system performance subject to the constraints of physics, budget, and schedule.
+These problems, when cast in the language of mathematics, are
+*numerical optimization* problems.  The LCsolver package seeks to facilitate the
+formulation of engineering design optimization problems and support back-end
+numerical algorithms that provide solutions to these problems as formulated.
+Specifically, LCsolver builds a thin layer on top of the
+Pyomo modeling language [@bynum2021pyomo] to provide design engineers with a
+clean interface to constructing optimization problems, then programmatically
+detects the mathematical structure of the optimization formulation, identifies
+the proper solver for the identified problem structure, and executes a back-end
+solver to obtain an optimal design.
 
 # Statement of need
 
-Design optimization in aerospace, energy, and mechanical engineering is
-characterized by models that mix closed-form physics with legacy analysis codes,
-and by quantities that carry units whose mismatch is a common and expensive source
-of error.
+The field of Multi-Disciplinary Analysis and Optimization (MDAO) seeks to solve
+engineering design problems, typically by creating large interconnected frameworks
+of software analysis tools, and then connecting these tools to general-purpose
+optimization algorithms that treat the analyses as opaque
+[@martins2013multidisciplinary]. However, a parallel track of work has emerged
+that challenges this paradigm, showing that when the optimization is given
+equal priority with the analysis, optimal designs can be determined with remarkable
+efficiency [@hoburg2014geometric].  Key to these developments has been the discovery
+that many design problems are well represented as Geometric Programs
+[@boyd2007tutorial], which are a type of optimization problem that becomes *convex*
+upon a transformation to log-log coordinates.  This log-convex property is what
+gives LCsolver its name and is the key to rapid design optimization.
 
-`LCsolver` targets that gap. An engineer writes a single unit-annotated model in
-which some constraints are algebraic and others are evaluated by external codes;
-`LCsolver` checks unit consistency, detects the mathematical structure of the
-algebraic portion, and routes the problem to a solver appropriate to that
-structure. The same model can therefore be solved as a geometric program when it
-happens to be one, and as a general nonlinear program when it is not, without
-being rewritten.
-
-The software began in 2023 as a contributed sub-package of Pyomo itself, the
-Engineering Design Interface [@karcher2023edi], and is distributed here as a
-standalone package so that it can evolve independently of the Pyomo release cycle.
+Basic Geometric Programs (GPs) are well understood and can be rapidly solved by
+existing primal-dual interior point methods.  While many academic problems
+have been shown to conform to the rigid set of mathematical rules that define
+GPs, real engineering design problems rarely fit into so neat a box.  The need
+is for a reliable software tool that can exploit log-convex structure when
+it is present, while still allowing for the messy edges where the strict GP
+formulation fails.  LCsolver provides this capability.
 
 # State of the field
 
-Existing tools address parts of this problem. Disciplined convex modeling packages
-such as `CVXPY` [@diamond2016cvxpy] and geometric-programming packages such as
-`GPkit` [@burnell2020gpkit] give excellent ergonomics and strong guarantees, but
-only within their problem class. A model that is *almost* a geometric program falls
-outside both, and neither accommodates an arbitrary external solver in the
-constraint set — the analysis codes that dominate real engineering practice cannot
-be expressed at all. General algebraic modeling languages such as Pyomo impose no
-such restriction, but leave the engineer to manage units by hand and to write the
-interface to any external analysis code from scratch, and they discard the
-structure that makes a log-convex problem tractable.
+Many tools exist for MDAO, the most notable being NASA's OpenMDAO code [@gray2019openmdao].
+While OpenMDAO is powerful with near unbounded modeling capability, it has no tools
+for exploiting log-convexity and leans heavily on an analysis-centered interface
+that is not conducive to formulating optimization-centered design problems.
 
-`LCsolver` borrows its ergonomics from `GPkit` and `CVXPY` while retaining the
-generality and solver ecosystem of Pyomo. The distinguishing capability is that
-structure is *detected* rather than *declared*: the user is not required to know,
-or to commit to, which problem class their model belongs to.
+On the other end of the spectrum, tools like `CVXPY` [@diamond2016cvxpy] and
+`GPkit` [@burnell2020gpkit] provide excellent user interfaces to mathematical
+modeling and allow for log-convex exploitation, but are narrowly limited in terms
+of their modeling scope and solver capability.  In these cases, CVXPY is limited
+to convex optimization problems and GPkit solves only geometric programs and
+their generalization, signomial programs.  CVXPY and GPkit also lock out the use
+of black-box analysis models (such as computational fluid dynamics, or finite
+element analysis) that have become the hallmark of modern engineering design.
+
+Pyomo [@bynum2021pyomo] is a highly flexible modeling framework, capable of
+capturing complex mathematical relationships and passing them to premier
+solvers such as IPOPT [@wachter2006implementation].  However, Pyomo has three gaps.
+First, Pyomo's interface and syntax favor modeling flexibility over the clean
+engineering focused language of GPkit.  Second, Pyomo has no awareness of
+log-convexity, nor of any other optimization structures present in the problems
+it creates.  Third, even premier solvers are unable to converge on many
+engineering problems of interest, and so new algorithms are required beyond what
+Pyomo currently offers.
 
 # Software design
 
-`LCsolver` is a thin layer over Pyomo rather than a fork or a new modeling
-language, and that constraint drove the significant design decisions.
+The LCsolver (LCS) package is composed of four primary elements.  First is a thin
+wrapping layer over Pyomo that mimics the front end of GPkit and similar
+engineering design focused tools.  This approach does come at the cost of some
+flexibility in the native LCS interface, but since all LCS models *are* Pyomo
+models, power users can still express full model control as needed.
 
-A `Formulation` subclasses Pyomo's `ConcreteModel`, so every existing Pyomo tool,
-solver interface, and transformation continues to work on an `LCsolver` model. The
-alternative — a native model object with a Pyomo exporter — would have bought
-freedom in the API at the cost of the ecosystem, which is most of Pyomo's value.
+Second is a structure detector that classifies the constructed optimization
+formulation.  LCS at time of writing detects the following optimization
+formulation types:  Linear Programs (LPs), Quadratic Programs (QPs), Geometric
+Programs (GPs), Signomial Programs (SPs), and variants of each of these that
+contain black-box constraints that are not inspectable by the solver.  This
+classification is done by means of a Pyomo walker that walks the objectives
+and constraints of the problems to check if they are compatible with the
+underlying mathematics of each form.
 
-Structure detection is implemented as an expression-tree walker rather than by
-asking users to declare a problem class, as `CVXPY` and `GPkit` do. Declaration is
-simpler to implement and yields better error messages, but it requires the modeler
-to classify their own problem, which is precisely the expertise the tool exists to
-supply.
+Third is a series of pre-solve checks that are performed on the structure
+detected problem.  A check is run for unit consistency, ensuring that the
+human design engineer has not accidentally set a constraint of wing area
+(units of length squared) to be less than a fixed wing span (units of
+length), which exposes a problematic gap between the modeler's intent and
+the problem being represented that must be closed.  The model is also checked
+for unbounded variables that may be driven incorrectly to positive or
+negative infinity.  Further checks target the quieter failure modes that
+produce plausible-looking answers rather than errors, including variables 
+that appear in no constraint at all, constraint rows that duplicate one 
+another, and other conditioning checks.
 
-Black-box constraints are routed through Pyomo's grey-box interface rather than
-through callbacks or finite differences, so an external code contributes exact
-derivatives to the same KKT system as the algebraic constraints. The cost is that
-the author must supply a Jacobian; the benefit is that the resulting problem is
-solved rather than sampled.
+Finally, LCS solves the problem as formulated and returns the result.  For
+convex formulations (LP, QP, GP), LCS provides two options.  CVXOPT
+[@andersen2013cvxopt] is a free Python package for solving convex optimization
+problems that does well on small-to-medium-sized problems that are well
+conditioned.  Alternatively, IPOPT is available as part of the provided installer,
+though with the default MUMPS linear solver.  Users are encouraged in the
+documentation to install MA27 for solving more challenging problems.
 
-Because a transformation that silently changes the problem is this architecture's
-characteristic failure mode, the package carries an unusual amount of internal
-checking: unit consistency is verified as the model is built, an equivalence
-assertion compares the problem before and after each presolve reduction, and
-post-solve checks report constraints that were declared as validity limits but
-turned out to bind.
+LCS defaults to IPOPT when it is available.  However, it is on the more
+complex problems that LCS is most differentiated from its predecessors.
 
-# Functionality
+For signomial programs and problems with black-box analysis models, LCS
+provides two algorithms: Sequential Log-Convex Programming (SLCP)
+[@karcher2022slcp] and the Sequential Inner Approximation (SIA) algorithm,
+an evolution of SLCP that uses conservative constraint approximations to
+exploit additional log-convex structure and improve problem convergence
+(publication pending).  These two algorithms enable LCS to give the human
+design engineer access to the majority of Pyomo's modeling flexibility,
+while still exploiting log-convexity for highly efficient solutions.
 
-- **Unit-aware modeling.** Variables and constants are declared with units, guesses,
-  and descriptions; unit consistency is checked as the model is built rather than at
-  solve time.
-- **Black-box constraints.** A `BlackBoxFunctionModel` base class exposes an
-  external analysis code, including its derivatives, as a Pyomo constraint.
-- **Structure detection and solver routing.** Linear and quadratic programs go to
-  IPOPT in their natural variables, or to `cvxopt`; geometric programs are solved
-  in log space, where they are convex, so global optimality is preserved.
-  Signomial programs default to sequential inner approximation (SIA), which
-  terminates on a KKT residual for the original problem, with a penalty
-  convex–concave loop and Sequential Log-Convex Programming available as
-  alternatives. Models carrying black-box constraints are routed to SIA, which
-  imposes each box through its linearization inside a trust-region loop while
-  keeping every algebraic constraint exact. Solutions are written back onto the
-  model in every case.
-- **Sequential Log-Convex Programming.** For the common case of a model that is
-  *almost* GP-compatible, `LCsolver` implements SLCP [@karcher2022slcp]. Posynomial
-  and monomial constraints are imposed exactly in a log-convex subproblem while the
-  remainder is linearized in log space, recovering much of the conditioning and
-  reliability of a geometric program without requiring the whole model to be one.
-- **Sensitivities to constants.** After a solve, `LCsolver` reports the log-log
-  sensitivity of the optimum to every declared constant, ranking a model's
-  assumptions by how much they actually matter. These come from the constraint
-  duals via the envelope theorem, so they cost one solve rather than the
-  two-per-constant a finite difference would need, and each partial derivative is
-  taken symbolically rather than by differencing. For a signomial program the duals
-  are recovered from the final convex subproblem; `LCsolver` tests them against the
-  stationarity condition and reports them as unreliable when they fail it, rather
-  than presenting an uncertified number as though it were exact.
+Black-box integration is handled through Pyomo's grey-box framework,
+bridging the previous gap between GPkit and OpenMDAO.  In the event that
+the formulated problem has no detectable underlying structure, LCS passes the
+problem to IPOPT for a non-linear solve, meaning that structure is exploited
+where possible, but does not constrain the user unnecessarily.
+
+Upon return, LCS also compiles the dual variables from the optimization solve
+into sensitivities of the objective to critical modeling parameters and reports
+these out to the user, similar to a core feature of GPkit.
 
 # Research impact
 
-The software's predecessor has been the basis of two completed master's theses in
-mechanical and aerospace engineering, both of which shaped its direction.
-@avila2025aircraft develops a signomial-programming framework for the conceptual
-design of commercial transport aircraft, minimizing takeoff weight across
-integrated aerodynamic, structural, weight, and mission-performance models.
-@shoda2026liftingline embeds lifting-line aerodynamic analysis directly in
-signomial-programming form, so that wing analysis and design optimization share a
-single formulation. The SLCP algorithm the package implements was developed and
-validated in the peer-reviewed literature [@karcher2022slcp].
-
-# Example
-
-The complete path from model to result, on a geometric program small enough
-to check by hand — minimize $x + y$ subject to $xy \geq A$:
-
-```python
-import lcsolver
-from lcsolver import Formulation
-
-f = Formulation()
-x = f.Variable(name='x', guess=2.0, units='m',   description='width')
-y = f.Variable(name='y', guess=2.0, units='m',   description='height')
-A = f.Constant(name='A', value=4.0, units='m^2', description='required area')
-
-f.Objective(x + y)
-f.ConstraintList([x * y >= A])
-
-sol = lcsolver.solve(f)
-print(sol.summary())
-```
-
-```
-Report
-------
-   Problem auto-detected as a geometric program (GP)
-   Solved with ipopt (pyomo, log-transformed) [gp form: sum]
-
-Objective
----------
-   4.00 m
-
-Variables
----------
-   x  :  2.00   [m]   width
-   y  :  2.00   [m]   height
-
-Constants
----------
-   A  :  4      [m**2]   required area
-
-Sensitivities
--------------
-   A  :    +0.5000   +++++++++++
-
-Post Solve Report
------------------
-   Status: optimal
-```
-
-The reported sensitivity is exact: the optimum is $2\sqrt{A}$, so
-$d \log f^* / d \log A = 1/2$. A constraint evaluated by an external analysis
-code enters the same constraint list as `[z, '==', [x, y], UnitCircle()]`,
-where `UnitCircle` is a `BlackBoxFunctionModel` subclass wrapping the
-analysis code and its derivatives; the repository `README` shows the complete
-version.
-
-# Author Contribution Statement
-
-Author Karcher was responsible for the primary development of the LCsolver package,
-including the primary interface, structure detectors, and back end solvers.  
-Author Bynum was responsible for the primary interface to black box analysis models
-through the Pyomo grey-box interface, oversaw development work, guided the scope
-of the software, and provided critical feedback regarding software design decisions.
+Prior versions of LCS (branded as the Engineering Design Interface for Pyomo)
+have been used to develop signomial programming compatible models for subsonic
+transport aircraft design [@avila2025aircraft] and for computing aircraft
+induced drag via Trefftz Plane Analysis [@shoda2026liftingline].  LCS also serves
+as the definitive implementation of Sequential Log-Convex Programming
+[@karcher2022slcp] and the newly developed Sequential Inner Approximation algorithm.
 
 # AI usage disclosure
 
@@ -234,6 +177,15 @@ package carries a suite of roughly 600 tests, run on Linux, macOS, and Windows
 across four Python versions, with a coverage floor enforced in continuous
 integration.  Tests reference published optima from the literature when they are
 available to ensure correctness.
+
+# Author contribution statement
+
+Author Karcher was responsible for the primary development of the LCsolver package,
+including the primary interface, structure detectors, and back-end solvers.
+
+Author Bynum was responsible for the primary interface to black-box analysis models
+through the Pyomo grey-box interface, oversaw development work, guided the scope
+of the software, and provided critical feedback regarding software design decisions.
 
 # Acknowledgements
 
