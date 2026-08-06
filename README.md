@@ -171,6 +171,11 @@ print(sol.summary())
 ```
 <!-- END readme_example -->
 
+## Additional Examples
+
+Further examples are available in the [examples](https://github.com/codykarcher/lcsolver/tree/main/examples) folder.  Of specific interest is the [Hoburg Black-Box Problem](https://github.com/codykarcher/lcsolver/tree/main/examples/hoburg_blackbox.py) which demonstrates the integration of a black box aerodynamic model into the optimization framework.  
+
+
 ## Citing LCsolver
 
 Citation metadata is in [CITATION.cff](CITATION.cff), which GitHub renders as a

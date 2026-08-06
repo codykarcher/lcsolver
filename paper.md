@@ -158,27 +158,67 @@ validated in the peer-reviewed literature [@karcher2022slcp].
 
 # Example
 
+The complete path from model to result, on a geometric program small enough
+to check by hand — minimize $x + y$ subject to $xy \geq A$:
+
 ```python
-from pyomo.environ import units
+import lcsolver
 from lcsolver import Formulation
 
 f = Formulation()
-x = f.Variable(name='x', guess=1.0, units='m',   description='x variable')
-y = f.Variable(name='y', guess=1.0, units='m',   description='y variable')
-z = f.Variable(name='z', guess=1.0, units='m^2', description='unit circle output')
-c = f.Constant(name='c', value=1.0, units='', description='a constant', size=2)
+x = f.Variable(name='x', guess=2.0, units='m',   description='width')
+y = f.Variable(name='y', guess=2.0, units='m',   description='height')
+A = f.Constant(name='A', value=4.0, units='m^2', description='required area')
 
-f.Objective(c[0] * x + c[1] * y)
-f.ConstraintList([
-    z == x**2 + y**2,
-    z <= 1.0 * units.m**2,
-])
+f.Objective(x + y)
+f.ConstraintList([x * y >= A])
+
+sol = lcsolver.solve(f)
+print(sol.summary())
 ```
 
-A constraint evaluated by an external code is declared in the same list by
-replacing `z == x**2 + y**2` with `[z, '==', [x, y], UnitCircle()]`, where
-`UnitCircle` is a `BlackBoxFunctionModel` subclass wrapping the analysis code
-and its derivatives; the repository `README` shows the complete version.
+```
+Report
+------
+   Problem auto-detected as a geometric program (GP)
+   Solved with ipopt (pyomo, log-transformed) [gp form: sum]
+
+Objective
+---------
+   4.00 m
+
+Variables
+---------
+   x  :  2.00   [m]   width
+   y  :  2.00   [m]   height
+
+Constants
+---------
+   A  :  4      [m**2]   required area
+
+Sensitivities
+-------------
+   A  :    +0.5000   +++++++++++
+
+Post Solve Report
+-----------------
+   Status: optimal
+```
+
+The reported sensitivity is exact: the optimum is $2\sqrt{A}$, so
+$d \log f^* / d \log A = 1/2$. A constraint evaluated by an external analysis
+code enters the same constraint list as `[z, '==', [x, y], UnitCircle()]`,
+where `UnitCircle` is a `BlackBoxFunctionModel` subclass wrapping the
+analysis code and its derivatives; the repository `README` shows the complete
+version.
+
+# Author Contribution Statement
+
+Author Karcher was responsible for the primary development of the LCsolver package,
+including the primary interface, structure detectors, and back end solvers.  
+Author Bynum was responsible for the primary interface to black box analysis models
+through the Pyomo grey-box interface, oversaw development work, guided the scope
+of the software, and provided critical feedback regarding software design decisions.
 
 # AI usage disclosure
 
@@ -189,18 +229,11 @@ the authors' own and derive from the peer-reviewed work cited above. All
 AI-assisted contributions were reviewed by the authors before being committed. This
 paper was drafted by the authors with AI assistance for editing.
 
-Correctness is established by verification rather than by inspection alone. The
+Correctness is established by verification in addition to inspection. The
 package carries a suite of roughly 600 tests, run on Linux, macOS, and Windows
 across four Python versions, with a coverage floor enforced in continuous
-integration. Two categories of test exist specifically because AI-assisted code
-tends toward plausible-looking errors rather than obvious ones. A cross-path
-integration suite solves the same model through five independent routes and asserts
-that they agree, on the principle that a transformation which quietly changes the
-problem shows up as a disagreement between paths rather than as an exception.
-And the documentation is itself executed and checked on every run, so the examples
-in this paper, the `README`, and the documentation cannot drift away from the
-behaviour of the code. Published optima from the literature are used as reference
-values wherever they exist.
+integration.  Tests reference published optima from the literature when they are
+available to ensure correctness.
 
 # Acknowledgements
 

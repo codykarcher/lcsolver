@@ -429,6 +429,8 @@ def test_ma27_plan_passes_the_sources_through_without_copying(tmp_path):
     assert any('cyipopt' in step.command for step in steps[1:] if step.command)
 
 
+@pytest.mark.skipif(sys.platform.startswith('win'),
+                    reason='the MA27 build is not supported on Windows')
 def test_ma27_also_gets_the_asl_library(tmp_path, monkeypatch):
     """`--ma27` is a complete install, not an add-on.
 
