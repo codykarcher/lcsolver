@@ -104,17 +104,17 @@ def test_named_accessors_with_units():
 
     allv = sol.variables()
     assert set(allv) == {'x', 'y'}
-    assert pyo.value(units.convert(sol.variables('x'), units.m)) \
-        == pytest.approx(2.0, rel=1e-6)
+    # pint quantities: readable in a printed dict, convertible, strippable
+    xq = sol.variables('x')
+    assert xq.to('ft').magnitude == pytest.approx(2.0 / 0.3048, rel=1e-6)
+    assert 'meter' in str(allv['x'].units)
     assert set(sol.variables(['x'])) == {'x'}
-    assert pyo.value(units.convert(sol.constants('c'), units.m ** 2)) \
-        == pytest.approx(4.0)
+    assert sol.constants('c').to('m^2').magnitude == pytest.approx(4.0)
     # log-log sensitivity of 2*sqrt(c) is 1/2 ...
     assert sol.sensitivities('c') == pytest.approx(0.5, rel=1e-6)
     # ... and the dimensioned d(obj)/dc = 1/sqrt(c) = 0.5 per metre
     ds = sol.dimensioned_sensitivities('c')
-    assert pyo.value(units.convert(ds, units.m ** -1)) \
-        == pytest.approx(0.5, rel=1e-6)
+    assert ds.to('1/m').magnitude == pytest.approx(0.5, rel=1e-6)
     with pytest.raises(KeyError):
         sol.variables('nope')
     # the raw dict key is untouched by the accessor of the same name

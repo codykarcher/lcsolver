@@ -159,7 +159,9 @@ class SolveResult(dict):
     #                                      never nested sub-dicts
     #   sol.variables('wing.AR')        -> the single quantity
     #   sol.variables(['wing.AR', 'S']) -> {name: quantity} for those names
-    # Values carry their units (value * pyomo unit); a dimensionless quantity
+    # Values come back as PINT quantities (pyomo's own registry:
+    # pyomo.environ.units.pint_registry), so a dict of them prints readably
+    # and `.to('ft')` / `.magnitude` work directly; a dimensionless quantity
     # comes back as a plain float. Names are accepted in dotted display form
     # ('wing.AR') or the flat internal form ('wing_AR').
 
@@ -174,7 +176,8 @@ class SolveResult(dict):
     def _quantity(value, units):
         if units is None or str(units) in ('dimensionless', 'None', ''):
             return value
-        return value * units
+        from pyomo.environ import units as _pu
+        return value * _pu.pint_registry(str(units))
 
     @staticmethod
     def _pick(sol, mapping, names, one):
@@ -240,6 +243,7 @@ class SolveResult(dict):
                 'cannot be dimensioned')
 
         def one(k):
+            from pyomo.environ import units as _pu
             entry = sol.constants[k]
             value = sens[k] * sol.objective / entry.value
             obj_u, c_u = sol.objective_units, entry.units
@@ -250,10 +254,11 @@ class SolveResult(dict):
             if obj_dimless and c_dimless:
                 return value
             if c_dimless:
-                return value * obj_u
+                return value * _pu.pint_registry(str(obj_u))
             if obj_dimless:
-                return value / c_u
-            return value * obj_u / c_u
+                return value / _pu.pint_registry(str(c_u))
+            return (value * _pu.pint_registry(str(obj_u))
+                    / _pu.pint_registry(str(c_u)))
 
         return self._pick(sol, sens, names, one)
 
