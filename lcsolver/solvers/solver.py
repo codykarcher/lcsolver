@@ -146,6 +146,14 @@ class SolveResult(dict):
     def objective(self):
         return self.get('primal objective', self.get('objective'))
 
+    def summary(self, *args, **kwargs):
+        """The solution summary -- same as ``f.solution.summary(...)``."""
+        sol = self.solution
+        if sol is None or not hasattr(sol, 'summary'):
+            raise AttributeError(
+                'this result carries no rich Solution to summarize')
+        return sol.summary(*args, **kwargs)
+
     def __getattr__(self, name):
         if name.startswith('_'):
             raise AttributeError(name)

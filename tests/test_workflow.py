@@ -83,6 +83,7 @@ def test_solve_returns_solveresult():
     assert str(res.solution) == str(f.solution)
     assert isinstance(res['solution'], dict)
     assert 'Objective' in str(res.solution)
+    assert res.summary() == f.solution.summary()
     assert res.objective == pytest.approx(2.0, rel=1e-5)
 
 
