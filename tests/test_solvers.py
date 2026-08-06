@@ -1,10 +1,14 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
 """Tests for solution write-back and the IPOPT interface."""
+
+import warnings
+
+import pytest
 
 import pyomo.common.unittest as unittest
 import pyomo.environ as pyo
@@ -15,7 +19,7 @@ from pyomo.core.base.units_container import pint_available
 cvxopt, cvxopt_available = attempt_import("cvxopt")
 
 try:
-    from edi import Formulation
+    from lcsolver import Formulation
 
     formulation_available = True
 except Exception:
@@ -57,7 +61,7 @@ class TestWriteBack(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_writes_solution_onto_model(self):
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
 
         f = _linear_model()
         self.assertAlmostEqual(pyo.value(f.x), 5.0)      # the guess
@@ -68,7 +72,7 @@ class TestWriteBack(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_returns_solution_dict(self):
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
 
         f = _linear_model()
         res = cvxopt_solve(f)
@@ -77,15 +81,15 @@ class TestWriteBack(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_writeback_can_be_disabled(self):
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
 
         f = _linear_model()
         cvxopt_solve(f, write_back=False)
         self.assertAlmostEqual(pyo.value(f.x), 5.0)      # untouched
 
     def test_structure_detector_publishes_variable_order(self):
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
 
         f = _linear_model()
         s = structure_detector(unit_corrector(f))
@@ -95,7 +99,7 @@ class TestWriteBack(unittest.TestCase):
 
 def _ipopt_route_available(route):
     try:
-        from edi.solvers.ipopt.ipopt_solver_interface import _executable_available
+        from lcsolver.solvers.ipopt.ipopt_solver_interface import _executable_available
         return _executable_available('ipopt' if route == 'pyomo' else 'cyipopt')
     except Exception:
         return False
@@ -109,7 +113,7 @@ class TestIpopt(unittest.TestCase):
     @unittest.skipIf(not _ipopt_route_available('pyomo'),
                      'the ipopt executable is not available')
     def test_ipopt_pyomo_route(self):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _rosenbrock()
         r = ipopt_solve(f, method='pyomo')
@@ -120,7 +124,7 @@ class TestIpopt(unittest.TestCase):
     @unittest.skipIf(not _ipopt_route_available('cyipopt'),
                      'cyipopt is not available')
     def test_ipopt_cyipopt_route(self):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _rosenbrock()
         r = ipopt_solve(f, method='cyipopt')
@@ -131,7 +135,7 @@ class TestIpopt(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_ipopt_auto_route_and_solution(self):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _rosenbrock()
         r = ipopt_solve(f)
@@ -140,7 +144,7 @@ class TestIpopt(unittest.TestCase):
         self.assertAlmostEqual(r['objective'], 0.0, places=6)
 
     def test_ipopt_rejects_bad_method(self):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _rosenbrock()
         self.assertRaises(ValueError, ipopt_solve, f, **{'method': 'nonsense'})
@@ -157,7 +161,7 @@ def _unit_circle_model():
     optimizer proposes, so an unbounded input can send the external code
     somewhere it cannot be evaluated. Without them IPOPT diverges here.
     """
-    from edi import BlackBoxFunctionModel
+    from lcsolver import BlackBoxFunctionModel
 
     class UnitCircle(BlackBoxFunctionModel):
         def __init__(self):
@@ -190,18 +194,18 @@ def _unit_circle_model():
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestIpoptBlackBox(unittest.TestCase):
-    """Black-box (grey-box) constraints. This is EDI's headline capability and the
+    """Black-box (grey-box) constraints. This is LCsolver's headline capability and the
     only case the AMPL-based route cannot handle, so it is covered explicitly."""
 
     def test_greybox_is_detected(self):
-        from edi.solvers.ipopt.ipopt_solver_interface import _has_greybox
+        from lcsolver.solvers.ipopt.ipopt_solver_interface import _has_greybox
 
         self.assertTrue(_has_greybox(_unit_circle_model()))
         self.assertFalse(_has_greybox(_rosenbrock()))
 
     def test_pyomo_route_refuses_greybox(self):
         """The AMPL route cannot evaluate a Python black box; it must say so."""
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _unit_circle_model()
         self.assertRaises(RuntimeError, ipopt_solve, f, **{'method': 'pyomo'})
@@ -214,7 +218,7 @@ class TestIpoptBlackBox(unittest.TestCase):
         -2 bounds. Landing on the unit circle proves the external model is being
         evaluated and enforced.
         """
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _unit_circle_model()
         r = ipopt_solve(f)
@@ -229,7 +233,7 @@ class TestIpoptBlackBox(unittest.TestCase):
 
     @unittest.skipIf(not _ipopt_route_available('cyipopt'), 'cyipopt is not available')
     def test_greybox_auto_routes_to_cyipopt(self):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
 
         r = ipopt_solve(_unit_circle_model(), method='auto')
         self.assertEqual(r['solver'], 'cyipopt')
@@ -263,9 +267,9 @@ class TestConvexIpoptBackend(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_gp_via_ipopt_matches_analytic_optimum(self):
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
-        from edi.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
 
         f = _gp_known_optimum()
         s = structure_detector(unit_corrector(f))
@@ -281,10 +285,10 @@ class TestConvexIpoptBackend(unittest.TestCase):
                      'no IPOPT backend available')
     def test_gp_backends_agree(self):
         """cvxopt and the IPOPT log-space path must reach the same optimum."""
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
-        from edi.solvers.solver import cvxopt_solve
-        from edi.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        from lcsolver.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
 
         f1 = _gp_known_optimum()
         r1 = cvxopt_solve(f1)
@@ -299,7 +303,7 @@ class TestConvexIpoptBackend(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_solve_dispatcher_honours_convex_backend(self):
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = _gp_known_optimum()
         r = solve(f, convex_backend='ipopt')
@@ -308,7 +312,7 @@ class TestConvexIpoptBackend(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_solve_defaults_to_cvxopt_for_structured(self):
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = _gp_known_optimum()
         r = solve(f)
@@ -355,8 +359,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     def test_structures_keep_the_corrected_model_alive(self):
         import gc
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
 
         # The clone is deliberately not bound to a local here: this is exactly
         # how callers invoke it, and it is what used to strand the VarData.
@@ -367,9 +371,9 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     def test_write_solution_resolves_indexed_variables(self):
         import gc
-        from edi.structure.structureDetector import structure_detector
-        from edi.units.unitCorrector import unit_corrector
-        from edi.solvers.writeback import write_solution
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        from lcsolver.solvers.writeback import write_solution
 
         f = _indexed_gp()
         s = structure_detector(unit_corrector(f))
@@ -382,7 +386,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_indexed_gp_solves_and_writes_back_cvxopt(self):
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = _indexed_gp()
         r = solve(f, solver='auto')
@@ -397,7 +401,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
                      'no IPOPT backend available')
     def test_indexed_gp_solves_and_writes_back_convex_ipopt(self):
         import warnings
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = _indexed_gp()
         with warnings.catch_warnings():
@@ -426,7 +430,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         Forcing a collection right after detection makes it deterministic.
         """
         import gc
-        from edi.solvers import solver as solver_module
+        from lcsolver.solvers import solver as solver_module
 
         original = solver_module._convex_ipopt
 
@@ -448,13 +452,15 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
     def test_auto_fallback_warns_instead_of_swallowing(self):
         """A failing structured backend must not fall through in silence."""
         import warnings
-        from edi.solvers import solver as solver_module
+        from lcsolver.solvers import solver as solver_module
 
         def _boom(*a, **k):
             raise RuntimeError('structured backend exploded')
 
-        original = solver_module.cvxopt_solve
-        solver_module.cvxopt_solve = _boom
+        # Patch whichever backend `auto` actually reaches. The default convex
+        # backend is ipopt; cvxopt is only used when asked for explicitly.
+        original = solver_module._convex_ipopt
+        solver_module._convex_ipopt = _boom
         try:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
@@ -466,4 +472,379 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
             self.assertTrue(any('structured backend exploded' in msg for msg in messages),
                             msg=f'no explanatory warning was issued; got {messages}')
         finally:
-            solver_module.cvxopt_solve = original
+            solver_module._convex_ipopt = original
+
+    def test_cvxopt_is_still_reachable_on_request(self):
+        """Changing the default must not remove the backend."""
+        from lcsolver.solvers import solver as solver_module
+
+        f = _gp_known_optimum()
+        solver_module.solve(f, solver='auto', convex_backend='cvxopt')
+        self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
+        self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
+
+
+class TestGPObjectiveForm(unittest.TestCase):
+    """The GP backend can write posynomials two ways; neither suits everything.
+
+    'sum' hands IPOPT the posynomial itself, which is better conditioned when
+    log c + a.t is O(1..30) -- the JHO sailplane solves under 'sum' and fails
+    IPOPT's restoration phase under 'lse'. 'lse' takes the logarithm, which is
+    required once the arguments approach the exp() overflow threshold --
+    SPaircraft reaches log c = 176 with exponents to 1022.7. 'auto' picks from
+    the row magnitudes and retries with 'lse' if 'sum' fails.
+    """
+
+    def _box(self):
+        from lcsolver import Formulation
+        f = Formulation()
+        h = f.Variable(name="h", guess=1.0, units="m", description="")
+        w = f.Variable(name="w", guess=1.0, units="m", description="")
+        d = f.Variable(name="d", guess=1.0, units="m", description="")
+        f.Objective(2 * (h * w + h * d + w * d))
+        f.ConstraintList([h * w * d >= 8.0 * pyo.units.m ** 3,
+                          h <= 4.0 * pyo.units.m, w <= 4.0 * pyo.units.m])
+        return f
+
+    def test_both_forms_give_the_same_optimum(self):
+        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        answers = {}
+        for form in ("sum", "lse", "auto"):
+            st = structure_detector(unit_corrector(self._box()))
+            answers[form] = solve_gp_ipopt(st, form=form)["primal objective"]
+        self.assertAlmostEqual(answers["sum"], answers["lse"], places=5)
+        self.assertAlmostEqual(answers["sum"], answers["auto"], places=5)
+
+    def test_auto_picks_sum_for_ordinary_magnitudes(self):
+        from lcsolver.solvers.ipopt.convex import _auto_form
+        groups = {0: [(1.0, [1.0, 0.0])], 1: [(2.5, [1.0, 2.0])]}
+        self.assertEqual(_auto_form(groups), "sum")
+
+    def test_auto_picks_lse_for_large_exponents(self):
+        from lcsolver.solvers.ipopt.convex import _auto_form
+        groups = {0: [(1.0, [1.0, 0.0])], 1: [(1.0, [1022.7, 0.0])]}
+        self.assertEqual(_auto_form(groups), "lse")
+
+    def test_auto_picks_lse_for_large_coefficients(self):
+        from lcsolver.solvers.ipopt.convex import _auto_form
+        import math
+        groups = {0: [(1.0, [1.0])], 1: [(math.exp(176.0), [1.0])]}
+        self.assertEqual(_auto_form(groups), "lse")
+
+    def test_invalid_form_is_rejected(self):
+        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        st = structure_detector(unit_corrector(self._box()))
+        with self.assertRaises(ValueError):
+            solve_gp_ipopt(st, form="nonsense")
+
+    # ---- silent 'sum' failure and its verification polish ----------------
+    # 'sum' can report optimality at a non-optimum: on a model whose optimum
+    # sits at small absolute scale, every sum-form KKT residual deflates
+    # below IPOPT's tolerances (the wind turbine COE model certifies a point
+    # 7x off).  Under form='auto' a claimed 'sum' success is therefore
+    # verified by a warm-started 'lse' solve.  These tests drive
+    # _build_and_solve_gp with a stubbed _assemble_and_solve so the three
+    # outcomes are exercised without needing a model that reproduces the
+    # numerics.
+
+    def _drive_polish(self, results_by_form, lse_raises=False):
+        import warnings as _warnings
+        from unittest import mock
+        from lcsolver.solvers.ipopt import convex
+
+        calls = []
+
+        def fake(m, n, groups, relations, tee, options, method, executable,
+                 form):
+            calls.append(form)
+            if not hasattr(m, 'obj'):
+                m.obj = pyo.Objective(expr=1.0)
+                m.cons = pyo.ConstraintList()
+            if form == 'lse' and lse_raises:
+                raise RuntimeError('restoration failed (JHO-style)')
+            return {'primal objective': results_by_form[form],
+                    'gp form': form, 'status': 'optimal'}
+
+        m = pyo.ConcreteModel()
+        groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}   # tame -> auto=sum
+        with mock.patch.object(convex, '_assemble_and_solve', fake):
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter('always')
+                res = convex._build_and_solve_gp(
+                    m, 1, groups, ['<='], False, None, 'auto', None,
+                    form='auto')
+        return res, calls, caught
+
+    def test_false_sum_optimum_is_replaced_by_lse_and_warned(self):
+        res, calls, caught = self._drive_polish({'sum': 100.0, 'lse': 1.0})
+        self.assertEqual(calls, ['sum', 'lse'])
+        self.assertEqual(res['gp form'], 'lse')
+        self.assertEqual(res['primal objective'], 1.0)
+        self.assertTrue(any('false optimum' in str(w.message) for w in caught))
+
+    def test_agreeing_sum_result_is_kept_without_warning(self):
+        res, calls, caught = self._drive_polish({'sum': 1.0, 'lse': 1.0})
+        self.assertEqual(calls, ['sum', 'lse'])       # verification ran
+        self.assertEqual(res['gp form'], 'sum')       # sum answer kept
+        self.assertFalse(any('false optimum' in str(w.message) for w in caught))
+
+    def test_lse_polish_failure_keeps_the_sum_answer(self):
+        # the JHO sailplane solves under 'sum' and fails under 'lse'; a
+        # failed verification must not take the model down with it
+        res, calls, caught = self._drive_polish({'sum': 1.0, 'lse': 0.5},
+                                                lse_raises=True)
+        self.assertEqual(calls, ['sum', 'lse'])
+        self.assertEqual(res['gp form'], 'sum')
+
+    def test_explicit_sum_form_skips_verification(self):
+        # form='sum' is an explicit user choice; no polish, exactly one solve
+        import warnings as _warnings
+        from unittest import mock
+        from lcsolver.solvers.ipopt import convex
+        calls = []
+
+        def fake(m, n, groups, relations, tee, options, method, executable,
+                 form):
+            calls.append(form)
+            m.obj = pyo.Objective(expr=1.0)
+            m.cons = pyo.ConstraintList()
+            return {'primal objective': 100.0, 'gp form': form,
+                    'status': 'optimal'}
+
+        m = pyo.ConcreteModel()
+        groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}
+        with mock.patch.object(convex, '_assemble_and_solve', fake):
+            res = convex._build_and_solve_gp(
+                m, 1, groups, ['<='], False, None, 'auto', None, form='sum')
+        self.assertEqual(calls, ['sum'])
+        self.assertEqual(res['gp form'], 'sum')
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+class TestWritebackFailureIsAnnounced(unittest.TestCase):
+    """A failed write-back must not look like a successful solve."""
+
+    def test_writeback_failure_warns(self):
+        import warnings
+        from lcsolver.solvers import solver as solver_module
+
+        def _boom(*a, **k):
+            raise RuntimeError('writeback exploded')
+
+        original = solver_module.write_solution
+        solver_module.write_solution = _boom
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                res = solver_module.cvxopt_solve(_gp_known_optimum())
+            messages = [str(w.message) for w in caught]
+            self.assertTrue(
+                any('writing the solution back' in m for m in messages),
+                msg=f'no warning issued; got {messages}')
+            self.assertIn('writeback_error', res)
+        finally:
+            solver_module.write_solution = original
+
+
+@unittest.skipIf(not formulation_available, 'Formulation import failed')
+class TestConstantOnlyConstraints(unittest.TestCase):
+    """A constraint with no variables is either redundant or a proof."""
+
+    @staticmethod
+    def _model(rhs):
+        f = Formulation()
+        x = f.Variable('x', 2.0, '-', 'x', bounds=[0.1, 10.0])
+        c = f.Constant('c', 3.0, '-', 'a constant')
+        f.Objective(x)
+        f.Constraint(x >= 2.0)
+        f.Constraint(c >= rhs)
+        return f
+
+    def test_a_true_constant_constraint_is_filtered_out(self):
+        from lcsolver.solvers import solver as solver_module
+        f = self._model(1.0)                      # c = 3 >= 1, always true
+        solver_module.solve(f, diagnostics='off')
+        self.assertAlmostEqual(pyo.value(f.x), 2.0, places=4)
+
+    def test_a_false_one_is_reported_as_infeasible_before_solving(self):
+        """It is a proof, and the cheapest one available -- no solve needed.
+
+        Falling through to a general NLP solver replaces "constraint X is false
+        as written" with a bare termination_condition=infeasible.
+        """
+        from lcsolver.presolve.reductions import InfeasibleProblem
+        from lcsolver.solvers import solver as solver_module
+
+        with self.assertRaises(InfeasibleProblem) as ctx:
+            solver_module.solve(self._model(99.0), diagnostics='off')
+        msg = str(ctx.exception)
+        self.assertIn('no feasible point', msg)
+        self.assertIn('c = 3', msg)               # names the value
+        self.assertNotIn('dimensionless', msg)    # not the unit parameters
+
+
+@unittest.skipIf(not formulation_available, 'LCsolver import failed')
+class TestSolveDetectsOnce(unittest.TestCase):
+    """`solve` walks the model once, not once per consumer.
+
+    The checks and the structured backends used to each detect for themselves,
+    because `optimization_check` wants bounds separated from the rows and the backends
+    read them out of the rows. `optimization_check` folds single-variable rows into
+    bounds itself, so it reads either form -- and the walk is the expensive
+    part of a solve on a large model, seconds against seconds.
+    """
+
+    def _count_detections(self, **kwargs):
+        import lcsolver.solvers.solver as solver_mod
+
+        calls = []
+        real = solver_mod.structure_detector
+
+        def counting(*a, **kw):
+            calls.append(1)
+            return real(*a, **kw)
+
+        solver_mod.structure_detector = counting
+        try:
+            solver_mod.solve(_linear_model(), **kwargs)
+        finally:
+            solver_mod.structure_detector = real
+        return sum(calls)
+
+    def test_diagnostics_on_costs_no_extra_walk(self):
+        self.assertEqual(self._count_detections(diagnostics='warn'), 1)
+
+    def test_diagnostics_off_still_detects_for_routing(self):
+        self.assertEqual(self._count_detections(diagnostics='off'), 1)
+
+    def test_the_answer_is_unchanged_either_way(self):
+        for level in ('warn', 'off'):
+            f = _linear_model()
+            from lcsolver.solvers.solver import solve
+            solve(f, diagnostics=level)
+            self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
+            self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
+
+
+class TestIpoptUnavailableFallback:
+    """What `solve()` does when there is no IPOPT to be had.
+
+    IPOPT is the default convex backend, so a machine without it used to fail
+    on models cvxopt could solve perfectly well: the structured path raised,
+    and the fallback was *plain IPOPT on the raw model*, which raised for the
+    same reason. A detected LP/QP/GP/SP does not need IPOPT at all.
+
+    Availability is faked by monkeypatching `_ipopt_available` rather than by
+    editing PATH, so the test is unaffected by what the machine has installed
+    and cannot leak a broken PATH into later tests.
+    """
+
+    @staticmethod
+    def _gp():
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='m', description='y')
+        A = f.Constant(name='A', value=2.0, units='m^2', description='area')
+        f.Objective(x + y)
+        f.ConstraintList([x * y >= A])
+        return f
+
+    def test_structured_model_falls_back_to_cvxopt_and_warns(self, monkeypatch):
+        from lcsolver.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        f = self._gp()
+        with pytest.warns(RuntimeWarning, match='cvxopt instead'):
+            S.solve(f, sensitivities=False)
+        # min x + y subject to x*y >= 2 is 2*sqrt(2) -- the fallback must give
+        # the right answer, not merely avoid raising.
+        assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5, rel=1e-6)
+
+    def test_unstructured_model_raises_a_named_dead_end(self, monkeypatch):
+        from lcsolver.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='-', description='x')
+        f.Objective(x ** 3 - 2 * x + 5)          # not LP, QP, GP or SP
+        f.ConstraintList([x >= 0.1])
+        with pytest.raises(RuntimeError, match='needs IPOPT'):
+            S.solve(f, sensitivities=False)
+
+    def test_ipopt_is_still_preferred_when_present(self, monkeypatch):
+        from lcsolver.solvers import solver as S
+        monkeypatch.setattr(S, '_ipopt_available', lambda: True)
+        f = self._gp()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            S.solve(f, sensitivities=False)
+        assert not [w for w in caught if 'cvxopt instead' in str(w.message)]
+
+
+class TestSuppliedStructures:
+    """`solve(f, structures=...)` -- run the chain yourself and hand it back.
+
+    The chain a plain solve runs is unit_corrector -> structure_detector ->
+    optimization_check -> backend -> sensitivities. Detecting is the expensive step (four
+    to six seconds on SPaircraft against an eleven-second solve), so a caller
+    who has already done it for a optimization_check should not pay twice.
+    """
+
+    @staticmethod
+    def _gp():
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='m', description='y')
+        A = f.Constant(name='A', value=2.0, units='m^2', description='area')
+        f.Objective(x + y)
+        f.ConstraintList([x * y >= A])
+        return f
+
+    def test_supplied_structures_give_the_same_answer(self):
+        from lcsolver.solvers.solver import solve
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+
+        a = self._gp()
+        solve(a, sensitivities=False)
+
+        b = self._gp()
+        st = structure_detector(unit_corrector(b))
+        solve(b, structures=st, sensitivities=False)
+
+        assert float(b.solution.objective) == pytest.approx(
+            float(a.solution.objective), rel=1e-9)
+        assert float(b.solution.objective) == pytest.approx(2 * 2 ** 0.5,
+                                                            rel=1e-6)
+
+    def test_diagnose_does_not_consume_the_structures(self):
+        """Detect once, optimization_check, then solve -- the whole point of sharing."""
+        from lcsolver.presolve.reductions import optimization_check
+        from lcsolver.solvers.solver import solve
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+
+        f = self._gp()
+        st = structure_detector(unit_corrector(f))
+        rep = optimization_check(st)                       # must not mutate st
+        assert 'Geometric Program' in rep.structure
+        solve(f, structures=st, sensitivities=False)
+        assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5,
+                                                            rel=1e-6)
+
+    def test_the_split_bounds_form_is_refused(self):
+        """The dangerous one: bounds in structures['bounds'], not in the rows.
+
+        A backend reading only rows would solve an unbounded relaxation and
+        return a perfectly reasonable-looking answer to a different question.
+        """
+        from lcsolver.solvers.solver import solve
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
+
+        f = self._gp()
+        split = structure_detector(unit_corrector(f), bounds_as_rows=False)
+        with pytest.raises(ValueError, match='bounds_as_rows'):
+            solve(f, structures=split, sensitivities=False)

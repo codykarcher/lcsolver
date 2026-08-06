@@ -1,0 +1,162 @@
+/**
+ * Shared materials for the component library.
+ *
+ * One place for the palette so that a strut looks like a strut wherever it
+ * appears, and so a change of look is a change in one file rather than a sweep
+ * through every component. Components should never construct their own
+ * materials -- ask here.
+ *
+ * Materials are created once and shared across every mesh that uses them.
+ * three.js is happy with that (a material carries no per-mesh state) and it
+ * keeps the shader-program count down: the whole gear library draws with five
+ * programs regardless of how many wheels are on screen.
+ */
+import * as THREE from 'three';
+
+/** Rubber. Nearly black, and *not* pure black -- pure black shows no form. */
+export const tire = new THREE.MeshStandardMaterial({
+  color: 0x1c1c1f, roughness: 0.92, metalness: 0.0,
+});
+
+/** Machined aluminium rim. */
+export const rim = new THREE.MeshStandardMaterial({
+  color: 0xb8bcc2, roughness: 0.38, metalness: 0.85,
+});
+
+/** The polished oleo piston -- the bright band you see on a real gear. */
+export const piston = new THREE.MeshStandardMaterial({
+  color: 0xe8ebef, roughness: 0.12, metalness: 1.0,
+});
+
+/** Painted structure: the strut's outer cylinder, forks, bogie beams. */
+export const structure = new THREE.MeshStandardMaterial({
+  color: 0x6f7885, roughness: 0.55, metalness: 0.6,
+});
+
+/** Darker steel for axles, pins and pivots, so joints read as joints. */
+export const hardware = new THREE.MeshStandardMaterial({
+  color: 0x3f4650, roughness: 0.45, metalness: 0.9,
+});
+
+/* ---- airframe --------------------------------------------------------- */
+
+/** Painted fuselage skin. Off-white: pure white blows out under a key light. */
+export const skin = new THREE.MeshStandardMaterial({
+  color: 0xe9eaec, roughness: 0.42, metalness: 0.05,
+});
+
+/** Cabin windows and flight-deck glass. */
+export const glass = new THREE.MeshStandardMaterial({
+  color: 0x14181d, roughness: 0.18, metalness: 0.30,
+});
+
+/** A cheatline or a door outline -- anything painted onto the skin. */
+export const trim = new THREE.MeshStandardMaterial({
+  color: 0x2f3742, roughness: 0.45, metalness: 0.10,
+});
+
+/* ---- engines ---------------------------------------------------------- */
+
+/** Engine casing: light, slightly warm metal. */
+export const casing = new THREE.MeshStandardMaterial({
+  color: 0xc3c8ce, roughness: 0.34, metalness: 0.92,
+});
+
+/** Fan and compressor blades -- titanium, brighter than the case. */
+export const blade = new THREE.MeshStandardMaterial({
+  color: 0xd9dde3, roughness: 0.22, metalness: 1.0,
+  side: THREE.DoubleSide,
+});
+
+/** Anything downstream of the burner: discoloured, dark, barely reflective. */
+export const hot = new THREE.MeshStandardMaterial({
+  color: 0x4a4038, roughness: 0.74, metalness: 0.75,
+});
+
+/** Spinners, cowl noses, propeller blades -- painted rather than bare. */
+export const painted = new THREE.MeshStandardMaterial({
+  color: 0x23262b, roughness: 0.48, metalness: 0.15,
+});
+
+/**
+ * Paint markings -- the spiral on a spinner, stencils, warning stripes.
+ * Off-white rather than pure white so it still shades against a lit case.
+ */
+export const marking = new THREE.MeshStandardMaterial({
+  color: 0xf0f2f4, roughness: 0.42, metalness: 0.05,
+});
+
+/**
+ * The inside of a duct or an exhaust. Looking up a nozzle should be looking
+ * into a hole, and a hole is black -- a lit metal surface back there reads as
+ * a plug rather than an opening.
+ */
+export const cavity = new THREE.MeshStandardMaterial({
+  color: 0x0b0c0e, roughness: 0.96, metalness: 0.0,
+});
+
+/** Accessories, gearboxes, crankcases: cast and unpolished. */
+export const accessory = new THREE.MeshStandardMaterial({
+  color: 0x878d95, roughness: 0.72, metalness: 0.55,
+});
+
+/** Cylinder barrels and cooling fins on a piston engine. */
+export const finned = new THREE.MeshStandardMaterial({
+  color: 0x555b62, roughness: 0.85, metalness: 0.5,
+});
+
+/** Copper-ish: motor windings seen through a vented can. */
+export const winding = new THREE.MeshStandardMaterial({
+  color: 0xa8632f, roughness: 0.55, metalness: 0.8,
+});
+
+/**
+ * A decal version of a material: same look, but biased toward the camera so it
+ * cannot fight with the surface it is lying on.
+ *
+ * Anything applied to a fuselage sits a few millimetres off a body tens of
+ * metres long, which is far below the resolution of the depth buffer at that
+ * range. Without a bias the window and the skin behind it win the depth test in
+ * alternating patches as the camera moves, and the result reads as triangles
+ * flickering across the surface -- not as a window at all.
+ *
+ * Cached per base material, so a hundred windows still share one material and
+ * one shader program, and so the wireframe toggle below reaches them.
+ */
+const decals = new Map();
+export function decal(base) {
+  if (decals.has(base)) return decals.get(base);
+  const m = base.clone();
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = -4;
+  m.polygonOffsetUnits = -4;
+  decals.set(base, m);
+  const name = Object.keys(all).find((k) => all[k] === base);
+  all[name ? `${name}Decal` : `decal${decals.size}`] = m;
+  return m;
+}
+
+/**
+ * Show a body's outer mould line as a shell you can see through.
+ *
+ * `depthWrite` off is the part that matters: with it on, the near side of the
+ * skin would occlude everything behind it and the body would look solid but
+ * dim rather than open. Off, and anything inside or on it shows through.
+ */
+export function setTranslucent(on, opacity = 0.16) {
+  skin.transparent = on;
+  skin.opacity = on ? opacity : 1;
+  skin.depthWrite = !on;
+  skin.side = on ? THREE.DoubleSide : THREE.FrontSide;
+  skin.needsUpdate = true;
+}
+
+export const all = { tire, rim, piston, structure, hardware,
+                     skin, glass, trim,
+                     casing, blade, hot, painted, marking, cavity, accessory, finned,
+                     winding };
+
+/** Free every material. Call when tearing down a scene you built. */
+export function dispose() {
+  for (const m of Object.values(all)) m.dispose();
+}

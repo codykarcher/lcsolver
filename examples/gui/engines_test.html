@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engines &mdash; component test</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #14161a; color: #d7dbe0;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #view { position: fixed; inset: 0; }
+
+  #panel { position: fixed; top: 14px; left: 14px; width: 236px; padding: 14px 16px;
+    background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
+    backdrop-filter: blur(6px); max-height: calc(100vh - 60px); overflow-y: auto; }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; }
+  #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
+  #panel h2 { margin: 12px 0 6px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: #6f7884;
+    border-top: 1px solid #2e343d; padding-top: 10px; }
+  .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
+  .row label { font-size: 11.5px; color: #aab3bf; }
+  .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
+  input[type=range] { width: 100%; margin: 1px 0 8px; accent-color: #e6a34a; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
+    font-size: 11.5px; color: #aab3bf; }
+  button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
+    font-size: 11.5px; color: #d7dbe0; background: #262b33;
+    border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2f353f; }
+  .hint { margin-top: 11px; padding-top: 10px; border-top: 1px solid #2e343d;
+    font-size: 10.5px; color: #6f7884; }
+
+  .tag { position: fixed; transform: translate(-50%, 0); text-align: center;
+    font-size: 11.5px; color: #98a2ae; white-space: nowrap;
+    text-shadow: 0 1px 3px #000; pointer-events: none; }
+  .tag b { display: block; color: #e6e9ee; font-weight: 600; font-size: 12.5px; }
+  .tag i { font-style: normal; color: #6f7884; font-size: 10.5px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>Engine cores</h1>
+  <p class="sub">no ducting, no fairings</p>
+
+  <div class="check">
+    <input type="checkbox" id="normalize" checked>
+    <label for="normalize">equal display size</label>
+  </div>
+  <div class="check">
+    <input type="checkbox" id="wire">
+    <label for="wire">wireframe</label>
+  </div>
+  <div class="check">
+    <input type="checkbox" id="spin">
+    <label for="spin">spin fans &amp; props</label>
+  </div>
+
+  <h2>variants</h2>
+
+  <div class="row"><label for="fanBlades">turbofan blades</label><output id="oFan"></output></div>
+  <input type="range" id="fanBlades" min="10" max="34" step="1" value="30">
+
+  <div class="row"><label for="propBlades">prop blades</label><output id="oProp"></output></div>
+  <input type="range" id="propBlades" min="2" max="8" step="1" value="4">
+
+  <div class="row"><label for="cylinders">piston cylinders</label><output id="oCyl"></output></div>
+  <input type="range" id="cylinders" min="2" max="8" step="2" value="4">
+
+
+  <button id="reset">reset</button>
+  <p class="hint">drag to orbit &middot; scroll to zoom &middot; right-drag to pan</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as E from './components/engines.js';
+import { disposeTree } from './components/geom.js';
+import { all as MATERIALS } from './components/materials.js';
+
+/* ---------- scene ---------- */
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.05, 400);
+camera.position.set(5.5, 3.4, 8.5);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.target.set(0, 1.05, 0);
+
+scene.add(new THREE.HemisphereLight(0x9fb4cc, 0x191c21, 1.5));
+
+const key = new THREE.DirectionalLight(0xfff3e2, 2.4);
+key.position.set(6, 9, 7);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+const c = key.shadow.camera;
+c.left = -10; c.right = 10; c.top = 10; c.bottom = -10; c.near = 0.5; c.far = 40;
+key.shadow.bias = -0.0013;
+scene.add(key);
+
+const fill = new THREE.DirectionalLight(0x93b6ff, 0.6);
+fill.position.set(-7, 4, -5);
+scene.add(fill);
+// A little light from dead ahead, so you can see down the inlets.
+const nose = new THREE.DirectionalLight(0xffffff, 0.45);
+nose.position.set(0, 1, 12);
+scene.add(nose);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80, 80),
+  new THREE.MeshStandardMaterial({ color: 0x1b1e24, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+const grid = new THREE.GridHelper(60, 120, 0x39414c, 0x252a31);
+grid.position.y = 0.001;
+scene.add(grid);
+
+/* ---------- engines ---------- */
+const AXIS_Y = 1.05;
+
+const el = (id) => document.getElementById(id);
+const N = (id) => parseInt(el(id).value, 10);
+
+// label -> builder. Kept in one place so adding a type is a one-line change.
+function specs() {
+  return [
+    ['turbofan',       'high bypass',    () => E.turbofan({ blades: N('fanBlades') })],
+    ['turbojet',       '',               () => E.turbojet({})],
+    ['turboprop',      '',               () => E.turboprop({ blades: N('propBlades') })],
+    ['electric motor', 'outrunner',      () => E.electricMotor({})],
+    ['piston',         `${N('cylinders')}-cyl opposed`, () => E.pistonEngine({ cylinders: N('cylinders') })],
+  ];
+}
+
+const root = new THREE.Group();
+scene.add(root);
+let tags = [];
+const anchors = [];
+const spinners = [];
+
+function clearTags() { for (const t of tags) t.remove(); tags = []; }
+
+function build() {
+  for (const ch of [...root.children]) { disposeTree(ch); root.remove(ch); }
+  clearTags();
+  anchors.length = 0;
+  spinners.length = 0;
+
+  const normalize = el('normalize').checked;
+  // Wireframe is set on the shared materials rather than on clones: the whole
+  // library uses them, which is exactly the scope we want, and cloning would
+  // leak a material set on every rebuild.
+  for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
+  const list = specs();
+
+  const built = list.map(([, , make]) => make());
+
+  // Optionally bring everything to a common display size. Engines differ by
+  // an order of magnitude in real diameter, which is useful to see but makes
+  // the small ones unreadable, so it is a toggle rather than a decision.
+  const scales = built.map((g) => (normalize ? 0.95 / g.userData.rMax : 1));
+
+  const boxes = built.map((g, i) => {
+    g.scale.setScalar(scales[i]);
+    g.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(g);
+  });
+  const widths = boxes.map((b) => b.max.x - b.min.x);
+  const gap = 0.85;
+  const total = widths.reduce((a, b) => a + b, 0) + gap * (built.length - 1);
+
+  let x = -total / 2;
+  built.forEach((g, i) => {
+    x += widths[i] / 2;
+    g.position.set(x, AXIS_Y, 0);
+    const turning = new Set();
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      // Rotors tag themselves; stator vanes deliberately do not.
+      for (let p = o; p && p !== g; p = p.parent)
+        if (p.userData.rotating) { turning.add(p); break; }
+    });
+    spinners.push(...turning);
+    root.add(g);
+
+    const [name, note] = list[i];
+    const t = document.createElement('div');
+    t.className = 'tag';
+    t.innerHTML = `<b>${name}</b>${note ? `<i>${note}</i>` : ''}`;
+    document.body.appendChild(t);
+    tags.push(t);
+    anchors.push(new THREE.Vector3(x, AXIS_Y - 0.95, 0));
+
+    x += widths[i] / 2 + gap;
+  });
+
+  el('oFan').textContent = N('fanBlades');
+  el('oProp').textContent = N('propBlades');
+  el('oCyl').textContent = N('cylinders');
+}
+
+for (const id of ['fanBlades', 'propBlades', 'cylinders'])
+  el(id).addEventListener('input', build);
+for (const id of ['normalize', 'wire'])
+  el(id).addEventListener('change', build);
+el('reset').addEventListener('click', () => {
+  el('fanBlades').value = 20; el('propBlades').value = 4;
+  el('cylinders').value = 4;
+  el('normalize').checked = true; el('wire').checked = false;
+  el('spin').checked = false;
+  build();
+});
+
+/* ---------- loop ---------- */
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+const v = new THREE.Vector3();
+const clock = new THREE.Clock();
+function tick() {
+  const dt = clock.getDelta();
+  if (el('spin').checked)
+    for (const s of spinners)
+      s.rotation.z += dt * 2.2 * (s.userData.spin ?? 1) * (s.userData.rate ?? 1);
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  anchors.forEach((a, i) => {
+    v.copy(a).project(camera);
+    tags[i].style.left = `${(v.x * 0.5 + 0.5) * innerWidth}px`;
+    tags[i].style.top = `${(-v.y * 0.5 + 0.5) * innerHeight + 10}px`;
+    tags[i].style.opacity = v.z > 1 ? 0 : 1;
+  });
+  requestAnimationFrame(tick);
+}
+
+resize();
+build();
+tick();
+</script>
+</body>
+</html>

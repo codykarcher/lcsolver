@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "edi"
+name = "lcsolver"
 version = "0.1.0"
 requires-python = ">=3.9"
 description = "A Pyomo based framework for Engineering Design Optimization"
@@ -43,7 +43,7 @@ dependencies = [
 ]
 
 # Optional extras. mpi4py in particular requires a working MPI installation and
-# must NOT be a hard dependency: it breaks `pip install edi` on machines without
+# must NOT be a hard dependency: it breaks `pip install lcsolver` on machines without
 # MPI, which includes most reviewer and CI environments.
 [project.optional-dependencies]
 parallel = ["mpi4py"]
@@ -53,6 +53,6 @@ docs     = ["sphinx", "sphinx-rtd-theme"]
 test     = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/codykarcher/edi"
-Repository = "https://github.com/codykarcher/edi.git"
-Issues = "https://github.com/codykarcher/edi/issues"
+Homepage = "https://github.com/codykarcher/lcsolver"
+Repository = "https://github.com/codykarcher/lcsolver.git"
+Issues = "https://github.com/codykarcher/lcsolver/issues"

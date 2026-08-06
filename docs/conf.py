@@ -1,4 +1,4 @@
-# Sphinx configuration for the EDI documentation.
+# Sphinx configuration for the LCsolver documentation.
 #
 # Build with:
 #     python -m pip install -e ".[docs]"
@@ -8,12 +8,12 @@ import sys
 
 sys.path.insert(0, os.path.abspath(".."))
 
-project = "EDI"
+project = "LCsolver"
 copyright = "2023-2026, NTESS and Cody J. Karcher"
 author = "Cody J. Karcher"
 
 try:
-    from edi import __version__ as release
+    from lcsolver import __version__ as release
 except Exception:
     release = "0.1.0"
 version = release
@@ -35,7 +35,7 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # The .rst files were written for the Pyomo documentation tree, where they sat
-# under contributed_packages/edi/. They are reused verbatim here.
+# under contributed_packages/lcsolver/. They are reused verbatim here.
 master_doc = "index"
 
 html_theme = "sphinx_rtd_theme"

@@ -1,0 +1,1258 @@
+/**
+ * Fuselages.
+ *
+ * A fuselage here is a **lofted body**: a stack of closed sections swept along
+ * a curved centreline. Three functions define one completely --
+ *
+ *   r(z)     the size of the section at station z
+ *   yc(z)    where the section's centre sits, so that a chosen profile line
+ *            -- keel forward, crown aft -- stays straight through the taper
+ *   sec(th, z)  the SHAPE of the section, as a radius multiplier by angle --
+ *            and, for a body whose section changes along it, by station too
+ *
+ * -- and everything else in this file is either one of those three for a
+ * particular aeroplane, or machinery for turning them into triangles.
+ *
+ * Splitting the section shape out from the size distribution is the whole
+ * point. A conventional jetliner and a double bubble have very nearly the same
+ * r(z) and yc(z); what makes one a D8 is `sec`. So the second fuselage is a
+ * section function, not a second body, and anything that works on one -- the
+ * window rows, the doors, the surface-patch machinery, whatever attaches to it
+ * later -- works on the other without being told about it.
+ *
+ * Axis convention: nose tip at the ORIGIN, body running aft along **-Z**, +Y
+ * up. Same as every other component in the library, so a fuselage and an engine
+ * dropped into the same scene are already in the same frame.
+ */
+import * as THREE from 'three';
+import { skin, glass, trim, painted, cavity, decal } from './materials.js';
+import { orientOutward } from './geom.js';
+
+// Register the decal variants at load rather than on first use, so that a page
+// enumerating the palette -- the wireframe toggle does -- sees them before it
+// has built anything.
+[glass, trim, painted].forEach(decal);
+
+/* ---- section shapes ---------------------------------------------------- */
+
+/**
+ * A section is `sec(theta, z) -> radius multiplier`, normalised so that the
+ * multiplier is 1 straight up. That normalisation is what lets `r(z)` mean
+ * HALF-HEIGHT for every section, circular or not, so one size distribution and
+ * one centreline law serve all of them.
+ *
+ * The station argument is what makes a D8 possible. A tube has one section from
+ * end to end; a double bubble does not -- it starts as an ellipse, becomes two
+ * lobes over the cabin, and opens into a trough at the back to take the
+ * engines. So the section is a function of where you are, not a constant.
+ */
+
+/**
+ * A circle. What almost every pressurised metal tube actually is -- a cylinder
+ * is the only shape that carries pressure in pure tension.
+ */
+export const circularSection = () => 1;
+
+/** An ellipse `w` times as wide as it is tall. */
+export const ellipticalSection = (w) => (th) => ellipticalRadius(w, th);
+
+/** The same, without building a closure per section. */
+export const ellipticalRadius = (w, th) =>
+  1 / Math.hypot(Math.sin(th), Math.cos(th) / w);
+
+/**
+ * A superellipse (Lame curve) `w` wide, with exponent `n`.
+ *
+ *     |x/w|^n + |y|^n = 1     ->     r = (|cos/w|^n + |sin|^n)^(-1/n)
+ *
+ * Not currently used by either aircraft -- the D8's fairing is a stadium, whose
+ * sides are exact semicircles where this one's shoulders are noticeably boxy --
+ * but it is the natural family for a flattened section and is kept for the next
+ * body that wants one. n = 2 is an ellipse and n large is a rectangle.
+ *
+ * Height at the centreline is 1 by construction and it is also the maximum, so
+ * `r(z)` keeps meaning half-height here as everywhere else.
+ */
+export const superellipseSection = (w, n = 3.6) => (th) => {
+  const c = Math.abs(Math.cos(th) / w), s = Math.abs(Math.sin(th));
+  return Math.pow(Math.pow(c, n) + Math.pow(s, n), -1 / n);
+};
+
+/**
+ * A stadium: flat top and bottom, SEMICIRCULAR sides, `w` wide per unit tall.
+ *
+ * This is the convex hull of the two pressure lobes, which is what a fairing
+ * over them physically is -- so the sides are semicircles because the lobes are
+ * circles, not because a curve was chosen to look right. A superellipse gets
+ * close and has boxy shoulders; this has none, because the shoulder IS an arc
+ * of the lobe.
+ *
+ * Offset o = w - 1 puts the lobe centres at +/-o with unit radius. A ray meets
+ * the flat top where |cot th| <= o, and an arc otherwise. The two agree in
+ * value and slope at the join by construction: the ray hits the flat exactly at
+ * (o, 1), which is the top of the arc, where its tangent is already horizontal.
+ *
+ * `crown` blends in an ellipse of the same width, for a top that is not dead
+ * flat but slightly convex. A little goes a long way -- 0.12 drops the roof
+ * about 1.5% over the middle half of the width, and leaves the shoulders within
+ * a couple of percent of circular.
+ */
+export function stadiumSection(w, crown = 0) {
+  return (th) => stadiumRadius(w, crown, th);
+}
+
+/**
+ * The same, as a plain function of the angle.
+ *
+ * Wanted because the D8's aft section rebuilds its stadium for every ray, and
+ * the closure and the elliptical section it captured were being allocated a
+ * million times over during a carve.
+ */
+export function stadiumRadius(w, crown, th) {
+  const o = Math.max(0, w - 1);
+  const s = Math.sin(th), c = Math.cos(th);
+  let r;
+  if (Math.abs(s) > 1e-12 && Math.abs(c / s) <= o) r = 1 / Math.abs(s);
+  else r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
+  if (!(crown > 0)) return r;
+  return r * (1 - crown) + ellipticalRadius(w, th) * crown;
+}
+
+/**
+ * Two overlapping circles side by side -- a double bubble.
+ *
+ * Not currently used by either aircraft -- the D8's fairing is the stadium
+ * above, which is these two lobes' convex hull -- but kept because it is the
+ * shape the name refers to and the obvious thing to reach for next.
+ *
+ * On a D8 this is the PRESSURE VESSEL, not the outer mould line. The two lobes
+ * are what carries cabin pressure in tension; the shape the air sees is the
+ * superellipse above, wrapped round them. Modelling the bubbles as the OML --
+ * which is the obvious reading of "double bubble fuselage" and is what this
+ * file did first -- puts a crease down the top of an aeroplane that has a flat
+ * roof.
+ *
+ * Unit lobes with their centres at +/- `offset` from the axis. The union is
+ * star-shaped about the centre while offset < 1, so it has a closed polar form:
+ * the radius to the boundary is |offset * cos| + sqrt(1 - offset^2 sin^2), the
+ * larger root of the nearer lobe. That is worth having exactly rather than by
+ * clipping two meshes together -- the crease down the top and bottom centreline
+ * is a real feature of the shape, not an artefact, and it comes out on its own.
+ *
+ * No normalising constant is needed, which is a small piece of luck worth
+ * pointing out: the highest point of the union is a LOBE APEX, at (+/-offset, 1),
+ * so the half-height is exactly 1 already and `r(z)` keeps meaning half-height
+ * for this section as it does for every other. Dividing by the height at the
+ * centreline instead -- sqrt(1 - offset^2), which is the valley, not the top --
+ * makes the body 12% taller than the half-height asked for.
+ *
+ * The top is not flat: a hump over each lobe and a valley between them, which
+ * is the thing that makes a double bubble recognisable. Half-width is
+ * 1 + offset, so that is the one number that grows with the bubble.
+ *
+ * `trough` deepens that valley -- a Gaussian notch about straight up -- which is
+ * how the aft body opens to seat the nacelles.
+ */
+export function doubleBubbleSection({ offset = 0.45, trough = 0, troughWidth = 0.55 } = {}) {
+  const o = Math.min(0.95, Math.max(0, offset));
+  return (th) => {
+    const s = Math.sin(th), c = Math.cos(th);
+    const r = Math.abs(o * c) + Math.sqrt(Math.max(0, 1 - o * o * s * s));
+    if (trough <= 0) return r;
+    // Angular distance from straight up, wrapped, so the notch does not
+    // reappear at the keel when theta runs past pi.
+    const d = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+    const g = d / troughWidth;
+    return r * (1 - trough * Math.exp(-g * g));
+  };
+}
+
+/**
+ * A section that changes along the body.
+ *
+ * `stops` are [fraction aft, section] in order. Between two stops the two
+ * sections are blended with a smoothstep, so the morph has no corner at either
+ * end of a transition -- which matters, because a discontinuity in the SECTION
+ * is a ring-shaped crease around the whole body and is impossible to miss.
+ */
+/**
+ * The channel an afterbody closes into: a flat floor, sides rounding up at the
+ * radius of what it holds, and an open top.
+ *
+ * Built as the convex hull of the things being cradled -- two circles, which
+ * gives a stadium: flat top and bottom joined by arcs of exactly their radius
+ * -- and then capped at their axis height so the top is open and they sit half
+ * in it. The walls cannot be the wrong curve for what they hold, because they
+ * ARE its curve.
+ *
+ * Carving the circles OUT of a wider body was the other way to try it and does
+ * not work: where the body runs wider than what it holds, a ray out of the
+ * section crosses skin, the opening, then skin again, and a section written as
+ * one radius per angle cannot say that. It collapsed the afterbody instead.
+ *
+ * Everything is in units of the local HALF-HEIGHT, about the section's centre.
+ */
+export function channelSection({ halfSpacing, radius, axisY, cap = Infinity }) {
+  return (th) => channelRadius(halfSpacing, radius, axisY, cap, th);
+}
+
+/**
+ * Where a ray out of the section's centre leaves the channel, solved rather
+ * than searched for.
+ *
+ * This was forty steps of bisection, and it is the single most expensive thing
+ * in the whole build: carving the duct asks the body whether a point is inside
+ * it about 900,000 times, and every one of those was forty evaluations of a
+ * predicate. 540 of the 820 ms it took to turn a solve into an aeroplane was
+ * spent here.
+ *
+ * It never needed searching. The region is a stadium -- the hull of two circles
+ * -- cut by a half-plane, so it is convex and contains the centre, which means
+ * a ray leaves it exactly once and through exactly one of four pieces: the flat
+ * top, the flat bottom, or one of the two end arcs. Each piece is a line or a
+ * circle, so each is a closed form, and the one that is hit is the one whose
+ * answer lands within its own piece.
+ *
+ * Identical to the bisection, not merely close: checked against it over random
+ * channels and angles, worst disagreement 1.5e-10, which is the bisection's own
+ * remaining interval and not an error in this.
+ */
+export function channelRadius(halfSpacing, radius, axisY, cap, th) {
+  // The centre has to be inside the shape, or the section is degenerate and the
+  // afterbody collapses. The origin sits on the stadium's axis, so with the
+  // spacing non-negative this is just the flat span's test.
+  if (cap < 0 || Math.abs(axisY) > radius) return 1e-4;
+  const c = Math.cos(th), s = Math.sin(th);
+  let t = Infinity;
+
+  // The flat top and bottom, at dy = +/-radius, valid only over the span.
+  if (Math.abs(s) > 1e-12) {
+    const tt = (axisY + (s > 0 ? radius : -radius)) / s;
+    if (tt > 0 && Math.abs(tt * c) <= halfSpacing) t = tt;
+  }
+  // The two end arcs, centred on the circles this was built to hold.
+  if (!(t < Infinity)) {
+    for (const k of [halfSpacing, -halfSpacing]) {
+      const b = k * c + axisY * s;
+      const disc = b * b - (k * k + axisY * axisY - radius * radius);
+      if (disc < 0) continue;
+      const tt = b + Math.sqrt(disc);
+      if (tt <= 0) continue;
+      const x = tt * c;
+      if (k >= 0 ? x >= halfSpacing - 1e-12 : x <= -halfSpacing + 1e-12) {
+        t = Math.min(t, tt);
+      }
+    }
+  }
+  // And the cap, which is what leaves the channel open at the top.
+  if (s > 1e-12 && cap < Infinity) t = Math.min(t, cap / s);
+  return t < Infinity ? Math.max(t, 1e-4) : 1e-4;
+}
+
+export function morphSection(stops, length) {
+  return (th, z) => {
+    const u = Math.min(1, Math.max(0, -z / length));
+    let i = 0;
+    while (i < stops.length - 2 && u > stops[i + 1][0]) i++;
+    const [u0, a] = stops[i], [u1, b] = stops[i + 1];
+    if (u <= u0) return a(th, z);
+    if (u >= u1) return b(th, z);
+    const t = (u - u0) / (u1 - u0), k = t * t * (3 - 2 * t);
+    return a(th, z) * (1 - k) + b(th, z) * k;
+  };
+}
+
+/* ---- shape law --------------------------------------------------------- */
+
+/**
+ * Proportions of a conventional single-aisle jetliner, in diameters and radii
+ * so they hold at any size. Numbers are off a 737-800 / A320: 37-38 m long,
+ * 3.8-4.0 m across, so a fineness ratio right around 10.
+ *
+ * Both ends come from `(1 - x^A)^B`. B < 1 makes the end round rather than
+ * pointed, A > 1 makes the slope vanish where the taper meets the barrel, so
+ * neither end blends in with a crease.
+ *
+ * **Three of these are deck inputs**: fineness, noseD, and the body radius that
+ * arrives beside them. Everything else is the shape of a conventional jetliner
+ * and is fixed. They remain overridable through `shape` so a different aircraft
+ * can be described later, but nothing routine should touch them.
+ *
+ * noseB is locked at exactly 1/2, which is worth knowing rather than treating
+ * as one value among many: it is the only exponent at which the point has a
+ * finite radius of curvature. Above it the tip is a knife edge, below it a
+ * flat. At 1/2 the nose closes on a sphere of radius R^2 * noseA / (2 * lNose),
+ * which the model reports -- see `noseTipRadius`.
+ */
+const JET = {
+  fineness:   10.1,  // DECK: overall length / diameter
+  noseD:      1.70,  // DECK: nose length, in diameters
+  tailD:      2.90,  // tailcone length, in diameters
+  noseA: 2.7, noseB: 0.50,   // locked
+  tailLaw: 'power',          // a tube closes on a small round tip, not an edge
+  // Locked, and nearer a straight taper than they were. Going further is
+  // possible and costs the barrel join: a cone meeting a cylinder IS a crease,
+  // so straightening the tailcone sharpens where it starts. At A 1.35 the join
+  // slope reaches -0.0023 and check_fuselage refuses it; 1.50 holds it at
+  // -0.0006 and still takes the quarter points from 0.934/0.793/0.579 to
+  // 0.909/0.740/0.511 against a straight line's 0.80/0.60/0.40.
+  tailA: 1.50, tailB: 0.90,
+  tipR:       0.20,  // tailcone tip radius, in radii -- the APU exhaust
+  keelHold:   0.45,  // fraction of the NOSE taper taken off the crown
+  crownHold:  1.00,  // fraction of the TAILCONE taper taken off the belly
+};
+
+/**
+ * Build the r(z) and yc(z) pair for the whole body: nose, barrel, tailcone.
+ *
+ * Both ends obey the same law, mirrored. A taper has to be spent somewhere --
+ * as the section shrinks, one of the two profile lines has to come and meet the
+ * other -- and the only question is which line moves:
+ *
+ *     tailcone   yc = +crownHold * (radius - r)     crown level, belly rises
+ *     nose       yc = -keelHold  * (radius - r)     keel level, crown falls
+ *
+ * At hold = 1 the named line is held exactly straight and the whole taper goes
+ * into the other one; at 0 the section stays centred and both lines close in
+ * symmetrically. Nothing else changes between the two ends.
+ *
+ * Aft that is structural: the cabin ceiling and the fin root both run along the
+ * top of the tube, so nothing up there is free to move, while the space under
+ * the aft floor is exactly what gets given up for rotation clearance.
+ *
+ * Keeping either hold at or below 1 makes bulging impossible rather than merely
+ * unobserved: yc -/+ r is monotonic in r over [0, radius], running from
+ * -/+ hold*radius at the point to -/+ radius at the join, so the nose cannot
+ * hang below the belly nor the tailcone rise above the roof.
+ *
+ * keelHold is SIGNED, and the negative half is not a trick -- it is the same
+ * law holding the crown instead of the keel, which lifts the point above the
+ * axis rather than dropping it below. A tube wants its point low, for the view
+ * over the nose. A D8 wants it high, to buy back some nose-up moment. Both are
+ * one number.
+ *
+ * Returned as one object carrying `at(z)` and the stations it was cut at, so
+ * that everything downstream -- skin, windows, doors, and later whatever mounts
+ * to the side of it -- asks the same question of the same object and cannot
+ * disagree about where the surface is.
+ */
+/**
+ * How much of the tail's taper has been spent by station fraction s.
+ *
+ * Two laws, because two shapes of tail want different things.
+ *
+ * `power` -- 1 - (1 - s^A)^B -- is what a tube wants: B < 1 rounds the end off
+ * around a small tip, A > 1 flattens the approach to the barrel. It cannot,
+ * though, be smooth at both ends at once. A < 2 leaves the curvature unbounded
+ * at the barrel join and B < 1 leaves the SLOPE unbounded at the tip, and the
+ * D8's defaults, inherited from the tube, had both: measured, a curvature jump
+ * of 0.43 sitting right on the join, which on a wide flat roof is a visible
+ * line across the aeroplane.
+ *
+ * `smooth` is the quintic smoothstep, 6s^5 - 15s^4 + 10s^3. Its first AND
+ * second derivatives vanish at both ends, so the taper leaves the barrel with
+ * no crease and no curvature step, and arrives at the trailing edge tangentially
+ * rather than diving into it. The price is that everything happens in the
+ * middle, where the slope peaks at 1.875 times the average instead of 3 times
+ * it at the very end -- which is the better place for it to be.
+ */
+function tailFall(s, p) {
+  if (p.tailLaw === 'smooth') return s * s * s * (s * (s * 6 - 15) + 10);
+  return 1 - Math.pow(1 - Math.pow(s, p.tailA), p.tailB);
+}
+
+function jetShape({ length, radius, p = JET }) {
+  const lNose = p.noseD * 2 * radius;
+  const lTail = p.tailD * 2 * radius;
+  const zNose = -lNose;                    // nose taper ends here
+  const zTail = -(length - lTail);         // tailcone begins here
+  const rTip  = p.tipR * radius;
+
+  function at(z) {
+    if (z > zNose) {                                     // nose
+      const t = Math.min(1, Math.max(0, -z / lNose));
+      // Closes to a POINT, not to an area -- but noseB < 1 gives r a vertical
+      // tangent there, so crown and keel both arrive at the tip vertically and
+      // the profile is round rather than pointed.
+      const r = radius * Math.pow(1 - Math.pow(1 - t, p.noseA), p.noseB);
+      return { r, yc: -p.keelHold * (radius - r) };
+    }
+    if (z > zTail) return { r: radius, yc: 0 };          // barrel
+    const s = Math.min(1, Math.max(0, (zTail - z) / lTail));   // tailcone
+    const r = rTip + (radius - rTip) * (1 - tailFall(s, p));
+    return { r, yc: p.crownHold * (radius - r) };
+  }
+
+  return { at, length, radius, lNose, lTail, zNose, zTail, rTip };
+}
+
+/* ---- lofting ----------------------------------------------------------- */
+
+/** The surface point at station z, angle th. th = 0 is +X, th = pi/2 is up. */
+function surfacePoint(shape, sec, z, th, out = new THREE.Vector3()) {
+  const { r, yc } = shape.at(z);
+  const rr = r * sec(th, z);
+  return out.set(rr * Math.cos(th), yc + rr * Math.sin(th), z);
+}
+
+/** The outward unit normal at (z, th), by finite difference on the surface. */
+function surfaceNormal(shape, sec, z, th, out = new THREE.Vector3()) {
+  const d = 1e-4;
+  const p = surfacePoint(shape, sec, z, th, new THREE.Vector3());
+  const a = surfacePoint(shape, sec, z, th + d, new THREE.Vector3()).sub(p);
+  const b = surfacePoint(shape, sec, z + d, th, new THREE.Vector3()).sub(p);
+  out.crossVectors(a, b).normalize();
+  // Point it away from the section's own centre, not away from the z axis: in
+  // the tailcone the centre now rides a full radius high, and radial-from-axis
+  // gets the sign wrong over the entire upper surface.
+  if (out.x * p.x + out.y * (p.y - shape.at(z).yc) < 0) out.negate();
+  return out;
+}
+
+/**
+ * Wind an open sheet outward.
+ *
+ * Signed volume says nothing about a sheet, so this votes on face normals
+ * instead, weighted by area and measured against the local section centre. It
+ * measures rather than reasoning about parameter directions, which is the only
+ * approach that has survived contact with mirrored and reversed patches.
+ */
+function faceOutward(geo, shape) {
+  const pos = geo.getAttribute('position'), idx = geo.getIndex().array;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const n = new THREE.Vector3(), cen = new THREE.Vector3();
+  let vote = 0;
+  for (let t = 0; t + 2 < idx.length; t += 3) {
+    a.fromBufferAttribute(pos, idx[t]);
+    b.fromBufferAttribute(pos, idx[t + 1]);
+    c.fromBufferAttribute(pos, idx[t + 2]);
+    cen.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+    n.crossVectors(b.clone().sub(a), c.clone().sub(a));   // 2 x area x normal
+    vote += n.x * cen.x + n.y * (cen.y - shape.at(cen.z).yc);
+  }
+  if (vote < 0) {
+    for (let t = 0; t + 2 < idx.length; t += 3) {
+      const s = idx[t + 1]; idx[t + 1] = idx[t + 2]; idx[t + 2] = s;
+    }
+    geo.getIndex().needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+  return geo;
+}
+
+/**
+ * The points of one section, spaced evenly along its OUTLINE.
+ *
+ * Not evenly in angle, which is what this file did first and is the single
+ * biggest thing that was wrong with the D8. Uniform angle is exact on a circle
+ * -- a tube measures 1:1 between its longest and shortest edge at every station
+ * -- and it falls apart as a section flattens, because on a wide flat top the
+ * ray angle sweeps almost all of its range over the corners and almost none
+ * over the middle. Measured on the D8's aft rings: 470 to 1, a 2.4 m edge
+ * beside a 5 mm one. That is not a shape that can be shaded, and no amount of
+ * smoothing the profile touches it.
+ *
+ * So: sample densely in angle, accumulate arc length, and resample at equal
+ * spacing along it. Circles are unaffected, since for them the two are the same
+ * thing -- which is why the tube's mesh does not change at all.
+ *
+ * Correspondence between adjacent rings comes from both starting at theta = 0,
+ * the widest point, and from every section here being symmetric about it. That
+ * keeps the quads from twisting along the body.
+ */
+function ringPoints(shape, sec, z, nSeg, nDense = 720) {
+  const dense = [], cum = [0];
+  for (let j = 0; j <= nDense; j++) {
+    dense.push(surfacePoint(shape, sec, z, (j / nDense) * Math.PI * 2, new THREE.Vector3()));
+    if (j) cum.push(cum[j - 1] + dense[j].distanceTo(dense[j - 1]));
+  }
+  const total = cum[nDense];
+  const out = [];
+  if (total < 1e-9) {                       // a section collapsed to a point
+    for (let i = 0; i < nSeg; i++) out.push(dense[0].clone());
+    return out;
+  }
+  let k = 0;
+  for (let i = 0; i < nSeg; i++) {
+    const target = total * i / nSeg;
+    while (k < nDense - 1 && cum[k + 1] < target) k++;
+    const span = cum[k + 1] - cum[k];
+    out.push(dense[k].clone().lerp(dense[k + 1], span > 1e-12 ? (target - cum[k]) / span : 0));
+  }
+  return out;
+}
+
+/**
+ * Skin the body: a grid of quads over (station, outline), closed at both ends.
+ *
+ * Stations are clustered toward both ends rather than spaced evenly. The body
+ * is nearly straight down the middle and turns hard at the tips, so uniform
+ * spacing spends most of its triangles where nothing is happening and then
+ * facets the nose.
+ *
+ * PARTLY clustered, though, not fully. A pure cosine puts the last two stations
+ * 4.7 mm apart on a 36 m body, and on a section that is still 5.9 m wide at the
+ * trailing edge -- which is a row of splinters, thinner than 0.001 on
+ * area-over-longest-edge-squared where a good triangle is 0.43. Blending the
+ * cosine with a uniform spacing keeps threefold clustering at the ends and
+ * takes the last gap to 92 mm. A body that closes on a POINT hides this,
+ * because its last row is tiny in both directions; one that closes on a LINE
+ * does not.
+ */
+function skinBody(shape, sec, { nStation = 140, nSeg = 64, cluster = 0.65 } = {}) {
+  const pos = [], idx = [];
+  const v = new THREE.Vector3();
+  const L = shape.length;
+
+  const zs = [];
+  for (let i = 0; i < nStation; i++) {
+    const t = i / (nStation - 1);
+    zs.push(-L * ((1 - cluster) * t + cluster * (1 - Math.cos(t * Math.PI)) / 2));
+  }
+
+  for (const z of zs) {
+    for (const p of ringPoints(shape, sec, z, nSeg)) pos.push(p.x, p.y, p.z);
+  }
+  for (let i = 0; i < nStation - 1; i++) {
+    for (let j = 0; j < nSeg; j++) {
+      const a = i * nSeg + j, b = i * nSeg + ((j + 1) % nSeg);
+      idx.push(a, b, a + nSeg, b, b + nSeg, a + nSeg);
+    }
+  }
+
+  // Close both ends. HOW to close depends on the shape of the ring, and getting
+  // that wrong is what puts splinters on a trailing edge.
+  //
+  // A fan to a centre vertex is right for a ring that is roughly as tall as it
+  // is wide -- and it is what an end that closes on a POINT wants, where the
+  // triangles are degenerate either way and it does not matter.
+  //
+  // It is quite wrong for a ring that is much wider than it is tall, which is
+  // what a body closing on a LINE ends with. Every fan triangle then has a base
+  // of one segment and a length of half the width, and the worst of them come
+  // out at 0.001 on area-over-longest-edge-squared where a well-shaped triangle
+  // is 0.43. Zipping the ring's upper half to its lower half instead gives
+  // triangles a segment wide and the full thickness tall -- 0.2 rather than
+  // 0.001. Valid for any convex section, which every section here is.
+  for (const [ring, z] of [[0, zs[0]], [nStation - 1, zs[nStation - 1]]]) {
+    const base = ring * nSeg;
+    let wide = 0, tall = 0;
+    for (let j = 0; j < nSeg; j++) {
+      const k = (base + j) * 3;
+      wide = Math.max(wide, Math.abs(pos[k]));
+      tall = Math.max(tall, Math.abs(pos[k + 1] - shape.at(z).yc));
+    }
+    if (wide < 4 * tall) {
+      const c = pos.length / 3;
+      pos.push(0, shape.at(z).yc, z);
+      for (let j = 0; j < nSeg; j++) {
+        idx.push(c, base + j, base + ((j + 1) % nSeg));
+      }
+    } else {
+      // The two chains MEET at the ring's two ends -- point 0 on the right and
+      // point nSeg/2 on the left are on both -- so the first and last rungs of
+      // the ladder are triangles, not quads. Emitting quads there pairs a point
+      // with itself and puts a zero-area face at each tip, which is the thing
+      // this whole branch exists to avoid.
+      const half = nSeg / 2;
+      for (let j = 0; j < half; j++) {
+        const uA = base + j, uB = base + j + 1;
+        const lA = base + ((nSeg - j) % nSeg), lB = base + nSeg - j - 1;
+        if (uA === lA) idx.push(uA, uB, lB);             // right-hand tip
+        else if (uB === lB) idx.push(uA, uB, lA);        // left-hand tip
+        else idx.push(uA, uB, lA, uB, lB, lA);
+      }
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return orientOutward(g);
+}
+
+/**
+ * A rectangular patch of the skin, lifted clear of it -- one window, one door,
+ * one pane of the flight deck.
+ *
+ * Everything applied to a fuselage is applied to a curved, varying surface, so
+ * building these as flat quads placed near the body means choosing between
+ * floating above it and sinking into it, differently at every station. Sampling
+ * the same `shape` the skin was built from and pushing out along the local
+ * normal instead means a patch is by construction the right shape and sits the
+ * same distance proud everywhere, on any body, without a single special case.
+ *
+ * The lift alone is not enough to keep it out of the skin -- millimetres on a
+ * body tens of metres long are far below the depth buffer's resolution at that
+ * range -- so the material is a `decal`, biased toward the camera. The lift
+ * fixes the geometry; the bias fixes the raster.
+ */
+function patch(shape, sec, { z0, z1, th0, th1, lift, material, nz = 3, nt = 5 }) {
+  const pos = [], idx = [];
+  const v = new THREE.Vector3(), n = new THREE.Vector3();
+
+  for (let i = 0; i < nz; i++) {
+    const z = z0 + (z1 - z0) * (i / (nz - 1));
+    for (let j = 0; j < nt; j++) {
+      const th = th0 + (th1 - th0) * (j / (nt - 1));
+      surfacePoint(shape, sec, z, th, v);
+      surfaceNormal(shape, sec, z, th, n);
+      pos.push(v.x + n.x * lift, v.y + n.y * lift, v.z + n.z * lift);
+    }
+  }
+  for (let i = 0; i < nz - 1; i++) {
+    for (let j = 0; j < nt - 1; j++) {
+      const p = i * nt + j;
+      idx.push(p, p + 1, p + nt, p + 1, p + nt + 1, p + nt);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return new THREE.Mesh(faceOutward(g, shape), decal(material));
+}
+
+/**
+ * The nose cap -- the radome -- as a closed-at-the-front offset of the skin.
+ *
+ * Deliberately not a `patch`. A patch is a grid in (z, th), and at the nose the
+ * whole first row collapses onto a single point: every quad along it becomes a
+ * zero-area sliver, and a fan of degenerate triangles around the tip is exactly
+ * the sort of thing that renders as flickering shards. Here the tip is one
+ * vertex and a proper triangle fan, so there are no degenerate faces at all.
+ */
+function noseCap(shape, sec, { zEnd, lift, material, nStation = 12, nSeg = 64 }) {
+  const pos = [], idx = [];
+  const v = new THREE.Vector3(), n = new THREE.Vector3();
+
+  // The apex. A surface normal is undefined at a point, but the axis is its
+  // limit from every direction, so lift the tip straight forward.
+  pos.push(0, shape.at(0).yc, lift);
+
+  for (let i = 1; i < nStation; i++) {
+    const z = zEnd * (1 - Math.cos((i / (nStation - 1)) * Math.PI / 2));
+    for (let j = 0; j < nSeg; j++) {
+      const th = (j / nSeg) * Math.PI * 2;
+      surfacePoint(shape, sec, z, th, v);
+      surfaceNormal(shape, sec, z, th, n);
+      pos.push(v.x + n.x * lift, v.y + n.y * lift, v.z + n.z * lift);
+    }
+  }
+  for (let j = 0; j < nSeg; j++) idx.push(0, 1 + j, 1 + ((j + 1) % nSeg));
+  for (let i = 1; i < nStation - 1; i++) {
+    const base = 1 + (i - 1) * nSeg, next = base + nSeg;
+    for (let j = 0; j < nSeg; j++) {
+      const jj = (j + 1) % nSeg;
+      idx.push(base + j, base + jj, next + j, base + jj, next + jj, next + j);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return new THREE.Mesh(faceOutward(g, shape), decal(material));
+}
+
+/**
+ * Which bits of skin are already spoken for, as (z, theta) boxes.
+ *
+ * Two decals on one patch of skin are two surfaces a few millimetres apart
+ * competing for the depth buffer, and the result reads as flicker rather than
+ * as either of them. Placing everything through one occupancy list makes that
+ * impossible by construction, rather than by hand-written exclusion zones that
+ * hold at one size and quietly stop holding at another -- which is exactly what
+ * the overwing exits did, colliding with the aft door only on a short body.
+ *
+ * Only the +X side is tracked, because everything here is placed in mirrored
+ * pairs, so the two sides can never disagree about what fits.
+ */
+function occupied(occ, box, dz = 0.06, dth = 0.02) {
+  return occ.some((o) => box.z1 - dz < o.z0 && o.z1 < box.z0 + dz &&
+                         box.t0 - dth < o.t1 && o.t0 < box.t1 + dth);
+}
+
+/**
+ * A patch centred on a station, sized in metres, placed at a WORLD HEIGHT --
+ * and mirrored to the other side.
+ *
+ * Placing by height rather than by angle is the whole trick to making a window
+ * line look right. Windows sit a fixed distance above the cabin floor and the
+ * floor is level, so the row has to be level too. Place by angle instead and
+ * the row climbs with the section centre through the tailcone, arcing up the
+ * side of the aeroplane in a way no real one does.
+ *
+ * Returns false, having placed nothing, if the station has run out of body or
+ * the skin there is taken. The first is what stops the window row where the
+ * rising belly reaches the window line -- rather than at a station picked by
+ * hand and wrong at every other size.
+ */
+function decalRow(shape, sec, out, occ, {
+  z, halfZ, y, halfArc, lift, material, nz = 2, nt = 3,
+}) {
+  const { r, yc } = shape.at(z);
+  // Find the angle at which the surface passes through the wanted height. On a
+  // circle that is one asin; on any other section the height is r*sec(th)*sin,
+  // so it takes a solve. Bisect on the upper right quadrant, where the height
+  // rises monotonically with angle for every section here.
+  let lo = -Math.PI / 2, hi = Math.PI / 2;
+  const yAt = (t) => yc + r * sec(t, z) * Math.sin(t);
+  if (y <= yAt(lo) || y >= yAt(hi)) return false;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    if (yAt(m) < y) lo = m; else hi = m;
+  }
+  const th = (lo + hi) / 2;
+  if (Math.abs(Math.sin(th)) > 0.92) return false;
+  const dth = halfArc / (r * sec(th, z));
+  const box = { z0: z + halfZ, z1: z - halfZ, t0: th - dth, t1: th + dth };
+  if (occupied(occ, box)) return false;
+  occ.push(box);
+  for (const s of [1, -1]) {
+    out.push(patch(shape, sec, {
+      z0: box.z0, z1: box.z1,
+      th0: s > 0 ? box.t0 : Math.PI - box.t0,
+      th1: s > 0 ? box.t1 : Math.PI - box.t1,
+      lift, material, nz, nt,
+    }));
+  }
+  return true;
+}
+
+/** Highest (dir 1) or lowest (dir -1) point of the section at a station. */
+function extremeY(shape, sec, z, dir, n = 240) {
+  const { r, yc } = shape.at(z);
+  let best = -Infinity;
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * Math.PI * 2;
+    best = Math.max(best, dir * (r * sec(th, z) * Math.sin(th)));
+  }
+  return yc + dir * best;
+}
+
+/** Half-width of the section at a station -- the plan-view silhouette. */
+function halfWidth(shape, sec, z, n = 240) {
+  const { r } = shape.at(z);
+  let best = 0;
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * Math.PI * 2;
+    best = Math.max(best, Math.abs(r * sec(th, z) * Math.cos(th)));
+  }
+  return best;
+}
+
+/* ---- the aeroplane ----------------------------------------------------- */
+
+const DEG = Math.PI / 180;
+
+/**
+ * A conventional jetliner fuselage.
+ *
+ * **What you get by default is the bare outer mould line and nothing else.**
+ * Windows, doors, exits, the flight deck, the radome and the APU exhaust are
+ * all detail applied to a shape, and none of them can tell you whether the
+ * shape underneath is right -- they mostly get in the way of seeing it. So they
+ * are off unless asked for. The machinery for all of them is intact and
+ * verified; `detail: true` turns the lot back on at once.
+ *
+ * Every term of the shape law is overridable through `shape`. Getting an OML
+ * right is a matter of pushing on those numbers and looking, and a parameter
+ * you have to edit a source file to change is a parameter you will not try.
+ *
+ * @param {number} radius     body radius. Default 1.88 -- a 737's 3.76 m tube.
+ * @param {number} length     nose to tailcone tip. Default fineness 10.1.
+ * @param {object} shape      overrides on the shape law; see JET above.
+ * @param {Function} section  section shape, th -> radius multiplier.
+ * @param {boolean} detail    shorthand for every feature flag at once.
+ */
+export function jetlinerFuselage({
+  radius = 1.88, fineness = null, noseD = null, length = null,
+  shape: shapeOverrides = {}, section = circularSection, ...rest
+} = {}) {
+  // The three deck inputs are named parameters rather than buried in `shape`,
+  // because that is how they arrive and how they should read at a call site.
+  const p = {
+    ...JET, ...shapeOverrides,
+    ...(fineness != null ? { fineness } : {}),
+    ...(noseD != null ? { noseD } : {}),
+  };
+  return buildFuselage({ radius, length, p, section, ...rest });
+}
+
+/**
+ * Loft a body from a size distribution and a section, and hang the detail on it.
+ *
+ * Everything below the shape law is shared: a D8 and a tube are skinned by the
+ * same code, get their windows placed by the same code, and are checked by the
+ * same code. What differs between two aeroplanes is `p` and `section`, and
+ * nothing else should have to.
+ */
+function buildFuselage({
+  radius, length = null, p, section = circularSection, sectionFor = null,
+  detail = false,
+  radome = detail,
+  flightDeck = detail,
+  cabinWindows = detail,
+  doors = detail,
+  exits = detail,
+  apu = detail,
+  nSeg = 64,
+  nStation = 140,
+}) {
+  const L = length ?? p.fineness * 2 * radius;
+  const shape = jetShape({ length: L, radius, p });
+  // A section may need to know how big the body is at a station -- the D8's aft
+  // holds its width while its height collapses, which cannot be said as a
+  // multiple of the height. Handing it the shape is the only way to say it
+  // without duplicating the taper law.
+  if (sectionFor) section = sectionFor(shape);
+  const g = new THREE.Group();
+  const lift = radius * 0.005;
+  const parts = [], occ = [];
+
+  const body = new THREE.Mesh(skinBody(shape, section, { nSeg, nStation }), skin);
+  g.add(body);
+
+  // The radome is a different material to the skin on a real aeroplane -- it
+  // has to be transparent to the radar behind it -- and is usually left
+  // unpainted or in a contrasting grey.
+  if (radome) {
+    parts.push(noseCap(shape, section, {
+      zEnd: -shape.lNose * 0.22, lift: lift * 0.5, material: painted, nSeg,
+    }));
+  }
+
+  if (flightDeck) {
+    // Two panes a side: a windscreen over the front quarter and a side window
+    // aft of it, offset down and back the way a real one is. These are the one
+    // thing still placed by angle rather than by height -- the flight deck
+    // wraps over the crown, so there is no single height to place it at.
+    const n = shape.lNose;
+    for (const [z0, z1, t0, t1, nz, nt] of [
+      [-0.30 * n, -0.60 * n, 78 * DEG, 40 * DEG, 4, 5],
+      [-0.47 * n, -0.74 * n, 34 * DEG, 11 * DEG, 3, 4],
+    ]) {
+      occ.push({ z0, z1, t0: Math.min(t0, t1), t1: Math.max(t0, t1) });
+      for (const s of [1, -1]) {
+        parts.push(patch(shape, section, {
+          z0, z1, lift, material: glass, nz, nt,
+          th0: s > 0 ? t0 : Math.PI - t0,
+          th1: s > 0 ? t1 : Math.PI - t1,
+        }));
+      }
+    }
+  }
+
+  // Order matters: whatever is placed first owns the skin. Doors before exits
+  // before windows, which is the order of how badly each one wants its nominal
+  // station -- a door has to line up with a galley, a window is one of fifty.
+  if (doors) {
+    for (const z of [-shape.lNose * 1.14, shape.zTail - shape.lTail * 0.10]) {
+      decalRow(shape, section, parts, occ, {
+        z, halfZ: 1.83 / 2, y: radius * Math.sin(6 * DEG), halfArc: 0.86 / 2,
+        lift: lift * 0.7, material: trim, nz: 3, nt: 4,
+      });
+    }
+  }
+  if (exits) {
+    for (const z of [-L * 0.480, -L * 0.545]) {
+      decalRow(shape, section, parts, occ, {
+        z, halfZ: 1.10 / 2, y: radius * Math.sin(14 * DEG), halfArc: 0.51 / 2,
+        lift: lift * 0.7, material: trim, nz: 2, nt: 3,
+      });
+    }
+  }
+
+  if (cabinWindows) {
+    // 0.51 m (20 in) pitch -- the frame spacing, which is what actually sets
+    // it -- at a fixed height, running aft until the body stops offering
+    // anywhere to put one. A station already taken by a door is skipped, not
+    // stopped at, which is why this cannot use decalRow's return value to end
+    // the row.
+    const pitch = 0.51, y = radius * Math.sin(20 * DEG);
+    for (let z = -shape.lNose * 1.02; z > -L; z -= pitch) {
+      const { r, yc } = shape.at(z);
+      if (Math.abs((y - yc) / r) > 0.92) break;          // belly has reached it
+      decalRow(shape, section, parts, occ, {
+        z, halfZ: 0.115, y, halfArc: 0.165 / 2, lift, material: glass,
+      });
+    }
+  }
+
+  for (const p of parts) g.add(p);
+
+  // The APU exhaust: the tailcone does not close to a point, it closes onto a
+  // hole, and a hole has to read as one.
+  if (apu) {
+    const hole = new THREE.Mesh(
+      new THREE.CircleGeometry(shape.rTip * 0.86, 24), cavity);
+    hole.position.set(0, shape.at(-L).yc, -L + lift);
+    hole.rotation.y = Math.PI;
+    g.add(hole);
+  }
+
+  Object.assign(g.userData, {
+    length: L, radius, section, shapeParams: p,
+    /** Where the section is widest, and how wide. Plan view in two numbers. */
+    maxHalfWidth: (() => {
+      let w = 0, at = 0;
+      for (let i = 0; i <= 200; i++) {
+        const z = -L * i / 200, h = halfWidth(shape, section, z);
+        if (h > w) { w = h; at = z; }
+      }
+      return { halfWidth: w, z: at };
+    })(),
+    keelHold: p.keelHold, crownHold: p.crownHold,
+    /**
+     * Curvature at the point, three ways. Meaningful ONLY because noseB is 1/2
+     * -- at any other exponent the tip curvature is 0 or unbounded and there is
+     * no radius to report, so these are null rather than numbers that lie.
+     *
+     * The section curve closes on rho = R^2 * noseA / (2 * lNose). What you
+     * SEE, though, is the two meridians, and they are not that: the centreline
+     * is still moving at the point, so crown and keel pick up (1 +/- keelHold)^2
+     * of it. At keelHold 0.45 that is 2.10 and 0.30 -- the underside of the tip
+     * is seven times tighter than the top. The tip is round in section and a
+     * long way from round in profile, and only the meridians are visible.
+     */
+    noseTipRadius: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) : null,
+    noseTipRadiusCrown: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) * (1 + p.keelHold) ** 2 : null,
+    noseTipRadiusKeel: Math.abs(p.noseB - 0.5) < 1e-9
+      ? radius * radius * p.noseA / (2 * shape.lNose) * (1 - p.keelHold) ** 2 : null,
+    noseLength: shape.lNose, tailLength: shape.lTail,
+    cabinZ: [shape.zNose, shape.zTail],
+    fineness: L / (2 * radius),
+    skinMesh: body,
+    decals: parts,
+    /** Surface geometry at a station -- what anything mounting to this asks. */
+    shapeAt: (z) => shape.at(z),
+    surfaceAt: (z, th) => surfacePoint(shape, section, z, th),
+    normalAt: (z, th) => surfaceNormal(shape, section, z, th),
+    /**
+     * Crown, keel and half-width: the silhouettes, which is what side and plan
+     * views are really about.
+     *
+     * Scanned over the section rather than taken as yc +/- r. For a circle the
+     * two agree exactly, so nothing changes for a tube; for a double bubble
+     * they do not, because the highest point of the section is over a LOBE and
+     * not on the centreline. Assuming the crown is straight up would report the
+     * valley between the lobes as the top of the aeroplane.
+     */
+    crownAt: (z) => extremeY(shape, section, z, 1),
+    keelAt: (z) => extremeY(shape, section, z, -1),
+    halfWidthAt: (z) => halfWidth(shape, section, z),
+    /**
+     * How far inside the body a point is: positive within, negative without,
+     * and zero exactly on the skin.
+     *
+     * Exact, and cheap, for the same reason the section is limiting elsewhere:
+     * the section is one radius per angle about its own centre, so it is
+     * star-shaped about that centre by construction, and a point is inside iff
+     * it is nearer that centre than the surface is on the same ray. No ray
+     * casting against the mesh, no marching.
+     *
+     * Signed rather than boolean because anything cutting geometry against the
+     * body has to interpolate to the crossing. A predicate can only put the cut
+     * on whichever sample happened to fall inside.
+     */
+    depthInside: (x, y, z) => {
+      if (z > 0) return -(z + 1e-3);
+      if (z < -L) return -(-L - z + 1e-3);
+      const { r, yc } = shape.at(z);
+      if (!(r > 1e-9)) return -1e-3;
+      const dy = y - yc;
+      return r * section(Math.atan2(dy, x), z) - Math.hypot(x, dy);
+    },
+    contains: (x, y, z) => g.userData.depthInside(x, y, z) > 0,
+  });
+  return g;
+}
+
+/* ---- D8 ---------------------------------------------------------------- */
+
+/**
+ * Proportions of a D8 double-bubble body, in half-heights so they hold at any
+ * size. Three deck inputs as before -- half-height, fineness, nose length --
+ * and four more that are what make it a D8 rather than a tube.
+ *
+ * The numbers are a first cut and should be treated as such: unlike the
+ * jetliner, which was settled against photographs, there are very few D8s to
+ * look at.
+ */
+const D8 = {
+  fineness:   9.6,   // DECK: length / (2 * half-height)
+  noseD:      1.45,  // DECK: nose length, in full heights
+  tailD:      3.00,  // aft body length, in full heights
+  noseA: 2.4, noseB: 0.50,
+  tailLaw: 'smooth',  // quintic smoothstep -- see tailFall
+  tailA: 1.5, tailB: 0.70,   // unused while tailLaw is 'smooth'
+  // The aft body closes on a LINE: the height goes to nothing while the width
+  // does not taper at all, so the back of the aeroplane is a horizontal edge
+  // the full width of the cabin. Two tapers, and one of them switched off.
+  tipR:       0.02,  // residual half-height at the edge -- as near a line as a
+                     // mesh can get without degenerate triangles
+  tailWidth:  null,  // half-width there; null means "the same as the cabin"
+  // Where that line sits, as a fraction of the body's HEIGHT measured up from
+  // the keel. 0.5 would close it on the axis, 1.0 along the roof. Stored as a
+  // signed crown hold -- the same law, with the sign saying which of the two
+  // profile lines is held and which comes to meet it.
+  tailEdgeHeight: 0.35,
+  crownHold:  1.00,
+
+  // The point sits ABOVE the axis, which is the opposite of a tube and is the
+  // one thing about this nose that is not just "wider". A tube drops its point
+  // to buy the view over the nose; a D8 lifts it to buy back nose-up moment.
+  // Implemented as a negative keel hold, which is the same law holding the
+  // crown instead of the keel -- see jetShape.
+  tipRise:    0.15,  // height of the point above the axis, in half-heights
+
+  noseWidth:  1.55,  // ellipse aspect at the point -- WIDE, like the cabin
+
+  // The OML over the cabin: flat-ish top and bottom, SEMICIRCULAR sides.
+  cabinWidth: 1.55,  // width over height
+  cabinCrown: 0.12,  // 0 a dead flat roof, 1 a full ellipse
+
+  // Where along the body each transition happens, as a fraction of length.
+  uBubble:    0.24,  // elliptical nose has become the double bubble by here
+
+  /**
+   * The valley the engines sit in.
+   *
+   * Over the cabin the OML is the convex hull of the two lobes -- a stadium,
+   * flat on top -- because the bubbles are pressure vessel and the fairing is
+   * what the air sees. Aft of the cabin that stops being true: the fairing
+   * falls away between the lobes and the two propulsors nestle in the dish it
+   * leaves, which is the whole reason the engines are where they are.
+   *
+   * Zero by default, so a body with nothing on the back of it stays the plain
+   * closing wedge it was. Depth is a fraction of the local half-height taken
+   * out of the crown, blended in over the afterbody.
+   */
+  tailTrough:  0.00,
+  troughWidth: 0.50,  // angular half-width of the dish, radians
+
+  /**
+   * The plan taper gets its own law when the afterbody has to become a channel.
+   *
+   * Sharing the height's is right for a body that merely closes. It is wrong
+   * for one that has to cradle something, because the cradle needs the WIDTH
+   * gone -- so the section is no wider than what it is holding -- while the
+   * DEPTH stays, so there is something to hold it in. Null means "the same as
+   * the height".
+   */
+  tailWidthA:  null,
+  tailWidthB:  null,
+
+  /**
+   * What the afterbody closes into, in METRES in the body's frame.
+   *
+   * `{ x, y, r }` for one of a mirrored pair, and the afterbody's section
+   * becomes the flat-floored channel that holds them. Null leaves the plain
+   * closing wedge, which is what a body with nothing on the back of it wants.
+   */
+  channel:      null,
+  channelGap:   0.02,  // clearance between the skin and what it holds
+  /**
+   * Where the run begins and ends, as stations aft of the nose in METRES.
+   *
+   * Absolute, not fractions of the tailcone: the run starts forward of the cone
+   * and ends at whatever station the thing it cradles begins, and neither of
+   * those is the cone's business.
+   */
+  channelFromX: 0,
+  channelToX:   0,
+  /**
+   * How the run is eased. One is linear; above one it leaves the cabin gently
+   * and is STILL CLIMBING at the far end, which is wanted -- the underside
+   * comes in at an angle rather than flattening off to meet it.
+   */
+  channelEase:  2.0,
+};
+
+/**
+ * A D8 double-bubble fuselage.
+ *
+ * Three shapes in one body, which is the whole difficulty. It starts as a wide
+ * ELLIPSE at the point, becomes a DOUBLE BUBBLE over the cabin, and opens at the
+ * back into a TROUGH between the two lobes for the engines to sit in. None of
+ * that is a size distribution -- the half-height and centreline behave much like
+ * a tube's -- it is the SECTION changing along the length, which is why the
+ * section here is a function of station and not a constant.
+ *
+ * The OML is NOT the double bubble, which is the thing most descriptions of
+ * this aeroplane get backwards. The two bubbles are the PRESSURE VESSEL, and
+ * what the air sees is the fairing over them -- a STADIUM: flat, faintly convex
+ * top and bottom joined by semicircular sides. Semicircular because they are
+ * arcs of the lobes themselves; the fairing is their convex hull.
+ *
+ * The aft body closes on a LINE rather than on a point: the height tapers to
+ * nothing while the width does not taper at all, so the planform is a
+ * constant-width slab and the back of the aeroplane is a horizontal edge the
+ * full width of the cabin. That is why the tail has two tapers and not one --
+ * and why one of them is switched off. The line sits at a chosen fraction of
+ * the body's height up from the keel, not on the axis and not on the roof.
+ */
+export function d8Fuselage({
+  radius = 1.90,            // HALF-HEIGHT, not a radius -- see the section note
+  fineness = null,
+  noseD = null,
+  length = null,
+  shape: shapeOverrides = {},
+  ...rest
+} = {}) {
+  const p = {
+    ...D8, ...shapeOverrides,
+    ...(fineness != null ? { fineness } : {}),
+    ...(noseD != null ? { noseD } : {}),
+  };
+  // Stated as a rise and stored as a hold, so the shape law stays one law and
+  // the parameter still reads the way the aeroplane does.
+  if (shapeOverrides.keelHold === undefined) p.keelHold = -p.tipRise;
+  // Same trick at the other end. yc at the tail is crownHold * (radius - r), so
+  // to land the closing line at a chosen height the hold has to account for the
+  // residual thickness -- otherwise the line sits tipR short of where it was
+  // asked for, which is small but is exactly the kind of quiet offset that
+  // nobody finds later.
+  // A closing line still has to be built out of triangles. Below about 0.01 the
+  // last ring is so thin that the cap fan across it collapses -- 84 degenerate
+  // faces at 0.005, 132 at 0.001 -- and degenerate faces are what render as
+  // shards. 0.02 is visually a line and measures clean, so that is the floor.
+  p.tipR = Math.max(0.012, p.tipR);
+  if (shapeOverrides.crownHold === undefined) {
+    p.crownHold = (2 * p.tailEdgeHeight - 1) / (1 - p.tipR);
+  }
+  const L = length ?? p.fineness * 2 * radius;
+
+  // The section, given the finished size distribution.
+  //
+  // Forward of the tailcone this is a shape and nothing more: a wide ellipse at
+  // the point morphing into the stadium over the cabin. Aft it cannot be, and
+  // that is the whole difficulty of the back end. The body has to close on a
+  // HORIZONTAL LINE -- a wide thin edge -- which means the half-height goes
+  // almost to nothing while the half-width does not. A section expressed as a
+  // multiple of the local height therefore has to get wider and wider as the
+  // height collapses, and it can only know how much by asking the size
+  // distribution what the height IS.
+  const tailW = p.tailWidth ?? p.cabinWidth;
+  const sectionFor = (shape) => {
+    const nose = ellipticalSection(p.noseWidth);
+    const cabin = stadiumSection(p.cabinWidth, p.cabinCrown);
+    const morph = morphSection([[0.00, nose], [p.uBubble, cabin], [1.00, cabin]], L);
+    /**
+     * How far the section has become the channel, at a station.
+     *
+     * Measured between two ABSOLUTE stations rather than as a fraction of the
+     * tailcone, because neither end of the run belongs to the tailcone. It
+     * starts forward of it -- the underside has 1.78 m to climb and cannot do
+     * that gently in the 2.3 m the cone allows -- and it finishes at the
+     * ENGINES' LEADING EDGE, which is the station the channel actually has to
+     * be ready by. Tied to the cone it finished at the body's own trailing
+     * edge, a good two metres late, and the climb was still arriving while the
+     * engines were already sitting in it.
+     */
+    const openAt = (z) => {
+      if (!p.channel) return 0;
+      const x = -z;
+      const t = (x - p.channelFromX) / Math.max(p.channelToX - p.channelFromX, 1e-6);
+      const f = Math.min(1, Math.max(0, t));
+      // Eased IN only. A smoothstep flattens at both ends, so the underside
+      // arrives at the trailing edge horizontal; this one leaves the cabin
+      // gently and is still climbing when it gets there, which is what the
+      // shape actually does.
+      return Math.pow(f, p.channelEase);
+    };
+    /**
+     * The section along the run, as a channel whose PARAMETERS travel.
+     *
+     * Not a blend between the cabin's shape and the channel's. Interpolating
+     * two radius functions angle by angle does not keep a shape convex: the
+     * two disagree most at the bottom corners, and the sections came out
+     * pinched there for most of the run. Interpolating the channel's own
+     * parameters instead means every station IS a channel -- the hull of two
+     * circles, cut by a half-plane, both convex operations -- so the underside
+     * is a proper U the whole way and cannot be anything else.
+     *
+     * At the start of the run the parameters ARE the cabin: two circles of the
+     * body's own half-height, spaced so their hull is its width, with the cut
+     * up at the crown where it does nothing.
+     */
+    const cabinHalfW = radius * p.cabinWidth;
+    const asChannel = (th, z, base) => {
+      const f = openAt(z);
+      if (f <= 0) return base;
+      const sh = shape.at(z);
+      if (!(sh.r > 1e-6)) return base;
+      const lerp = (a, b) => a + (b - a) * f;
+      const sp = lerp(Math.max(cabinHalfW - radius, 0), p.channel.x);
+      const rr = lerp(radius, p.channel.r + p.channelGap);
+      const ax = lerp(0, p.channel.y);
+      const cp = lerp(radius, p.channel.y);
+      // Straight to the closed form rather than through `channelSection`,
+      // which would build an object and a closure on EVERY ray. This runs about
+      // a million times when the duct is carved, and the allocation, not the
+      // arithmetic, was most of what it cost.
+      return channelRadius(sp / sh.r, rr / sh.r,
+                           (ax - sh.yc) / sh.r, (cp - sh.yc) / sh.r, th);
+    };
+
+    return (th, z) => {
+      // The channel reaches forward of the tailcone, so it has to be applied to
+      // the cabin's own section too, not only to the closing one.
+      if (z > shape.zTail) return asChannel(th, z, morph(th, z));
+      // Aft: the half-width follows its own taper, so the aspect the stadium is
+      // built at is whatever holds that width against a height that is on its
+      // way down. With tailWidth equal to cabinWidth -- the default -- the
+      // width does not taper at all and the planform is a constant-width slab.
+      const s = Math.min(1, Math.max(0, (shape.zTail - z) / shape.lTail));
+      const wA = p.tailWidthA ?? p.tailA, wB = p.tailWidthB ?? p.tailB;
+      const k = Math.pow(1 - Math.pow(s, wA), wB);
+      const halfW = tailW + (p.cabinWidth - tailW) * k;
+      const sh = shape.at(z);
+      const halfH = sh.r / radius;
+      let base = stadiumRadius(halfW / Math.max(halfH, 1e-6), p.cabinCrown, th);
+      base = asChannel(th, z, base);
+      if (!(p.tailTrough > 0)) return base;
+      // The dish, eased in over the afterbody so the roof leaves the cabin
+      // flat and falls away smoothly rather than stepping.
+      const depth = p.tailTrough * s * s * (3 - 2 * s);
+      // Angular distance from straight up, WRAPPED -- otherwise the notch
+      // reappears at the keel when theta runs past pi.
+      const dth = Math.atan2(Math.sin(th - Math.PI / 2), Math.cos(th - Math.PI / 2));
+      const gg = dth / p.troughWidth;
+      return base * (1 - depth * Math.exp(-gg * gg));
+    };
+  };
+
+  const g = buildFuselage({ radius, length: L, p, sectionFor, ...rest });
+
+  const u = g.userData;
+  Object.assign(u, {
+    isDoubleBubble: true,
+    tipRise: p.tipRise,
+    tipY: p.tipRise * radius,
+    /** Section width over height at the cabin -- what makes it look like a D8. */
+    cabinWidthOverHeight: 2 * u.halfWidthAt(-L * 0.45)
+      / (u.crownAt(-L * 0.45) - u.keelAt(-L * 0.45)),
+    /** The trailing edge: how wide, how thin, and how high it sits. */
+    tailEdge: {
+      halfWidth: u.halfWidthAt(-L),
+      halfHeight: (u.crownAt(-L) - u.keelAt(-L)) / 2,
+      /** Thickness as a fraction of the body's height -- near zero is a line. */
+      thicknessFraction: (u.crownAt(-L) - u.keelAt(-L)) / (2 * radius),
+      /** Height of the line above the keel, as a fraction of the body height. */
+      heightFraction: ((u.crownAt(-L) + u.keelAt(-L)) / 2 + radius) / (2 * radius),
+      y: (u.crownAt(-L) + u.keelAt(-L)) / 2,
+    },
+    /** Planform taper: 1.00 means the top view is a constant-width slab. */
+    planTaper: tailW / p.cabinWidth,
+  });
+
+  return g;
+}
+
+export const fuselages = { jetliner: jetlinerFuselage, d8: d8Fuselage };

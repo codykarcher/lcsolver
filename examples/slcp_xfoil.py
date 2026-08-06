@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -148,7 +148,7 @@ def hoburg_xfoil(segments=(0, 1, 2)):
 
     Defaults to all three, matching the paper's demonstration.
     """
-    from edi.solvers.ipopt.slcp import Constraint, Problem, Signomial
+    from lcsolver.solvers.ipopt.slcp import Constraint, Problem, Signomial
 
     from examples.slcp_cases import (HOBURG_NAMES, HOBURG_X0, _HOB_SEG,
                                      _hoburg_constraints, posy)

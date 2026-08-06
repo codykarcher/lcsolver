@@ -30,7 +30,7 @@ egb, egb_available = attempt_import(
 
 formulation_available = False
 try:
-    from edi import Formulation
+    from lcsolver import Formulation
 
     formulation_available = True
 except:
@@ -39,7 +39,7 @@ except:
 
 blackbox_available = False
 try:
-    from edi import BlackBoxFunctionModel
+    from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
 except:
@@ -51,24 +51,24 @@ if numpy_available:
 
 
 @unittest.skipIf(
-    not egb_available, 'Testing edi requires pynumero external grey boxes'
+    not egb_available, 'Testing lcsolver requires pynumero external grey boxes'
 )
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not blackbox_available, 'Blackbox import failed')
-@unittest.skipIf(not numpy_available, 'Testing edi requires numpy')
-@unittest.skipIf(not scipy_available, 'Testing edi requires scipy')
+@unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
+@unittest.skipIf(not scipy_available, 'Testing lcsolver requires scipy')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_formuation_01(self):
         # BEGIN: Formulation_Snippet_01
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         # END: Formulation_Snippet_01
 
     def test_edi_snippet_formuation_02(self):
         # BEGIN: Formulation_Snippet_02
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
@@ -76,7 +76,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_03(self):
         # BEGIN: Formulation_Snippet_03
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         c = f.Constant(name='c', value=1.0, units='')
@@ -84,7 +84,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_04(self):
         # BEGIN: Formulation_Snippet_04
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
@@ -95,7 +95,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_05(self):
         # BEGIN: Formulation_Snippet_05
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import maximize, minimize
 
         f = Formulation()
@@ -107,7 +107,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_06(self):
         # BEGIN: Formulation_Snippet_06
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
@@ -121,7 +121,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_07(self):
         # BEGIN: Formulation_Snippet_07
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
@@ -133,7 +133,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_formuation_08(self):
         # BEGIN: Formulation_Snippet_08
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
@@ -150,7 +150,7 @@ class TestEDISnippets(unittest.TestCase):
         # BEGIN: Formulation_Snippet_09
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='x variable')
@@ -216,7 +216,7 @@ class TestEDISnippets(unittest.TestCase):
         # BEGIN: Formulation_Snippet_14
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='x variable')
@@ -281,7 +281,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_variables_01(self):
         # BEGIN: Variables_Snippet_01
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -289,7 +289,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_variables_02(self):
         # BEGIN: Variables_Snippet_02
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable('x', 1.0, 'm')
@@ -297,7 +297,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_variables_03(self):
         # BEGIN: Variables_Snippet_03
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -311,7 +311,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_variables_04(self):
         # BEGIN: Variables_Snippet_04
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import Integers
 
         f = Formulation()
@@ -327,7 +327,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_variables_05(self):
         # BEGIN: Variables_Snippet_05
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units=units.m, description='The x variable')
@@ -336,7 +336,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_variables_06(self):
         # BEGIN: Variables_Snippet_06
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -347,7 +347,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_variables_07(self):
         # BEGIN: Variables_Snippet_07
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -358,7 +358,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_variables_08(self):
         # BEGIN: Variables_Snippet_08
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -368,7 +368,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_constants_01(self):
         # BEGIN: Constants_Snippet_01
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units='m', description='A constant c')
@@ -376,7 +376,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_constants_02(self):
         # BEGIN: Constants_Snippet_02
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant('c', 1.0, 'm')
@@ -385,7 +385,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constants_03(self):
         # BEGIN: Constants_Snippet_03
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units=units.m, description='A constant c')
@@ -394,7 +394,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constants_04(self):
         # BEGIN: Constants_Snippet_04
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant(
@@ -405,7 +405,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constants_05(self):
         # BEGIN: Constants_Snippet_05
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant(
@@ -416,7 +416,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constants_06(self):
         # BEGIN: Constants_Snippet_06
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Constant(
@@ -426,7 +426,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_01(self):
         # BEGIN: Objectives_Snippet_01
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -437,7 +437,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_02(self):
         # BEGIN: Objectives_Snippet_02
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -448,7 +448,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_03(self):
         # BEGIN: Objectives_Snippet_03
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import minimize, maximize
 
         f = Formulation()
@@ -460,7 +460,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_04(self):
         # BEGIN: Objectives_Snippet_04
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import minimize, maximize
 
         f = Formulation()
@@ -472,7 +472,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_05(self):
         # BEGIN: Objectives_Snippet_05
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import minimize, maximize
 
         f = Formulation()
@@ -484,7 +484,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_06(self):
         # BEGIN: Objectives_Snippet_06
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import minimize, maximize
 
         f = Formulation()
@@ -496,7 +496,7 @@ class TestEDISnippets(unittest.TestCase):
 
     def test_edi_snippet_objectives_07(self):
         # BEGIN: Objectives_Snippet_07
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -527,7 +527,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constraints_01(self):
         # BEGIN: Constraints_Snippet_01
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -542,7 +542,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constraints_02(self):
         # BEGIN: Constraints_Snippet_02
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -557,7 +557,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_constraints_03(self):
         # BEGIN: Constraints_Snippet_03
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(
@@ -599,7 +599,7 @@ class TestEDISnippets(unittest.TestCase):
         # BEGIN: RuntimeConstraints_Snippet_01
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import BlackBoxFunctionModel
+        from lcsolver import BlackBoxFunctionModel
 
         class Parabola(BlackBoxFunctionModel):
             def __init__(self):
@@ -648,7 +648,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_runtimeconstraints_02(self):
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import BlackBoxFunctionModel
+        from lcsolver import BlackBoxFunctionModel
 
         class Parabola(BlackBoxFunctionModel):
             def __init__(self):
@@ -713,7 +713,7 @@ class TestEDISnippets(unittest.TestCase):
     def test_edi_snippet_runtimeconstraints_03(self):
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -755,7 +755,7 @@ class TestEDISnippets(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
         from pyomo.common.formatting import tostr
 
         class PassThrough(BlackBoxFunctionModel):
@@ -833,7 +833,7 @@ class TestEDISnippets(unittest.TestCase):
         # BEGIN: RuntimeConstraints_Snippet_10
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -875,7 +875,7 @@ class TestEDISnippets(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         class SignomialTest(BlackBoxFunctionModel):
             def __init__(self):
@@ -933,7 +933,7 @@ class TestEDISnippets(unittest.TestCase):
         s = SignomialTest()
         ivals = [[x] for x in np.linspace(-2, 2, 11)]
 
-        # How the black box may be called using EDI
+        # How the black box may be called using LCsolver
         bbo = s.BlackBox(**{'x': 0.5})
         bbo = s.BlackBox({'x': 0.5})
         bbo = s.BlackBox(**{'x': 0.5, 'optn': True})
@@ -952,7 +952,7 @@ class TestEDISnippets(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         class SignomialTest(BlackBoxFunctionModel):
             def __init__(self):
@@ -1012,7 +1012,7 @@ class TestEDISnippets(unittest.TestCase):
         s = SignomialTest()
         ivals = [[x] for x in np.linspace(-2, 2, 11)]
 
-        # How the black box may be called using EDI
+        # How the black box may be called using LCsolver
         bbo = s.BlackBox(**{'x': 0.5})
         bbo = s.BlackBox({'x': 0.5})
         bbo = s.BlackBox(**{'x': 0.5, 'optn': True})

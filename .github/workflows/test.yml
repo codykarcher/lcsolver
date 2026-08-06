@@ -39,7 +39,7 @@ jobs:
         run: python -m pip install cyipopt
 
       - name: Show environment
-        run: python -c "import edi, pyomo; print('edi', edi.__version__); print('pyomo', pyomo.version.version)"
+        run: python -c "import lcsolver, pyomo; print('lcsolver', lcsolver.__version__); print('pyomo', pyomo.version.version)"
 
       - name: Run test suite
         run: python -m pytest tests/ -v

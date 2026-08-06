@@ -62,11 +62,11 @@ The Two-Variable Example
       & 0.01x^{-1.1} + x^{0.1} + y \le 1
     \end{aligned}
 
-Written as an EDI ``Formulation``:
+Written as an LCsolver ``Formulation``:
 
 .. code-block:: python
 
-    from edi import Formulation
+    from lcsolver import Formulation
     from pyomo.environ import units
 
     f = Formulation()
@@ -80,7 +80,7 @@ Written as an EDI ``Formulation``:
         0.01 * f.x ** -1.1 + f.x ** 0.1 + f.y <= 1.0 * units.dimensionless,
     ])
 
-Every term is a monomial with a positive coefficient, so EDI detects a geometric
+Every term is a monomial with a positive coefficient, so LCsolver detects a geometric
 program and routes it to a convex backend. The optimum is
 :math:`f^\ast = 31.8115934` at :math:`(x, y) = (0.0593208, 0.0224878)`.
 
@@ -98,7 +98,7 @@ been checked against the published values:
 
    * - Quantity
      - Published
-     - EDI
+     - LCsolver
    * - :math:`P_{max}` [kW]
      - 1186.1
      - 1186.09

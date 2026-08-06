@@ -7,11 +7,11 @@ Overview
 
 While some constraints are explicitly known and can be written directly into the optimization problem, it is common (particularly in engineering design) for some relationships to be too complex to be directly coded as a constraint.  
 
-EDI refers to these types of constraints as ``RuntimeConstraints`` because they are not constructed until they are needed by the solver.  A particular subset of Runtime Constraints of interest are Black-Box constraints, that is, constraints which call to an external routine.  To the average pyomo and EDI user, ``RuntimeConstraints`` are for all intents and purposes Black-Box constraint, and the distinction is semantic.  
+LCsolver refers to these types of constraints as ``RuntimeConstraints`` because they are not constructed until they are needed by the solver.  A particular subset of Runtime Constraints of interest are Black-Box constraints, that is, constraints which call to an external routine.  To the average pyomo and LCsolver user, ``RuntimeConstraints`` are for all intents and purposes Black-Box constraint, and the distinction is semantic.  
 
-In other words, if you wish to code a black-box constraint using EDI, you will be using the Runtime Constraint constructor.
+In other words, if you wish to code a black-box constraint using LCsolver, you will be using the Runtime Constraint constructor.
 
-In this context, a *Black-Box* is defined as a routine that performs hidden computation not visible EDI, pyomo, or more generally the optimization algorithm.  However, it is **not** assumed that black-boxes are unable to return gradient information.  A black-box in this context may be capable of returning arbitrary derivative information.
+In this context, a *Black-Box* is defined as a routine that performs hidden computation not visible LCsolver, pyomo, or more generally the optimization algorithm.  However, it is **not** assumed that black-boxes are unable to return gradient information.  A black-box in this context may be capable of returning arbitrary derivative information.
 
 
 Construction
@@ -23,7 +23,7 @@ Runtime constraints consist of two separate elements that need to be constructed
 Constructing a Black Box
 ++++++++++++++++++++++++
 
-First, we need to create an object which is visible to pyomo/EDI that calls the black-box function.  EDI calls this a ``BlackBoxFunctionModel``, and it is a base class that gets inherited into the objects you will create as a user.
+First, we need to create an object which is visible to pyomo/LCsolver that calls the black-box function.  LCsolver calls this a ``BlackBoxFunctionModel``, and it is a base class that gets inherited into the objects you will create as a user.
 
 A simple example is shown below:
 
@@ -49,7 +49,7 @@ The ``__init__()`` function sets up the model, and has 5 distinct steps.  First,
 
 In general, this line can be used verbatim.
 
-Next, you must tell the model what its inputs are by appending them to the ``self.inputs`` attribute.  These inputs exist entirely in the local namespace of the black-box model, and are **independent** of the namespace in the optimization model (ex, something called ``x`` in the optimization can be called ``y`` in the black-box model).  Inputs must have a ``name`` and ``units``, and has optional arguments ``description``, and ``size``, all of which are defined the same way as EDI variables.  (There are some advanced uses reserved for the advanced discussion).
+Next, you must tell the model what its inputs are by appending them to the ``self.inputs`` attribute.  These inputs exist entirely in the local namespace of the black-box model, and are **independent** of the namespace in the optimization model (ex, something called ``x`` in the optimization can be called ``y`` in the black-box model).  Inputs must have a ``name`` and ``units``, and has optional arguments ``description``, and ``size``, all of which are defined the same way as LCsolver variables.  (There are some advanced uses reserved for the advanced discussion).
 
 .. py:function:: self.inputs.append(name, units, description='', size=0)
 
@@ -180,7 +180,7 @@ if there is one single scalar output, the unpacking may be simplified to the fol
 See the :doc:`advanced <./advancedruntimeconstraints>` documentation for cases where the inputs and outputs are not scalar.
 
 
-Including a Black-Box in an EDI Formulation
+Including a Black-Box in an LCsolver Formulation
 +++++++++++++++++++++++++++++++++++++++++++
 
 This second construction step is covered in the :doc:`Formulation <./formulation>` documentation, but is repeated here for completion.  Future versions may differentiate this section.
@@ -198,7 +198,7 @@ The ``f.RuntimeConstraint()`` constructor takes in the following inputs:
 
 .. py:function:: f.RuntimeConstraint(outputs, operators, inputs, black_box)
 
-    Declares a runtime constraint in a pyomo.edi.formulation
+    Declares a runtime constraint in a pyomo.lcsolver.formulation
 
     :param outputs: The outputs of the black box function
     :type outputs: pyomo.environ.Var or list or tuple
@@ -207,7 +207,7 @@ The ``f.RuntimeConstraint()`` constructor takes in the following inputs:
     :param inputs: The inputs to the black box function
     :type inputs: pyomo.environ.Var or list or tuple
     :param black_box: The object that stores the black-box function.   See the :doc:`black box constraint documentation <./blackboxconstraints>` for details on constructing this object
-    :type black_box: edi.BlackBoxFunctionModel
+    :type black_box: lcsolver.BlackBoxFunctionModel
 
 
 The following are alternative construction methods that may be of use:

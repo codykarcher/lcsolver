@@ -1,6 +1,6 @@
-# Contributing to EDI
+# Contributing to LCsolver
 
-Thanks for your interest in EDI. This document describes how to report problems,
+Thanks for your interest in LCsolver. This document describes how to report problems,
 ask questions, and contribute changes.
 
 ## Reporting a bug
@@ -10,12 +10,12 @@ Open an issue on the GitHub tracker and include:
 - what you expected to happen and what happened instead;
 - a minimal example that reproduces the problem (ideally a short `Formulation`);
 - your operating system, Python version, and the output of
-  `python -c "import edi, pyomo; print(edi.__version__, pyomo.version.version)"`.
+  `python -c "import lcsolver, pyomo; print(lcsolver.__version__, pyomo.version.version)"`.
 
 ## Asking a question
 
 Questions are welcome as GitHub issues. If your question is about how to express a
-particular design problem in EDI, please include the model you have so far — it is
+particular design problem in LCsolver, please include the model you have so far — it is
 much easier to advise on concrete code.
 
 ## Contributing code
@@ -33,7 +33,7 @@ much easier to advise on concrete code.
 
 ```bash
 git clone <your fork>
-cd edi
+cd lcsolver
 python -m pip install -e ".[test,docs]"
 python -m pytest tests/
 ```
@@ -50,7 +50,7 @@ cd docs && python -m sphinx . _build/html
 
 ## Scope
 
-EDI aims to stay a thin, readable layer over Pyomo. Contributions that add
+LCsolver aims to stay a thin, readable layer over Pyomo. Contributions that add
 engineering-design conveniences — units handling, black-box interfaces, structure
 detection, solver routing — are in scope. Contributions that duplicate functionality
 better provided by Pyomo itself generally are not.

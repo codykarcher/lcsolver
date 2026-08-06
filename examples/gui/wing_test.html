@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wing &mdash; component test</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #14161a; color: #d7dbe0;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #view { position: fixed; inset: 0; }
+
+  #panel { position: fixed; top: 14px; left: 14px; width: 236px;
+    max-height: calc(100vh - 28px); overflow-y: auto; padding: 14px 16px;
+    background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
+    backdrop-filter: blur(6px); }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; }
+  #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
+  #panel h2 { margin: 13px 0 7px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: #6f7884;
+    border-top: 1px solid #2e343d; padding-top: 10px; }
+  .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
+  .row label { font-size: 11.5px; color: #aab3bf; }
+  .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
+  input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
+  input:disabled { opacity: .3; }
+  .off { opacity: .35; }
+  .tailOnly, .finOnly { display: none; }
+  body.tail .tailOnly, body.fin .finOnly { display: block; }
+  body.tail .wingOnly, body.fin .wingOnly { display: none; }
+  body.fin .notFin { display: none; }
+  body.fin .foils { display: none; }
+  input[type=text] { width: 100%; margin: 1px 0 9px; padding: 3px 6px; font: inherit;
+    font-size: 11.5px; color: #e6a34a; background: #14161a;
+    border: 1px solid #363d47; border-radius: 4px; font-variant-numeric: tabular-nums; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
+    font-size: 11.5px; color: #aab3bf; }
+  button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
+    font-size: 11.5px; color: #d7dbe0; background: #262b33;
+    border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2f353f; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair.three { grid-template-columns: 1fr 1fr 1fr; }
+  .pair button { margin-top: 0; }
+  #readout { margin-top: 11px; padding-top: 9px; border-top: 1px solid #2e343d;
+    font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #readout span { color: #98a2ae; }
+  #locked { font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #locked div { display: grid; grid-template-columns: 1fr auto; }
+  #locked b { color: #8b939f; font-weight: 500; }
+  #params { margin-top: 7px; font-size: 10px; color: #59616c;
+    word-break: break-all; user-select: all; }
+  .hint { margin-top: 9px; font-size: 10.5px; color: #565e69; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>Lifting surface</h1>
+  <p class="sub">given geometrically &mdash; area and AR come out</p>
+
+  <div class="check"><input type="radio" name="kind" id="kWing" checked><label for="kWing">wing (cranked)</label></div>
+  <div class="check"><input type="radio" name="kind" id="kTail"><label for="kTail">horizontal tail</label></div>
+  <div class="check"><input type="radio" name="kind" id="kFin"><label for="kFin">vertical tail</label></div>
+
+  <h2>planform</h2>
+  <div class="notFin">
+    <div class="row"><label for="span">span</label><output id="oSpan"></output></div>
+    <input type="range" id="span" min="4" max="80" step="0.1" value="34.1">
+  </div>
+  <div class="finOnly">
+    <div class="row"><label for="height">height &middot; root to tip</label><output id="oHeight"></output></div>
+    <input type="range" id="height" min="1" max="20" step="0.05" value="6.2">
+    <div class="row"><label for="cant">cant &middot; deg from vertical</label><output id="oCant"></output></div>
+    <input type="range" id="cant" min="-60" max="60" step="0.5" value="0">
+  </div>
+
+  <div class="row"><label for="rootChord">root chord</label><output id="oRootChord"></output></div>
+  <input type="range" id="rootChord" min="0.5" max="14.0" step="0.05" value="6.0">
+
+  <div class="wingOnly">
+    <div class="row"><label for="crankRatio">crank / root</label><output id="oCrankRatio"></output></div>
+    <input type="range" id="crankRatio" min="0.15" max="1.00" step="0.005" value="0.73">
+
+    <div class="row"><label for="tipRatio">tip / crank</label><output id="oTipRatio"></output></div>
+    <input type="range" id="tipRatio" min="0.05" max="1.00" step="0.005" value="0.27">
+  </div>
+
+  <div class="tailOnly finOnly">
+    <div class="row"><label for="taperRatio">taper &middot; tip / root</label><output id="oTaperRatio"></output></div>
+    <input type="range" id="taperRatio" min="0.05" max="1.00" step="0.005" value="0.30">
+  </div>
+
+  <div class="row"><label for="sweep">LE sweep &middot; deg</label><output id="oSweep"></output></div>
+  <input type="range" id="sweep" min="-15" max="60" step="0.5" value="27">
+
+
+  <h2>crank</h2>
+  <div class="row"><label for="kink">station &middot; of semispan</label><output id="oKink"></output></div>
+  <input type="range" id="kink" min="0.10" max="0.70" step="0.01" value="0.35">
+
+
+
+
+
+
+  <h2>thickness &middot; t/c</h2>
+  <div class="wingOnly">
+    <div class="row"><label for="rootThickness">root</label><output id="oRootThickness"></output></div>
+    <input type="range" id="rootThickness" min="0.04" max="0.24" step="0.002" value="0.13">
+    <div class="row"><label for="crankThickness">crank</label><output id="oCrankThickness"></output></div>
+    <input type="range" id="crankThickness" min="0.04" max="0.24" step="0.002" value="0.11">
+    <div class="row"><label for="tipThickness">tip</label><output id="oTipThickness"></output></div>
+    <input type="range" id="tipThickness" min="0.04" max="0.24" step="0.002" value="0.10">
+  </div>
+  <div class="tailOnly finOnly">
+    <div class="row"><label for="thickness">constant</label><output id="oThickness"></output></div>
+    <input type="range" id="thickness" min="0.04" max="0.24" step="0.002" value="0.10">
+  </div>
+
+  <h2 class="foils">sections</h2>
+  <div class="foils"><div class="row"><label for="root">root NACA</label><output></output></div>
+  <input type="text" id="root" value="2412" spellcheck="false">
+  <div class="row"><label for="kinkFoil">crank NACA (blank = blend)</label><output></output></div>
+  <input type="text" id="kinkFoil" value="" spellcheck="false">
+  <div class="row"><label for="tip">tip NACA</label><output></output></div>
+  <input type="text" id="tip" value="2410" spellcheck="false"></div>
+
+  <h2>locked</h2>
+  <div id="locked"></div>
+
+  <h2>view</h2>
+  <div class="check"><input type="checkbox" id="outline" checked><label for="outline">planform &amp; MAC</label></div>
+  <div class="check"><input type="checkbox" id="ribs"><label for="ribs">section stations</label></div>
+  <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
+  <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
+  <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
+
+  <h2>view from</h2>
+  <div class="pair three">
+    <button id="plan">plan</button>
+    <button id="front">front</button>
+    <button id="side">side</button>
+  </div>
+  <div class="pair">
+    <button id="frame">frame</button>
+    <button id="reset">reset</button>
+  </div>
+
+  <div id="readout"></div>
+  <div id="params"></div>
+  <p class="hint">drag orbit &middot; scroll zoom &middot; right-drag pan</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { liftingSurface, verticalTail, defaults } from './components/wing.js';
+import { disposeTree } from './components/geom.js';
+import { all as MATERIALS } from './components/materials.js';
+
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({
+  canvas, antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0x9fb4cc, 0x191c21, 1.5));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.2);
+key.position.set(5, 7, 6);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x93b6ff, 0.7);
+fill.position.set(-6, 3, -5);
+scene.add(fill);
+// From below, because half of what there is to judge on a wing -- dihedral,
+// the crank, the underside of the leading edge -- is only visible from there.
+const bounce = new THREE.DirectionalLight(0xc9d6e4, 0.45);
+bounce.position.set(0, -8, 2);
+scene.add(bounce);
+
+const axes = new THREE.Group();
+scene.add(axes);
+function rebuildAxes(L) {
+  for (const ch of [...axes.children]) { ch.geometry.dispose(); axes.remove(ch); }
+  const spec = [[[L, 0, 0], 0xd8544f], [[0, L, 0], 0x74c46a], [[0, 0, L], 0x5b8ff5]];
+  for (const [v, colour] of spec) {
+    const p = new THREE.Vector3(...v);
+    const geo = new THREE.BufferGeometry().setFromPoints([p.clone().negate(), p]);
+    axes.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: colour, transparent: true, opacity: 0.85 })));
+  }
+}
+
+const grid = new THREE.GridHelper(80, 80, 0x39414c, 0x252a31);
+grid.visible = false;
+scene.add(grid);
+
+const el = (id) => document.getElementById(id);
+const num = (id) => parseFloat(el(id).value);
+
+// Shared, then the two kinds' own. A tail is not a wing with some sliders
+// greyed out -- it is described differently: a plain taper ratio instead of two
+// chained ones, and one thickness instead of a distribution. Passing a wing's
+// set to a tail would apply parameters it does not have.
+const NUMS = ['rootChord', 'sweep'];
+const WING_NUMS = ['span', 'crankRatio', 'tipRatio', 'kink',
+                   'rootThickness', 'crankThickness', 'tipThickness'];
+const TAIL_NUMS = ['span', 'taperRatio', 'thickness'];
+const FIN_NUMS = ['height', 'cant', 'taperRatio', 'thickness'];
+const KIND_NUMS = { wing: WING_NUMS, tail: TAIL_NUMS, fin: FIN_NUMS };
+const ALL = [...new Set([...NUMS, ...WING_NUMS, ...TAIL_NUMS, ...FIN_NUMS])];
+const FOILS = ['root', 'kinkFoil', 'tip'];
+const DEFAULTS = Object.fromEntries([...ALL, ...FOILS].map((k) => [k, el(k).value]));
+
+/**
+ * Load one of the component's own default sets into the sliders.
+ *
+ * The toggle used to change the topology and nothing else, so picking
+ * "horizontal tail" gave a wing-sized trapezoid: 34 m of span with a tail's
+ * planform rules. Reading the defaults out of the component rather than keeping
+ * a copy here means the two cannot drift.
+ */
+function loadDefaults(which) {
+  const d = defaults[which];
+  for (const k of ALL) if (d[k] != null) el(k).value = d[k];
+  for (const k of FOILS) el(k).value = d[k] ?? '';
+  // The two kinds' own controls swap rather than grey out, because they are
+  // alternative descriptions and not one description with parts switched off.
+  document.body.classList.remove('wing', 'tail', 'fin');
+  document.body.classList.add(which);
+}
+
+let surface = null, extra = [];
+
+function line(pts, colour, opacity = 0.9) {
+  const l = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity }));
+  scene.add(l); extra.push(l);
+}
+
+function build() {
+  if (surface) { disposeTree(surface); scene.remove(surface); }
+  for (const o of extra) { o.geometry?.dispose(); scene.remove(o); }
+  extra = [];
+
+  for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
+
+  const kind = el('kFin').checked ? 'fin' : el('kTail').checked ? 'tail' : 'wing';
+  // Start from the COMPONENT's own default set for whichever kind is selected,
+  // then override with the sliders. The locked values -- dihedral, twist -- are
+  // not sliders and differ between the two, so a page that only passed slider
+  // values would build a tail with the wing's dihedral and washout.
+  const keys = [...NUMS, ...KIND_NUMS[kind]];
+  const p = { ...defaults[kind],
+              ...Object.fromEntries(keys.map((k) => [k, num(k)])) };
+  for (const k of FOILS) {
+    const v = el(k).value.trim();
+    p[k] = v === '' ? null : v;
+  }
+  if (p.root == null) p.root = '0012';
+  if (p.tip == null) p.tip = p.root;
+
+  // A fin is not liftingSurface with a flag: its span is a height, its area is
+  // one surface, and its aspect ratio is defined on those. verticalTail owns
+  // that translation so nothing here has to know about it.
+  surface = kind === 'fin' ? verticalTail(p) : liftingSurface(p);
+  scene.add(surface);
+  const u = surface.userData;
+
+  // The planform, drawn flat at y = 0: leading edge, trailing edge, quarter
+  // chord, and the MAC where it actually sits. A wing is judged in plan, and
+  // reading a swept crank off a shaded surface in perspective is guesswork.
+  if (el('outline').checked) {
+    const le = [], te = [], c4 = [];
+    for (const s of u.frames) {
+      le.push(new THREE.Vector3(s.x, 0, -s.zLE));
+      te.push(new THREE.Vector3(s.x, 0, -(s.zLE + s.chord)));
+      c4.push(new THREE.Vector3(s.x, 0, -(s.zLE + 0.25 * s.chord)));
+    }
+    for (const arr of [le, te, c4]) {
+      const m = arr.slice(1).map((v) => new THREE.Vector3(-v.x, v.y, v.z)).reverse();
+      if (u.mirror) arr.unshift(...m);
+    }
+    line(le, 0xe6a34a); line(te, 0xe6a34a); line(c4, 0x5b8ff5, 0.75);
+    for (const sgn of (u.mirror ? [1, -1] : [1])) {
+      const y = sgn * u.yMac;
+      line([new THREE.Vector3(y, 0, -u.xMacLE),
+            new THREE.Vector3(y, 0, -(u.xMacLE + u.mac))], 0xd8544f, 1.0);
+    }
+  }
+
+  if (el('ribs').checked) {
+    const geo = surface.children[0].geometry;
+    const pos = geo.getAttribute('position');
+    const M = 2 * u.planform.nChord - 2;
+    for (let r = 0; r * M < pos.count; r++) {
+      const pts = [];
+      for (let j = 0; j <= M; j++) {
+        pts.push(new THREE.Vector3().fromBufferAttribute(pos, r * M + (j % M)));
+      }
+      line(pts, 0x5b8ff5, 0.35);
+    }
+  }
+
+  rebuildAxes(u.semiSpan * 0.25);
+  axes.visible = el('axes').checked;
+  grid.visible = el('grid').checked;
+  grid.position.y = -u.semiSpan * 0.3;
+  grid.scale.setScalar(u.semiSpan / 17);
+
+  for (const k of ALL) el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent =
+    num(k).toFixed(k.endsWith('Thickness') || k === 'thickness' ? 3 : 2);
+
+  el('locked').innerHTML = [
+    ['dihedral &middot; deg', u.dihedral],
+    ['root twist &middot; deg', u.planform.twistRoot],
+    ['tip twist &middot; deg', u.planform.twistTip],
+    ['twist axis &middot; chord', u.planform.twistAxis],
+  ].map(([k, v]) => `<div>${k}<b>${(+v).toFixed(2)}</b></div>`).join('');
+
+  el('readout').innerHTML =
+    (u.isFin
+      ? `height <span>${u.height.toFixed(2)}</span> &middot; ` +
+        `S <span>${u.area.toFixed(2)}</span> (one surface) &middot; ` +
+        `AR <span>${u.aspectRatio.toFixed(3)}</span> = h&sup2;/S<br>` +
+        `cant <span>${u.cant.toFixed(1)}&deg;</span> &rarr; tip ` +
+        `<span>${u.tipRise.toFixed(2)}</span> up, ` +
+        `<span>${u.tipOffset.toFixed(2)}</span> across<br>`
+      : '') +
+    `chords: root <span>${u.rootChord.toFixed(3)}</span>` +
+    (u.kinkChord ? ` &middot; crank <span>${u.kinkChord.toFixed(3)}</span>` : '') +
+    ` &middot; tip <span>${u.tipChord.toFixed(3)}</span><br>` +
+    (u.isFin ? '' :
+      `derived: S <span>${u.referenceArea.toFixed(2)}</span> ` +
+      `&middot; AR <span>${u.aspectRatio.toFixed(2)}</span> &middot; `) +
+    `tip/root <span>${u.taperRatio.toFixed(3)}</span><br>` +
+    `MAC <span>${u.mac.toFixed(3)}</span> at y <span>${u.yMac.toFixed(3)}</span>, ` +
+    `LE <span>${u.xMacLE.toFixed(3)}</span> aft<br>` +
+    `MAC c/4 <span>${u.xMacQuarter.toFixed(3)}</span> aft of the root LE<br>` +
+    (u.constantThickness != null
+      ? `t/c <span>${(100 * u.constantThickness).toFixed(1)}%</span> constant &middot; `
+      : `t/c <span>${(100 * u.rootThickness).toFixed(1)}</span> / ` +
+        (u.crankThickness ? `<span>${(100 * u.crankThickness).toFixed(1)}</span> / ` : '') +
+        `<span>${(100 * u.tipThickness).toFixed(1)}%</span> &middot; `) +
+    `${u.sections.root}${u.sections.kink ? ' / ' + u.sections.kink : ''} / ${u.sections.tip}`;
+
+  el('params').textContent = `{ ${keys.map((k) => `${k}: ${num(k)}`).join(', ')}, ` +
+    `root: '${p.root}', tip: '${p.tip}' }`;
+}
+
+function frameSurface() {
+  const b = new THREE.Box3().setFromObject(surface);
+  const c = b.getCenter(new THREE.Vector3());
+  const r = b.getSize(new THREE.Vector3()).length() / 2;
+  controls.target.copy(c);
+  const d = r / Math.sin((camera.fov * Math.PI / 180) / 2) * 0.95;
+  camera.position.set(c.x + d * 0.35, c.y + d * 0.45, c.z + d * 0.82);
+  camera.near = r / 500; camera.far = r * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+/** Plan, front and side: the three views a planform is actually defined in. */
+function ortho(axis) {
+  const u = surface.userData, d = u.span * 1.15;
+  const c = new THREE.Vector3(0, 0, -u.rootChord * 0.4);
+  controls.target.copy(c);
+  if (axis === 'plan') camera.position.set(c.x, c.y + d, c.z + 0.001);
+  else if (axis === 'front') camera.position.set(c.x, c.y, c.z + d);
+  else camera.position.set(c.x + d, c.y, c.z);
+  camera.near = d / 500; camera.far = d * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+for (const id of ALL) el(id).addEventListener('input', build);
+for (const id of FOILS) el(id).addEventListener('input', build);
+for (const id of ['outline', 'ribs', 'wire', 'axes', 'grid'])
+  el(id).addEventListener('change', build);
+for (const [id, which] of [['kWing', 'wing'], ['kTail', 'tail'], ['kFin', 'fin']]) {
+  el(id).addEventListener('change', () => { loadDefaults(which); build(); });
+}
+for (const v of ['plan', 'front', 'side']) el(v).addEventListener('click', () => ortho(v));
+el('frame').addEventListener('click', frameSurface);
+el('reset').addEventListener('click', () => {
+  loadDefaults(el('kFin').checked ? 'fin' : el('kTail').checked ? 'tail' : 'wing');
+  build();
+});
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+function tick() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+resize();
+build();
+frameSurface();
+tick();
+</script>
+</body>
+</html>

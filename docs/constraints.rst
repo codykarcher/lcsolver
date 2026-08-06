@@ -13,11 +13,11 @@ The Constraint constructor is a very thin wrapper on pyomo ``Constraint``, and s
 Construction
 ------------
 
-Constraints are constructed by creating an instance of a new constraint in a EDI Formulation 
+Constraints are constructed by creating an instance of a new constraint in a LCsolver Formulation 
 
 .. py:function:: f.Constraint(expr)
 
-    Declares a constraint in a pyomo.edi.formulation
+    Declares a constraint in a pyomo.lcsolver.formulation
 
    :param expr: The expression representing the constraint
    :type  expr: pyomo expression
@@ -30,7 +30,7 @@ However, the expected use case is the ``f.ConstraintList()`` function:
 
 .. py:function:: f.ConstraintList(conList)
 
-    Declares new constraints in a pyomo.edi.formulation from a list of inputs
+    Declares new constraints in a pyomo.lcsolver.formulation from a list of inputs
 
    :param conList: The list of constraints to be generated.  Entries will be pyomo expressions, or lists/tuples/dicts that are used to create RuntimeConstraints (see :doc:`here <./blackboxconstraints>`)
    :type  conList: list
@@ -42,7 +42,7 @@ However, the expected use case is the ``f.ConstraintList()`` function:
 Relation to Pyomo Constraint
 ----------------------------
 
-The EDI constraint constructor is essentially a direct pass through to base pyomo.  Constraints will be added to the ``pyomo.ConcreteModel`` in increasing order with key ``constraint_###`` where the the index of the objective appears after the underscore.  First constraint is labeled as ``constraint_1``, and constraint names are never padded with zeros.  RuntimeConstraints also contribute to this counter.
+The LCsolver constraint constructor is essentially a direct pass through to base pyomo.  Constraints will be added to the ``pyomo.ConcreteModel`` in increasing order with key ``constraint_###`` where the the index of the objective appears after the underscore.  First constraint is labeled as ``constraint_1``, and constraint names are never padded with zeros.  RuntimeConstraints also contribute to this counter.
 
 
 Examples

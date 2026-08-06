@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D8 fuselage &mdash; component test</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #14161a; color: #d7dbe0;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #view { position: fixed; inset: 0; }
+
+  #panel { position: fixed; top: 14px; left: 14px; width: 236px;
+    max-height: calc(100vh - 28px); overflow-y: auto; padding: 14px 16px;
+    background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
+    backdrop-filter: blur(6px); }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; }
+  #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
+  #panel h2 { margin: 13px 0 7px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: #6f7884;
+    border-top: 1px solid #2e343d; padding-top: 10px; }
+  .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
+  .row label { font-size: 11.5px; color: #aab3bf; }
+  .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
+  input[type=range] { width: 100%; margin: 1px 0 9px; accent-color: #e6a34a; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
+    font-size: 11.5px; color: #aab3bf; }
+  button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
+    font-size: 11.5px; color: #d7dbe0; background: #262b33;
+    border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2f353f; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair.three { grid-template-columns: 1fr 1fr 1fr; }
+  .pair button { margin-top: 0; }
+  #readout { margin-top: 11px; padding-top: 9px; border-top: 1px solid #2e343d;
+    font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #readout span { color: #98a2ae; }
+  #params { margin-top: 7px; font-size: 10px; color: #59616c;
+    word-break: break-all; user-select: all; }
+  .hint { margin-top: 9px; font-size: 10.5px; color: #565e69; }
+  input[type=file] { width: 100%; font-size: 10.5px; margin-bottom: 7px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>D8 fuselage</h1>
+  <p class="sub">wide ellipse &rarr; stadium cabin &rarr; blunt trailing edge</p>
+
+  <h2>deck inputs</h2>
+  <div class="row"><label for="rad">half-height</label><output id="oRad"></output></div>
+  <input type="range" id="rad" min="0.60" max="4.00" step="0.01" value="1.90">
+
+  <div class="row"><label for="fineness">fineness L/H</label><output id="oFineness"></output></div>
+  <input type="range" id="fineness" min="5.0" max="16.0" step="0.05" value="9.6">
+
+  <div class="row"><label for="noseD">nose length &middot; H</label><output id="oNoseD"></output></div>
+  <input type="range" id="noseD" min="0.60" max="3.50" step="0.01" value="1.45">
+
+  <h2>section</h2>
+  <div class="row"><label for="noseWidth">nose ellipse W/H</label><output id="oNoseWidth"></output></div>
+  <input type="range" id="noseWidth" min="0.80" max="2.40" step="0.01" value="1.55">
+
+  <div class="row"><label for="tipRise">tip above axis</label><output id="oTipRise"></output></div>
+  <input type="range" id="tipRise" min="-0.40" max="0.60" step="0.01" value="0.15">
+
+  <div class="row"><label for="cabinWidth">cabin W/H</label><output id="oCabinWidth"></output></div>
+  <input type="range" id="cabinWidth" min="1.00" max="2.40" step="0.01" value="1.55">
+
+  <div class="row"><label for="cabinCrown">roof crown</label><output id="oCabinCrown"></output></div>
+  <input type="range" id="cabinCrown" min="0.00" max="0.60" step="0.01" value="0.12">
+
+
+  <h2>tail</h2>
+  <div class="row"><label for="tailD">aft length &middot; H</label><output id="oTailD"></output></div>
+  <input type="range" id="tailD" min="1.50" max="4.50" step="0.01" value="3.00">
+  <div class="row"><label for="tailEdgeHeight">edge height from keel</label><output id="oTailEdgeHeight"></output></div>
+  <input type="range" id="tailEdgeHeight" min="0.00" max="1.00" step="0.01" value="0.35">
+  <div class="row"><label for="tipR">edge thickness</label><output id="oTipR"></output></div>
+  <input type="range" id="tipR" min="0.012" max="0.30" step="0.002" value="0.02">
+
+  <h2>where the section changes</h2>
+  <div class="row"><label for="uBubble">bubble by</label><output id="oUBubble"></output></div>
+  <input type="range" id="uBubble" min="0.05" max="0.50" step="0.01" value="0.24">
+
+  <h2>view</h2>
+  <div class="check"><input type="checkbox" id="prof" checked><label for="prof">crown, keel &amp; width</label></div>
+  <div class="check"><input type="checkbox" id="rings"><label for="rings">section rings</label></div>
+  <div class="check"><input type="checkbox" id="area"><label for="area">area distribution</label></div>
+  <div class="check"><input type="checkbox" id="xray"><label for="xray">translucent OML</label></div>
+  <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
+  <div class="check"><input type="checkbox" id="axes"><label for="axes">origin axes</label></div>
+  <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
+  <div class="check"><input type="checkbox" id="detail"><label for="detail">detail (windows, doors&hellip;)</label></div>
+  <div class="check"><input type="checkbox" id="glass" checked><label for="glass">windscreen</label></div>
+
+  <h2>reference image</h2>
+  <input type="file" id="refFile" accept="image/*">
+  <div class="check"><input type="checkbox" id="refShow" checked><label for="refShow">show</label></div>
+  <div class="check"><input type="checkbox" id="refFlip"><label for="refFlip">nose to the right</label></div>
+  <div class="row"><label for="refScale">height &middot; H</label><output id="oRefScale"></output></div>
+  <input type="range" id="refScale" min="0.20" max="10.0" step="0.02" value="2.60">
+  <div class="row"><label for="refZ">shift aft</label><output id="oRefZ"></output></div>
+  <input type="range" id="refZ" min="-14.0" max="4.0" step="0.02" value="-1.60">
+  <div class="row"><label for="refY">shift up</label><output id="oRefY"></output></div>
+  <input type="range" id="refY" min="-5.0" max="5.0" step="0.02" value="0.00">
+  <div class="row"><label for="refOpacity">opacity</label><output id="oRefOpacity"></output></div>
+  <input type="range" id="refOpacity" min="0.05" max="1.00" step="0.01" value="0.70">
+
+  <h2>view from</h2>
+  <div class="pair three">
+    <button id="front">front</button>
+    <button id="side">side</button>
+    <button id="top">top</button>
+  </div>
+  <div class="pair three">
+    <button id="nose">nose</button>
+    <button id="aft">aft</button>
+    <button id="frame">frame</button>
+  </div>
+  <button id="reset">reset</button>
+
+  <div id="readout"></div>
+  <div id="params"></div>
+  <p class="hint">drag orbit &middot; scroll zoom &middot; right-drag pan</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { d8Fuselage } from './components/fuselage.js';
+import { windscreen, WINDSCREEN_D8 } from './components/decals.js';
+import { disposeTree } from './components/geom.js';
+import { all as MATERIALS, setTranslucent } from './components/materials.js';
+
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({
+  canvas, antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 5000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0x9fb4cc, 0x191c21, 1.5));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.2);
+key.position.set(5, 7, 6);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x93b6ff, 0.7);
+fill.position.set(-6, 3, -5);
+scene.add(fill);
+const bounce = new THREE.DirectionalLight(0xc9d6e4, 0.35);
+bounce.position.set(0, -8, 2);
+scene.add(bounce);
+// From above, because on this body the interesting surface is the upper one --
+// a wide flat roof shows its shape in the highlight across it or not at all.
+const over = new THREE.DirectionalLight(0xffffff, 0.5);
+over.position.set(0.5, 10, 1);
+scene.add(over);
+
+const axes = new THREE.Group();
+scene.add(axes);
+function rebuildAxes(L) {
+  for (const ch of [...axes.children]) { ch.geometry.dispose(); axes.remove(ch); }
+  const spec = [[[L, 0, 0], 0xd8544f], [[0, L, 0], 0x74c46a], [[0, 0, L], 0x5b8ff5]];
+  for (const [v, colour] of spec) {
+    const p = new THREE.Vector3(...v);
+    const geo = new THREE.BufferGeometry().setFromPoints([p.clone().negate(), p]);
+    axes.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: colour, transparent: true, opacity: 0.85 })));
+  }
+}
+
+const grid = new THREE.GridHelper(80, 80, 0x39414c, 0x252a31);
+grid.visible = false;
+scene.add(grid);
+
+const el = (id) => document.getElementById(id);
+const num = (id) => parseFloat(el(id).value);
+
+const DECK = ['rad', 'fineness', 'noseD'];
+const SHAPE = ['noseWidth', 'tipRise', 'cabinWidth', 'cabinCrown',
+               'tailD', 'tailEdgeHeight', 'tipR', 'uBubble'];
+const DEFAULTS = Object.fromEntries([...DECK, ...SHAPE].map((k) => [k, el(k).value]));
+
+let body = null, extra = [];
+
+function line(pts, colour, opacity = 0.9) {
+  const l = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: colour, transparent: true, opacity }));
+  scene.add(l); extra.push(l);
+}
+
+/* ---- reference image -------------------------------------------------- */
+let refMesh = null, refTex = null;
+
+function buildRef() {
+  if (refMesh) {
+    refMesh.geometry.dispose(); refMesh.material.dispose();
+    scene.remove(refMesh); refMesh = null;
+  }
+  if (!refTex || !el('refShow').checked || !body) return;
+  const R = body.userData.radius, img = refTex.image;
+  const h = num('refScale') * 2 * R;
+  refMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(h * img.width / img.height, h),
+    new THREE.MeshBasicMaterial({
+      map: refTex, transparent: true, opacity: num('refOpacity'),
+      side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+  refMesh.rotation.y = Math.PI / 2;
+  if (el('refFlip').checked) refMesh.scale.x = -1;
+  refMesh.position.set(-R * 6, num('refY') * R, num('refZ') * R);
+  refMesh.renderOrder = -1;
+  scene.add(refMesh);
+}
+
+el('refFile').addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  new THREE.TextureLoader().load(URL.createObjectURL(file), (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    if (refTex) refTex.dispose();
+    refTex = tex;
+    buildRef();
+  });
+});
+
+/* ---- build ------------------------------------------------------------ */
+
+function build() {
+  if (body) { disposeTree(body); scene.remove(body); }
+  for (const o of extra) { disposeTree(o); scene.remove(o); }
+  extra = [];
+
+  for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
+
+  const radius = num('rad');
+  body = d8Fuselage({
+    radius,
+    fineness: num('fineness'),
+    noseD: num('noseD'),
+    shape: Object.fromEntries(SHAPE.map((k) => [k, num(k)])),
+    detail: el('detail').checked,
+  });
+  scene.add(body);
+  setTranslucent(el('xray').checked, 0.16);
+
+  // The jetliner's windscreen, unmodified, on its own numbers. It asks the body
+  // only for its crown, its keel and its surface, so it does not care which
+  // fuselage it is on.
+  if (el('glass').checked) body.add(windscreen(body, WINDSCREEN_D8));
+
+  const u = body.userData, L = u.length;
+
+
+  if (el('prof').checked) {
+    const top = [], bot = [], mid = [], wideL = [], wideR = [], valley = [];
+    for (let i = 0; i <= 300; i++) {
+      const z = -L * i / 300, sh = u.shapeAt(z);
+      top.push(new THREE.Vector3(0, u.crownAt(z), z));
+      bot.push(new THREE.Vector3(0, u.keelAt(z), z));
+      mid.push(new THREE.Vector3(0, sh.yc, z));
+      // Plan-view silhouette, drawn at the centreline height so side and top
+      // views can be read off the same overlay.
+      wideR.push(new THREE.Vector3(u.halfWidthAt(z), sh.yc, z));
+      wideL.push(new THREE.Vector3(-u.halfWidthAt(z), sh.yc, z));
+      // Height on the CENTRELINE. On a stadium roof that is the crown, so the
+      // two lines coincide -- and they separate the moment anything dishes the
+      // deck, which makes it worth drawing even when nothing does.
+      valley.push(new THREE.Vector3(0, sh.yc + sh.r * u.section(Math.PI / 2, z), z));
+    }
+    line(top, 0xe6a34a); line(bot, 0xe6a34a); line(mid, 0x5b8ff5, 0.8);
+    line(wideR, 0x74c46a, 0.8); line(wideL, 0x74c46a, 0.8);
+    line(valley, 0xd8544f, 0.9);
+  }
+
+  if (el('rings').checked) {
+    for (let i = 1; i < 44; i++) {
+      const z = -L * i / 44, pts = [];
+      for (let j = 0; j <= 96; j++) pts.push(u.surfaceAt(z, (j / 96) * Math.PI * 2));
+      line(pts, 0x5b8ff5, 0.32);
+    }
+  }
+
+  if (el('area').checked) {
+    // Area by integrating the section, not pi r^2 -- this one is not a circle.
+    const area = (z) => {
+      const { r } = u.shapeAt(z);
+      let a = 0;
+      for (let i = 0; i < 240; i++) {
+        const th = (i / 240) * Math.PI * 2, sc = r * u.section(th, z);
+        a += 0.5 * sc * sc * (Math.PI * 2 / 240);
+      }
+      return a;
+    };
+    let aMax = 0;
+    for (let i = 0; i <= 300; i++) aMax = Math.max(aMax, area(-L * i / 300));
+    const pts = [];
+    for (let i = 0; i <= 300; i++) {
+      const z = -L * i / 300;
+      pts.push(new THREE.Vector3(
+        0, -radius * 1.6 - (area(z) / aMax) * radius * 1.6, z));
+    }
+    line(pts, 0xd8544f, 0.85);
+  }
+
+  rebuildAxes(radius * 2.2);
+  axes.visible = el('axes').checked;
+  grid.visible = el('grid').checked;
+  grid.position.y = -radius * 1.3;
+  grid.scale.setScalar(radius / 1.90);
+
+  for (const k of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
+    el(`o${k[0].toUpperCase()}${k.slice(1)}`).textContent = num(k).toFixed(2);
+
+  el('readout').innerHTML =
+    `L <span>${L.toFixed(2)}</span> &middot; H <span>${(2 * radius).toFixed(2)}</span> ` +
+    `&middot; W <span>${(2 * u.maxHalfWidth.halfWidth).toFixed(2)}</span><br>` +
+    `cabin W/H <span>${u.cabinWidthOverHeight.toFixed(3)}</span> &middot; ` +
+    `flat roof spans <span>${((num('cabinWidth') - 1) * 2 * radius).toFixed(2)}</span> ` +
+    `of it<br>` +
+    `nose <span>${u.noseLength.toFixed(2)}</span> &middot; ` +
+    `tail <span>${u.tailLength.toFixed(2)}</span> &middot; ` +
+    `widest at z <span>${u.maxHalfWidth.z.toFixed(1)}</span><br>` +
+    `nose tip y <span>${u.shapeAt(0).yc.toFixed(2)}</span> ` +
+    `(<span>${u.tipRise.toFixed(2)}</span> half-heights ` +
+    `${u.tipRise >= 0 ? 'above' : 'below'} the axis)<br>` +
+    `trailing edge <span>${(2 * u.tailEdge.halfWidth).toFixed(2)}</span> wide by ` +
+    `<span>${(2 * u.tailEdge.halfHeight).toFixed(3)}</span> thick, at ` +
+    `<span>${(100 * u.tailEdge.heightFraction).toFixed(1)}%</span> of the height ` +
+    `up from the keel<br>` +
+    `plan taper <span>${u.planTaper.toFixed(2)}</span> ` +
+    `(1.00 = constant width in top view)`;
+
+  el('params').textContent =
+    `{ radius: ${num('rad')}, fineness: ${num('fineness')}, noseD: ${num('noseD')}, ` +
+    `shape: { ${SHAPE.map((k) => `${k}: ${num(k)}`).join(', ')} } }`;
+
+  buildRef();
+}
+
+/* ---- views ------------------------------------------------------------ */
+
+function frameBody() {
+  const b = new THREE.Box3().setFromObject(body);
+  const c = b.getCenter(new THREE.Vector3());
+  const r = b.getSize(new THREE.Vector3()).length() / 2;
+  controls.target.copy(c);
+  const d = r / Math.sin((camera.fov * Math.PI / 180) / 2) * 0.95;
+  camera.position.set(c.x + d * 0.62, c.y + d * 0.30, c.z + d * 0.72);
+  camera.near = r / 500; camera.far = r * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+/**
+ * Straight-on views. `front` matters more here than on a tube: end-on is the
+ * only view in which a double bubble is a double bubble rather than a slightly
+ * odd oval, and it is the fastest way to see whether the two lobes are doing
+ * anything at all.
+ */
+function ortho(axis) {
+  const u = body.userData, L = u.length, R = u.radius;
+  const setNearFar = (d) => {
+    camera.near = d / 500; camera.far = d * 100; camera.updateProjectionMatrix();
+  };
+  if (axis === 'front') {
+    const d = 9 * R;
+    controls.target.set(0, 0, -L * 0.30);
+    camera.position.set(0, 0, -L * 0.30 + d);
+    setNearFar(d);
+  } else if (axis === 'nose') {
+    // Keeps the direction you are already looking from and only moves in. So
+    // `side` then `nose` is a side view OF THE NOSE, `top` then `nose` a plan
+    // of it, `front` then `nose` an end-on section. A fixed camera angle here
+    // would mean one of those three and a lot of orbiting for the other two.
+    const N = u.noseLength, c = new THREE.Vector3(0, R * 0.1, -N * 0.55);
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-9) dir.set(1, 0.25, 0.6);
+    dir.normalize();
+    const d = 2.2 * Math.max(N, 2.4 * R);
+    controls.target.copy(c);
+    camera.position.copy(c).addScaledVector(dir, d);
+    setNearFar(d);
+  } else if (axis === 'aft') {
+    // The aft end is where the trough and the engine seats are, and it is a
+    // small part of a long body -- framing the whole thing hides it.
+    const c = -L * 0.85, d = 4.2 * R;
+    controls.target.set(0, R * 0.2, c);
+    camera.position.set(d * 0.75, d * 0.62, c + d * 0.55);
+    setNearFar(d);
+  } else if (axis === 'side') {
+    controls.target.set(0, 0, -L / 2);
+    camera.position.set(L * 1.55, 0, -L / 2);
+  } else {
+    controls.target.set(0, 0, -L / 2);
+    camera.position.set(0, L * 1.55, -L / 2 + 0.001);
+  }
+  controls.update();
+}
+
+for (const id of [...DECK, ...SHAPE, 'refScale', 'refZ', 'refY', 'refOpacity'])
+  el(id).addEventListener('input', build);
+for (const id of ['prof', 'rings', 'area', 'xray', 'wire', 'axes', 'grid',
+                  'detail', 'glass', 'refShow', 'refFlip'])
+  el(id).addEventListener('change', build);
+for (const v of ['front', 'side', 'top', 'nose', 'aft'])
+  el(v).addEventListener('click', () => ortho(v));
+el('frame').addEventListener('click', frameBody);
+el('reset').addEventListener('click', () => {
+  for (const [k, v] of Object.entries(DEFAULTS)) el(k).value = v;
+  build();
+});
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+function tick() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+resize();
+build();
+ortho('side');
+ortho('nose');
+tick();
+</script>
+</body>
+</html>

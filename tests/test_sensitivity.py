@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -24,7 +24,7 @@ cvxopt, cvxopt_available = attempt_import("cvxopt")
 numpy, numpy_available = attempt_import("numpy")
 
 try:
-    from edi import Formulation, sensitivities, format_sensitivities
+    from lcsolver import Formulation, sensitivities, format_sensitivities
 
     edi_available = True
 except Exception:
@@ -94,18 +94,18 @@ def _objective_only():
     return f
 
 
-@unittest.skipIf(not edi_available, 'EDI import failed')
+@unittest.skipIf(not edi_available, 'LCsolver import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 @unittest.skipIf(not numpy_available, 'sensitivity requires numpy')
 class TestSensitivityKnownAnswers(unittest.TestCase):
     """Closed-form checks across problem classes and both solver cores."""
 
     def _solve_cvxopt(self, f):
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
         cvxopt_solve(f)
 
     def _solve_ipopt(self, f):
-        from edi.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.ipopt import ipopt_solve
         ipopt_solve(f)
 
     # ---- cvxopt core --------------------------------------------------
@@ -188,7 +188,7 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
                                s2['sensitivities']['a'], places=5)
 
 
-@unittest.skipIf(not edi_available, 'EDI import failed')
+@unittest.skipIf(not edi_available, 'LCsolver import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 @unittest.skipIf(not numpy_available, 'sensitivity requires numpy')
 class TestSensitivityAgainstFiniteDifference(unittest.TestCase):
@@ -201,7 +201,7 @@ class TestSensitivityAgainstFiniteDifference(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_gp_matches_finite_difference(self):
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
         import numpy as np
 
         def build():
@@ -235,7 +235,7 @@ class TestSensitivityAgainstFiniteDifference(unittest.TestCase):
                                        f"vs finite difference {fd}")
 
 
-@unittest.skipIf(not edi_available, 'EDI import failed')
+@unittest.skipIf(not edi_available, 'LCsolver import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 @unittest.skipIf(not numpy_available, 'sensitivity requires numpy')
 class TestSensitivityInterface(unittest.TestCase):
@@ -244,7 +244,7 @@ class TestSensitivityInterface(unittest.TestCase):
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_formulation_method(self):
         f = _gp()
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
         cvxopt_solve(f)
         self.assertAlmostEqual(f.sensitivities()['sensitivities']['a'], 0.5,
                                places=5)
@@ -252,7 +252,7 @@ class TestSensitivityInterface(unittest.TestCase):
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_result_keys(self):
         f = _gp()
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
         cvxopt_solve(f)
         r = sensitivities(f)
         for key in ('sensitivities', 'objective', 'normalized', 'method',
@@ -262,7 +262,7 @@ class TestSensitivityInterface(unittest.TestCase):
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_format_is_printable(self):
         f = _gp()
-        from edi.solvers.solver import cvxopt_solve
+        from lcsolver.solvers.solver import cvxopt_solve
         cvxopt_solve(f)
         text = format_sensitivities(sensitivities(f))
         self.assertIn('a', text)
@@ -287,6 +287,129 @@ class TestSensitivityInterface(unittest.TestCase):
         f = _gp()
         with self.assertRaises(ValueError):
             sensitivities(f, method='nonsense')
+
+
+class TestParameterGradient(unittest.TestCase):
+    """The one-walk-per-expression gradient the envelope sum is built on.
+
+    Its predecessor asked for one constant at a time, which cost a full walk
+    per (constraint, constant) pair -- almost all of them returning zero
+    because the constant was not in that constraint. These are the cases where
+    the batched form could differ from the pairwise one.
+    """
+
+    def _index(self, f):
+        from lcsolver.solvers.sensitivity import _constants
+        return {id(pd): n for n, pd in _constants(f).items()}
+
+    def test_a_constant_appearing_twice_is_not_counted_twice(self):
+        """The walker yields a repeated Param once per occurrence."""
+        from lcsolver.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 1.0, '')
+        a = f.Constant('a', 3.0, '')
+        f.Objective(x)
+        g = _param_gradient(a * x + a * x, self._index(f))
+        self.assertAlmostEqual(g['a'], 2.0, places=12)     # d(2ax)/da = 2x
+
+    def test_constants_absent_from_an_expression_are_omitted(self):
+        from lcsolver.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 2.0, '')
+        a = f.Constant('a', 3.0, '')
+        b = f.Constant('b', 5.0, '')
+        f.Objective(x)
+        g = _param_gradient(a * x, self._index(f))
+        self.assertIn('a', g)
+        self.assertNotIn('b', g)                # contributes nothing, not zero
+
+    def test_a_plain_number_has_no_gradient(self):
+        """Bounds are often literals, and were reaching the walker as floats."""
+        from lcsolver.solvers.sensitivity import _param_gradient
+        f = Formulation()
+        x = f.Variable('x', 1.0, '')
+        f.Constant('a', 3.0, '')
+        f.Objective(x)
+        self.assertEqual(_param_gradient(4.0, self._index(f)), {})
+        self.assertEqual(_param_gradient(None, self._index(f)), {})
+
+    def test_it_agrees_with_differentiating_one_at_a_time(self):
+        from lcsolver.solvers.sensitivity import _param_gradient, _d, _constants
+        f = Formulation()
+        x = f.Variable('x', 2.0, '')
+        y = f.Variable('y', 3.0, '')
+        a = f.Constant('a', 3.0, '')
+        b = f.Constant('b', 5.0, '')
+        f.Objective(x)
+        expr = a * x ** 2 + b * y + a * b * x * y
+        constants = _constants(f)
+        batched = _param_gradient(expr, {id(pd): n for n, pd in constants.items()})
+        for name, pd in constants.items():
+            self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
+
+
+class TestDualAmbiguity(unittest.TestCase):
+    """Which sensitivities the problem actually determines.
+
+    A rank-deficient active set leaves the duals non-unique: any null-space
+    vector can be added and stationarity still holds. `lstsq` returns the
+    minimum-norm member of that family without saying so, so an undetermined
+    sensitivity comes back looking like an ordinary number. On SPaircraft that
+    produced a reported +315 -- not a credible log-log sensitivity -- from an
+    active set rank deficient by 23.
+    """
+
+    def test_a_nondegenerate_problem_reports_nothing_ambiguous(self):
+        from lcsolver.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.sensitivity import DUAL_AMBIGUITY_TOL
+
+        f = _gp()
+        ipopt_solve(f)
+        res = sensitivities(f)
+        self.assertEqual(res['ambiguous'], [])
+        for r in res['ambiguity'].values():
+            self.assertLessEqual(r, DUAL_AMBIGUITY_TOL)
+
+    def test_a_duplicated_constraint_makes_its_constant_undetermined(self):
+        """State the same binding constraint twice and the duals split freely.
+
+        Either multiplier can take the other's share, so any sensitivity that
+        reads them individually is an artefact of the split.
+        """
+        from lcsolver.solvers.ipopt import ipopt_solve
+
+        f = Formulation()
+        x = f.Variable('x', 1.0, '', 'x')
+        a = f.Constant('a', 2.0, '', 'a')
+        b = f.Constant('b', 2.0, '', 'b')
+        f.Objective(x)
+        f.Constraint(x >= a)
+        f.Constraint(x >= b)            # the same constraint, said twice
+        ipopt_solve(f)
+
+        res = sensitivities(f)
+        self.assertTrue(res['ambiguous'],
+                        'a duplicated binding constraint leaves the duals '
+                        'undetermined, and that should be reported')
+
+    def test_the_ambiguity_measure_is_a_relative_size(self):
+        from lcsolver.solvers.ipopt import ipopt_solve
+        from lcsolver.solvers.sensitivity import dual_ambiguity
+
+        f = _gp()
+        ipopt_solve(f)
+        for r in dual_ambiguity(f).values():
+            self.assertGreaterEqual(r, 0.0)
+            self.assertLessEqual(r, 1.0 + 1e-9)
+
+    def test_it_can_be_switched_off(self):
+        from lcsolver.solvers.ipopt import ipopt_solve
+
+        f = _gp()
+        ipopt_solve(f)
+        res = sensitivities(f, check_ambiguity=False)
+        self.assertEqual(res['ambiguity'], {})
+        self.assertEqual(res['ambiguous'], [])
 
 
 if __name__ == '__main__':

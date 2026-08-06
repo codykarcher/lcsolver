@@ -1,0 +1,195 @@
+"""The unit checker should say what is wrong and what would fix it."""
+import unittest
+
+try:
+    import pyomo.environ as pyo
+    from pyomo.environ import units
+
+    from lcsolver import Formulation
+    from lcsolver.presolve.unitCorrector import UnitMismatch, unit_corrector
+    available = True
+except Exception:                                    # pragma: no cover
+    available = False
+
+
+@unittest.skipIf(not available, 'LCsolver import failed')
+class TestUnitMessages(unittest.TestCase):
+
+    def test_a_mismatch_names_both_sides_and_the_correction(self):
+        f = Formulation()
+        s = f.Variable('S', 100.0, 'm^2', 'wing area')
+        ar = f.Variable('AR', 11.0, '-', 'aspect ratio')
+        f.Objective(s)
+        f.Constraint(50.0 <= s * ar)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+
+        self.assertIn('constraint', msg)          # which constraint
+        self.assertIn('S*AR', msg)                # what it says
+        self.assertIn('dimensionless', msg)       # left units
+        self.assertIn('m**2', msg)                # right units
+        self.assertIn('multiply the left side', msg)   # what to do about it
+
+    def test_unrelated_units_report_the_ratio(self):
+        f = Formulation()
+        length = f.Variable('L', 1.0, 'm', 'length')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(length)
+        f.Constraint(length >= time)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+        self.assertIn('m/s', msg)
+
+    def test_an_objective_mismatch_is_reported_as_the_objective(self):
+        f = Formulation()
+        length = f.Variable('L', 1.0, 'm', 'length')
+        area = f.Variable('A', 1.0, 'm^2', 'area')
+        f.Objective(length + area)
+        f.Constraint(length >= 1.0 * units.m)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        self.assertIn('objective', str(ctx.exception))
+
+    def test_equivalent_units_are_not_a_mismatch(self):
+        """N against kg*m/s**2 is the same dimension written two ways."""
+        f = Formulation()
+        force = f.Variable('F', 1.0, 'N', 'force')
+        mass = f.Variable('m', 1.0, 'kg', 'mass')
+        accel = f.Variable('a', 1.0, 'm/s^2', 'acceleration')
+        f.Objective(force)
+        f.Constraint(force >= mass * accel)
+        unit_corrector(f)                         # must not raise
+
+    def test_the_underlying_error_is_kept_but_trimmed(self):
+        """Useful for debugging the walker; not hundreds of pointer addresses."""
+        f = Formulation()
+        length = f.Variable('L', 1.0, 'm', 'length')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(length)
+        f.Constraint(length >= time)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+        self.assertIn('underlying:', msg)
+        self.assertNotIn('0x', msg)               # no object addresses
+        for line in msg.splitlines():
+            self.assertLess(len(line), 180)
+
+
+    def test_every_mismatch_is_reported_not_just_the_first(self):
+        """One round trip per bad constraint is a bad way to fix a model."""
+        f = Formulation()
+        area = f.Variable('S', 100.0, 'm^2', 'wing area')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(area)
+        f.Constraint(50.0 <= area)          # bad
+        f.Constraint(area >= time)          # bad
+        f.Constraint(area >= 1.0 * units.m ** 2)   # fine
+        f.Constraint(area >= time * time)   # bad
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+
+        self.assertIn('3 unit errors', msg)
+        for name in ('constraint_1', 'constraint_2', 'constraint_4'):
+            self.assertIn(name, msg)
+        self.assertNotIn('constraint_3', msg)      # the good one
+
+    def test_a_lone_mismatch_is_not_dressed_up_as_a_list(self):
+        f = Formulation()
+        area = f.Variable('S', 100.0, 'm^2', 'wing area')
+        f.Objective(area)
+        f.Constraint(50.0 <= area)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            unit_corrector(f)
+        msg = str(ctx.exception)
+        self.assertTrue(msg.startswith('Error in units for'))
+        self.assertNotIn('unit errors:', msg)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+@unittest.skipIf(not available, 'LCsolver import failed')
+class TestUnitMismatchIsFatal(unittest.TestCase):
+    """A dimensional error is a modelling error, not a routing decision.
+
+    `solve` falls back to plain IPOPT when structure detection fails, which is
+    right for a model it cannot classify and wrong for one that does not
+    balance dimensionally: IPOPT returns numbers for it either way. Observed on
+    an example whose coordinate arrays were bare floats standing for metres --
+    the fallback reported lengths of 1e5 m with nothing to say anything was
+    amiss.
+    """
+
+    def test_solve_raises_rather_than_falling_back(self):
+        from lcsolver.solvers.solver import solve
+
+        f = Formulation()
+        length = f.Variable('L', 1.0, 'm', 'length')
+        time = f.Variable('T', 1.0, 's', 'time')
+        f.Objective(length)
+        f.Constraint(length >= time)
+
+        with self.assertRaises(UnitMismatch) as ctx:
+            solve(f)
+        self.assertIn('Error in units', str(ctx.exception))
+
+    def test_a_sound_model_is_unaffected(self):
+        from lcsolver.solvers.solver import solve
+        import pyomo.environ as pyo
+
+        f = Formulation()
+        x = f.Variable('x', 5.0, 'm', 'x')
+        f.Objective(x)
+        f.Constraint(x >= 2.0 * units.m)
+        solve(f, sensitivities=False)
+        self.assertAlmostEqual(pyo.value(f.x), 2.0, places=5)
+
+
+@unittest.skipIf(not available, 'LCsolver import failed')
+class TestNegatedUnitLeaf(unittest.TestCase):
+    """Subtracting a quantity whose coefficient is exactly 1.
+
+    Pyomo folds `1.0*units.m` down to the bare unit, so `a*m - 1.0*m` negates
+    a `_PyomoUnit` while `a*m - 1.5*m` negates a product. The walker's branch
+    for the first case read `node.expr`, which a negation node does not have,
+    and raised AttributeError -- so the failure appeared to depend on the
+    numbers in the model rather than on their form.
+    """
+
+    def _rebuilt(self, expr):
+        f = Formulation()
+        d = f.Variable('d', 1.0, 'm', 'd')
+        f.Objective(d)
+        f.Constraint(d >= expr)
+        corrected = unit_corrector(f)
+        cons = list(corrected.component_data_objects(pyo.Constraint, active=True))
+        return cons[0].expr
+
+    def test_a_unit_coefficient_of_one_is_handled(self):
+        for expr in (1.5 * units.m - 1.0 * units.m,
+                     2.0 * units.m - units.m,
+                     units.m - units.m):
+            self._rebuilt(expr)          # must not raise
+
+    def test_the_arithmetic_is_right(self):
+        self.assertIn('0.5', str(self._rebuilt(1.5 * units.m - 1.0 * units.m)))
+
+    def test_a_conversion_under_the_negation_is_applied(self):
+        """The foot must become 0.3048 m, not be read as a metre."""
+        text = str(self._rebuilt(2.0 * units.m - units.ft))
+        self.assertIn('1.695', text)     # 2.0 - 0.3048
+
+    def test_a_variable_minus_a_bare_unit_converts(self):
+        text = str(self._rebuilt(units.ft * 0 + 3.0 * units.m - units.ft))
+        self.assertIn('2.695', text)     # 3.0 - 0.3048

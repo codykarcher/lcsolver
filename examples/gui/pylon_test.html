@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pylon &mdash; component test</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: #14161a; color: #d7dbe0;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #view { position: fixed; inset: 0; }
+
+  #panel { position: fixed; top: 14px; left: 14px; width: 228px; padding: 14px 16px;
+    background: #1c1f25e6; border: 1px solid #2e343d; border-radius: 10px;
+    backdrop-filter: blur(6px); }
+  #panel h1 { margin: 0 0 2px; font-size: 13px; }
+  #panel .sub { margin: 0 0 12px; font-size: 11px; color: #838d9a; }
+  #panel h2 { margin: 12px 0 6px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .07em; color: #6f7884;
+    border-top: 1px solid #2e343d; padding-top: 10px; }
+  .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; }
+  .row label { font-size: 11.5px; color: #aab3bf; }
+  .row output { font-variant-numeric: tabular-nums; font-size: 11.5px; color: #e6a34a; }
+  input[type=range] { width: 100%; margin: 1px 0 8px; accent-color: #e6a34a; }
+  .check { display: flex; align-items: center; gap: 7px; margin: 3px 0 7px;
+    font-size: 11.5px; color: #aab3bf; }
+  button { width: 100%; padding: 6px 10px; margin-top: 4px; font: inherit;
+    font-size: 11.5px; color: #d7dbe0; background: #262b33;
+    border: 1px solid #363d47; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #2f353f; }
+  #readout { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2e343d;
+    font-size: 10.5px; color: #6f7884; font-variant-numeric: tabular-nums; }
+  #readout span { color: #98a2ae; }
+  .hint { margin-top: 8px; font-size: 10.5px; color: #565e69; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>Pylon</h1>
+  <p class="sub">under- or over-mount &mdash; driven by the two ends</p>
+
+  <div class="row"><label for="rFan">fan radius</label><output id="oR"></output></div>
+  <input type="range" id="rFan" min="0.20" max="2.00" step="0.01" value="0.90">
+
+  <div class="row"><label for="bpr">bypass ratio</label><output id="oBPR"></output></div>
+  <input type="range" id="bpr" min="0.30" max="16.0" step="0.1" value="9.0">
+
+
+  <div class="row"><label for="ez">engine position</label><output id="oEZ"></output></div>
+  <input type="range" id="ez" min="-1.50" max="4.50" step="0.01" value="2.50">
+
+  <h2>view</h2>
+  <div class="check"><input type="checkbox" id="nacelle" checked><label for="nacelle">nacelle</label></div>
+  <div class="check"><input type="checkbox" id="wing" checked><label for="wing">wing stub</label></div>
+  <div class="check"><input type="radio" name="mt" id="mUnder" checked><label for="mUnder">under-mount</label></div>
+  <div class="check"><input type="radio" name="mt" id="mOver"><label for="mOver">over-mount</label></div>
+  <div class="check"><input type="radio" name="mt" id="mSide"><label for="mSide">side-mount</label></div>
+  <div class="check"><input type="checkbox" id="axes" checked><label for="axes">origin axes</label></div>
+  <div class="check"><input type="checkbox" id="grid"><label for="grid">grid</label></div>
+  <div class="check"><input type="checkbox" id="wire"><label for="wire">wireframe</label></div>
+  <div class="check"><input type="checkbox" id="spin"><label for="spin">spin fan</label></div>
+
+  <button id="frame">frame engine</button>
+  <button id="origin">look at origin</button>
+
+  <div id="readout"></div>
+  <p class="hint">drag orbit &middot; scroll zoom &middot; right-drag pan</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { turbofan, bareTurbofan } from './components/engines.js';
+import { underMountPylon, overMountPylon, sideMountPylon }
+  from './components/pylon.js';
+import { structure } from './components/materials.js';
+import { disposeTree } from './components/geom.js';
+import { all as MATERIALS } from './components/materials.js';
+
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0x9fb4cc, 0x191c21, 1.6));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.4);
+key.position.set(5, 7, 6);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x93b6ff, 0.65);
+fill.position.set(-6, 3, -5);
+scene.add(fill);
+// From dead ahead, so the fan is lit rather than a silhouette in its own case.
+const nose = new THREE.DirectionalLight(0xffffff, 0.5);
+nose.position.set(0, 0.4, 10);
+scene.add(nose);
+
+/* ---- origin marker -------------------------------------------------- *
+ * The engine's origin is the centre of its front face, so the marker sits
+ * in the fan plane. Kept as explicit lines rather than AxesHelper so the
+ * lengths can track fan radius and the arms extend both ways.            */
+const axes = new THREE.Group();
+scene.add(axes);
+function rebuildAxes(L) {
+  for (const ch of [...axes.children]) { ch.geometry.dispose(); axes.remove(ch); }
+  const spec = [[[L, 0, 0], 0xd8544f], [[0, L, 0], 0x74c46a], [[0, 0, L], 0x5b8ff5]];
+  for (const [v, colour] of spec) {
+    const p = new THREE.Vector3(...v);
+    const geo = new THREE.BufferGeometry().setFromPoints([p.clone().negate(), p]);
+    axes.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: colour, transparent: true, opacity: 0.85 })));
+  }
+}
+
+const grid = new THREE.GridHelper(20, 40, 0x39414c, 0x252a31);
+grid.visible = false;
+scene.add(grid);
+
+/* ---- engine --------------------------------------------------------- */
+const el = (id) => document.getElementById(id);
+const num = (id) => parseFloat(el(id).value);
+
+let engine = null;
+
+let extra = [];
+
+function build() {
+  if (engine) { disposeTree(engine); scene.remove(engine); }
+  for (const o of extra) { disposeTree(o); scene.remove(o); }
+  extra = [];
+
+  for (const m of Object.values(MATERIALS)) m.wireframe = el('wire').checked;
+
+  const rFan = num('rFan');
+  const build = el('nacelle').checked ? turbofan : bareTurbofan;
+  engine = build({
+    rFan,
+    bypassRatio: num('bpr'),
+  });
+  // The engine slides along the axis; the wing does not move. The pylon spans
+  // the two, so it is built in the SCENE frame and told where the engine is --
+  // parented to the engine it would just travel with it and never lean.
+  const engineZ = num('ez') * rFan;
+  engine.position.set(0, 0, engineZ);
+  scene.add(engine);
+
+  const mount = el('mSide').checked ? sideMountPylon
+    : el('mOver').checked ? overMountPylon : underMountPylon;
+  const py = mount(engine, { engineZ });
+  scene.add(py);
+  extra.push(py);
+
+  // A stub of wing at the attachment, purely so the top face has something to
+  // meet. Not a wing model -- that is a component of its own.
+  if (el('wing').checked && !el('mSide').checked) {
+    const c = py.userData.attachZ;
+    const stub = new THREE.Mesh(
+      new THREE.BoxGeometry(rFan * 3.2, rFan * 0.34, (c[0] - c[1]) * 1.35),
+      structure);
+    const sign = el('mOver').checked ? -1 : 1;
+    stub.position.set(0, py.userData.attachY + sign * rFan * 0.17,
+                      (c[0] + c[1]) / 2 - rFan * 0.1);
+    scene.add(stub);
+    extra.push(stub);
+  }
+  if (el('wing').checked && el('mSide').checked) {
+    // A slab of fuselage side for the stub to land on.
+    const wz = py.userData.wallZ;
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(rFan * 0.30, rFan * 3.4,
+                            (wz[0] - wz[1]) * 1.5), structure);
+    wall.position.set(py.userData.attachX + rFan * 0.15, 0,
+                      (wz[0] + wz[1]) / 2);
+    scene.add(wall);
+    extra.push(wall);
+  }
+
+  rebuildAxes(rFan * 1.55);
+  axes.visible = el('axes').checked;
+  grid.visible = el('grid').checked;
+  grid.position.y = -rFan * 1.6;
+  grid.scale.setScalar(rFan / 0.9);
+
+  el('oR').textContent = rFan.toFixed(2);
+  el('oBPR').textContent = num('bpr').toFixed(1);
+  el('oEZ').textContent = num('ez').toFixed(2);
+
+  const b = new THREE.Box3().setFromObject(engine);
+  el('readout').innerHTML =
+    `origin <span>0, 0, 0</span> &middot; fan plane<br>` +
+    `length <span>${engine.userData.length.toFixed(3)}</span> aft` +
+    `<br>` +
+    `nose-tail <span>${engine.userData.overallLength.toFixed(3)}</span> &middot; ` +
+    `L/D <span>${engine.userData.lengthOverDiameter.toFixed(2)}</span><br>` +
+    `duct-face r <span>${engine.userData.rCore.toFixed(3)}</span>` +
+    (Math.abs(engine.userData.bypassRatioEffective - num('bpr')) > 1e-6
+      ? ` <span>(capped, BPR ${engine.userData.bypassRatioEffective.toFixed(2)})</span>`
+      : '') + `<br>` +
+    `outlet <span>${engine.userData.outletRadius.toFixed(3)}</span> &middot; ` +
+    `plug <span>${engine.userData.plugExitRadius.toFixed(3)}</span><br>` +
+    `r max <span>${engine.userData.rMax.toFixed(3)}</span> &middot; ` +
+    `r core <span>${engine.userData.rCore.toFixed(3)}</span><br>` +
+    `z extent <span>${b.min.z.toFixed(2)} &hellip; ${b.max.z.toFixed(2)}</span><br>` +
+    `pylon root <span>${py.userData.rootZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span>` +
+    (py.userData.attachX !== undefined
+      ? ` &middot; reach <span>${py.userData.attachX.toFixed(2)}</span><br>` +
+        `wall chord <span>${py.userData.wallZ.map((v) => v.toFixed(2)).join(' &hellip; ')}</span>`
+      : ` &middot; kink y <span>${py.userData.kinkY.toFixed(2)}</span>`);
+}
+
+function frameEngine() {
+  const b = new THREE.Box3().setFromObject(engine);
+  const c = b.getCenter(new THREE.Vector3());
+  const r = b.getSize(new THREE.Vector3()).length() / 2;
+  controls.target.copy(c);
+  const d = r / Math.sin((camera.fov * Math.PI / 180) / 2) * 0.95;
+  camera.position.set(c.x + d * 0.52, c.y + d * 0.34, c.z + d * 0.78);
+  camera.near = r / 100; camera.far = r * 100;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function lookAtOrigin() {
+  const r = num('rFan');
+  controls.target.set(0, 0, 0);
+  camera.position.set(r * 2.6, r * 1.7, r * 4.0);
+  controls.update();
+}
+
+for (const id of ['rFan', 'bpr', 'ez']) el(id).addEventListener('input', build);
+for (const id of ['axes', 'grid', 'wire', 'nacelle', 'wing',
+                  'mUnder', 'mOver', 'mSide']) el(id).addEventListener('change', build);
+el('frame').addEventListener('click', frameEngine);
+el('origin').addEventListener('click', lookAtOrigin);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+const clock = new THREE.Clock();
+function tick() {
+  const dt = clock.getDelta();
+  if (el('spin').checked && engine) {
+    engine.traverse((o) => {
+      // Direction comes from the component: which way a rotor has to turn to
+      // push air aft is set by the pitch its blades were built with, so it is
+      // the component's business and not the viewer's.
+      if (o.userData.rotating)
+        o.rotation.z += dt * 2.4 * (o.userData.spin ?? 1) * (o.userData.rate ?? 1);
+    });
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+resize();
+build();
+frameEngine();
+tick();
+</script>
+</body>
+</html>

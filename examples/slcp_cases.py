@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -17,7 +17,7 @@ doi:10.1007/s11081-022-09750-3, Sections 6 and 7; transcribed from the notebooks
 
 import numpy as np
 
-from edi.solvers.ipopt.slcp import Constraint, Posynomial, Problem, Signomial
+from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Problem, Signomial
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ def floudas():
 
         return fn
 
-    from edi.solvers.ipopt.slcp import Signomial
+    from lcsolver.solvers.ipopt.slcp import Signomial
 
     constraints = [
         # 833.33252 x4/(x1 x6) + 100/x6 - 83333.333/(x1 x6) <= 1

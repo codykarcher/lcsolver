@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -12,7 +12,7 @@ import pyomo.common.unittest as unittest
 import pyomo.environ as pyo
 from pyomo.common.dependencies import attempt_import, numpy as np, numpy_available
 
-slcp, slcp_available = attempt_import('edi.solvers.ipopt.slcp')
+slcp, slcp_available = attempt_import('lcsolver.solvers.ipopt.slcp')
 
 
 def _ipopt_available():
@@ -27,7 +27,7 @@ ipopt_available = _ipopt_available()
 
 def _xy_problem():
     """min x*y  s.t.  1/x <= 1, 2/y <= 1.  Optimum (1, 2), objective 2."""
-    from edi.solvers.ipopt.slcp import Constraint, Posynomial, Problem
+    from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Problem
 
     objective = Posynomial([(1.0, [1, 1])], 2)
     constraints = [
@@ -43,7 +43,7 @@ class TestSLCPComponents(unittest.TestCase):
     """The problem-description primitives."""
 
     def test_posynomial_value_and_gradient(self):
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         p = Posynomial([(2.0, [1, 0]), (3.0, [0, 2])], 2)
         x = np.array([5.0, 4.0])
@@ -53,7 +53,7 @@ class TestSLCPComponents(unittest.TestCase):
 
     def test_log_gradient_matches_equation_11(self):
         """d log f(e^y)/dy_i = x_i/f * df/dx_i."""
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         p = Posynomial([(2.0, [1, 0]), (3.0, [0, 2])], 2)
         x = np.array([5.0, 4.0])
@@ -61,19 +61,19 @@ class TestSLCPComponents(unittest.TestCase):
         self.assertTrue(np.allclose(p.log_grad(x), expected))
 
     def test_negative_coefficient_rejected(self):
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         self.assertRaises(ValueError, Posynomial, [(-1.0, [1, 0])], 2)
 
     def test_multiterm_posynomial_equality_rejected(self):
         """A multi-term posynomial equality is not GP-compatible."""
-        from edi.solvers.ipopt.slcp import Constraint, Posynomial
+        from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial
 
         body = Posynomial([(1.0, [1, 0]), (1.0, [0, 1])], 2)
         self.assertRaises(ValueError, Constraint, body, '==')
 
     def test_posynomial_is_exact_in_logspace(self):
-        from edi.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
+        from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
 
         posy = Constraint(Posynomial([(1.0, [1, 1])], 2), '<=')
         self.assertTrue(posy.exact_in_logspace)
@@ -105,6 +105,98 @@ class TestSLCPSolve(unittest.TestCase):
         for value in objectives:
             self.assertAlmostEqual(value, 2.0, places=4)
 
+    def test_max_violation_reported_on_every_solve(self):
+        """A caller must always be able to tell whether x is usable."""
+        for method in ('slcp', 'lsqp', 'sqp'):
+            r = slcp.solve(_xy_problem(), [3.0, 3.0], method=method)
+            self.assertIsNotNone(r.max_violation, msg=f'{method}: {r.status}')
+            self.assertLessEqual(r.max_violation, 1e-6, msg=f'{method}: {r.status}')
+
+    def test_stalled_infeasible_is_not_reported_as_converged(self):
+        """A collapsed step at an INFEASIBLE point is a stall, not convergence.
+
+        Regression for the original behaviour, which set converged=True on step
+        magnitude alone. A signomial constraint that cannot be satisfied
+        anywhere (body >= 2 > 1 for every x) drives the iterates to a standstill
+        while remaining infeasible; the result must say so.
+        """
+        def impossible(x):
+            g = np.zeros(2)
+            return 2.0, g          # body == 2 > 1 always, gradient 0 -> no way out
+
+        problem = slcp.Problem(
+            2,
+            slcp.Posynomial([(1.0, [1, 0]), (1.0, [0, 1])], 2),
+            [slcp.Constraint(slcp.Signomial(impossible, 2), '<=')],
+        )
+        r = slcp.solve(problem, [1.0, 1.0], method='slcp',
+                       options=slcp.Options(max_iterations=50))
+        self.assertFalse(r.converged, msg=r.status)
+        self.assertIsNotNone(r.max_violation)
+        self.assertGreater(r.max_violation, 1e-6)
+
+    def test_feasibility_tolerance_is_configurable(self):
+        opts = slcp.Options(feasibility_tolerance=1e-3)
+        self.assertEqual(opts.feasibility_tolerance, 1e-3)
+        self.assertEqual(slcp.Options().feasibility_tolerance, 1e-6)
+
+    def test_agm_condensation_is_a_tight_underestimator(self):
+        """q_hat <= q everywhere, with equality at the linearization point."""
+        n = 2
+        pp = slcp.Posynomial([(1.0, [1, 0])], n)
+        qq = slcp.Posynomial([(1.0, [0, 0]), (2.0, [0, 1]), (0.5, [1, 1])], n)
+        pr = slcp.PosynomialRatio(pp, qq, n)
+        xk = np.array([1.5, 0.8])
+        c, a = pr.condensed_q(xk)
+        qhat = lambda x: c * np.prod(np.asarray(x, dtype=float) ** a)
+        self.assertAlmostEqual(qhat(xk), qq(xk), places=10)      # tight at x_k
+        for x in ([2.2, 0.35], [0.4, 3.0], [1.0, 1.0], [5.0, 0.1]):
+            self.assertLessEqual(qhat(x), qq(x) + 1e-12)         # under-estimator
+
+    def test_sp_form_matches_black_box_optimum(self):
+        """p/q <= 1 and the 2-q<=1 black box must find the same optimum."""
+        n = 2
+        obj = slcp.Posynomial([(1.0, [1, 0]), (1.0, [0, 1])], n)
+        q = slcp.Posynomial([(1.0, [1, 1])], n)
+        pp = slcp.Posynomial([(1.0, [0, 0])], n)
+
+        def bb(x):
+            return 2.0 - x[0] * x[1], np.array([-x[1], -x[0]])
+
+        r_bb = slcp.solve(slcp.Problem(n, obj, [slcp.Constraint(slcp.Signomial(bb, n), '<=')]),
+                          [3.0, 0.4], method='slcp')
+        r_sp = slcp.solve(slcp.Problem(n, obj, [slcp.Constraint(slcp.PosynomialRatio(pp, q, n), '<=')]),
+                          [3.0, 0.4], method='slcp')
+        self.assertTrue(r_bb.converged and r_sp.converged)
+        self.assertAlmostEqual(r_bb.objective, 2.0, places=5)
+        self.assertAlmostEqual(r_sp.objective, 2.0, places=5)
+
+    def test_sp_form_multiterm_q_converges_efficiently(self):
+        """A multi-term q makes the AGM condensation a real approximation,
+        iterated to tightness. SP-form constraints always enter the Reduced
+        Lagrangian (they are only PARTLY exact -- q's curvature is condensed
+        away and BFGS is the only thing left to supply it); measured, omitting
+        them failed to converge from every start."""
+        n = 3
+        obj = slcp.Posynomial([(1.0, [1, 0, 0]), (1.0, [0, 1, 0]), (1.0, [0, 0, 1])], n)
+        q = slcp.Posynomial([(0.6, [1, 1, 0]), (0.5, [0, 1, 1]),
+                             (0.4, [1, 0, 1]), (0.3, [2, 0, 0])], n)
+        pp = slcp.Posynomial([(1.0, [0, 0, 0])], n)
+        prob = slcp.Problem(n, obj, [slcp.Constraint(slcp.PosynomialRatio(pp, q, n), '<=')])
+        for start in ([0.5, 0.5, 0.5], [0.3, 0.9, 0.6], [1.0, 0.4, 0.4]):
+            r = slcp.solve(prob, start, method='slcp',
+                           options=slcp.Options(max_iterations=300))
+            self.assertTrue(r.converged, msg=f'{start}: {r.status}')
+            self.assertLess(r.iterations, 100)
+            self.assertLessEqual(r.max_violation, 1e-6)
+
+    def test_sp_form_equality_rejected(self):
+        n = 2
+        pp = slcp.Posynomial([(1.0, [0, 0])], n)
+        q = slcp.Posynomial([(1.0, [1, 1])], n)
+        self.assertRaises(ValueError, slcp.Constraint,
+                          slcp.PosynomialRatio(pp, q, n), '==')
+
     def test_rejects_unknown_method(self):
         self.assertRaises(ValueError, slcp.solve, _xy_problem(), [3.0, 3.0],
                           **{'method': 'nonsense'})
@@ -124,7 +216,7 @@ class TestSLCPSolve(unittest.TestCase):
         min x  s.t.  2/(x + y) <= 1 and y <= 1, so x >= 1 at the optimum.
         The ratio is not a sum of monomials, hence a Signomial.
         """
-        from edi.solvers.ipopt.slcp import (Constraint, Posynomial, Problem,
+        from lcsolver.solvers.ipopt.slcp import (Constraint, Posynomial, Problem,
                                             Signomial)
 
         def ratio(x):

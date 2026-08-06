@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "cost": 3.7509322005447796,
+    "gpkit_version": "1.1",
+    "units": "P kW, Q N*m, R ft, T_m/W lbf, rest dimensionless"
+  },
+  "source": "gpkit solve of gplibrary GP/aircraft/prop/prop_test.py simpleprop_test",
+  "values": {
+    "CP": 0.002951879,
+    "CT": 0.006836664,
+    "P_shaft": 26.6518,
+    "Q": 254.5059,
+    "R": 4.347527,
+    "T_m": 100.0001,
+    "Tc": 0.05265941,
+    "W": 0.7560412,
+    "eta": 0.8345068,
+    "etai": 0.9817727,
+    "lam": 0.3603165,
+    "z2": 1.052659
+  }
+}

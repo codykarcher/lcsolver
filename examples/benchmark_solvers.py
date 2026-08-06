@@ -1,10 +1,10 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""Compare EDI's solver backends on identical models.
+"""Compare LCsolver's solver backends on identical models.
 
 Four routes are available for a problem that happens to be a geometric program:
 
@@ -54,11 +54,11 @@ def _time(fn, repeats):
 
 
 def bench_case(name, build_formulation, slcp_case=None, repeats=5):
-    from edi.solvers.ipopt import ipopt_solve
-    from edi.solvers.ipopt.convex import solve_gp_ipopt
-    from edi.solvers.solver import cvxopt_solve
-    from edi.structure.structureDetector import structure_detector
-    from edi.units.unitCorrector import unit_corrector
+    from lcsolver.solvers.ipopt import ipopt_solve
+    from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+    from lcsolver.solvers.solver import cvxopt_solve
+    from lcsolver.presolve.structureDetector import structure_detector
+    from lcsolver.presolve.unitCorrector import unit_corrector
 
     print(f'\n{"=" * 76}\n{name.upper()}\n{"=" * 76}')
 
@@ -91,7 +91,7 @@ def bench_case(name, build_formulation, slcp_case=None, repeats=5):
 
     # --- SLCP -----------------------------------------------------------------
     if slcp_case is not None:
-        from edi.solvers.ipopt import slcp as slcp_mod
+        from lcsolver.solvers.ipopt import slcp as slcp_mod
 
         def run_slcp():
             problem, x0, _ = slcp_case()

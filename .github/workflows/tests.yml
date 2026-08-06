@@ -1,0 +1,30 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -e .[dev] || pip install -e .
+      - run: pytest -q
+
+  # The cross-path suite is separate because it is slower and because it fails
+  # for a different reason than a unit test does. A unit test failing says a
+  # function is wrong; this failing says two routes through the codebase
+  # disagree about what the problem IS, which is the defect class this
+  # repository actually produces. It found four real bugs in its first two
+  # runs, one of them introduced hours earlier the same day.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -e .[dev] || pip install -e .
+      - run: pytest -m "slow and not veryslow" -q
+      - run: pytest -m veryslow -q          # SPaircraft, about half a minute
+        timeout-minutes: 15

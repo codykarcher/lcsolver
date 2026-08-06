@@ -1,0 +1,3801 @@
+{
+  "meta": {
+    "Nclimb": 3,
+    "Ncruise": 2,
+    "Nmission": 1,
+    "fixedBPR": false,
+    "pRatOpt": true,
+    "reltol": 1e-06
+  },
+  "source": "convexengineering/SPaircraft @ master, solved with gpkit_ipopt (see module docstring)",
+  "values": {
+    "D8_no_BLI": {
+      "checked": {
+        "dry_weight_lbf": 69216.62042434639,
+        "fuel_lbf": 25033.069485755103,
+        "span_ft": 140.00000289708632,
+        "takeoff_weight_lbf": 132949.69243501287
+      },
+      "values": {
+        "Mission1.Aircraft.A_{corecowl}": 0.15145845644273193,
+        "Mission1.Aircraft.A_{exh}": 7.2473381016791185,
+        "Mission1.Aircraft.A_{fancowl}": 3.623669050839559,
+        "Mission1.Aircraft.A_{inlet}": 7.2473381016791185,
+        "Mission1.Aircraft.BLI_{wakebenefit}": 0.02,
+        "Mission1.Aircraft.C_{engsys}": 1.0,
+        "Mission1.Aircraft.D_{reduct}": 1.0,
+        "Mission1.Aircraft.D_{wakefraction}": 0.33,
+        "Mission1.Aircraft.Engine.Combustor.C_{p_{c}}": 1253.9,
+        "Mission1.Aircraft.Engine.Combustor.C_{p_{fuel}": 2010.0,
+        "Mission1.Aircraft.Engine.Combustor.T_{t_f}": 435.0,
+        "Mission1.Aircraft.Engine.Combustor.\\alpha_c": 0.16,
+        "Mission1.Aircraft.Engine.Combustor.\\eta_{B}": 0.985,
+        "Mission1.Aircraft.Engine.Combustor.\\pi_{b}": 0.94,
+        "Mission1.Aircraft.Engine.Combustor.h_{f}": 42.5,
+        "Mission1.Aircraft.Engine.Combustor.hold_{4a}": 1.00626,
+        "Mission1.Aircraft.Engine.Combustor.r_{uc}": 0.01,
+        "Mission1.Aircraft.Engine.Compressor.C_{p_{1}": 1008.0,
+        "Mission1.Aircraft.Engine.Compressor.C_{p_{2}": 1099.0,
+        "Mission1.Aircraft.Engine.Compressor.C_{p_{air}": 1003.0,
+        "Mission1.Aircraft.Engine.Compressor.\\gamma_{air}": 1.4,
+        "Mission1.Aircraft.Engine.Compressor.\\pi_{d}": 0.995,
+        "Mission1.Aircraft.Engine.Compressor.\\pi_{fn}": 0.985,
+        "Mission1.Aircraft.Engine.EngineConstants.M_{takeoff}": 0.9556,
+        "Mission1.Aircraft.Engine.EngineConstants.P_{ref}": 101.325,
+        "Mission1.Aircraft.Engine.EngineConstants.T_{ref}": 288.15,
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.M_{4a}[:]": [
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{4a}[:]": [
+          1617.5455398425188,
+          1743.837657893274,
+          958.9692475917197,
+          520.0106446587562,
+          476.177824618487
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{t_4}[:]": [
+          1575.7506372775356,
+          1698.7795601732607,
+          934.1909490655391,
+          506.57436500484175,
+          463.8741179880864
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{t_{4.1}}[:]": [
+          1617.5273526039095,
+          1743.8181993081948,
+          958.9585097527414,
+          520.0046966267197,
+          476.0341139375044
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{4.1}[:]": [
+          2481.410593515779,
+          2521.8586875074857,
+          2416.955779160486,
+          1570.659008513909,
+          1543.7562806530495
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{t_4}[:]": [
+          2809.73036309749,
+          2847.5648460261677,
+          2737.732208944763,
+          1760.9912155600061,
+          1731.132606859834
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{t_{4.1}}[:]": [
+          2481.417244585722,
+          2521.865395747071,
+          2416.962230702557,
+          1570.6632912928849,
+          1543.8673666707418
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.f[:]": [
+          0.0618780226562314,
+          0.061489005249581744,
+          0.060121778536013325,
+          0.03302005877885487,
+          0.032420207868870336
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.fp1[:]": [
+          1.0618779804490215,
+          1.0614889897774393,
+          1.060121733175191,
+          1.0330200291199307,
+          1.0324201786525788
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.h_{t_4}[:]": [
+          3523120.902287945,
+          3570561.5604322134,
+          3432842.4167958368,
+          2208106.8851906927,
+          2170667.175741545
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.h_{t_{4.1}}[:]": [
+          3111449.0829860414,
+          3162167.019727254,
+          3030628.9410779406,
+          1969454.7009521495,
+          1935855.2910684424
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_c[:]": [
+          1.0481399778198397,
+          1.0551732556937814,
+          1.034623756866911,
+          0.8297849591807975,
+          0.8227201459531553
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_{4.1}[:]": [
+          4.068571660981286,
+          4.096623193766834,
+          4.019430917256312,
+          3.2656615942070677,
+          3.2387981401581087
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_{4a}[:]": [
+          104.81399778198397,
+          105.51732556937814,
+          103.4623756866911,
+          82.97849591807974,
+          82.27201459531554
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_0}[:]": [
+          79.24608751782513,
+          51.89411543803637,
+          28.53755057333751,
+          19.40576827574841,
+          17.917759067681672
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_3}[:]": [
+          1676.3304651888684,
+          1807.2122980566596,
+          993.8201585803605,
+          538.9088989413214,
+          493.48310424264537
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_7}[:]": [
+          182.7681653478051,
+          128.61073246405317,
+          70.34187975374951,
+          47.66945937300688,
+          43.965650678136015
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{1.8}}[:]": [
+          78.84985708023602,
+          51.63464486084618,
+          28.39486282047083,
+          19.308739434369667,
+          17.82817027234326
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2.1}}[:]": [
+          185.55143690132508,
+          130.56927153710976,
+          71.41307589213153,
+          48.395390226402924,
+          44.63517835343757
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2.5}}[:]": [
+          1095.131038115525,
+          1229.7742452928992,
+          649.2536110968131,
+          430.30055468862867,
+          394.0295440213282
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2}}[:]": [
+          78.84985708023602,
+          51.63464486084618,
+          28.39486282047083,
+          19.308739434369667,
+          17.82817027234326
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_0}[:]": [
+          281.3513106338593,
+          262.3575696797552,
+          234.09007003443065,
+          217.49776166428978,
+          214.21115181786683
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_3}[:]": [
+          719.7129005862491,
+          783.5742798041124,
+          698.7016495416606,
+          607.1694083927679,
+          596.4642448210478
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_7}[:]": [
+          366.129735339091,
+          349.05447585373446,
+          310.92504836038916,
+          288.58223061596993,
+          284.12488530652905
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{1.8}}[:]": [
+          281.3513106338593,
+          262.3575696797552,
+          234.09007003443065,
+          217.49776166428978,
+          214.21115181786664
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2.1}}[:]": [
+          366.129735339091,
+          349.05447585373446,
+          310.92504836038916,
+          288.58223061596993,
+          284.12488530652905
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2.5}}[:]": [
+          635.1038077151154,
+          699.7905067650412,
+          616.5626798735818,
+          568.3248403671561,
+          558.304535692551
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2}}[:]": [
+          281.3513106338593,
+          262.3575696797552,
+          234.09007003443065,
+          217.49776166428978,
+          214.21115181786683
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{f}[:]": [
+          2.3532247713843253,
+          2.5287144297978617,
+          2.5149998555600472,
+          2.5063982240217526,
+          2.503632042525411
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{hc}[:]": [
+          1.5307122224144594,
+          1.4695480125510603,
+          1.530711792116884,
+          1.2524011253745257,
+          1.2524012773416147
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{lc}[:]": [
+          5.902034801799499,
+          9.418557910414458,
+          9.091522847685514,
+          8.891354169800058,
+          8.827780207379455
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.c1[:]": [
+          1.070839045405636,
+          1.1054628741380172,
+          1.1046289437721069,
+          1.104106913973196,
+          1.1039392298450543
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_0}[:]": [
+          282195.36456576077,
+          263144.6423887946,
+          234792.34024453402,
+          218150.25494928274,
+          214853.7852733203
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_3}[:]": [
+          790964.4777442884,
+          861148.1335047187,
+          767873.1128462849,
+          667279.1798236518,
+          655514.2050583321
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_7}[:]": [
+          367228.1245451087,
+          350101.6392812955,
+          311857.8235054705,
+          289447.9773078182,
+          284977.25996244873
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{1.8}}[:]": [
+          282195.36456576077,
+          263144.6423887946,
+          234792.34024453402,
+          218150.25494928274,
+          214853.7852733203
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2.1}}[:]": [
+          367228.1245451087,
+          350101.6392812955,
+          311857.8235054705,
+          289447.9773078182,
+          284977.25996244873
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2.5}}[:]": [
+          640184.6381768358,
+          705388.8308191623,
+          621495.1813125712,
+          572871.4390900929,
+          562770.9719780915
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2}}[:]": [
+          282195.36456576077,
+          263144.6423887946,
+          234792.34024453402,
+          218150.25494928274,
+          214853.7852733203
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.hold_{2.5}[:]": [
+          1.06372,
+          1.06372,
+          1.06372,
+          1.06372,
+          1.06372
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.CompressorPerformance.hold_{2}[:]": [
+          1.07164,
+          1.07164,
+          1.07164,
+          1.07164,
+          1.07164
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.FanMapPerformance.N_{f}[:]": [
+          0.9410752834451316,
+          1.0220850255996843,
+          1.0157232743453821,
+          1.0117358725072376,
+          1.0104540022088402
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.FanMapPerformance.m_{f}[:]": [
+          199.05948190870944,
+          242.88255402113984,
+          241.92037036441357,
+          241.3161035286,
+          241.1216823745046
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.FanMapPerformance.m_{tild_f}[:]": [
+          0.8374708453590524,
+          1.0218405869876332,
+          1.0177925469110554,
+          1.0152503125348835,
+          1.014432355777864
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.HPCMapPerformance.N_{2}[:]": [
+          0.8048501959080092,
+          0.7990723797615217,
+          0.8048501559336673,
+          0.7768148332193583,
+          0.7768148498549109
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.HPCMapPerformance.m_{hc}[:]": [
+          1.6496285609719317,
+          1.649628560971933,
+          1.6496285609719323,
+          1.6496285609719303,
+          1.6496285609719332
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.HPCMapPerformance.m_{tild_{hc}}[:]": [
+          0.33779348955650296,
+          0.3377934895565032,
+          0.33779348955650307,
+          0.3377934895565027,
+          0.3377934895565033
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.LPCMapPerformance.N_{1}[:]": [
+          0.9410752834451316,
+          1.0220850255996843,
+          1.0157232743453821,
+          1.0117358725072376,
+          1.0104540022088402
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.LPCMapPerformance.m_{lc}[:]": [
+          15.249424623776804,
+          24.056538827863843,
+          23.241472772698387,
+          22.742239448559335,
+          22.583624294436117
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.LPCMapPerformance.m_{tild_lc}[:]": [
+          0.7253280729040162,
+          1.1442322172306054,
+          1.105464178064009,
+          1.0817184988753887,
+          1.0741740815014913
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.M_2[:]": [
+          0.5944004937644027,
+          0.7252581422026106,
+          0.7223850188770288,
+          0.7205806511466947,
+          0.7200001009067137
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.M_5[:]": [
+          0.19503393016681744,
+          0.18740648463666687,
+          0.17135871053218146,
+          0.3561729040831595,
+          0.35970687532064
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.M_7[:]": [
+          0.4970618380857896,
+          0.581136201771968,
+          0.581061439922469,
+          0.5809775059935058,
+          0.5809604907211829
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.M_{2.5}[:]": [
+          0.6,
+          0.6,
+          0.6,
+          0.6,
+          0.6
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{2.5}[:]": [
+          864.6799852014257,
+          970.9898991181591,
+          512.6296153574482,
+          339.7513761463483,
+          311.1129613124391
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{2}[:]": [
+          61.83994840179736,
+          40.495745866611315,
+          22.269372662365445,
+          15.143355924033292,
+          13.982182981235972
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{5}[:]": [
+          97.24027156850366,
+          109.93031485534529,
+          67.11259531070932,
+          15.484002423768683,
+          14.011953854779806
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{7}[:]": [
+          119.12170141698245,
+          82.06726267825545,
+          44.92541892677756,
+          30.464438580317896,
+          28.1025883217518
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{2.5}[:]": [
+          597.0591957612108,
+          657.8709686431031,
+          579.6287367668016,
+          534.2804876914563,
+          524.8604291472861
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{2}[:]": [
+          262.5427481559659,
+          244.81875413362243,
+          218.44095968275784,
+          202.95786053552493,
+          199.89096321326826
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{5}[:]": [
+          1122.8442549216527,
+          1158.6012268482075,
+          1144.1974840518462,
+          581.5232707066232,
+          569.6905688873609
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{7}[:]": [
+          323.9798161788082,
+          307.0070006498937,
+          273.5400366404404,
+          253.92957553793363,
+          250.02059961941723
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_5[:]": [
+          0.3017482395773705,
+          0.3305990422467868,
+          0.20437188402094258,
+          0.09277569905641903,
+          0.08569939811743955
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_7[:]": [
+          1.281123614384223,
+          0.9314075895388942,
+          0.5722546602062456,
+          0.4180208996646605,
+          0.39164143417480957
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_{2.5}[:]": [
+          5.046103082370993,
+          5.142710695369221,
+          3.081568931747817,
+          2.2156951856087916,
+          2.0653439021190287
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_{2}[:]": [
+          0.8207052184986697,
+          0.5763453878903573,
+          0.35521558357280525,
+          0.2599766582890297,
+          0.24372491290737622
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.a_{5}[:]": [
+          668.5577684182624,
+          679.1194532409152,
+          674.8848407536166,
+          481.13032210297763,
+          476.21020050648127
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.a_{7}[:]": [
+          360.79785218407994,
+          351.2198924621543,
+          331.524338053979,
+          319.41963535628435,
+          316.95153718996517
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.h_{2.5}[:]": [
+          656168.0561415706,
+          723000.1945387695,
+          637011.9817067143,
+          587174.2559729103,
+          576821.6116328674
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.h_{2}[:]": [
+          264643.09014121344,
+          246777.3041666915,
+          220188.48736021994,
+          204581.523419809,
+          201490.09091897428
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.m_{total}[:]": [
+          168.77548549196442,
+          154.041477582817,
+          117.2660685970564,
+          98.37042860445251,
+          94.83672048624622
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{2.5}[:]": [
+          294.6281398552327,
+          309.268643088215,
+          290.2956194482703,
+          278.7084813498496,
+          276.2405586451763
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{2}[:]": [
+          185.36377799261606,
+          218.40403235153198,
+          205.4856347301513,
+          197.57465485390293,
+          195.91822395047495
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{5}[:]": [
+          130.39144911817093,
+          127.27138938025494,
+          115.64739606924606,
+          171.36558406588745,
+          171.2960832199964
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{7}[:]": [
+          179.33884358402554,
+          204.10659429222005,
+          192.63600923898215,
+          185.57562311464764,
+          184.1363205807208
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.F[:]": [
+          44740.605204487416,
+          41225.57005587652,
+          23037.987297479776,
+          11704.940090957585,
+          10701.603935703079
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{6}[:]": [
+          6551.011884376712,
+          11152.38994139833,
+          6622.63708393061,
+          594.6587782431207,
+          458.779886246781
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{8}[:]": [
+          38189.600267957554,
+          30073.18637364323,
+          16415.351481331287,
+          11110.282989148292,
+          10242.825555850446
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{sp}[:]": [
+          0.815877951771914,
+          0.9364567880442677,
+          0.9576444899217029,
+          0.7183288815234257,
+          0.7121938147545699
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.I_{sp}[:]": [
+          6137.250127707483,
+          5319.612013115768,
+          5405.539980852477,
+          7243.8574016636685,
+          7301.162197268722
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{6}[:]": [
+          62.36531724569805,
+          36.53537314175058,
+          20.144626949922966,
+          13.721193472557802,
+          12.675806726546645
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{8}[:]": [
+          62.36531724569805,
+          36.5353731417506,
+          20.144626949922984,
+          13.721193472557802,
+          12.675806726546645
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{t_6}[:]": [
+          141.1960434539776,
+          221.2519043183551,
+          142.53890499784376,
+          18.588808710797966,
+          16.600294547392657
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{t_8}[:]": [
+          182.7681653478051,
+          128.61073246405317,
+          70.34187975374951,
+          47.6694593730069,
+          43.965650678136015
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.TSFC[:]": [
+          0.5865819259585467,
+          0.67674108395951,
+          0.6659834193719645,
+          0.4969727867880444,
+          0.4930721853223194
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{6}[:]": [
+          986.5519794345714,
+          841.8088243923797,
+          807.2049895780782,
+          561.0973498410211,
+          552.9820193512448
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{8}[:]": [
+          271.2344145304486,
+          245.69216609870782,
+          219.34758972435287,
+          203.8742475354699,
+          200.81691256238142
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{t_6}[:]": [
+          1245.9886438380065,
+          1408.2884203743413,
+          1411.810680770369,
+          611.9450257932699,
+          597.2822855950814
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{t_8}[:]": [
+          366.129735339091,
+          349.05447585373446,
+          310.92504836038916,
+          288.58223061596993,
+          284.12488530652905
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.\\alpha[:]": [
+          13.05357328684632,
+          10.096321659532228,
+          10.408994848579301,
+          10.6109208846575,
+          10.676837306131995
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.\\alpha_{+1}[:]": [
+          14.053572113005206,
+          11.096320941497051,
+          11.408993889826908,
+          11.610919655883313,
+          11.676836092442999
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_6[:]": [
+          1015161.9868381738,
+          866221.2802997585,
+          830613.9342758424,
+          577369.1729864102,
+          569018.4979124308
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{8}[:]": [
+          272590.5866031011,
+          246920.62692920116,
+          220444.32767297485,
+          204893.61877314746,
+          201820.9971251935
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{t_6}[:]": [
+          1282122.3145093084,
+          1449128.7845651968,
+          1452753.1905127082,
+          629691.4315412747,
+          614603.4718773387
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{t_8}[:]": [
+          367960.3840157865,
+          350799.7482330032,
+          312479.67360219144,
+          290025.1417690498,
+          285545.50973306195
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.m_{core}[:]": [
+          12.009435565138924,
+          12.847547645793856,
+          7.2261109214796875,
+          4.988298724721462,
+          4.608632464467833
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.m_{fan}[:]": [
+          156.76604728319967,
+          129.71297356810078,
+          75.21655135694469,
+          52.93044311705732,
+          49.2056190268812
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.u_{6}[:]": [
+          730.6986579434863,
+          1079.729072709108,
+          1115.4722988930685,
+          323.48803834781694,
+          301.9436070768272
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.ThrustPerformance.u_{8}[:]": [
+          436.73743777009724,
+          455.80504310849574,
+          429.0346023566266,
+          412.62942901568675,
+          409.2053578213872
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_5}[:]": [
+          141.1960434539776,
+          221.2519043183551,
+          142.53890499784376,
+          18.588808710797966,
+          16.600294547392657
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_{4.5}}[:]": [
+          1407.0901302253187,
+          1516.950778732636,
+          834.199837298875,
+          452.35307774943027,
+          414.1029839734885
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_{4.9}}[:]": [
+          141.90557131053023,
+          222.36372293302014,
+          143.2551809023555,
+          18.682219809847197,
+          16.683713112957438
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_5}[:]": [
+          1245.9886438380065,
+          1408.2884203743413,
+          1411.810680770369,
+          611.9450257932699,
+          597.2822855950814
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_{4.5}}[:]": [
+          2391.393967229597,
+          2430.374700874407,
+          2329.277315266203,
+          1513.681235004826,
+          1487.8574390964382
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_{4.9}}[:]": [
+          1245.9886438380065,
+          1408.2884203743413,
+          1411.810680770369,
+          611.9450257932699,
+          597.2822855950814
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.\\pi_{HPT}[:]": [
+          0.8699019079709366,
+          0.8699019079709337,
+          0.8699019079709357,
+          0.8699019079709346,
+          0.8699019079709349
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.\\pi_{LPT}[:]": [
+          0.10085037785589955,
+          0.1465859842326577,
+          0.17172765385116037,
+          0.0413000833393152,
+          0.0402888019614598
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_5}[:]": [
+          1495684.7680631413,
+          1690509.4198173604,
+          1694737.5411967505,
+          734578.8089622403,
+          716977.6556283362
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_{4.5}}[:]": [
+          2956958.6404794003,
+          3005158.3176312027,
+          2880151.400326661,
+          1871666.847083468,
+          1839735.7234427466
+        ],
+        "Mission1.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_{4.9}}[:]": [
+          1495684.7680631413,
+          1690509.4198173604,
+          1694737.5411967505,
+          734578.8089622403,
+          716977.6556283362
+        ],
+        "Mission1.Aircraft.Engine.FanMap.\\bar{m}_{fan_{D}}": 237.6912378643651,
+        "Mission1.Aircraft.Engine.FanMap.\\pi_{f_D}": 2.589360497377225,
+        "Mission1.Aircraft.Engine.HPCMap.\\pi_{hc_D}": 5.429112333409949,
+        "Mission1.Aircraft.Engine.HPCMap.m_{hc_D}": 4.8835416074411855,
+        "Mission1.Aircraft.Engine.HTR_{f_{SUB}}": 0.91,
+        "Mission1.Aircraft.Engine.HTR_{lpc_{SUB}}": 0.64,
+        "Mission1.Aircraft.Engine.LPCMap.\\pi_{lc_D}": 8.639136414726988,
+        "Mission1.Aircraft.Engine.LPCMap.m_{lc_D}": 21.024175395172914,
+        "Mission1.Aircraft.Engine.OPR[:]": [
+          21.259778105660722,
+          34.999994730806065,
+          34.9999985865007,
+          27.91010261301935,
+          27.679963602783467
+        ],
+        "Mission1.Aircraft.Engine.OPR_{max}": 35.0,
+        "Mission1.Aircraft.Engine.Sizing.A_{2.5}": 0.008077784343612367,
+        "Mission1.Aircraft.Engine.Sizing.A_{2}": 1.0304808863324997,
+        "Mission1.Aircraft.Engine.Sizing.A_{5}": 0.30972730639206786,
+        "Mission1.Aircraft.Engine.Sizing.A_{7}": 0.6823176516789283,
+        "Mission1.Aircraft.Engine.Sizing.G_{f}": 1.0,
+        "Mission1.Aircraft.Engine.Sizing.\\alpha_{OD}": 9.619956124304107,
+        "Mission1.Aircraft.Engine.Sizing.m_{coreD}": 13.713108791125387,
+        "Mission1.Aircraft.Engine.Sizing.m_{htD}": 2.2401593781271196,
+        "Mission1.Aircraft.Engine.Sizing.m_{ltD}": 2.5280420935277084,
+        "Mission1.Aircraft.Engine.T_{t_{4.1_{max}}}": 1567.0,
+        "Mission1.Aircraft.Engine.Thrust.C_{p_{fex}": 1005.0,
+        "Mission1.Aircraft.Engine.Thrust.C_{p_{tex}": 1029.0,
+        "Mission1.Aircraft.Engine.Thrust.\\alpha_{max}": 69.18454117455572,
+        "Mission1.Aircraft.Engine.Turbine.C_{p_{t1}}": 1236.5,
+        "Mission1.Aircraft.Engine.Turbine.C_{p_{t2}}": 1200.4,
+        "Mission1.Aircraft.Engine.Turbine.\\eta_{HPshaft}": 0.978,
+        "Mission1.Aircraft.Engine.Turbine.\\eta_{LPshaft}": 0.99,
+        "Mission1.Aircraft.Engine.Turbine.\\pi_{tn}": 0.995,
+        "Mission1.Aircraft.Engine.W_{engine}": 18063.67380759706,
+        "Mission1.Aircraft.Engine.d_{LPC}": 0.1267684556344869,
+        "Mission1.Aircraft.Engine.d_{f}": 1.2007548059140054,
+        "Mission1.Aircraft.Engine.g": 9.81,
+        "Mission1.Aircraft.Fuselage.A_{0h}": 0.02288573266797622,
+        "Mission1.Aircraft.Fuselage.A_{1h_{Land}}": 0.0010230749651401305,
+        "Mission1.Aircraft.Fuselage.A_{1h_{MLF}}": 0.0016794404563708367,
+        "Mission1.Aircraft.Fuselage.A_{2h_{Land}}": 0.00015118501259391817,
+        "Mission1.Aircraft.Fuselage.A_{2h_{MLF}}": 7.559251238061399e-05,
+        "Mission1.Aircraft.Fuselage.A_{db}": 0.008260179878971607,
+        "Mission1.Aircraft.Fuselage.A_{floor}": 0.010324888433768475,
+        "Mission1.Aircraft.Fuselage.A_{fuse}": 16.033084887424433,
+        "Mission1.Aircraft.Fuselage.A_{hbendb_{Land}}": 0.01038369239848188,
+        "Mission1.Aircraft.Fuselage.A_{hbendb_{MLF}}": 0.010236047386737432,
+        "Mission1.Aircraft.Fuselage.A_{hbendf_{Land}}": 7.522725052126746e-07,
+        "Mission1.Aircraft.Fuselage.A_{hbendf_{MLF}}": 6.670345693706798e-06,
+        "Mission1.Aircraft.Fuselage.A_{skin}": 0.014180906985263681,
+        "Mission1.Aircraft.Fuselage.A_{vbend_{b}}": 0.0008348534527692888,
+        "Mission1.Aircraft.Fuselage.B_{0v}": 0.005948400924288507,
+        "Mission1.Aircraft.Fuselage.B_{1v}": 0.00048463734290491806,
+        "Mission1.Aircraft.Fuselage.C_{fuse}": 1.0,
+        "Mission1.Aircraft.Fuselage.I_{h_{shell}}": 0.08148937295332224,
+        "Mission1.Aircraft.Fuselage.I_{v_{shell}}": 0.04053723604988497,
+        "Mission1.Aircraft.Fuselage.M_{floor}": 104272.81007806523,
+        "Mission1.Aircraft.Fuselage.M_{fuseD}": 0.72,
+        "Mission1.Aircraft.Fuselage.N_{land}": 6.0,
+        "Mission1.Aircraft.Fuselage.N_{lift}": 3.0000000000000004,
+        "Mission1.Aircraft.Fuselage.P_{floor}": 1136165.461073099,
+        "Mission1.Aircraft.Fuselage.R_{fuse}": 1.680519559960152,
+        "Mission1.Aircraft.Fuselage.SPR": 8.0,
+        "Mission1.Aircraft.Fuselage.S_{bulk}": 23.996168243372097,
+        "Mission1.Aircraft.Fuselage.S_{floor}": 355051.706585343,
+        "Mission1.Aircraft.Fuselage.S_{nose}": 100.09690035175136,
+        "Mission1.Aircraft.Fuselage.V_{bulk}": 0.022528322392369737,
+        "Mission1.Aircraft.Fuselage.V_{cabin}": 405.20770256605056,
+        "Mission1.Aircraft.Fuselage.V_{cone}": 0.016975488753367036,
+        "Mission1.Aircraft.Fuselage.V_{cyl}": 0.2584470325940896,
+        "Mission1.Aircraft.Fuselage.V_{db}": 0.15054177991802978,
+        "Mission1.Aircraft.Fuselage.V_{floor}": 0.05390664630972669,
+        "Mission1.Aircraft.Fuselage.V_{hbend_{b}}": 0.01586766178094574,
+        "Mission1.Aircraft.Fuselage.V_{hbend_{c}}": 0.017888040878340308,
+        "Mission1.Aircraft.Fuselage.V_{hbend_{f}}": 0.001310990463655763,
+        "Mission1.Aircraft.Fuselage.V_{hbend}": 0.03506672547791787,
+        "Mission1.Aircraft.Fuselage.V_{nose}": 0.09397397195796098,
+        "Mission1.Aircraft.Fuselage.V_{vbend_{b}}": 0.0007190734797850748,
+        "Mission1.Aircraft.Fuselage.V_{vbend_{c}}": 0.0014381319861109536,
+        "Mission1.Aircraft.Fuselage.V_{vbend}": 0.0021572378585099977,
+        "Mission1.Aircraft.Fuselage.W''_{floor}": 60.0,
+        "Mission1.Aircraft.Fuselage.W''_{insul}": 22.0,
+        "Mission1.Aircraft.Fuselage.W'_{seat}": 1.0,
+        "Mission1.Aircraft.Fuselage.W'_{window}": 435.0,
+        "Mission1.Aircraft.Fuselage.W_{apu}": 1354.5000147354108,
+        "Mission1.Aircraft.Fuselage.W_{avg. pass_{total}}": 215.0,
+        "Mission1.Aircraft.Fuselage.W_{avg. pass}": 180.0,
+        "Mission1.Aircraft.Fuselage.W_{cargo}": 0.022480894309971054,
+        "Mission1.Aircraft.Fuselage.W_{carry on}": 15.0,
+        "Mission1.Aircraft.Fuselage.W_{checked}": 40.0,
+        "Mission1.Aircraft.Fuselage.W_{cone}": 161.72946236337464,
+        "Mission1.Aircraft.Fuselage.W_{db}": 896.4032077469558,
+        "Mission1.Aircraft.Fuselage.W_{fix}": 3000.0,
+        "Mission1.Aircraft.Fuselage.W_{floor}": 1841.1673410161036,
+        "Mission1.Aircraft.Fuselage.W_{fuse}": 31720.1430555014,
+        "Mission1.Aircraft.Fuselage.W_{hbend}": 208.80551716902443,
+        "Mission1.Aircraft.Fuselage.W_{insul}": 1028.6795425701414,
+        "Mission1.Aircraft.Fuselage.W_{lugg}[:]": 4961.179315300033,
+        "Mission1.Aircraft.Fuselage.W_{padd}": 13545.000147354112,
+        "Mission1.Aircraft.Fuselage.W_{pass}[:]": 33063.0185736264,
+        "Mission1.Aircraft.Fuselage.W_{payload_{max}}": 38700.00042101172,
+        "Mission1.Aircraft.Fuselage.W_{payload}[:]": 38700.00008976774,
+        "Mission1.Aircraft.Fuselage.W_{seat}": 3870.000228876553,
+        "Mission1.Aircraft.Fuselage.W_{shell}": 4915.1577339980995,
+        "Mission1.Aircraft.Fuselage.W_{skin}": 2232.6412994928455,
+        "Mission1.Aircraft.Fuselage.W_{tail}": 411.3189347176973,
+        "Mission1.Aircraft.Fuselage.W_{vbend}": 12.845496940971662,
+        "Mission1.Aircraft.Fuselage.W_{window}": 1782.2574093010096,
+        "Mission1.Aircraft.Fuselage.\\Delta P_{over}": 8.382,
+        "Mission1.Aircraft.Fuselage.\\Delta R_{fuse}": 0.4129276633044945,
+        "Mission1.Aircraft.Fuselage.\\lambda_{cone}": 0.3,
+        "Mission1.Aircraft.Fuselage.\\rho_{bend}": 2700.0,
+        "Mission1.Aircraft.Fuselage.\\rho_{cargo}": 150.0,
+        "Mission1.Aircraft.Fuselage.\\rho_{cone}": 2700.0,
+        "Mission1.Aircraft.Fuselage.\\rho_{floor}": 2700.0,
+        "Mission1.Aircraft.Fuselage.\\rho_{lugg}": 100.0,
+        "Mission1.Aircraft.Fuselage.\\rho_{skin}": 2700.0,
+        "Mission1.Aircraft.Fuselage.\\sigma_x": 38314193.831735,
+        "Mission1.Aircraft.Fuselage.\\sigma_{M_h}": 168582310.2635284,
+        "Mission1.Aircraft.Fuselage.\\sigma_{M_v}": 168579826.62298244,
+        "Mission1.Aircraft.Fuselage.\\sigma_{\\theta}": 103448275.8620686,
+        "Mission1.Aircraft.Fuselage.\\sigma_{bend}": 206896551.72413793,
+        "Mission1.Aircraft.Fuselage.\\sigma_{floor}": 206896551.72413793,
+        "Mission1.Aircraft.Fuselage.\\sigma_{skin}": 103448275.86206897,
+        "Mission1.Aircraft.Fuselage.\\tau_{cone}": 103448275.86206895,
+        "Mission1.Aircraft.Fuselage.\\tau_{floor}": 206896551.72413793,
+        "Mission1.Aircraft.Fuselage.\\theta_{db}": 0.553400282958951,
+        "Mission1.Aircraft.Fuselage.c_0": 6.890309136095914,
+        "Mission1.Aircraft.Fuselage.f_{apu}": 0.035,
+        "Mission1.Aircraft.Fuselage.f_{fadd}": 0.2,
+        "Mission1.Aircraft.Fuselage.f_{frame}": 0.25,
+        "Mission1.Aircraft.Fuselage.f_{lugg,1}": 0.4,
+        "Mission1.Aircraft.Fuselage.f_{lugg,2}": 0.1,
+        "Mission1.Aircraft.Fuselage.f_{padd}": 0.35,
+        "Mission1.Aircraft.Fuselage.f_{seat}": 0.1,
+        "Mission1.Aircraft.Fuselage.f_{string}": 0.35,
+        "Mission1.Aircraft.Fuselage.g": 9.81,
+        "Mission1.Aircraft.Fuselage.h_{db}": 3.7682245909784733,
+        "Mission1.Aircraft.Fuselage.h_{floor}": 0.130048,
+        "Mission1.Aircraft.Fuselage.h_{fuse}": 1.8869833916074248,
+        "Mission1.Aircraft.Fuselage.l_{cone}": 5.60173186653384,
+        "Mission1.Aircraft.Fuselage.l_{floor}": 21.586042022425637,
+        "Mission1.Aircraft.Fuselage.l_{fuse}": 32.66593206126098,
+        "Mission1.Aircraft.Fuselage.l_{nose}": 8.839199999999998,
+        "Mission1.Aircraft.Fuselage.l_{shell}": 18.22500019657832,
+        "Mission1.Aircraft.Fuselage.n_{pass}[:]": 180.0,
+        "Mission1.Aircraft.Fuselage.n_{rows}": 22.500000242689286,
+        "Mission1.Aircraft.Fuselage.n_{seat}": 180.00000194151434,
+        "Mission1.Aircraft.Fuselage.p_s": 81.0,
+        "Mission1.Aircraft.Fuselage.p_{\\lambda_{vt}}": 1.6,
+        "Mission1.Aircraft.Fuselage.r_E": 1.0,
+        "Mission1.Aircraft.Fuselage.r_{M_h}": 0.4,
+        "Mission1.Aircraft.Fuselage.r_{M_v}": 0.7,
+        "Mission1.Aircraft.Fuselage.r_{w/c}": 0.5,
+        "Mission1.Aircraft.Fuselage.t_{db}": 0.0010390975642514436,
+        "Mission1.Aircraft.Fuselage.t_{shell}": 0.0012674199047666168,
+        "Mission1.Aircraft.Fuselage.t_{skin}": 0.0009388299900169358,
+        "Mission1.Aircraft.Fuselage.w_{aisle}": 0.51,
+        "Mission1.Aircraft.Fuselage.w_{db}": 0.93,
+        "Mission1.Aircraft.Fuselage.w_{floor}": 2.6105195545464768,
+        "Mission1.Aircraft.Fuselage.w_{fuse}": 2.6105195545464768,
+        "Mission1.Aircraft.Fuselage.w_{seat}": 0.5,
+        "Mission1.Aircraft.Fuselage.w_{sys}": 0.1,
+        "Mission1.Aircraft.Fuselage.x_b": 15.868552604773253,
+        "Mission1.Aircraft.Fuselage.x_f": 19.313707168174993,
+        "Mission1.Aircraft.Fuselage.x_{hbend_{Land}}": 60.54175683528125,
+        "Mission1.Aircraft.Fuselage.x_{hbend_{MLF}}": 62.650713534782454,
+        "Mission1.Aircraft.Fuselage.x_{shell1}": 8.839199999999998,
+        "Mission1.Aircraft.Fuselage.x_{shell2}": 27.064201077202945,
+        "Mission1.Aircraft.Fuselage.x_{tail}": 29.865071214996853,
+        "Mission1.Aircraft.Fuselage.x_{vbend}": 57.71374432026667,
+        "Mission1.Aircraft.Fuselage.x_{wing}": 17.59112988615351,
+        "Mission1.Aircraft.HorizontalTail.C_{ht}": 1.0,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.AR_{ht}": 4.913516271760586,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.C_{L_{ht,fCG}}": 0.85,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.C_{L_{ht,max}}": 2.0,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.L_{ht_{max}}": 836352.0778321848,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.S_{ht}": 32.96178642850544,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.V_{ht}": 0.5592086789557433,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\Delta x_{lead_{ht}}": 12.238597988202812,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\Delta x_{trail_{ht}}": 16.223300315088476,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\alpha_{ht,max}": 2.5,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\bar{c}_{ht}": 2.840373879109026,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\eta_{ht}": 1.0,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\lambda_{ht}": 0.3,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\tan(\\Lambda_{ht})": 0.14054083470239143,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\tau_{ht}": 3.450915841556664e-10,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.b_{ht}": 12.726282802246649,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{attach}": 2.840377103622768,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{root_{ht}}": 3.9847016921053973,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{tip_{ht}}": 1.1954105076352017,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.e_{ht}": 0.9757931723281864,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.f(\\lambda_{ht})": 0.005041065109243641,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.l_{ht}": 13.433093795088286,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.m_{ratio}": 1.1866827910149849,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.p_{ht}": 1.6000007547899544,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.q_{ht}": 1.3000014758104208,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.x_{CG_{ht}}": 32.66593176813943,
+        "Mission1.Aircraft.HorizontalTail.HorizontalTailNoStruct.y_{\\bar{c}_{ht}}": 3.4467038791435876,
+        "Mission1.Aircraft.HorizontalTail.W_{ht}": 233.78407037003248,
+        "Mission1.Aircraft.HorizontalTail.WingBox.I_{cap}": 1.0000190141091342e-30,
+        "Mission1.Aircraft.HorizontalTail.WingBox.L_{ht_{rect_{out}}}": 113823.6600216427,
+        "Mission1.Aircraft.HorizontalTail.WingBox.L_{ht_{rect}}": 193004.32581725132,
+        "Mission1.Aircraft.HorizontalTail.WingBox.L_{ht_{tri_{out}}}": 78314.75546277608,
+        "Mission1.Aircraft.HorizontalTail.WingBox.L_{ht_{tri}}": 225171.71336428128,
+        "Mission1.Aircraft.HorizontalTail.WingBox.L_{shear}": 192139.01148489272,
+        "Mission1.Aircraft.HorizontalTail.WingBox.M_r": 1.1277165594186749e-20,
+        "Mission1.Aircraft.HorizontalTail.WingBox.M_{r_{out}}": 257135764276.5492,
+        "Mission1.Aircraft.HorizontalTail.WingBox.N_{lift}": 1.0,
+        "Mission1.Aircraft.HorizontalTail.WingBox.W_{cap}": 0.12778849638492418,
+        "Mission1.Aircraft.HorizontalTail.WingBox.W_{struct}": 179.8333428519968,
+        "Mission1.Aircraft.HorizontalTail.WingBox.W_{web}": 179.70499813732798,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\nu": 0.8225410927960635,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\pi_{M-fac}": 29.685644197201423,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\rho_{cap}": 2700.0,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\rho_{web}": 2700.0,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission1.Aircraft.HorizontalTail.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission1.Aircraft.HorizontalTail.WingBox.b_{ht_{out}}": 3.752621851980685,
+        "Mission1.Aircraft.HorizontalTail.WingBox.g": 9.81,
+        "Mission1.Aircraft.HorizontalTail.WingBox.r_h": 0.75,
+        "Mission1.Aircraft.HorizontalTail.WingBox.r_{w/c}": 0.5,
+        "Mission1.Aircraft.HorizontalTail.WingBox.t_{cap}": 7.933423974245337e-11,
+        "Mission1.Aircraft.HorizontalTail.WingBox.t_{web}": 139985.85611113033,
+        "Mission1.Aircraft.HorizontalTail.WingBox.taper": 0.3,
+        "Mission1.Aircraft.HorizontalTail.\\cos(\\Lambda_{ht})^3": 0.9710874159668281,
+        "Mission1.Aircraft.HorizontalTail.c_{d_{fh}}": 0.006,
+        "Mission1.Aircraft.HorizontalTail.c_{d_{ph}}": 0.0035,
+        "Mission1.Aircraft.HorizontalTail.f_{ht}": 0.3,
+        "Mission1.Aircraft.I_{z_{fuse}}[:]": 2457288.5316448174,
+        "Mission1.Aircraft.I_{z_{tail}}[:]": 1099156.127134171,
+        "Mission1.Aircraft.I_{z_{wing}}[:]": 2069132.693800753,
+        "Mission1.Aircraft.I_{z}[:]": 5625577.685258883,
+        "Mission1.Aircraft.LandingGear.B": 10.024838501576117,
+        "Mission1.Aircraft.LandingGear.C_{lg}": 1.0,
+        "Mission1.Aircraft.LandingGear.E": 205.0,
+        "Mission1.Aircraft.LandingGear.E_{land}": 449378.23908809567,
+        "Mission1.Aircraft.LandingGear.F_{w_m}": 5477.856607981839,
+        "Mission1.Aircraft.LandingGear.F_{w_n}": 248.9781165788748,
+        "Mission1.Aircraft.LandingGear.I_m": 5.375490388493196e-06,
+        "Mission1.Aircraft.LandingGear.I_n": 2.752477150203533e-07,
+        "Mission1.Aircraft.LandingGear.K": 2.0,
+        "Mission1.Aircraft.LandingGear.L_m": 525044.2152246601,
+        "Mission1.Aircraft.LandingGear.L_n": 66345.70740370789,
+        "Mission1.Aircraft.LandingGear.L_{n_{dyn}}": 76759.5905670139,
+        "Mission1.Aircraft.LandingGear.L_{w_m}": 131261.05380616503,
+        "Mission1.Aircraft.LandingGear.L_{w_n}": 33172.85370185394,
+        "Mission1.Aircraft.LandingGear.N_s": 2.0,
+        "Mission1.Aircraft.LandingGear.S_{sa}": 0.42794323416719066,
+        "Mission1.Aircraft.LandingGear.T": 7.030938993632189,
+        "Mission1.Aircraft.LandingGear.W_{lg}": 11875.457999193828,
+        "Mission1.Aircraft.LandingGear.W_{mg}": 11041.861774357112,
+        "Mission1.Aircraft.LandingGear.W_{ms}": 472.556035654201,
+        "Mission1.Aircraft.LandingGear.W_{mw}": 2019.3497715378871,
+        "Mission1.Aircraft.LandingGear.W_{ng}": 833.5952143307816,
+        "Mission1.Aircraft.LandingGear.W_{ns}": 65.17128255393202,
+        "Mission1.Aircraft.LandingGear.W_{nw}": 307.36919814106784,
+        "Mission1.Aircraft.LandingGear.W_{wa,m}": 226.98394394403712,
+        "Mission1.Aircraft.LandingGear.W_{wa,n}": 34.54963018130051,
+        "Mission1.Aircraft.LandingGear.\\Delta x_m": 1.124647590633366,
+        "Mission1.Aircraft.LandingGear.\\Delta x_n": 8.90019467326382,
+        "Mission1.Aircraft.LandingGear.\\eta_s": 0.8,
+        "Mission1.Aircraft.LandingGear.\\lambda_{LG}": 2.5,
+        "Mission1.Aircraft.LandingGear.\\rho_{st}": 7850.0,
+        "Mission1.Aircraft.LandingGear.\\sigma_{y_c}": 470000000.0,
+        "Mission1.Aircraft.LandingGear.\\tan(\\gamma)": 0.087488663525924,
+        "Mission1.Aircraft.LandingGear.\\tan(\\phi)": 0.2679491924311227,
+        "Mission1.Aircraft.LandingGear.\\tan(\\phi_{min})": 0.2679491924311227,
+        "Mission1.Aircraft.LandingGear.\\tan(\\psi)": 1.6723858548665624,
+        "Mission1.Aircraft.LandingGear.\\tan(\\psi_{max})": 1.9626105055051506,
+        "Mission1.Aircraft.LandingGear.\\tan(\\theta_{max})": 0.2679491924311227,
+        "Mission1.Aircraft.LandingGear.d_{nacelle}": 7.987984989896368,
+        "Mission1.Aircraft.LandingGear.d_{oleo}": 0.33733050236746753,
+        "Mission1.Aircraft.LandingGear.d_{t_m}": 41.732535654262385,
+        "Mission1.Aircraft.LandingGear.d_{t_n}": 33.38602852340991,
+        "Mission1.Aircraft.LandingGear.f_{add,m}": 1.5,
+        "Mission1.Aircraft.LandingGear.f_{add,n}": 1.5,
+        "Mission1.Aircraft.LandingGear.g": 9.81,
+        "Mission1.Aircraft.LandingGear.h_{hold}": 1.0,
+        "Mission1.Aircraft.LandingGear.h_{nacelle}": 1.000000000000002,
+        "Mission1.Aircraft.LandingGear.l_m": 2.1972315960584803,
+        "Mission1.Aircraft.LandingGear.l_n": 1.3896878465256106,
+        "Mission1.Aircraft.LandingGear.l_{oleo}": 1.0698580854179767,
+        "Mission1.Aircraft.LandingGear.n_{mg}": 2.0,
+        "Mission1.Aircraft.LandingGear.n_{wps}": 2.0,
+        "Mission1.Aircraft.LandingGear.p_{oleo}": 1800.0,
+        "Mission1.Aircraft.LandingGear.r_m": 0.06204472040006942,
+        "Mission1.Aircraft.LandingGear.r_n": 0.030066287749336628,
+        "Mission1.Aircraft.LandingGear.t_m": 0.007163969391189425,
+        "Mission1.Aircraft.LandingGear.t_n": 0.003223550074931362,
+        "Mission1.Aircraft.LandingGear.t_{nacelle}": 0.15,
+        "Mission1.Aircraft.LandingGear.w_{t_m}": 0.3707485190798132,
+        "Mission1.Aircraft.LandingGear.w_{t_n}": 0.29659881526385057,
+        "Mission1.Aircraft.LandingGear.w_{ult}": 10.0,
+        "Mission1.Aircraft.LandingGear.x_m": 18.86402506349382,
+        "Mission1.Aircraft.LandingGear.x_n": 8.839185691369465,
+        "Mission1.Aircraft.LandingGear.x_{CG_{lg}}": 18.160340380906263,
+        "Mission1.Aircraft.LandingGear.x_{up}": 27.064201077202945,
+        "Mission1.Aircraft.LandingGear.y_m": 3.515469496816094,
+        "Mission1.Aircraft.LandingGear.z_{CG}": 2.0,
+        "Mission1.Aircraft.LandingGear.z_{wing}": 0.5,
+        "Mission1.Aircraft.M_{min}": 0.72,
+        "Mission1.Aircraft.PRFC[:]": 0.4203194791026786,
+        "Mission1.Aircraft.SM_{min}": 0.05,
+        "Mission1.Aircraft.S_{nacelle}": 18.11834525419779,
+        "Mission1.Aircraft.V_{mn}": 133.76,
+        "Mission1.Aircraft.V_{ne}": 143.92,
+        "Mission1.Aircraft.VerticalTail.C_{VT}": 1.0,
+        "Mission1.Aircraft.VerticalTail.N_{spar}": 1.0,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.A_{vt}": 2.2,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.C_{D_{wm}}": 0.5,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,EO}}": 0.4585350305965248,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,max}}": 2.6,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,yaw}}": 2.2100000000000004,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.D_{wm}": 1546.3774935560555,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.I_{z, max}": 5625578.017938077,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.L_{vt,EO}": 6355.858109543102,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.L_{vt_{max}}": 152342.61033504625,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.S_{vt}": 4.618484604512245,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.T_e": 44740.605204487416,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.V_1": 70.0,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.V_{land}": 72.0,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.V_{vt_{min}}": 0.001,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.V_{vt}": 0.01639091875780239,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\Delta x_{lead_{vt}}": 12.001866137052566,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\Delta x_{trail_{vt}}": 14.23094582936736,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\bar{c}_{vt}": 1.5889292660809264,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\dot{r}_{req}": 0.1475,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\lambda_{vt}": 0.3,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\mu_0": 1.8e-05,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\rho_{TO}": 1.225,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\tan(\\Lambda_{vt})": 0.46630765815499864,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.\\tau_{vt}": 0.13999994176183936,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.b_{vt}": 3.1875799801615865,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.c_{l_{vt,EO}}": 0.5,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.c_{root_{vt}}": 2.2290780785643936,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.c_{tip_{vt}}": 0.6687234235693179,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.e_{vt}": 0.8,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.l_{vt}": 12.801661590903995,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.p_{vt}": 1.600003429577407,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.q_{vt}": 1.3000027105616456,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.x_{CG_{vt}}": 31.551761343316173,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.y_{\\bar{c}_{vt}}": 0.8633028608439044,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.y_{eng}": 3.515697877904207,
+        "Mission1.Aircraft.VerticalTail.VerticalTailNoStruct.z_{\\bar{c}_{vt}}": 0.8633028608437158,
+        "Mission1.Aircraft.VerticalTail.W_{vt}": 797.9263522551178,
+        "Mission1.Aircraft.VerticalTail.WingBox.AR_{vt}": 4.4,
+        "Mission1.Aircraft.VerticalTail.WingBox.I_{cap}": 1.0912258148310576e-05,
+        "Mission1.Aircraft.VerticalTail.WingBox.M_r": 193644.35500488523,
+        "Mission1.Aircraft.VerticalTail.WingBox.N_{lift}": 1.0,
+        "Mission1.Aircraft.VerticalTail.WingBox.W_{cap}": 1068.5163544849288,
+        "Mission1.Aircraft.VerticalTail.WingBox.W_{struct}": 569.9470923990517,
+        "Mission1.Aircraft.VerticalTail.WingBox.W_{web}": 71.37722617577842,
+        "Mission1.Aircraft.VerticalTail.WingBox.\\nu": 0.8225385505825783,
+        "Mission1.Aircraft.VerticalTail.WingBox.\\rho_{cap}": 2700.0,
+        "Mission1.Aircraft.VerticalTail.WingBox.\\rho_{web}": 2700.0,
+        "Mission1.Aircraft.VerticalTail.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission1.Aircraft.VerticalTail.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission1.Aircraft.VerticalTail.WingBox.g": 9.81,
+        "Mission1.Aircraft.VerticalTail.WingBox.r_h": 0.75,
+        "Mission1.Aircraft.VerticalTail.WingBox.r_{w/c}": 0.5,
+        "Mission1.Aircraft.VerticalTail.WingBox.t_{cap}": 0.0027484336231147774,
+        "Mission1.Aircraft.VerticalTail.WingBox.t_{web}": 0.0008742611802024316,
+        "Mission1.Aircraft.VerticalTail.WingBox.taper": 0.3,
+        "Mission1.Aircraft.VerticalTail.\\cos(\\Lambda_{vt})^3": 0.7444356015531176,
+        "Mission1.Aircraft.VerticalTail.c_{d_{fv}}": 0.006,
+        "Mission1.Aircraft.VerticalTail.c_{d_{pv}}": 0.0035,
+        "Mission1.Aircraft.VerticalTail.f_{VT}": 0.4,
+        "Mission1.Aircraft.W_{dry}[:]": 69216.62042434639,
+        "Mission1.Aircraft.W_{eadd}": 406.0875417183818,
+        "Mission1.Aircraft.W_{engsys}": 6599.822768842014,
+        "Mission1.Aircraft.W_{f_{climb}}[:]": 2489.637588511503,
+        "Mission1.Aircraft.W_{f_{cruise}}[:]": 18371.25068168415,
+        "Mission1.Aircraft.W_{f_{primary}}[:]": 20860.88830005368,
+        "Mission1.Aircraft.W_{f_{total}}[:]": 25033.065998895407,
+        "Mission1.Aircraft.W_{hpesys}": 1329.4969356989375,
+        "Mission1.Aircraft.W_{misc}": 3999.206323163565,
+        "Mission1.Aircraft.W_{nacelle}": 1478.8231769977886,
+        "Mission1.Aircraft.W_{pylon}": 654.0365569184333,
+        "Mission1.Aircraft.W_{total, max}": 132949.6935698937,
+        "Mission1.Aircraft.W_{total}[:]": 132949.69243501287,
+        "Mission1.Aircraft.Wing.C_{wing}": 1.0,
+        "Mission1.Aircraft.Wing.TipReduct": 1.0,
+        "Mission1.Aircraft.Wing.W_{wing}": 88458.69803251854,
+        "Mission1.Aircraft.Wing.WingBox.I_{cap}": 1.1478884884587558e-05,
+        "Mission1.Aircraft.Wing.WingBox.M_r": 1849506.7934249437,
+        "Mission1.Aircraft.Wing.WingBox.N_{lift}": 3.0000000000000004,
+        "Mission1.Aircraft.Wing.WingBox.W_{cap}": 54513.70275081244,
+        "Mission1.Aircraft.Wing.WingBox.W_{struct}": 57403.437473596976,
+        "Mission1.Aircraft.Wing.WingBox.W_{web}": 2889.7341480364335,
+        "Mission1.Aircraft.Wing.WingBox.\\nu": 0.8867366187428308,
+        "Mission1.Aircraft.Wing.WingBox.\\rho_{cap}": 2700.0,
+        "Mission1.Aircraft.Wing.WingBox.\\rho_{web}": 2700.0,
+        "Mission1.Aircraft.Wing.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission1.Aircraft.Wing.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission1.Aircraft.Wing.WingBox.g": 9.81,
+        "Mission1.Aircraft.Wing.WingBox.r_h": 0.75,
+        "Mission1.Aircraft.Wing.WingBox.r_{w/c}": 0.5,
+        "Mission1.Aircraft.Wing.WingBox.t_{cap}": 0.0025988632284411743,
+        "Mission1.Aircraft.Wing.WingBox.t_{web}": 0.0006233803521408284,
+        "Mission1.Aircraft.Wing.WingBox.taper": 0.15000000546710304,
+        "Mission1.Aircraft.Wing.WingNoStruct.AR": 10.770514247199765,
+        "Mission1.Aircraft.Wing.WingNoStruct.A_{rect}": 44.103491827120955,
+        "Mission1.Aircraft.Wing.WingNoStruct.A_{tri}": 849412.804877408,
+        "Mission1.Aircraft.Wing.WingNoStruct.C_{L_{w,max}}": 3.5029772750376846,
+        "Mission1.Aircraft.Wing.WingNoStruct.FuelFrac": 0.9,
+        "Mission1.Aircraft.Wing.WingNoStruct.L_{max}": 2184536.5670212586,
+        "Mission1.Aircraft.Wing.WingNoStruct.S": 169.06337998645913,
+        "Mission1.Aircraft.Wing.WingNoStruct.V_{fuel, max}": 25.38348114691039,
+        "Mission1.Aircraft.Wing.WingNoStruct.W_{fuel_{wing}}": 123725.17376017055,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\bar{A}_{fuel, max}": 1.000000000000002,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\cos(\\Lambda)": 0.9734312373241428,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\eta": 0.97,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\lambda": 0.15000000546710304,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\rho_0": 1.225,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\rho_{fuel}": 817.0,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\tan(\\Lambda)": 0.23522928327838724,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\tau": 0.14732999482713327,
+        "Mission1.Aircraft.Wing.WingNoStruct.\\tau_{max_w}": 0.14733,
+        "Mission1.Aircraft.Wing.WingNoStruct.b": 42.67199951752793,
+        "Mission1.Aircraft.Wing.WingNoStruct.b_{max}": 42.672000000000004,
+        "Mission1.Aircraft.Wing.WingNoStruct.c_{root}": 6.890309136095916,
+        "Mission1.Aircraft.Wing.WingNoStruct.c_{tip}": 1.0335464080844174,
+        "Mission1.Aircraft.Wing.WingNoStruct.e": 0.9531560393900042,
+        "Mission1.Aircraft.Wing.WingNoStruct.f(\\lambda_w)": 0.004563027859534467,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{aileron}": 0.04,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{flap}": 0.2,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{lete}": 0.1,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{ribs}": 0.15,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{slat}": 0.001,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{spoiler}": 0.02,
+        "Mission1.Aircraft.Wing.WingNoStruct.f_{watt}": 0.03,
+        "Mission1.Aircraft.Wing.WingNoStruct.g": 9.81,
+        "Mission1.Aircraft.Wing.WingNoStruct.mac": 4.683422498303029,
+        "Mission1.Aircraft.Wing.WingNoStruct.p": 1.3000000284171729,
+        "Mission1.Aircraft.Wing.WingNoStruct.q": 1.1500000191664776,
+        "Mission1.Aircraft.Wing.WingNoStruct.wwn": 0.5,
+        "Mission1.Aircraft.Wing.WingNoStruct.x_w": 17.59112988615351,
+        "Mission1.Aircraft.Wing.WingNoStruct.y_{mac}": 12.582769023161102,
+        "Mission1.Aircraft.Wing.\\Delta x_{AC_{wing}}": 1.2728955989923747,
+        "Mission1.Aircraft.\\Delta x_{CG}": 1.8287999999999998,
+        "Mission1.Aircraft.\\rho_{T/O}": 1.225,
+        "Mission1.Aircraft.f_{L_{total/wing}}": 1.195,
+        "Mission1.Aircraft.f_{S_{nacelle}}": 0.1071689519968722,
+        "Mission1.Aircraft.f_{eadd}": 0.1,
+        "Mission1.Aircraft.f_{fuel_{res}}": 0.2,
+        "Mission1.Aircraft.f_{hpesys}": 0.01,
+        "Mission1.Aircraft.f_{pylon}": 0.11,
+        "Mission1.Aircraft.f_{wingfuel}": 1.0,
+        "Mission1.Aircraft.l_{nacelle}": 2.881811534193613,
+        "Mission1.Aircraft.n_{aisle}": 2.0,
+        "Mission1.Aircraft.n_{eng}": 2.0,
+        "Mission1.Aircraft.n_{vt}": 2.0,
+        "Mission1.Aircraft.r_{S_{nacelle}}": 16.0,
+        "Mission1.Aircraft.r_{v_{nacelle}}": 1.0,
+        "Mission1.Aircraft.x_{CG_{min}}": 17.074896,
+        "Mission1.Aircraft.x_{eng}": 31.26550164065786,
+        "Mission1.Aircraft.x_{hpesys}": 9.723119999999996,
+        "Mission1.Aircraft.x_{misc}": 3.2323615134998365,
+        "Mission1.ClimbTime": 15.999999780035814,
+        "Mission1.CruiseAlt": 1.1222349756405983,
+        "Mission1.FlightSegment.FlightP.AircraftP.C_D[:]": [
+          0.013651247332328758,
+          0.015703800334640392,
+          0.020111777514242556,
+          0.02719850295196486,
+          0.027414718606217008
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.C_{d_{nacelle}}[:]": [
+          0.001105710979256295,
+          0.0011057109683918671,
+          0.0011057105666896733,
+          0.001105710353649747,
+          0.001105710361266343
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.C_{f_{nacelle}}[:]": [
+          0.010317449275891974,
+          0.01059413363957501,
+          0.011414264742323892,
+          0.011976487684329792,
+          0.012096619909581729
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.D[:]": [
+          35590.42923914752,
+          35707.789839180296,
+          25015.349708551188,
+          22927.75397585667,
+          21314.931803141924
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.D_{nacelle}[:]": [
+          2882.720341090991,
+          2514.2000051490018,
+          1375.3004418727369,
+          932.0900860537965,
+          859.6893253929657
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.F_{fuel}[:]": [
+          0.9649098536650953,
+          0.9280576482948979,
+          0.8806559956519482,
+          0.4207124175492997,
+          1.5465779797394481e-06
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.FuselagePerformance.C_{D_{fuse}}[:]": [
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.FuselagePerformance.D_{fuse}[:]": [
+          10431.955980726583,
+          13545.341654622227,
+          7350.893257599355,
+          4957.106361628884,
+          4564.695391217851
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.FuselagePerformance.L_{fuse}[:]": [
+          97851.9167226907,
+          97132.63392197422,
+          96020.45506880572,
+          91985.97250814183,
+          85304.1308227962
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{D_{0,ht}}[:]": [
+          0.0002465841438726319,
+          0.0003155764869879265,
+          0.000298081427550744,
+          0.00028734030736250033,
+          0.00028505096480625373
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{D_{ht}}[:]": [
+          0.00025322817878462874,
+          0.00032221972269169755,
+          0.00030472224327695793,
+          0.0002939799756527086,
+          0.0002916906732394947
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{\\alpha,ht_0}}[:]": [
+          6.28,
+          6.28,
+          6.28,
+          6.28,
+          6.28
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{\\alpha,ht}}[:]": [
+          0.44713041622272365,
+          0.44870576184174404,
+          0.45507714266865784,
+          0.4555519064706542,
+          0.4551758596424146
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{ht}}[:]": [
+          0.010000888339566779,
+          0.010000328639041309,
+          0.010000057801964788,
+          0.010000016572281766,
+          0.01000001738003653
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.D_{ht}[:]": [
+          128.71646853268376,
+          142.84712978359386,
+          73.89609231907079,
+          48.316498772231576,
+          44.21645204561098
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.L_{ht}[:]": [
+          5083.474656876816,
+          4433.3668685654675,
+          2425.0451381010603,
+          1643.5329901779846,
+          1515.8705077162986
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.Re_{c_h}[:]": [
+          14346022.7833525,
+          12567994.82205242,
+          8656723.009143356,
+          6806845.091328591,
+          6475496.220995092
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.\\alpha_{ht}[:]": [
+          0.02236682626973263,
+          0.022287051982560226,
+          0.021974423376490703,
+          0.021951431725433682,
+          0.021969568834104055
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.L/D[:]": [
+          16.705965863375905,
+          16.545834321643504,
+          23.425936186861072,
+          24.51462859368375,
+          24.454469011298823
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.L_{total}[:]": [
+          599656.6178646951,
+          595248.7053167137,
+          588433.045165244,
+          563708.9084473305,
+          522761.21196534054
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.P_{cabin}[:]": [
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.R_{e_{nacelle}}[:]": [
+          14555314.084157841,
+          12751346.823129116,
+          8783014.236102948,
+          6906148.813695577,
+          6569965.95995474
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.SM[:]": [
+          0.09312396404801933,
+          0.09310790530043027,
+          0.09306500837977333,
+          0.1236493794750043,
+          0.11734674901093084
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.T_{cabin}[:]": [
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.V_2[:]": [
+          193.12855727459277,
+          223.9609465695505,
+          210.7933859100347,
+          202.7259713909424,
+          201.0416197479249
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.V_{nacelle_ratio}[:]": [
+          1.0000002256637441,
+          1.000000222388495,
+          1.0000001012892865,
+          1.0000000370650084,
+          1.0000000393612611
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.V_{nacelle}[:]": [
+          193.12855727459277,
+          223.9609465695505,
+          210.7933859100347,
+          202.7259713909424,
+          201.04161974792473
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.V_{stall}[:]": [
+          120.0,
+          120.0,
+          120.0,
+          120.0,
+          120.0
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.C_{D_{vis}}[:]": [
+          0.015213174876439799,
+          0.01451653166026196,
+          0.013578796041799254,
+          0.013006409432844573,
+          0.012891082476108639
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.D_{vt}[:]": [
+          1083.5054437660037,
+          901.7194416843142,
+          461.3893263776923,
+          299.51871798730826,
+          273.8038697877677
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.Re_{vt}[:]": [
+          8025286.9595755655,
+          7030643.020480669,
+          4842644.3570521,
+          3807806.942191738,
+          3622447.5705862963
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{Load_{max}}[:]": [
+          6664.0,
+          6664.0,
+          6664.0,
+          6664.0,
+          6664.0
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{Load}[:]": [
+          3127.9236675765655,
+          3104.9261576860513,
+          3069.3728849854397,
+          2940.4072119194857,
+          2726.816651993221
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{avg}[:]": [
+          133665.21440665057,
+          132820.53498509026,
+          131739.83597267588,
+          126357.32250326767,
+          117180.61381421467
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{buoy}[:]": [
+          924.6948795459297,
+          881.5099395183591,
+          786.2924600546085,
+          786.2915728747691,
+          786.2914206492186
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{burn}[:]": [
+          732.0178944607875,
+          768.7693281126114,
+          988.850317707847,
+          9594.821094484076,
+          8776.429554851837
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{end}[:]": [
+          132217.67249223325,
+          131448.90111503648,
+          130460.04961388501,
+          120865.22806042663,
+          112088.7983107924
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.W_{start}[:]": [
+          132949.69243498804,
+          132217.67249220883,
+          131448.9011150124,
+          130460.04961386115,
+          120865.22806040623
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.C_{D_{i_w}}[:]": [
+          0.0012756735409693756,
+          0.0016524758322598479,
+          0.005396794300291444,
+          0.010782779318320012,
+          0.010900849623609826
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.C_{D_{p_w}}[:]": [
+          0.005282254921936956,
+          0.005026893932616581,
+          0.00579230483250387,
+          0.007555900506054043,
+          0.007670264787847275
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.C_{L_{\\alpha,w}}[:]": [
+          5.876492738268677,
+          6.555972256684331,
+          6.536499274910057,
+          6.52440435862014,
+          6.520534636867121
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.C_{L}[:]": [
+          0.2028358904281446,
+          0.2308567717058495,
+          0.4171988253285508,
+          0.5897127452365004,
+          0.592932601223104
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.C_{d_w}[:]": [
+          0.00655792921613543,
+          0.006679370507127363,
+          0.011189099468848272,
+          0.01833867994023948,
+          0.018571114534707136
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.D_{wing}[:]": [
+          17097.30327495196,
+          15187.760493898546,
+          13917.180415246075,
+          15459.113417174744,
+          14439.033480570257
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.L_w[:]": [
+          501804.70114200434,
+          498116.0713947395,
+          492412.5900964386,
+          471722.93593918876,
+          437457.08114254446
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.Re_w[:]": [
+          23654803.460520737,
+          20723056.968338247,
+          14273857.255481135,
+          11223639.140489446,
+          10677286.153116513
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.\\Delta L_{o}[:]": [
+          26695.00621124348,
+          26498.36124654227,
+          26194.82338537226,
+          25094.188140676146,
+          23271.351692276126
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.\\Delta L_{t}[:]": [
+          158.53470137066924,
+          157.3668780516463,
+          155.56424561191264,
+          149.02785905125185,
+          138.20250730913634
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.\\alpha_w[:]": [
+          0.03451648788864186,
+          0.035213201439414296,
+          0.06382603405617142,
+          0.0903856831708108,
+          0.09093312653699505
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.\\alpha_{max,w}[:]": [
+          0.18000000000000002,
+          0.18000000000000002,
+          0.18000000000000002,
+          0.09999999999999998,
+          0.09999999999999998
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.\\eta_{o}[:]": [
+          0.12235281140149902,
+          0.12235281140149902,
+          0.12235281140149902,
+          0.12235281140149902,
+          0.12235281140149902
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.c_{m_{w}}[:]": [
+          1.9,
+          1.9,
+          1.9,
+          1.9,
+          1.9
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.f_{L_{o}}[:]": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.f_{L_{t}}[:]": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.WingPerformance.p_{o}[:]": [
+          20451.872244934155,
+          20301.21643823182,
+          20068.666668097845,
+          19225.43586924844,
+          17828.9043280651
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.\\rho_{cabin}[:]": [
+          0.8798789286594149,
+          0.879878928659415,
+          0.879878928659416,
+          0.8798789286594163,
+          0.879878928659415
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.r_{v_{nsurf}}[:]": [
+          1.000000227026888,
+          1.0000002237516379,
+          1.000000102652409,
+          1.0000000384281273,
+          1.0000000407243796
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.thr[:]": [
+          0.062036542693049875,
+          0.06128627928215929,
+          0.1433438373595318,
+          3.6685251285240006,
+          3.699260487378694
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.tmin[:]": [
+          3.7221925615829936,
+          3.6771767569295557,
+          8.600630241571901,
+          220.11150771144003,
+          221.95562924272156
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.x_{AC}[:]": [
+          19.144526664472046,
+          19.14426997909025,
+          19.143239513872437,
+          18.849140483017564,
+          18.911618588219337
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.x_{CG}[:]": [
+          18.434981876884763,
+          18.434981958975946,
+          18.43497960123693,
+          17.739379558122298,
+          17.884530787029263
+        ],
+        "Mission1.FlightSegment.FlightP.AircraftP.x_{NP}[:]": [
+          1.5157210048789098,
+          1.5157210048789103,
+          1.5157210048789098,
+          1.5157210048789098,
+          1.5157210048789103
+        ],
+        "Mission1.FlightSegment.FlightP.P_{excess}[:]": [
+          10407847.687336452,
+          10468683.847150862,
+          4439440.165769652,
+          97739.43939813251,
+          17747.101547660666
+        ],
+        "Mission1.FlightSegment.FlightP.RC[:]": [
+          3445.818514726608,
+          3488.0020439349387,
+          1491.286066698314,
+          34.230977467781045,
+          6.702264104037309
+        ],
+        "Mission1.FlightSegment.FlightP.RC_{min}[:]": [
+          500.0,
+          500.0,
+          500.0,
+          500.0,
+          500.0
+        ],
+        "Mission1.FlightSegment.FlightP.R_{segment}[:]": [
+          23.289255269440947,
+          26.680690729551618,
+          58.735074608461595,
+          1445.6474907708405,
+          1445.6474907708405
+        ],
+        "Mission1.FlightSegment.FlightP.\\theta[:]": [
+          0.09063785440038606,
+          0.07911669715008501,
+          0.03593914100350714,
+          0.0008577754707165125,
+          0.00016935548813822667
+        ],
+        "Mission1.FlightSegment.FlightP.dhft[:]": [
+          12826.00004408033,
+          12826.00004408033,
+          12826.00004408033,
+          7534.632060869625,
+          1487.6052465625057
+        ],
+        "Mission1.FlightState.Altitude.h[:]": [
+          3909.3648134356868,
+          7818.7296274303035,
+          11728.094442553902,
+          14024.650290892489,
+          14478.072367003004
+        ],
+        "Mission1.FlightState.Altitude.hft[:]": [
+          12826.00004408033,
+          25652.000089994468,
+          38478.00013961252,
+          46012.63218796746,
+          47500.23742455051
+        ],
+        "Mission1.FlightState.Atmosphere.C_1[:]": [
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06
+        ],
+        "Mission1.FlightState.Atmosphere.L_{atm}[:]": [
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451
+        ],
+        "Mission1.FlightState.Atmosphere.M_{atm}[:]": [
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287
+        ],
+        "Mission1.FlightState.Atmosphere.P_{atm}[:]": [
+          62365.31724569798,
+          36535.37314175062,
+          20144.62694992297,
+          13721.193472557792,
+          12675.806726546636
+        ],
+        "Mission1.FlightState.Atmosphere.R_{atm}[:]": [
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695
+        ],
+        "Mission1.FlightState.Atmosphere.T_s[:]": [
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789
+        ],
+        "Mission1.FlightState.Atmosphere.T_{atm}[:]": [
+          262.7391220379744,
+          237.32825029002268,
+          211.91737854981025,
+          196.98976513208393,
+          194.04252156881216
+        ],
+        "Mission1.FlightState.Atmosphere.T_{sl}[:]": [
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844
+        ],
+        "Mission1.FlightState.Atmosphere.\\mu[:]": [
+          3.161832335733335e-05,
+          2.7144126850357502e-05,
+          2.2903485523517205e-05,
+          2.0526609185934685e-05,
+          2.006767618288641e-05
+        ],
+        "Mission1.FlightState.Atmosphere.\\rho[:]": [
+          0.8268911551973085,
+          0.5362830427812164,
+          0.3311483620460708,
+          0.24264881830633792,
+          0.22756666978250467
+        ],
+        "Mission1.FlightState.Atmosphere.p_{sl}[:]": [
+          101325.0,
+          101325.0,
+          101325.0,
+          101325.0,
+          101325.0
+        ],
+        "Mission1.FlightState.M[:]": [
+          0.5944004937644027,
+          0.7252581422026106,
+          0.7223850188770288,
+          0.7205806511466947,
+          0.7200001009067137
+        ],
+        "Mission1.FlightState.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission1.FlightState.V[:]": [
+          375.41188239121675,
+          435.3452525110049,
+          409.74956224412796,
+          394.06776296295504,
+          390.79364529834186
+        ],
+        "Mission1.FlightState.\\gamma[:]": [
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142
+        ],
+        "Mission1.FlightState.a[:]": [
+          324.9131844616897,
+          308.8016990603932,
+          291.80198980001,
+          281.33696216840497,
+          279.22443273931253
+        ],
+        "Mission1.Fsafetyfac": 1.0,
+        "Mission1.MaxClimbTime": 16.0,
+        "Mission1.MinCruiseAlt": 38478.0,
+        "Mission1.R_{req}": 3000.0,
+        "Mission1.T_{t_{4.1_{max-Cruise}}}": 3000.0,
+        "Mission1.TotalTime": 4445.26178991467
+      }
+    },
+    "optimalD8": {
+      "checked": {
+        "dry_weight_lbf": 74014.33475232196,
+        "fuel_lbf": 20859.749589703384,
+        "span_ft": 140.000001164358,
+        "takeoff_weight_lbf": 133574.08713690913
+      },
+      "paper_sp": {
+        "empty_weight_lbf": 77129.0,
+        "fuel_lbf": 27529.0,
+        "span_ft": 140.0,
+        "takeoff_weight_lbf": 143421.0
+      },
+      "values": {
+        "Mission.Aircraft.A_{corecowl}": 0.12070326885596024,
+        "Mission.Aircraft.A_{exh}": 3.8400425839911625,
+        "Mission.Aircraft.A_{fancowl}": 1.920021291995581,
+        "Mission.Aircraft.A_{inlet}": 3.8400425839911616,
+        "Mission.Aircraft.BLI_{wakebenefit}": 0.02,
+        "Mission.Aircraft.C_{engsys}": 1.0,
+        "Mission.Aircraft.D_{reduct}": 0.98416,
+        "Mission.Aircraft.D_{wakefraction}": 0.33,
+        "Mission.Aircraft.Engine.Combustor.C_{p_{c}}": 1257.9,
+        "Mission.Aircraft.Engine.Combustor.C_{p_{fuel}": 2010.0,
+        "Mission.Aircraft.Engine.Combustor.T_{t_f}": 435.0,
+        "Mission.Aircraft.Engine.Combustor.\\alpha_c": 0.16,
+        "Mission.Aircraft.Engine.Combustor.\\eta_{B}": 0.985,
+        "Mission.Aircraft.Engine.Combustor.\\pi_{b}": 0.94,
+        "Mission.Aircraft.Engine.Combustor.h_{f}": 43.003,
+        "Mission.Aircraft.Engine.Combustor.hold_{4a}": 1.00626,
+        "Mission.Aircraft.Engine.Combustor.r_{uc}": 0.01,
+        "Mission.Aircraft.Engine.Compressor.C_{p_{1}": 1008.0,
+        "Mission.Aircraft.Engine.Compressor.C_{p_{2}": 1099.0,
+        "Mission.Aircraft.Engine.Compressor.C_{p_{air}": 1003.0,
+        "Mission.Aircraft.Engine.Compressor.\\gamma_{air}": 1.4,
+        "Mission.Aircraft.Engine.Compressor.\\pi_{d}": 0.995,
+        "Mission.Aircraft.Engine.Compressor.\\pi_{fn}": 0.985,
+        "Mission.Aircraft.Engine.EngineConstants.M_{takeoff}": 0.9556,
+        "Mission.Aircraft.Engine.EngineConstants.P_{ref}": 101.325,
+        "Mission.Aircraft.Engine.EngineConstants.T_{ref}": 288.15,
+        "Mission.Aircraft.Engine.EngineConstants.f_{BLI_{P}}": 0.9626999907300536,
+        "Mission.Aircraft.Engine.EngineConstants.f_{BLI_{V}}": 0.927288,
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.M_{4a}[:]": [
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033,
+          0.10249999910593033
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{4a}[:]": [
+          1708.6461052627471,
+          1709.2599143795776,
+          935.5745000468921,
+          497.93236615795894,
+          432.0974967712134
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{t_4}[:]": [
+          1664.4973034339919,
+          1665.0952526621252,
+          911.4006860128528,
+          485.0665554497492,
+          420.93275838747417
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.P_{t_{4.1}}[:]": [
+          1705.0899776258584,
+          1709.2407989659234,
+          935.5640389103528,
+          492.95012519292675,
+          429.54157500801006
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{4.1}[:]": [
+          2686.9447155765088,
+          2227.817447665506,
+          2352.5961895695236,
+          1640.1119479414879,
+          1684.2120697686905
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{t_4}[:]": [
+          3047.7669077330934,
+          2504.2320873562185,
+          2662.7082836465993,
+          1847.3728061277752,
+          1900.9268671728637
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.T_{t_{4.1}}[:]": [
+          2688.279538772558,
+          2227.823387000381,
+          2352.602460478571,
+          1644.0484455903754,
+          1686.5956894876733
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.f[:]": [
+          0.06835275571581574,
+          0.05018490316504733,
+          0.057153153885645444,
+          0.035172287147194954,
+          0.03725228301463441
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.fp1[:]": [
+          1.0683527520817155,
+          1.050184888900359,
+          1.0571531484083307,
+          1.0351722696063366,
+          1.0372522491019827
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.h_{t_4}[:]": [
+          3833785.993237455,
+          3150073.5426853853,
+          3349420.7499990547,
+          2323810.252828131,
+          2391175.9062167457
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.h_{t_{4.1}}[:]": [
+          3381586.8318219865,
+          2802379.0385077423,
+          2959338.6350360215,
+          2068048.5397081482,
+          2121568.7178065428
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_c[:]": [
+          1.0916359720928945,
+          0.9895192598749638,
+          1.0203490356902758,
+          0.8498929699111563,
+          0.8621238668100439
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_{4.1}[:]": [
+          4.2245503743311446,
+          3.862347636453189,
+          3.9695364660103354,
+          3.341318793723366,
+          3.386004000501871
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CombustorPerformance.u_{4a}[:]": [
+          109.1635972092894,
+          98.9519259874964,
+          102.03490356902758,
+          84.98929699111567,
+          86.21238668100436
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_0}[:]": [
+          77.07857406529024,
+          50.86513015104327,
+          27.841356462183203,
+          18.2648254673277,
+          17.363177480791027
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_3}[:]": [
+          1770.7418121638204,
+          1771.3779283639637,
+          969.5751978860133,
+          516.0282504784569,
+          447.8008067951855
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_7}[:]": [
+          133.74915411268702,
+          95.43716541799688,
+          51.489184317466425,
+          33.46389035805122,
+          31.279115542902932
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{1.8}}[:]": [
+          76.69318119496374,
+          50.61080450028806,
+          27.702149679872292,
+          18.173501339991066,
+          17.276361593387076
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2.1}}[:]": [
+          135.78594326161115,
+          96.89052326700195,
+          52.27328357103188,
+          33.97349274929057,
+          31.755447251678106
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2.5}}[:]": [
+          1207.7527838545084,
+          1432.0430748199033,
+          703.394524004087,
+          430.1755533516338,
+          360.29208415550903
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.P_{t_{2}}[:]": [
+          76.69318119496367,
+          50.610804500287884,
+          27.70214967987238,
+          18.173501339991105,
+          17.276361593387076
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_0}[:]": [
+          282.17895512789573,
+          263.70923326712733,
+          234.98232678907948,
+          216.7787750143499,
+          214.53160900384196
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_3}[:]": [
+          741.0015587679059,
+          789.7429299613893,
+          702.5187260669496,
+          608.8048211747188,
+          585.4046116663224
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_7}[:]": [
+          336.41955695799174,
+          322.0531795297364,
+          285.69800752426283,
+          262.80751491493993,
+          258.73467562536956
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{1.8}}[:]": [
+          282.17895512789545,
+          263.70923326712733,
+          234.98232678907948,
+          216.7787750143499,
+          214.53160900384196
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2.1}}[:]": [
+          336.41955695799174,
+          322.0531795297364,
+          285.69800752426255,
+          262.80751491493993,
+          258.73467562536956
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2.5}}[:]": [
+          662.2206079157248,
+          741.9170946162402,
+          639.3117927898983,
+          577.1155646540587,
+          549.1818993787284
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.T_{t_{2}}[:]": [
+          282.17895512789545,
+          263.7092332671278,
+          234.98232678907928,
+          216.7787750143499,
+          214.53160900384196
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{f}[:]": [
+          1.770508683378596,
+          1.914423693194816,
+          1.8869757103728382,
+          1.869397212662114,
+          1.8380865137618583
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{hc}[:]": [
+          1.4661459164784936,
+          1.2369585520929522,
+          1.3784230112664035,
+          1.199575955578873,
+          1.242882723456966
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.\\pi_{lc}[:]": [
+          8.894534698099037,
+          14.780011775492337,
+          13.45609986501564,
+          12.662093842577221,
+          11.345835607352987
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.c1[:]": [
+          1.0739891073890089,
+          1.1111582078970506,
+          1.1088393429940444,
+          1.107362342434042,
+          1.104747341289163
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_0}[:]": [
+          283025.4919932795,
+          264500.36096692877,
+          235687.2737694468,
+          217429.1113393928,
+          215175.20383085354
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_3}[:]": [
+          814360.713085929,
+          867927.4800275705,
+          772068.0799475755,
+          669076.4984710146,
+          643359.6682212881
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_7}[:]": [
+          337428.81562886527,
+          323019.3390683257,
+          286555.1015468357,
+          263595.9374596851,
+          259510.8796522455
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{1.8}}[:]": [
+          283025.49199328,
+          264500.36096692877,
+          235687.2737694468,
+          217429.1113393928,
+          215175.20383085354
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2.1}}[:]": [
+          337428.81562886527,
+          323019.3390683257,
+          286555.1015468357,
+          263595.9374596851,
+          259510.8796522455
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2.5}}[:]": [
+          667518.3727790503,
+          747852.4313731671,
+          644426.2871322194,
+          581732.489171293,
+          553575.3545737584
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.h_{t_{2}}[:]": [
+          283025.49199328,
+          264500.36096692877,
+          235687.2737694468,
+          217429.11133939243,
+          215175.20383085395
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.hold_{2.5}[:]": [
+          1.0637199999999984,
+          1.0637199999999958,
+          1.0637200000000027,
+          1.063720000000003,
+          1.06372
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.CompressorPerformance.hold_{2}[:]": [
+          1.0716399999999995,
+          1.07164,
+          1.07164,
+          1.0716400000000001,
+          1.07164
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.FanMapPerformance.N_{f}[:]": [
+          0.9403426689757995,
+          1.0286149862240843,
+          1.011701083638927,
+          1.000888013812722,
+          0.9816652016632424
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.FanMapPerformance.m_{f}[:]": [
+          287.4462630401976,
+          352.3250623544037,
+          348.6307775737533,
+          346.25715545723915,
+          342.0143066957862
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.FanMapPerformance.m_{tild_f}[:]": [
+          0.8370562891640665,
+          1.0259862353216025,
+          1.015228313903872,
+          1.0083162208409362,
+          0.9959608567385007
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.HPCMapPerformance.N_{2}[:]": [
+          0.7871522188009151,
+          0.7638638534019624,
+          0.7786184338460813,
+          0.7597335334079152,
+          0.7645089390741753
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.HPCMapPerformance.m_{hc}[:]": [
+          1.3146546213664534,
+          1.3146546213664672,
+          1.3146546213664314,
+          1.3146546213664276,
+          1.3146546213664458
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.HPCMapPerformance.m_{tild_{hc}}[:]": [
+          0.30468600555317493,
+          0.304686005553178,
+          0.30468600555316966,
+          0.3046860055531685,
+          0.30468600555317293
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.LPCMapPerformance.N_{1}[:]": [
+          0.9403426689758002,
+          1.028614986224084,
+          1.0117010836389269,
+          1.0008880138127216,
+          0.9816652016632424
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.LPCMapPerformance.m_{lc}[:]": [
+          13.514311712046313,
+          22.177341911860264,
+          20.237572893034354,
+          19.07197972547921,
+          17.135691914569446
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.LPCMapPerformance.m_{tild_lc}[:]": [
+          0.7252473115588717,
+          1.1901499641126099,
+          1.0860520051544273,
+          1.0235002948525822,
+          0.9195891553740708
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.M_2[:]": [
+          0.6074726207664213,
+          0.7445837935982931,
+          0.7367765017802559,
+          0.731760223493742,
+          0.7227936276877113
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.M_5[:]": [
+          0.15067995138939197,
+          0.22057879956518434,
+          0.16413795647853807,
+          0.30528093074531126,
+          0.2851538578853494
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.M_7[:]": [
+          0.5380234498170894,
+          0.6459306324663202,
+          0.6455972916709282,
+          0.6453388933057131,
+          0.6448450685133164
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.M_{2.5}[:]": [
+          0.6000000000000002,
+          0.6000000000000008,
+          0.5999999999999995,
+          0.5999999999999994,
+          0.6
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{2.5}[:]": [
+          953.6024666667685,
+          1130.694813356641,
+          555.3775260111397,
+          339.65267914072473,
+          284.47495610375773
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{2}[:]": [
+          60.148522058070185,
+          39.6927737698556,
+          21.72609526836503,
+          14.253017402446766,
+          13.549413392324851
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{5}[:]": [
+          112.4193364940343,
+          72.27897703040448,
+          55.865115727210735,
+          14.256593412739583,
+          13.449855446709577
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.P_{7}[:]": [
+          92.52358092949555,
+          62.6149597552427,
+          33.867911465248085,
+          22.049697458457416,
+          20.675828052319808
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{2.5}[:]": [
+          622.5516187678392,
+          697.4740482610487,
+          601.0151099818532,
+          542.5446213797405,
+          516.2842659522513
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{2}[:]": [
+          263.31506394675023,
+          246.08005791789031,
+          219.2735683523191,
+          202.28693872415164,
+          200.18999757739718
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{5}[:]": [
+          1248.5644400478059,
+          912.1451430158767,
+          1063.5039732452008,
+          603.0838392546052,
+          632.7504643044234
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.T_{7}[:]": [
+          302.80003224135464,
+          285.5161062670078,
+          253.4707783412176,
+          233.27802970494133,
+          229.87176040356113
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_5[:]": [
+          0.3137243001976707,
+          0.27609983725703563,
+          0.1830289082804127,
+          0.08236755534553827,
+          0.07406333218541857
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_7[:]": [
+          1.0646690249636017,
+          0.7641270901812243,
+          0.465563174303274,
+          0.3293418340258695,
+          0.3133974029666713
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_{2.5}[:]": [
+          5.337158523268583,
+          5.648530138504572,
+          3.219741565412048,
+          2.18131148241296,
+          1.9198763220404373
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.\\rho_{2}[:]": [
+          0.7959162258640637,
+          0.5620217615370783,
+          0.3452339511160142,
+          0.24550315435515097,
+          0.23582846393997672
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.a_{5}[:]": [
+          704.9927645624387,
+          602.575061660526,
+          650.651952372191,
+          489.96834674113563,
+          501.874829589209
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.a_{7}[:]": [
+          348.8051790822154,
+          338.7039584919015,
+          319.13094293330624,
+          306.15537286718546,
+          303.9119499627333
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.h_{2.5}[:]": [
+          684184.2290258551,
+          766523.9790388923,
+          660515.6058700567,
+          596256.5388963347,
+          567396.4082815241
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.h_{2}[:]": [
+          265421.58445832453,
+          248048.69838123326,
+          221027.7568991375,
+          203905.2342339447,
+          201791.5175580164
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.m_{total}[:]": [
+          230.19546012332427,
+          213.29676933668782,
+          161.05047723517325,
+          132.34621986742397,
+          128.00625874935105
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{2.5}[:]": [
+          300.8522136737722,
+          318.44142192693164,
+          295.60258211620817,
+          280.8557108982023,
+          273.97439272016925
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{2}[:]": [
+          189.7187518875166,
+          224.80061079815894,
+          209.9783921433185,
+          200.30805652580517,
+          196.82542583026748
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{5}[:]": [
+          106.22827549418291,
+          132.91528374906756,
+          106.79668184114682,
+          149.57799292889743,
+          143.11154383292055
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.SizingPerformance.u_{7}[:]": [
+          187.66536576396513,
+          218.7792621277034,
+          206.03007244627364,
+          197.5739695059288,
+          195.9761221955519
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.F[:]": [
+          46073.6484174058,
+          38985.063615393636,
+          22272.04536906444,
+          11422.426922084325,
+          10452.771979118874
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{6}[:]": [
+          7145.739532177705,
+          6454.48185352874,
+          4924.522558822481,
+          235.2372301453176,
+          146.7503056140924
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{8}[:]": [
+          38927.910963485556,
+          32530.583630561534,
+          17347.524729820303,
+          11187.19035428614,
+          10306.022738921927
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.F_{sp}[:]": [
+          0.6160110801060279,
+          0.645640399819131,
+          0.6834581078455335,
+          0.5391165999102443,
+          0.5272749917742976
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.I_{sp}[:]": [
+          6647.318604101879,
+          6838.697360271579,
+          6483.416127382594,
+          8394.021290246708,
+          8447.118572588548
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{6}[:]": [
+          62.3653172156749,
+          36.53537313557669,
+          20.14462694491507,
+          13.277320291451089,
+          12.726760142600076
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{8}[:]": [
+          62.365317215674956,
+          36.53537313557666,
+          20.144626944915053,
+          13.277320291451094,
+          12.726760142600076
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{t_6}[:]": [
+          179.81735733440195,
+          118.80675233398186,
+          110.75910296760864,
+          16.17487166262214,
+          14.95122422403251
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.P_{t_8}[:]": [
+          133.7491541126869,
+          95.43716541799688,
+          51.489184317466425,
+          33.46389035805122,
+          31.279115542902932
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.TSFC[:]": [
+          0.5415717546287814,
+          0.526416042463536,
+          0.5552628320115783,
+          0.42887668204784746,
+          0.4261808294821664
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{6}[:]": [
+          1051.7962213639553,
+          748.1045883624429,
+          791.0119226108351,
+          590.4465011654022,
+          622.3973171700989
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{8}[:]": [
+          271.9122151773439,
+          246.36293074385753,
+          219.88263640036058,
+          203.0583960577705,
+          201.32018534645763
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{t_6}[:]": [
+          1423.4044309978706,
+          1047.8146912142247,
+          1287.284426995002,
+          624.7049637113835,
+          651.7123752654675
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.T_{t_8}[:]": [
+          336.41955695799146,
+          322.0531795297364,
+          285.69800752426283,
+          262.80751491493993,
+          258.73467562536956
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.\\alpha[:]": [
+          21.269767130202837,
+          15.886712833064287,
+          17.22690657701098,
+          18.155281226240827,
+          19.959176927369487
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.\\alpha_{+1}[:]": [
+          22.26976694265081,
+          16.886712278094297,
+          18.226906112991745,
+          19.155280386049572,
+          20.959175440769698
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_6[:]": [
+          1082298.3117835098,
+          769799.6214249543,
+          813951.2683665493,
+          607569.4496991982,
+          640446.8393680323
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{8}[:]": [
+          273271.77625323087,
+          247594.74539757686,
+          220982.0495823622,
+          204073.6880380592,
+          202326.78627318976
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{t_6}[:]": [
+          1464683.1594968087,
+          1078201.317259437,
+          1324615.675377857,
+          642821.407659014,
+          670612.0341481665
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.h_{t_8}[:]": [
+          338101.6547427814,
+          323663.4454273854,
+          287126.4975618844,
+          264121.55248951464,
+          260028.3490034964
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.m_{core}[:]": [
+          10.336680039077239,
+          11.57931222649492,
+          6.126987540342614,
+          3.943834704671206,
+          3.386109397564094
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.m_{fan}[:]": [
+          219.8587773305888,
+          183.95720814671506,
+          105.54904195599244,
+          71.60142817311419,
+          67.58395656141025
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.u_{6}[:]": [
+          874.5110164074193,
+          785.368248071399,
+          1010.6081078212645,
+          265.5257223349715,
+          245.6224387654516
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.ThrustPerformance.u_{8}[:]": [
+          360.0829821726295,
+          390.047942298726,
+          363.7154039547455,
+          346.5483066802242,
+          339.71035515036186
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_5}[:]": [
+          179.81735733440195,
+          118.80675233398186,
+          110.75910296760864,
+          16.17487166262214,
+          14.95122422403251
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_{4.5}}[:]": [
+          1537.2229238405293,
+          1540.9650945180908,
+          843.4572405007901,
+          444.41891202232085,
+          387.2529687637369
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.P_{t_{4.9}}[:]": [
+          180.72096214512754,
+          119.40377118993149,
+          111.31568137448102,
+          16.256152424745874,
+          15.02635600405277
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_5}[:]": [
+          1423.4044309978706,
+          1047.8146912142247,
+          1287.284426995002,
+          624.7049637113835,
+          651.7123752654675
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_{4.5}}[:]": [
+          2615.4142856355597,
+          2167.438701294549,
+          2288.835664153612,
+          1599.4868572474838,
+          1640.8808670215722
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.T_{t_{4.9}}[:]": [
+          1423.4044309978706,
+          1047.8146912142247,
+          1287.284426995002,
+          624.7049637113835,
+          651.7123752654675
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.\\pi_{HPT}[:]": [
+          0.90154944549081,
+          0.9015494454908687,
+          0.9015494454908276,
+          0.901549445490833,
+          0.9015494454908479
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.\\pi_{LPT}[:]": [
+          0.11756327552910954,
+          0.07748635683877893,
+          0.131975488536193,
+          0.03657844431231005,
+          0.038802429461090485
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_5}[:]": [
+          1708654.678969842,
+          1257796.7553335538,
+          1545256.2261647987,
+          749895.8384391445,
+          782315.535268667
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_{4.5}}[:]": [
+          3233959.7641883823,
+          2680037.954150742,
+          2830145.2987259147,
+          1977765.4989864987,
+          2028949.1920721766
+        ],
+        "Mission.Aircraft.Engine.EnginePerformance.TurbinePerformance.h_{t_{4.9}}[:]": [
+          1708654.678969842,
+          1257796.7553335538,
+          1545256.2261647987,
+          749895.8384391445,
+          782315.535268667
+        ],
+        "Mission.Aircraft.Engine.FanMap.\\bar{m}_{fan_{D}}": 343.4013539606261,
+        "Mission.Aircraft.Engine.FanMap.\\pi_{f_D}": 1.949493363614407,
+        "Mission.Aircraft.Engine.HPCMap.\\pi_{hc_D}": 5.897491198803712,
+        "Mission.Aircraft.Engine.HPCMap.m_{hc_D}": 4.3147850488886865,
+        "Mission.Aircraft.Engine.HTR_{f_{SUB}}": 0.91,
+        "Mission.Aircraft.Engine.HTR_{lpc_{SUB}}": 0.64,
+        "Mission.Aircraft.Engine.LPCMap.\\pi_{lc_D}": 13.07694049983943,
+        "Mission.Aircraft.Engine.LPCMap.m_{lc_D}": 18.63407350383442,
+        "Mission.Aircraft.Engine.OPR[:]": [
+          23.088647316147753,
+          34.99999547238754,
+          34.99999852323655,
+          28.394542186701358,
+          25.91985612101398
+        ],
+        "Mission.Aircraft.Engine.OPR_{max}": 35.0,
+        "Mission.Aircraft.Engine.Sizing.A_{2.5}": 0.00643750767231788,
+        "Mission.Aircraft.Engine.Sizing.A_{2}": 1.4560161464299828,
+        "Mission.Aircraft.Engine.Sizing.A_{5}": 0.31665299282662734,
+        "Mission.Aircraft.Engine.Sizing.A_{7}": 1.1003860088336879,
+        "Mission.Aircraft.Engine.Sizing.G_{f}": 1.0,
+        "Mission.Aircraft.Engine.Sizing.\\alpha_{OD}": 15.615102683635136,
+        "Mission.Aircraft.Engine.Sizing.m_{coreD}": 10.010542422771357,
+        "Mission.Aircraft.Engine.Sizing.m_{htD}": 1.9154424128147782,
+        "Mission.Aircraft.Engine.Sizing.m_{ltD}": 2.0956202264548183,
+        "Mission.Aircraft.Engine.T_{t_{4.1_{max}}}": 1567.0,
+        "Mission.Aircraft.Engine.Thrust.C_{p_{fex}": 1005.0,
+        "Mission.Aircraft.Engine.Thrust.C_{p_{tex}": 1029.0,
+        "Mission.Aircraft.Engine.Thrust.\\alpha_{max}": 75.50763007288728,
+        "Mission.Aircraft.Engine.Turbine.C_{p_{t1}}": 1236.5,
+        "Mission.Aircraft.Engine.Turbine.C_{p_{t2}}": 1200.4,
+        "Mission.Aircraft.Engine.Turbine.\\eta_{HPshaft}": 0.978,
+        "Mission.Aircraft.Engine.Turbine.\\eta_{LPshaft}": 0.99,
+        "Mission.Aircraft.Engine.Turbine.\\pi_{tn}": 0.995,
+        "Mission.Aircraft.Engine.W_{engine}": 24912.58979176187,
+        "Mission.Aircraft.Engine.d_{LPC}": 0.1131680811471035,
+        "Mission.Aircraft.Engine.d_{f}": 1.4273072069758588,
+        "Mission.Aircraft.Engine.g": 9.81,
+        "Mission.Aircraft.Fuselage.A_{0h}": 0.011511488501189528,
+        "Mission.Aircraft.Fuselage.A_{1h_{Land}}": 0.0012118772585144382,
+        "Mission.Aircraft.Fuselage.A_{1h_{MLF}}": 0.0018805728865866436,
+        "Mission.Aircraft.Fuselage.A_{2h_{Land}}": 0.00016200707775747912,
+        "Mission.Aircraft.Fuselage.A_{2h_{MLF}}": 7.498383570351126e-05,
+        "Mission.Aircraft.Fuselage.A_{db}": 0.003386740119551601,
+        "Mission.Aircraft.Fuselage.A_{floor}": 0.01032488854473799,
+        "Mission.Aircraft.Fuselage.A_{fuse}": 16.03308510757433,
+        "Mission.Aircraft.Fuselage.A_{hbendb_{Land}}": 0.01276624144805235,
+        "Mission.Aircraft.Fuselage.A_{hbendb_{MLF}}": 0.012962735019588749,
+        "Mission.Aircraft.Fuselage.A_{hbendf_{Land}}": 0.00223145570116429,
+        "Mission.Aircraft.Fuselage.A_{hbendf_{MLF}}": 0.0037267837119002003,
+        "Mission.Aircraft.Fuselage.A_{skin}": 0.014180907035326418,
+        "Mission.Aircraft.Fuselage.A_{vbend_{b}}": 0.00102302507126777,
+        "Mission.Aircraft.Fuselage.B_{0v}": 0.005552301125006852,
+        "Mission.Aircraft.Fuselage.B_{1v}": 0.0006207126814722267,
+        "Mission.Aircraft.Fuselage.C_{fuse}": 1.0,
+        "Mission.Aircraft.Fuselage.I_{h_{shell}}": 0.040989029997903915,
+        "Mission.Aircraft.Fuselage.I_{v_{shell}}": 0.0378378902976894,
+        "Mission.Aircraft.Fuselage.M_{floor}": 104272.81067167403,
+        "Mission.Aircraft.Fuselage.M_{fuseD}": 0.7200000000000001,
+        "Mission.Aircraft.Fuselage.N_{land}": 6.0,
+        "Mission.Aircraft.Fuselage.N_{lift}": 3.0000000000000004,
+        "Mission.Aircraft.Fuselage.P_{floor}": 1136165.4667953812,
+        "Mission.Aircraft.Fuselage.R_{fuse}": 1.6805195627636125,
+        "Mission.Aircraft.Fuselage.SPR": 8.0,
+        "Mission.Aircraft.Fuselage.S_{bulk}": 23.996168338344884,
+        "Mission.Aircraft.Fuselage.S_{floor}": 355051.70837355684,
+        "Mission.Aircraft.Fuselage.S_{nose}": 100.09690071764321,
+        "Mission.Aircraft.Fuselage.V_{bulk}": 0.022528322519115032,
+        "Mission.Aircraft.Fuselage.V_{cabin}": 405.2077121326756,
+        "Mission.Aircraft.Fuselage.V_{cone}": 0.024605610281898078,
+        "Mission.Aircraft.Fuselage.V_{cyl}": 0.25844703310607964,
+        "Mission.Aircraft.Fuselage.V_{db}": 0.06172333924896171,
+        "Mission.Aircraft.Fuselage.V_{floor}": 0.05390664692448479,
+        "Mission.Aircraft.Fuselage.V_{hbend_{b}}": 0.029859537523357526,
+        "Mission.Aircraft.Fuselage.V_{hbend_{c}}": 0.02750599827747551,
+        "Mission.Aircraft.Fuselage.V_{hbend_{f}}": 0.002801204185625282,
+        "Mission.Aircraft.Fuselage.V_{hbend}": 0.06016677253266906,
+        "Mission.Aircraft.Fuselage.V_{nose}": 0.09397397245823963,
+        "Mission.Aircraft.Fuselage.V_{vbend_{b}}": 0.0008430462962366192,
+        "Mission.Aircraft.Fuselage.V_{vbend_{c}}": 0.001686078369606888,
+        "Mission.Aircraft.Fuselage.V_{vbend}": 0.0025291572637540947,
+        "Mission.Aircraft.Fuselage.W''_{floor}": 60.0,
+        "Mission.Aircraft.Fuselage.W''_{insul}": 22.0,
+        "Mission.Aircraft.Fuselage.W'_{seat}": 1.0,
+        "Mission.Aircraft.Fuselage.W'_{window}": 435.0,
+        "Mission.Aircraft.Fuselage.W_{apu}": 1354.5000144358942,
+        "Mission.Aircraft.Fuselage.W_{avg. pass_{total}}": 215.0,
+        "Mission.Aircraft.Fuselage.W_{avg. pass}": 180.0,
+        "Mission.Aircraft.Fuselage.W_{cargo}": 0.022480894309971054,
+        "Mission.Aircraft.Fuselage.W_{carry on}": 15.0,
+        "Mission.Aircraft.Fuselage.W_{checked}": 40.0,
+        "Mission.Aircraft.Fuselage.W_{cone}": 234.42333409991457,
+        "Mission.Aircraft.Fuselage.W_{db}": 367.5325170577202,
+        "Mission.Aircraft.Fuselage.W_{fix}": 3000.0,
+        "Mission.Aircraft.Fuselage.W_{floor}": 1841.1673474310571,
+        "Mission.Aircraft.Fuselage.W_{fuse}": 31415.639454991557,
+        "Mission.Aircraft.Fuselage.W_{hbend}": 358.26411181063776,
+        "Mission.Aircraft.Fuselage.W_{insul}": 1028.6795453013995,
+        "Mission.Aircraft.Fuselage.W_{lugg}[:]": 4961.177545176248,
+        "Mission.Aircraft.Fuselage.W_{padd}": 13545.000144358934,
+        "Mission.Aircraft.Fuselage.W_{pass}[:]": 33063.01908695414,
+        "Mission.Aircraft.Fuselage.W_{payload_{max}}": 38700.00041245414,
+        "Mission.Aircraft.Fuselage.W_{payload}[:]": 38700.00009085377,
+        "Mission.Aircraft.Fuselage.W_{seat}": 3870.0002296833586,
+        "Mission.Aircraft.Fuselage.W_{shell}": 4386.287059399724,
+        "Mission.Aircraft.Fuselage.W_{skin}": 2232.6413072057326,
+        "Mission.Aircraft.Fuselage.W_{tail}": 578.9255193118727,
+        "Mission.Aircraft.Fuselage.W_{vbend}": 15.060097660102038,
+        "Mission.Aircraft.Fuselage.W_{window}": 1782.2574082149185,
+        "Mission.Aircraft.Fuselage.\\Delta P_{over}": 8.382,
+        "Mission.Aircraft.Fuselage.\\Delta R_{fuse}": 0.41292766399334474,
+        "Mission.Aircraft.Fuselage.\\lambda_{cone}": 0.3,
+        "Mission.Aircraft.Fuselage.\\rho_{bend}": 2700.0,
+        "Mission.Aircraft.Fuselage.\\rho_{cargo}": 150.0,
+        "Mission.Aircraft.Fuselage.\\rho_{cone}": 2700.0,
+        "Mission.Aircraft.Fuselage.\\rho_{floor}": 2700.0,
+        "Mission.Aircraft.Fuselage.\\rho_{lugg}": 100.0,
+        "Mission.Aircraft.Fuselage.\\rho_{skin}": 2700.0,
+        "Mission.Aircraft.Fuselage.\\sigma_x": 38314184.971265405,
+        "Mission.Aircraft.Fuselage.\\sigma_{M_h}": 168582334.8755128,
+        "Mission.Aircraft.Fuselage.\\sigma_{M_v}": 168580194.73723614,
+        "Mission.Aircraft.Fuselage.\\sigma_{\\theta}": 103448275.86208108,
+        "Mission.Aircraft.Fuselage.\\sigma_{bend}": 206896551.72413793,
+        "Mission.Aircraft.Fuselage.\\sigma_{floor}": 206896551.72413793,
+        "Mission.Aircraft.Fuselage.\\sigma_{skin}": 103448275.86206897,
+        "Mission.Aircraft.Fuselage.\\tau_{cone}": 103448275.86206895,
+        "Mission.Aircraft.Fuselage.\\tau_{floor}": 206896551.72413793,
+        "Mission.Aircraft.Fuselage.\\theta_{db}": 0.5534002820357629,
+        "Mission.Aircraft.Fuselage.c_0": 6.592392780331149,
+        "Mission.Aircraft.Fuselage.f_{apu}": 0.035,
+        "Mission.Aircraft.Fuselage.f_{fadd}": 0.2,
+        "Mission.Aircraft.Fuselage.f_{frame}": 0.25,
+        "Mission.Aircraft.Fuselage.f_{lugg,1}": 0.4,
+        "Mission.Aircraft.Fuselage.f_{lugg,2}": 0.1,
+        "Mission.Aircraft.Fuselage.f_{padd}": 0.35,
+        "Mission.Aircraft.Fuselage.f_{seat}": 0.1,
+        "Mission.Aircraft.Fuselage.f_{string}": 0.35,
+        "Mission.Aircraft.Fuselage.g": 9.81,
+        "Mission.Aircraft.Fuselage.h_{db}": 1.4231898473172282,
+        "Mission.Aircraft.Fuselage.h_{floor}": 0.130048,
+        "Mission.Aircraft.Fuselage.h_{fuse}": 1.8869833947559096,
+        "Mission.Aircraft.Fuselage.l_{cone}": 5.601731875878709,
+        "Mission.Aircraft.Fuselage.l_{floor}": 21.58604202358302,
+        "Mission.Aircraft.Fuselage.l_{fuse}": 32.665932045800496,
+        "Mission.Aircraft.Fuselage.l_{nose}": 8.839199999999998,
+        "Mission.Aircraft.Fuselage.l_{shell}": 18.225000168342945,
+        "Mission.Aircraft.Fuselage.n_{pass}[:]": 180.0,
+        "Mission.Aircraft.Fuselage.n_{rows}": 22.500000207830787,
+        "Mission.Aircraft.Fuselage.n_{seat}": 180.00000166264635,
+        "Mission.Aircraft.Fuselage.p_s": 81.0,
+        "Mission.Aircraft.Fuselage.p_{\\lambda_{vt}}": 1.6,
+        "Mission.Aircraft.Fuselage.r_E": 1.0,
+        "Mission.Aircraft.Fuselage.r_{M_h}": 0.4,
+        "Mission.Aircraft.Fuselage.r_{M_v}": 0.7,
+        "Mission.Aircraft.Fuselage.r_{w/c}": 0.5,
+        "Mission.Aircraft.Fuselage.t_{db}": 0.0010390975642514436,
+        "Mission.Aircraft.Fuselage.t_{shell}": 0.0012674201999824286,
+        "Mission.Aircraft.Fuselage.t_{skin}": 0.0009388299915831027,
+        "Mission.Aircraft.Fuselage.w_{aisle}": 0.51,
+        "Mission.Aircraft.Fuselage.w_{db}": 0.93,
+        "Mission.Aircraft.Fuselage.w_{floor}": 2.610519556259904,
+        "Mission.Aircraft.Fuselage.w_{fuse}": 2.610519556259904,
+        "Mission.Aircraft.Fuselage.w_{seat}": 0.5,
+        "Mission.Aircraft.Fuselage.w_{sys}": 0.1,
+        "Mission.Aircraft.Fuselage.x_b": 19.27191157581212,
+        "Mission.Aircraft.Fuselage.x_f": 22.56810796562873,
+        "Mission.Aircraft.Fuselage.x_{hbend_{Land}}": 74.79852835210829,
+        "Mission.Aircraft.Fuselage.x_{hbend_{MLF}}": 79.0527027992502,
+        "Mission.Aircraft.Fuselage.x_{shell1}": 8.839199999999998,
+        "Mission.Aircraft.Fuselage.x_{shell2}": 27.064200405828807,
+        "Mission.Aircraft.Fuselage.x_{tail}": 29.8650678719367,
+        "Mission.Aircraft.Fuselage.x_{vbend}": 68.63525485502957,
+        "Mission.Aircraft.Fuselage.x_{wing}": 20.92000977042378,
+        "Mission.Aircraft.HorizontalTail.C_{ht}": 1.0,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.AR_{ht}": 4.383717867553158,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.C_{L_{ht,fCG}}": 0.85,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.C_{L_{ht,max}}": 2.0,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.L_{ht_{max}}": 937430.2031774801,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.S_{ht}": 36.94541461340919,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.V_{ht}": 0.6116687937548907,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\Delta x_{lead_{ht}}": 10.719555195100748,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\Delta x_{trail_{ht}}": 15.185832262258987,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\alpha_{ht,max}": 2.5,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\bar{c}_{ht}": 3.1836512655677245,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\eta_{ht}": 1.0,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\lambda_{ht}": 0.3,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\tan(\\Lambda_{ht})": 0.14054083470239143,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.\\tau_{ht}": 3.450911000264327e-10,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.b_{ht}": 12.72628281019094,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{attach}": 3.1836535896602682,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{root_{ht}}": 4.466276618547276,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.c_{tip_{ht}}": 1.339882985567572,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.e_{ht}": 0.9796189002415365,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.f(\\lambda_{ht})": 0.0047408104056861225,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.l_{ht}": 11.999870314873622,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.m_{ratio}": 1.2365449759317484,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.p_{ht}": 1.6000005096204915,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.q_{ht}": 1.3000009490054512,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.x_{CG_{ht}}": 32.66593184641136,
+        "Mission.Aircraft.HorizontalTail.HorizontalTailNoStruct.y_{\\bar{c}_{ht}}": 3.446703012711611,
+        "Mission.Aircraft.HorizontalTail.W_{ht}": 262.0396003322754,
+        "Mission.Aircraft.HorizontalTail.WingBox.I_{cap}": 1.0000169123845636e-30,
+        "Mission.Aircraft.HorizontalTail.WingBox.L_{ht_{rect_{out}}}": 127579.87255512908,
+        "Mission.Aircraft.HorizontalTail.WingBox.L_{ht_{rect}}": 216330.04707440123,
+        "Mission.Aircraft.HorizontalTail.WingBox.L_{ht_{tri_{out}}}": 87779.50558174073,
+        "Mission.Aircraft.HorizontalTail.WingBox.L_{ht_{tri}}": 252385.05481881686,
+        "Mission.Aircraft.HorizontalTail.WingBox.L_{shear}": 215359.99207407644,
+        "Mission.Aircraft.HorizontalTail.WingBox.M_r": 1.3001089943941589e-20,
+        "Mission.Aircraft.HorizontalTail.WingBox.M_{r_{out}}": 265932980473.42917,
+        "Mission.Aircraft.HorizontalTail.WingBox.N_{lift}": 1.0,
+        "Mission.Aircraft.HorizontalTail.WingBox.W_{cap}": 0.14482738706386836,
+        "Mission.Aircraft.HorizontalTail.WingBox.W_{struct}": 201.56834912038025,
+        "Mission.Aircraft.HorizontalTail.WingBox.W_{web}": 201.42295942087057,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\nu": 0.8225409253670173,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\pi_{M-fac}": 31.58128612948737,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\rho_{cap}": 2700.0,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\rho_{web}": 2700.0,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission.Aircraft.HorizontalTail.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission.Aircraft.HorizontalTail.WingBox.b_{ht_{out}}": 3.7526218543394685,
+        "Mission.Aircraft.HorizontalTail.WingBox.g": 9.81,
+        "Mission.Aircraft.HorizontalTail.WingBox.r_h": 0.75,
+        "Mission.Aircraft.HorizontalTail.WingBox.r_{w/c}": 0.5,
+        "Mission.Aircraft.HorizontalTail.WingBox.t_{cap}": 7.933460443338405e-11,
+        "Mission.Aircraft.HorizontalTail.WingBox.t_{web}": 124891.87155199591,
+        "Mission.Aircraft.HorizontalTail.WingBox.taper": 0.3,
+        "Mission.Aircraft.HorizontalTail.\\cos(\\Lambda_{ht})^3": 0.9710874159668281,
+        "Mission.Aircraft.HorizontalTail.c_{d_{fh}}": 0.006,
+        "Mission.Aircraft.HorizontalTail.c_{d_{ph}}": 0.0035,
+        "Mission.Aircraft.HorizontalTail.f_{ht}": 0.3,
+        "Mission.Aircraft.I_{z_{fuse}}[:]": 3442805.152343653,
+        "Mission.Aircraft.I_{z_{tail}}[:]": 959979.2318844073,
+        "Mission.Aircraft.I_{z_{wing}}[:]": 1976953.5259645735,
+        "Mission.Aircraft.I_{z}[:]": 6379738.140821866,
+        "Mission.Aircraft.LandingGear.B": 17.19286111693024,
+        "Mission.Aircraft.LandingGear.C_{lg}": 1.0,
+        "Mission.Aircraft.LandingGear.E": 205.0,
+        "Mission.Aircraft.LandingGear.E_{land}": 351876.83791595075,
+        "Mission.Aircraft.LandingGear.F_{w_m}": 9045.26051742207,
+        "Mission.Aircraft.LandingGear.F_{w_n}": 362.6430696211505,
+        "Mission.Aircraft.LandingGear.I_m": 3.562977996991711e-06,
+        "Mission.Aircraft.LandingGear.I_n": 1.530929614570122e-07,
+        "Mission.Aircraft.LandingGear.K": 2.0,
+        "Mission.Aircraft.LandingGear.L_m": 768831.517189706,
+        "Mission.Aircraft.LandingGear.L_n": 85695.08507602176,
+        "Mission.Aircraft.LandingGear.L_{n_{dyn}}": 35414.50311855188,
+        "Mission.Aircraft.LandingGear.L_{w_m}": 192207.87929742647,
+        "Mission.Aircraft.LandingGear.L_{w_n}": 42847.54253801087,
+        "Mission.Aircraft.LandingGear.N_s": 2.0,
+        "Mission.Aircraft.LandingGear.S_{sa}": 0.2288387182677129,
+        "Mission.Aircraft.LandingGear.T": 2.6105194389590003,
+        "Mission.Aircraft.LandingGear.W_{lg}": 15519.140053437679,
+        "Mission.Aircraft.LandingGear.W_{mg}": 14525.522066701864,
+        "Mission.Aircraft.LandingGear.W_{ms}": 411.0643205457788,
+        "Mission.Aircraft.LandingGear.W_{mw}": 2740.678516002754,
+        "Mission.Aircraft.LandingGear.W_{ng}": 993.6169695434172,
+        "Mission.Aircraft.LandingGear.W_{ns}": 27.42928576836564,
+        "Mission.Aircraft.LandingGear.W_{nw}": 386.47467915116385,
+        "Mission.Aircraft.LandingGear.W_{wa,m}": 308.064520279331,
+        "Mission.Aircraft.LandingGear.W_{wa,n}": 43.44143769484542,
+        "Mission.Aircraft.LandingGear.\\Delta x_m": 2.4796788334026,
+        "Mission.Aircraft.LandingGear.\\Delta x_n": 22.24696128064834,
+        "Mission.Aircraft.LandingGear.\\eta_s": 0.8,
+        "Mission.Aircraft.LandingGear.\\lambda_{LG}": 2.5,
+        "Mission.Aircraft.LandingGear.\\rho_{st}": 7850.0,
+        "Mission.Aircraft.LandingGear.\\sigma_{y_c}": 470000000.0,
+        "Mission.Aircraft.LandingGear.\\tan(\\gamma)": 0.087488663525924,
+        "Mission.Aircraft.LandingGear.\\tan(\\phi)": 0.2679491924311227,
+        "Mission.Aircraft.LandingGear.\\tan(\\phi_{min})": 0.2679491924311227,
+        "Mission.Aircraft.LandingGear.\\tan(\\psi)": 1.9626103662957906,
+        "Mission.Aircraft.LandingGear.\\tan(\\psi_{max})": 1.9626105055051506,
+        "Mission.Aircraft.LandingGear.\\tan(\\theta_{max})": 0.2679491924311227,
+        "Mission.Aircraft.LandingGear.d_{nacelle}": 8.570715719214421,
+        "Mission.Aircraft.LandingGear.d_{oleo}": 0.4082002471147543,
+        "Mission.Aircraft.LandingGear.d_{t_m}": 47.05978001778613,
+        "Mission.Aircraft.LandingGear.d_{t_n}": 37.64782401422891,
+        "Mission.Aircraft.LandingGear.f_{add,m}": 1.5,
+        "Mission.Aircraft.LandingGear.f_{add,n}": 1.5,
+        "Mission.Aircraft.LandingGear.g": 9.81,
+        "Mission.Aircraft.LandingGear.h_{hold}": 1.0,
+        "Mission.Aircraft.LandingGear.h_{nacelle}": 1.000000000000002,
+        "Mission.Aircraft.LandingGear.l_m": 1.305259556460888,
+        "Mission.Aircraft.LandingGear.l_n": 0.6910888709106949,
+        "Mission.Aircraft.LandingGear.l_{oleo}": 0.5720967956692822,
+        "Mission.Aircraft.LandingGear.n_{mg}": 2.0,
+        "Mission.Aircraft.LandingGear.n_{wps}": 2.0,
+        "Mission.Aircraft.LandingGear.p_{oleo}": 1800.0,
+        "Mission.Aircraft.LandingGear.r_m": 0.04174309791010102,
+        "Mission.Aircraft.LandingGear.r_n": 0.024374148557750625,
+        "Mission.Aircraft.LandingGear.t_m": 0.015592266107244122,
+        "Mission.Aircraft.LandingGear.t_n": 0.0033652473440360276,
+        "Mission.Aircraft.LandingGear.t_{nacelle}": 0.15,
+        "Mission.Aircraft.LandingGear.w_{t_m}": 0.44522994807346716,
+        "Mission.Aircraft.LandingGear.w_{t_n}": 0.3561839584587737,
+        "Mission.Aircraft.LandingGear.w_{ult}": 10.0,
+        "Mission.Aircraft.LandingGear.x_m": 22.19290571470564,
+        "Mission.Aircraft.LandingGear.x_n": 5.000020161366962,
+        "Mission.Aircraft.LandingGear.x_{CG_{lg}}": 21.092132637299663,
+        "Mission.Aircraft.LandingGear.x_{up}": 27.064200405828807,
+        "Mission.Aircraft.LandingGear.y_m": 1.3052597194795001,
+        "Mission.Aircraft.LandingGear.z_{CG}": 2.0,
+        "Mission.Aircraft.LandingGear.z_{wing}": 0.5,
+        "Mission.Aircraft.M_{min}": 0.72,
+        "Mission.Aircraft.PRFC[:]": 0.35439233891121225,
+        "Mission.Aircraft.SM_{min}": 0.05,
+        "Mission.Aircraft.S_{nacelle}": 9.600106459977905,
+        "Mission.Aircraft.V_{mn}": 133.76,
+        "Mission.Aircraft.V_{ne}": 143.92,
+        "Mission.Aircraft.VerticalTail.C_{VT}": 1.0,
+        "Mission.Aircraft.VerticalTail.N_{spar}": 1.0,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.A_{vt}": 2.2,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.C_{D_{wm}}": 0.5,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,EO}}": 0.298285048636568,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,max}}": 2.6,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.C_{L_{vt,yaw}}": 2.2100000000000004,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.D_{wm}": 13772.904988232858,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.I_{z, max}": 6379738.37147283,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.L_{vt,EO}": 5295.511253216338,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.L_{vt_{max}}": 195117.4380085219,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.S_{vt}": 5.915265429681037,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.T_e": 46073.6484174058,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.V_1": 70.0,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.V_{land}": 72.0,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.V_{vt_{min}}": 0.001,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.V_{vt}": 0.019428293144074932,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\Delta x_{lead_{vt}}": 10.430008545112058,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\Delta x_{trail_{vt}}": 12.952691736980828,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\bar{c}_{vt}": 1.7982178763972498,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\dot{r}_{req}": 0.1475,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\lambda_{vt}": 0.3,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\mu_0": 1.8e-05,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\rho_{TO}": 1.225,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\tan(\\Lambda_{vt})": 0.46630765815499864,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.\\tau_{vt}": 0.13999995815415375,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.b_{vt}": 3.607434537908939,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.c_{l_{vt,EO}}": 0.5,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.c_{root_{vt}}": 2.5226823199728456,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.c_{tip_{vt}}": 0.7568046959918537,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.e_{vt}": 0.8,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.l_{vt}": 11.335151072626392,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.p_{vt}": 1.6000014914763858,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.q_{vt}": 1.3000013219654987,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.x_{CG_{vt}}": 31.404980777071053,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.y_{\\bar{c}_{vt}}": 0.9770136034608087,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.y_{eng}": 1.305259778129952,
+        "Mission.Aircraft.VerticalTail.VerticalTailNoStruct.z_{\\bar{c}_{vt}}": 0.9770136034589345,
+        "Mission.Aircraft.VerticalTail.W_{vt}": 1156.5742010320373,
+        "Mission.Aircraft.VerticalTail.WingBox.AR_{vt}": 4.4,
+        "Mission.Aircraft.VerticalTail.WingBox.I_{cap}": 1.0912234183708654e-05,
+        "Mission.Aircraft.VerticalTail.WingBox.M_r": 248015.92680242236,
+        "Mission.Aircraft.VerticalTail.WingBox.N_{lift}": 1.0,
+        "Mission.Aircraft.VerticalTail.WingBox.W_{cap}": 1548.7885219806615,
+        "Mission.Aircraft.VerticalTail.WingBox.W_{struct}": 826.1241212696519,
+        "Mission.Aircraft.VerticalTail.WingBox.W_{web}": 103.45910448229827,
+        "Mission.Aircraft.VerticalTail.WingBox.\\nu": 0.822538730795548,
+        "Mission.Aircraft.VerticalTail.WingBox.\\rho_{cap}": 2700.0,
+        "Mission.Aircraft.VerticalTail.WingBox.\\rho_{web}": 2700.0,
+        "Mission.Aircraft.VerticalTail.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission.Aircraft.VerticalTail.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission.Aircraft.VerticalTail.WingBox.g": 9.81,
+        "Mission.Aircraft.VerticalTail.WingBox.r_h": 0.75,
+        "Mission.Aircraft.VerticalTail.WingBox.r_{w/c}": 0.5,
+        "Mission.Aircraft.VerticalTail.WingBox.t_{cap}": 0.002748426156248074,
+        "Mission.Aircraft.VerticalTail.WingBox.t_{web}": 0.0008742569263448634,
+        "Mission.Aircraft.VerticalTail.WingBox.taper": 0.3,
+        "Mission.Aircraft.VerticalTail.\\cos(\\Lambda_{vt})^3": 0.7444356015531176,
+        "Mission.Aircraft.VerticalTail.c_{d_{fv}}": 0.006,
+        "Mission.Aircraft.VerticalTail.c_{d_{pv}}": 0.0035,
+        "Mission.Aircraft.VerticalTail.f_{VT}": 0.4,
+        "Mission.Aircraft.W_{dry}[:]": 74014.33475232196,
+        "Mission.Aircraft.W_{eadd}": 560.0572980962622,
+        "Mission.Aircraft.W_{engsys}": 7398.454816691553,
+        "Mission.Aircraft.W_{f_{climb}}[:]": 2037.7726843959235,
+        "Mission.Aircraft.W_{f_{cruise}}[:]": 15345.349414650971,
+        "Mission.Aircraft.W_{f_{primary}}[:]": 17383.12212396958,
+        "Mission.Aircraft.W_{f_{total}}[:]": 20859.74658089096,
+        "Mission.Aircraft.W_{hpesys}": 1335.7408817812966,
+        "Mission.Aircraft.W_{misc}": 4824.582582361051,
+        "Mission.Aircraft.W_{nacelle}": 885.5170107184979,
+        "Mission.Aircraft.W_{pylon}": 352.3074492718605,
+        "Mission.Aircraft.W_{total, max}": 133574.0881781296,
+        "Mission.Aircraft.W_{total}[:]": 133574.08713690913,
+        "Mission.Aircraft.Wing.C_{wing}": 1.0,
+        "Mission.Aircraft.Wing.TipReduct": 1.0,
+        "Mission.Aircraft.Wing.W_{wing}": 99632.50169629452,
+        "Mission.Aircraft.Wing.WingBox.I_{cap}": 1.404685299459634e-05,
+        "Mission.Aircraft.Wing.WingBox.M_r": 2071781.7361244622,
+        "Mission.Aircraft.Wing.WingBox.N_{lift}": 3.0000000000000004,
+        "Mission.Aircraft.Wing.WingBox.W_{cap}": 61643.59842366778,
+        "Mission.Aircraft.Wing.WingBox.W_{struct}": 64654.44569666203,
+        "Mission.Aircraft.Wing.WingBox.W_{web}": 3010.846703431848,
+        "Mission.Aircraft.Wing.WingBox.\\nu": 0.8867366183990497,
+        "Mission.Aircraft.Wing.WingBox.\\rho_{cap}": 2700.0,
+        "Mission.Aircraft.Wing.WingBox.\\rho_{web}": 2700.0,
+        "Mission.Aircraft.Wing.WingBox.\\sigma_{max,shear}": 167000000.0,
+        "Mission.Aircraft.Wing.WingBox.\\sigma_{max}": 250000000.0,
+        "Mission.Aircraft.Wing.WingBox.g": 9.81,
+        "Mission.Aircraft.Wing.WingBox.r_h": 0.75,
+        "Mission.Aircraft.Wing.WingBox.r_{w/c}": 0.5,
+        "Mission.Aircraft.Wing.WingBox.t_{cap}": 0.0032103841002891864,
+        "Mission.Aircraft.Wing.WingBox.t_{web}": 0.0007095371397439442,
+        "Mission.Aircraft.Wing.WingBox.taper": 0.15000000469216682,
+        "Mission.Aircraft.Wing.WingNoStruct.AR": 11.257243662658304,
+        "Mission.Aircraft.Wing.WingNoStruct.A_{rect}": 42.19658802896018,
+        "Mission.Aircraft.Wing.WingNoStruct.A_{tri}": 821295.9853187928,
+        "Mission.Aircraft.Wing.WingNoStruct.C_{L_{w,max}}": 2.268965553780077,
+        "Mission.Aircraft.Wing.WingNoStruct.FuelFrac": 0.9,
+        "Mission.Aircraft.Wing.WingNoStruct.L_{max}": 2276093.438024979,
+        "Mission.Aircraft.Wing.WingNoStruct.S": 161.75358305433636,
+        "Mission.Aircraft.Wing.WingNoStruct.V_{fuel, max}": 22.164438203456324,
+        "Mission.Aircraft.Wing.WingNoStruct.W_{fuel_{wing}}": 103098.66379259875,
+        "Mission.Aircraft.Wing.WingNoStruct.\\bar{A}_{fuel, max}": 1.000000000000002,
+        "Mission.Aircraft.Wing.WingNoStruct.\\cos(\\Lambda)": 0.9734312373241428,
+        "Mission.Aircraft.Wing.WingNoStruct.\\eta": 0.97,
+        "Mission.Aircraft.Wing.WingNoStruct.\\lambda": 0.15000000469216682,
+        "Mission.Aircraft.Wing.WingNoStruct.\\rho_0": 1.225,
+        "Mission.Aircraft.Wing.WingNoStruct.\\rho_{fuel}": 817.0,
+        "Mission.Aircraft.Wing.WingNoStruct.\\tan(\\Lambda)": 0.23522928327838724,
+        "Mission.Aircraft.Wing.WingNoStruct.\\tau": 0.14732999643336298,
+        "Mission.Aircraft.Wing.WingNoStruct.\\tau_{max_w}": 0.14733,
+        "Mission.Aircraft.Wing.WingNoStruct.b": 42.67199898939235,
+        "Mission.Aircraft.Wing.WingNoStruct.b_{max}": 42.672000000000004,
+        "Mission.Aircraft.Wing.WingNoStruct.c_{root}": 6.592392780331149,
+        "Mission.Aircraft.Wing.WingNoStruct.c_{tip}": 0.9888589479822791,
+        "Mission.Aircraft.Wing.WingNoStruct.e": 0.9511425452141192,
+        "Mission.Aircraft.Wing.WingNoStruct.f(\\lambda_w)": 0.0045630278709221095,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{aileron}": 0.04,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{flap}": 0.2,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{lete}": 0.1,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{ribs}": 0.15,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{slat}": 0.001,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{spoiler}": 0.02,
+        "Mission.Aircraft.Wing.WingNoStruct.f_{watt}": 0.03,
+        "Mission.Aircraft.Wing.WingNoStruct.g": 9.81,
+        "Mission.Aircraft.Wing.WingNoStruct.mac": 4.480916627999817,
+        "Mission.Aircraft.Wing.WingNoStruct.p": 1.300000025830886,
+        "Mission.Aircraft.Wing.WingNoStruct.q": 1.1500000174164253,
+        "Mission.Aircraft.Wing.WingNoStruct.wwn": 0.5,
+        "Mission.Aircraft.Wing.WingNoStruct.x_w": 20.92000977042378,
+        "Mission.Aircraft.Wing.WingNoStruct.y_{mac}": 12.582768873302284,
+        "Mission.Aircraft.Wing.\\Delta x_{AC_{wing}}": 1.2728962861756439,
+        "Mission.Aircraft.\\Delta x_{CG}": 1.8287999999999998,
+        "Mission.Aircraft.\\rho_{T/O}": 1.225,
+        "Mission.Aircraft.f_{L_{total/wing}}": 1.195,
+        "Mission.Aircraft.f_{S_{nacelle}}": 0.05935019353947189,
+        "Mission.Aircraft.f_{eadd}": 0.1,
+        "Mission.Aircraft.f_{fuel_{res}}": 0.2,
+        "Mission.Aircraft.f_{hpesys}": 0.01,
+        "Mission.Aircraft.f_{pylon}": 0.05,
+        "Mission.Aircraft.f_{wingfuel}": 1.0,
+        "Mission.Aircraft.l_{nacelle}": 1.284576486278273,
+        "Mission.Aircraft.n_{aisle}": 2.0,
+        "Mission.Aircraft.n_{eng}": 2.0,
+        "Mission.Aircraft.n_{vt}": 2.0,
+        "Mission.Aircraft.r_{S_{nacelle}}": 6.0,
+        "Mission.Aircraft.r_{v_{nacelle}}": 0.925,
+        "Mission.Aircraft.x_{CG_{min}}": 17.074896,
+        "Mission.Aircraft.x_{eng}": 31.26550101633776,
+        "Mission.Aircraft.x_{hpesys}": 9.723119999999996,
+        "Mission.Aircraft.x_{misc}": 2.6919623238752948,
+        "Mission.ClimbTime": 15.99999977862052,
+        "Mission.CruiseAlt": 1.12228648702387,
+        "Mission.FlightSegment.FlightP.AircraftP.C_D[:]": [
+          0.012836983472950099,
+          0.015125892233717414,
+          0.01945416802759912,
+          0.0277254233906836,
+          0.027710422756705804
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.C_{d_{nacelle}}[:]": [
+          0.0005018415447528658,
+          0.0005018413869394587,
+          0.0005018410207370878,
+          0.0005018408215987499,
+          0.0005018408301125566
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.C_{f_{nacelle}}[:]": [
+          0.01207435538789716,
+          0.012386892690411861,
+          0.013363359615796369,
+          0.014091037878516144,
+          0.014200149631810837
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.D[:]": [
+          33444.39385585931,
+          34683.70642424,
+          24082.81327664296,
+          22314.646448424275,
+          20857.076537069523
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.D_{nacelle}[:]": [
+          1307.4556270413095,
+          1150.7234791311357,
+          621.2418634317631,
+          403.9036789288932,
+          377.72547517556313
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.F_{fuel}[:]": [
+          0.9638353227266232,
+          0.9293927399655458,
+          0.8827731576417723,
+          0.4729393986045546,
+          1.5466710352160531e-06
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.FuselagePerformance.C_{D_{fuse}}[:]": [
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996,
+          0.018080999999999996
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.FuselagePerformance.D_{fuse}[:]": [
+          11380.358284126278,
+          15047.828348090554,
+          7954.415247237138,
+          5101.425999203702,
+          4654.586266823695
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.FuselagePerformance.L_{fuse}[:]": [
+          98533.23512954533,
+          97896.75883907056,
+          96802.80318541928,
+          93408.36158505201,
+          87823.7404141884
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{D_{0,ht}}[:]": [
+          0.00025866520664204564,
+          0.0003332571889782074,
+          0.0003117543981111472,
+          0.0002977693904410736,
+          0.00029135505713887683
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{D_{ht}}[:]": [
+          0.00026608245365097616,
+          0.0003406729605697277,
+          0.00031916824686750847,
+          0.0003051823163683419,
+          0.00029876802155679534
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{\\alpha,ht_0}}[:]": [
+          6.28,
+          6.28,
+          6.28,
+          6.28,
+          6.28
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{\\alpha,ht}}[:]": [
+          0.44704037683352493,
+          0.45118812958766213,
+          0.45039401475890595,
+          0.4448726440167493,
+          0.44452992087465826
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.C_{L_{ht}}[:]": [
+          0.01000079691152138,
+          0.010000265299381209,
+          0.010000049628608324,
+          0.010000015233331572,
+          0.010000016052923277
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.D_{ht}[:]": [
+          158.3372941465676,
+          178.42216277137334,
+          90.24452617200551,
+          56.10193278187641,
+          51.363076588396254
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.L_{ht}[:]": [
+          5951.159501696195,
+          5237.483362398862,
+          2827.504769936959,
+          1838.3115677023054,
+          1719.1652163277126
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.Re_{c_h}[:]": [
+          16433461.157516463,
+          14462285.75924499,
+          9896247.228243608,
+          7591610.241356742,
+          7304394.337776178
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.HorizontalTailPerformance.\\alpha_{ht}[:]": [
+          0.022371126703060167,
+          0.02216429166368062,
+          0.022202891914468947,
+          0.022478377503827935,
+          0.022495709699904283
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.L/D[:]": [
+          17.876838317527543,
+          17.146200309660856,
+          24.51540479090453,
+          25.570079629235245,
+          25.72185645921257
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.L_{total}[:]": [
+          603831.8768195211,
+          599931.4195522517,
+          593227.434905518,
+          572425.6004827535,
+          538201.8963843841
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.P_{cabin}[:]": [
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996,
+          74999.99999999996
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.R_{e_{nacelle}}[:]": [
+          6630763.243268893,
+          5835410.563051463,
+          3993052.451844549,
+          3063150.827636934,
+          2947261.6282722247
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.SM[:]": [
+          0.1813349989618586,
+          0.18114847701657544,
+          0.17977400260516405,
+          0.17835069741589124,
+          0.19849138691448182
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.T_{cabin}[:]": [
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006,
+          297.00000000000006
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.V_2[:]": [
+          197.37586367746906,
+          229.9287405522906,
+          214.9928492522857,
+          205.22830810583784,
+          201.8986616332237
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.V_{nacelle_ratio}[:]": [
+          0.8500005261234348,
+          0.8500004302839831,
+          0.8500002078921642,
+          0.8500000869565127,
+          0.8500000921269029
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.V_{nacelle}[:]": [
+          182.57267390165887,
+          212.68408501086878,
+          198.86838555836428,
+          189.83618499789998,
+          186.7562620107321
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.V_{stall}[:]": [
+          120.0,
+          120.0,
+          120.0,
+          120.0,
+          120.0
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.C_{D_{vis}}[:]": [
+          0.015578413140312357,
+          0.014869406068757007,
+          0.013902957026370736,
+          0.013264343373640694,
+          0.013191193254791327
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.D_{vt}[:]": [
+          1484.2403142813787,
+          1246.8629878433376,
+          629.3934393685588,
+          390.4073386903978,
+          363.0903978267453
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.VerticalTailPerformance.Re_{vt}[:]": [
+          9282091.89998424,
+          8168715.294629082,
+          5589685.298621665,
+          4287959.989305017,
+          4125732.17943165
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{Load_{max}}[:]": [
+          6664.0,
+          6664.0,
+          6664.0,
+          6664.0,
+          6664.0
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{Load}[:]": [
+          3291.9557897712216,
+          3270.68556060752,
+          3234.13545373223,
+          3120.7286563995426,
+          2934.149137247847
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{avg}[:]": [
+          134408.7757536741,
+          133692.47966246132,
+          132727.1811177626,
+          128273.12484316406,
+          120606.1152630465
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{buoy}[:]": [
+          959.4792143767298,
+          912.0670240805163,
+          786.2938734978535,
+          786.2914677236303,
+          786.2914713747444
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{burn}[:]": [
+          628.660765319413,
+          598.7191460981087,
+          810.3927332504189,
+          7974.285550836646,
+          7371.0638367171005
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{end}[:]": [
+          132945.42454326036,
+          132346.70356524683,
+          131536.3094785985,
+          123562.02343334946,
+          116190.95940387074
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.W_{start}[:]": [
+          133574.08713688588,
+          132945.42454323723,
+          132346.70356522402,
+          131536.30947857606,
+          123562.0234333297
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.C_{D_{i_w}}[:]": [
+          0.0012418463637043123,
+          0.0015825194452949365,
+          0.005308937329643975,
+          0.011694149668364092,
+          0.011820179706513332
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.C_{D_{p_w}}[:]": [
+          0.005229763937462703,
+          0.0050552897450753965,
+          0.00593930992338562,
+          0.008095579937305418,
+          0.00811550602418217
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.C_{L_{\\alpha,w}}[:]": [
+          5.983948189480032,
+          6.766053359333448,
+          6.707261339440518,
+          6.670663572159833,
+          6.607420078470318
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.C_{L}[:]": [
+          0.2043843115922248,
+          0.23072157282247033,
+          0.4225883878933394,
+          0.6271885123690905,
+          0.6305591190574368
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.C_{d_w}[:]": [
+          0.006471611164437529,
+          0.006637809897394043,
+          0.011248247589276233,
+          0.01978972973430898,
+          0.01993568586770234
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.D_{wing}[:]": [
+          16860.58980456453,
+          15220.513687666033,
+          13924.494020903368,
+          15927.64936743932,
+          15005.188827773205
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.L_w[:]": [
+          505298.6416899759,
+          502034.6607131814,
+          496424.6317200988,
+          479017.2388977017,
+          450378.15597019607
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.Re_w[:]": [
+          23129722.20064227,
+          20355337.73386754,
+          13928742.522597305,
+          10685018.46659483,
+          10280768.625508452
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.\\Delta L_{o}[:]": [
+          26880.915931932726,
+          26706.81366458869,
+          26408.251911460153,
+          25482.222684141856,
+          23958.71293410106
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.\\Delta L_{t}[:]": [
+          152.7364662702935,
+          151.7472230037652,
+          150.05080509703217,
+          144.7891379647903,
+          136.13260646345347
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.\\alpha_w[:]": [
+          0.034155428008467756,
+          0.03409987485601582,
+          0.06300461045234033,
+          0.09402190735376639,
+          0.09543197065861882
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.\\alpha_{max,w}[:]": [
+          0.18000000000000002,
+          0.18000000000000002,
+          0.18000000000000002,
+          0.09999999999999998,
+          0.09999999999999998
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.\\eta_{o}[:]": [
+          0.12235281299612144,
+          0.12235281299612144,
+          0.12235281299612144,
+          0.12235281299612144,
+          0.12235281299612144
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.c_{m_{w}}[:]": [
+          1.9,
+          1.9,
+          1.9,
+          1.9,
+          1.9
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.f_{L_{o}}[:]": [
+          0.5,
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.f_{L_{t}}[:]": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806,
+          0.05000000074505806
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.WingPerformance.p_{o}[:]": [
+          20594.303434711714,
+          20460.918287738543,
+          20232.180868466887,
+          19522.721155669315,
+          18355.51308294104
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.\\rho_{cabin}[:]": [
+          0.8798789286594163,
+          0.8798789286594149,
+          0.8798789286594162,
+          0.8798789286594161,
+          0.8798789286594163
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.r_{v_{nsurf}}[:]": [
+          0.8880283672601547,
+          0.888028274174096,
+          0.8880280581714188,
+          0.8880279407101815,
+          0.8880279457320284
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.thr[:]": [
+          0.05603561820141428,
+          0.06488617952166921,
+          0.14574486159652628,
+          3.6204068765919386,
+          3.680113438728393
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.tmin[:]": [
+          3.362137092084857,
+          3.8931707713001504,
+          8.74469169579157,
+          217.2244125955162,
+          220.80680632370363
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.x_{AC}[:]": [
+          21.598491294244187,
+          21.5954233304931,
+          21.57453758090184,
+          21.551116342605564,
+          21.20451883151215
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.x_{CG}[:]": [
+          19.713237202333598,
+          19.713237329547272,
+          19.713237624123533,
+          19.71323095100211,
+          19.047122348241945
+        ],
+        "Mission.FlightSegment.FlightP.AircraftP.x_{NP}[:]": [
+          1.5477532583652225,
+          1.547753258365222,
+          1.547753258365222,
+          1.5477532583652223,
+          1.5477532583652223
+        ],
+        "Mission.FlightSegment.FlightP.P_{excess}[:]": [
+          11586534.870908245,
+          9952791.125950612,
+          4399028.077294752,
+          108813.49908796395,
+          9785.441281702442
+        ],
+        "Mission.FlightSegment.FlightP.RC[:]": [
+          3814.8355332353967,
+          3294.486884840841,
+          1466.7183810112613,
+          37.54023378903077,
+          3.5905498262426776
+        ],
+        "Mission.FlightSegment.FlightP.RC_{min}[:]": [
+          500.0,
+          500.0,
+          500.0,
+          500.0,
+          500.0
+        ],
+        "Mission.FlightSegment.FlightP.R_{segment}[:]": [
+          21.49907275439426,
+          29.00059996328401,
+          60.908623655864986,
+          1444.2958534426205,
+          1444.2958534426205
+        ],
+        "Mission.FlightSegment.FlightP.\\theta[:]": [
+          0.09818507768763234,
+          0.07278773995278481,
+          0.034656638122851406,
+          0.0009292304234654054,
+          9.034231812020728e-05
+        ],
+        "Mission.FlightSegment.FlightP.dhft[:]": [
+          12826.000046494044,
+          12826.000046494044,
+          12826.000046494044,
+          8154.655233520562,
+          792.8178400787747
+        ],
+        "Mission.FlightState.Altitude.h[:]": [
+          3909.3648141713797,
+          7818.729628840786,
+          11728.094444598002,
+          14213.633352576786,
+          14455.282777508957
+        ],
+        "Mission.FlightState.Altitude.hft[:]": [
+          12826.000046494044,
+          25652.000094622035,
+          38478.000146318955,
+          46632.655356223026,
+          47425.46843014756
+        ],
+        "Mission.FlightState.Atmosphere.C_1[:]": [
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06,
+          1.45800004247576e-06
+        ],
+        "Mission.FlightState.Atmosphere.L_{atm}[:]": [
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451,
+          0.006500000134110451
+        ],
+        "Mission.FlightState.Atmosphere.M_{atm}[:]": [
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287,
+          0.02896440029144287
+        ],
+        "Mission.FlightState.Atmosphere.P_{atm}[:]": [
+          62365.317215674884,
+          36535.3731355767,
+          20144.626944915064,
+          13277.32029145108,
+          12726.76014260009
+        ],
+        "Mission.FlightState.Atmosphere.R_{atm}[:]": [
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695,
+          8.314470291137695
+        ],
+        "Mission.FlightState.Atmosphere.T_s[:]": [
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789,
+          110.4000015258789
+        ],
+        "Mission.FlightState.Atmosphere.T_{atm}[:]": [
+          262.7391220139142,
+          237.32825028239378,
+          211.91737853978864,
+          195.76137521333663,
+          194.1906542662493
+        ],
+        "Mission.FlightState.Atmosphere.T_{sl}[:]": [
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844,
+          288.1499938964844
+        ],
+        "Mission.FlightState.Atmosphere.\\mu[:]": [
+          3.1618323352990245e-05,
+          2.7144126849048683e-05,
+          2.2903485521892622e-05,
+          2.0334908893568354e-05,
+          2.0090660162734976e-05
+        ],
+        "Mission.FlightState.Atmosphere.\\rho[:]": [
+          0.8268911548749592,
+          0.5362830427078313,
+          0.3311483619794079,
+          0.23627261050136628,
+          0.2283071376484332
+        ],
+        "Mission.FlightState.Atmosphere.p_{sl}[:]": [
+          101325.0,
+          101325.0,
+          101325.0,
+          101325.0,
+          101325.0
+        ],
+        "Mission.FlightState.M[:]": [
+          0.6074726207664212,
+          0.7445837935982931,
+          0.7367765017802559,
+          0.731760223493742,
+          0.7227936276877113
+        ],
+        "Mission.FlightState.R[:]": [
+          287.0,
+          287.0,
+          287.0,
+          287.0,
+          287.0
+        ],
+        "Mission.FlightState.V[:]": [
+          383.6679855501559,
+          446.94571597637446,
+          417.91266593316885,
+          398.9319164044361,
+          392.45960144687155
+        ],
+        "Mission.FlightState.\\gamma[:]": [
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142,
+          1.399999976158142
+        ],
+        "Mission.FlightState.a[:]": [
+          324.9131844468128,
+          308.80169905543,
+          291.80198979311035,
+          280.4584090755691,
+          279.33099283002485
+        ],
+        "Mission.Fsafetyfac": 1.0,
+        "Mission.MaxClimbTime": 16.0,
+        "Mission.MinCruiseAlt": 38478.0,
+        "Mission.R_{req}": 3000.0,
+        "Mission.T_{t_{4.1_{max-Cruise}}}": 3000.0,
+        "Mission.TotalTime": 4417.621779679117
+      }
+    }
+  }
+}

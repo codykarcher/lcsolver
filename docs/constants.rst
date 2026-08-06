@@ -11,11 +11,11 @@ The Constant constructor is a very thin wrapper on pyomo ``Param``, and so exper
 Construction
 ------------
 
-Constants are constructed by 1) creating an instance of a new parameter in a EDI Formulation and 2) passing out this newly constructed parameter to be used in objective and constraint construction.  
+Constants are constructed by 1) creating an instance of a new parameter in a LCsolver Formulation and 2) passing out this newly constructed parameter to be used in objective and constraint construction.  
 
 .. py:function:: f.Constant(name, value, units, description='', size=None, within=None)
 
-    Declares a constant in a pyomo.edi.formulation
+    Declares a constant in a pyomo.lcsolver.formulation
 
    :param name: The name of the constant for the purposes of tracking in the formulation.  Commonly, this will be the same as the constant name in local namespace.
    :type  name: str
