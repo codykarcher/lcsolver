@@ -5,6 +5,9 @@
 
 # LCsolver
 
+[![tests](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml)
+[![cross-platform](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml)
+
 LCsolver is a lightweight wrapper on the Pyomo language that is targeted at composing engineering design optimization problems.  The language and interface have been designed to mimic many of the features found in [GPkit](https://github.com/convexengineering/gpkit) and [CVXPY](https://github.com/cvxpy/cvxpy) while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
 
 ## Statement of Need
@@ -15,24 +18,41 @@ LCsolver targets the gap: an engineer writes a single unit-annotated model in wh
 
 ## Installation
 
-LCsolver began as a contribution to Pyomo itself (`pyomo.contrib.lcsolver`) and is now distributed as a standalone package.  Install it directly from GitHub:
+LCsolver began as a contribution to Pyomo itself (`pyomo.contrib.lcsolver`) and is now distributed as a standalone package.
 
-```
-pip install git+https://github.com/codykarcher/lcsolver.git
-```
+Two steps, because one of the solvers cannot come from pip. `pip install lcsolver` gets you the package and cvxopt; it cannot get you IPOPT, which is the default backend — there is no IPOPT executable on PyPI, and cyipopt is published there as source only, so it compiles against an IPOPT that has to exist already.
 
-or from a local clone:
+**Everything in one command (recommended):**
 
 ```
 git clone https://github.com/codykarcher/lcsolver.git
 cd lcsolver
+conda env create -f environment.yml     # python, cvxopt, ipopt, cyipopt
+conda activate lcsolver
 pip install -e .
 ```
 
-The structured solver backends require `cvxopt`, which is an optional extra:
+**Or pip, then the solver bootstrap:**
 
 ```
-pip install "lcsolver[solvers] @ git+https://github.com/codykarcher/lcsolver.git"
+pip install git+https://github.com/codykarcher/lcsolver.git
+lcsolver-install-solvers
+```
+
+`lcsolver-install-solvers` prints exactly what it will run and asks before touching anything. `--dry-run` shows the plan and exits.
+
+Either way you end up with a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs, MA27 is markedly more robust — it is free for academic use but has to be fetched by hand, and IPOPT rebuilt against it:
+
+```
+lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
+```
+
+That works both as a first install and as an upgrade on top of an existing MUMPS one; it rebuilds IPOPT, relinks cyipopt to match, and prints the environment to export. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
+
+To see what you actually have — which `ipopt` binary wins, which linear solver it carries, whether cyipopt agrees:
+
+```
+lcsolver-check-solvers
 ```
 
 ## Solving
@@ -42,9 +62,9 @@ LCsolver detects the structure of a formulation and routes it to an appropriate 
 ```python
 from lcsolver.solvers.solver import solve
 
-res = solve(f)                    # auto: cvxopt for LP/QP/GP/SP, IPOPT otherwise
+res = solve(f)                    # auto: IPOPT for LP/QP/GP/SP, and everything else
+res = solve(f, convex_backend='cvxopt')  # structured backends for a detected LP/QP/GP/SP
 res = solve(f, solver='ipopt')    # force IPOPT (general NLP, and black-box models)
-res = solve(f, solver='cvxopt')   # force the structured backends
 ```
 
 After any successful solve the solution is written back onto the model, so
@@ -87,17 +107,28 @@ is flagged as such. See the [documentation](docs/sensitivities.rst).
 ### IPOPT
 
 Two routes are supported. `method='pyomo'` uses `SolverFactory('ipopt')`, Pyomo's
-AMPL-based interface, and needs the `ipopt` executable on PATH. `method='cyipopt'`
-uses `pyomo.contrib.pynumero` and needs `pip install cyipopt`. The default,
+AMPL-based interface, and needs the `ipopt` executable. `method='cyipopt'`
+uses `pyomo.contrib.pynumero` and calls the IPOPT library in-process. The default,
 `method='auto'`, prefers the Pyomo route but switches to cyipopt when the model
 contains black-box (grey-box) constraints, which the AMPL route cannot evaluate.
 
-Getting IPOPT itself is worth doing carefully. `conda install -c conda-forge
-ipopt` works and takes a minute, but like every prebuilt IPOPT it is built
-against the MUMPS linear solver — the only one that may be redistributed — and
-MUMPS is not what you want underneath a geometric or signomial program. IPOPT's
-own default is `ma27`. See [docs/ipopt.rst](docs/ipopt.rst) for why, and
-[tools/install_ipopt.sh](tools/install_ipopt.sh) to build against HSL MA27.
+Which linear solver is underneath matters more than anything else about the
+install, and it is fixed when IPOPT is built. Every prebuilt IPOPT — conda,
+apt, Homebrew — is a MUMPS build, because MUMPS is the only one that may be
+redistributed, and MUMPS is not what you want underneath a geometric or
+signomial program. IPOPT's own default is `ma27`. See
+[docs/ipopt.rst](docs/ipopt.rst) for why, and
+[lcsolver/scripts/install_ipopt.sh](lcsolver/scripts/install_ipopt.sh) (driven
+by `lcsolver-install-solvers --ma27`) to build against HSL MA27.
+
+If you have both a conda IPOPT and a source-built MA27 one, `conda activate`
+puts conda's first on `PATH` in every new shell and the MA27 build is used by
+nothing. Rather than fight `PATH`, pin it — LCsolver honours this everywhere,
+including inside the SLCP and SIA loops:
+
+```
+export LCSOLVER_IPOPT_EXECUTABLE=/path/to/ipopt/build/bin/ipopt
+```
 
 ```python
 from lcsolver.solvers.ipopt import ipopt_solve
