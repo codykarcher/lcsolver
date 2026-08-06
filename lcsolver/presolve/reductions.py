@@ -2205,6 +2205,167 @@ def structure_report(structures, top=5, simplify=True) -> str:
     return '\n'.join(L)
 
 
+def _checks_setup(structures):
+    """Shared front door for the check entry points.
+
+    Returns ``(st, model, units_report)``. On a unit failure ``st`` is None
+    and ``units_report`` carries the diagnosis text -- bad units are a
+    finding, not a crash: asking what is wrong with a model is exactly when
+    it is most likely to be wrong.
+    """
+    from lcsolver.presolve.detected import as_detected
+    from lcsolver.presolve.unitCorrector import UnitMismatch
+
+    try:
+        st = as_detected(_as_structures(structures))
+    except UnitMismatch as exc:
+        model = None if isinstance(structures, dict) else structures
+        return None, model, _units_diagnosis(exc)
+    # The interesting checks need bounds separated from rows; fold a copy
+    # rather than making the caller know that (see the note in
+    # optimization_check's history: unfolded single-variable rows hid all 52
+    # output-only variables on SPaircraft).
+    try:
+        st = fold_singleton_rows(st if st.bounds is not None
+                                 else _with_empty_bounds(st))
+    except Exception:
+        pass
+    return st, st.get("model"), None
+
+
+def _greybox_covered(st):
+    """Names of variables referenced by a grey-box (black-box) row.
+
+    The structural checks read only the algebraic rows, so a variable that a
+    black box computes looks unbounded or empty to them. These names let the
+    check entry points subtract that false positive.
+    """
+    try:
+        from lcsolver.solvers.ipopt.slcp_bridge import (_unwrap_vars,
+                                                        greybox_blocks)
+        blocks = greybox_blocks(st)
+    except Exception:
+        return set()
+    covered = set()
+    for block in blocks:
+        bb = getattr(block, '_ex_model', None)
+        if bb is None:
+            continue
+        try:
+            for v in _unwrap_vars(list(bb.inputVariables_optimization)
+                                  + list(bb.outputVariables_optimization)):
+                covered.add(str(v))
+        except Exception:
+            pass
+    return covered
+
+
+def presolve_check(structures, names=None, structure_top=5):
+    """The pre-solve half of the checks: needs nothing but the model.
+
+    Structure classification (and what stops the model being a simpler
+    class), the structural findings (empty, unbounded, fixed, output-only
+    variables; foldable rows), rigidity, and unopposed variables. Returns a
+    :class:`PresolveReport` and prints nothing.
+
+    Variables that a black-box constraint computes are excluded from the
+    empty/unbounded findings: the algebraic rows cannot see them, but they
+    are not free.
+    """
+    st, model, units_report = _checks_setup(structures)
+    if st is None:
+        rep = PresolveReport()
+        rep.structure = units_report
+        return rep
+
+    rep = presolve_report(st, names=names)
+    guesses = getattr(model, 'defaulted_guesses', None)
+    if guesses:
+        rep.defaulted_guesses = list(guesses)
+
+    covered = _greybox_covered(st)
+    if covered:
+        rep.empty_columns = [n for n in rep.empty_columns
+                             if n not in covered]
+        rep.unbounded_above = [n for n in rep.unbounded_above
+                               if n not in covered]
+        rep.unbounded_below = [n for n in rep.unbounded_below
+                               if n not in covered]
+
+    if names is None:
+        try:
+            names = [str(v) for v in st.variables]
+        except Exception:
+            names = None
+    try:
+        rep.structure = structure_report(st, top=structure_top)
+    except Exception:
+        rep.structure = ''
+    try:
+        rep.rigidity = rigidity_report(
+            st, names or [str(v) for v in st.variables])
+    except Exception:
+        rep.rigidity = {}
+    try:
+        rep.unopposed = unopposed_report(
+            st, names or [str(v) for v in st.variables])
+    except Exception:
+        rep.unopposed = []
+    return rep
+
+
+def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9):
+    """The post-solve half: the checks that only mean something at a solution.
+
+    Degenerate variables (the optimum does not determine them), cancelling
+    signomial terms, and variables resting on the solver's positivity floor.
+    Hand this a SOLVED Formulation and the point is read off the model;
+    passing ``x`` and ``problem`` explicitly also works and takes precedence.
+    An unsolved model raises: running these against an initial guess would
+    describe the guess in the language of a result.
+    """
+    st, model, units_report = _checks_setup(structures)
+    rep = PresolveReport()
+    if st is None:
+        rep.structure = units_report
+        return rep
+
+    if x is None and problem is None:
+        if model is None or not getattr(model, '_edi_solved', False):
+            raise ValueError(
+                'postsolve_check needs a solved model (or explicit x= and '
+                'problem=); this one has not been solved')
+        import numpy as _np
+        import pyomo.environ as _pyo
+
+        from lcsolver.solvers.ipopt.slcp_bridge import build_problem
+
+        _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
+                         dtype=float)
+        _p = build_problem(st, sp_form=True)
+        if _x.size >= _p.n:
+            x, problem = _x[:_p.n], _p
+
+    if names is None:
+        try:
+            names = [str(v) for v in st.variables]
+        except Exception:
+            names = None
+
+    if x is not None and problem is not None:
+        try:
+            rep.degenerate = degeneracy_report(problem, x, names=names)
+        except Exception:
+            rep.degenerate = []
+        try:
+            rep.cancelling = cancellation_report(st, x, names=names)
+        except Exception:
+            rep.cancelling = []
+        rep.at_floor = floor_report(
+            x, names or [str(v) for v in st.variables], x_min=x_min)
+    return rep
+
+
 def optimization_check(structures, x=None, problem=None, names=None,
                        x_min=1e-9, structure_top=5):
     """Every check on a model, in one call, as one report.
@@ -2254,98 +2415,21 @@ def optimization_check(structures, x=None, problem=None, names=None,
         report = optimization_check(f)
         print(report.summary())
     """
-    from lcsolver.presolve.detected import as_detected
+    rep = presolve_check(structures, names=names, structure_top=structure_top)
 
-    # Accept the formulation itself. Detecting structure is how this runs,
-    # not what the caller wants, and `optimization_check(f)` is the call
-    # people try first.
     model = None if isinstance(structures, dict) else structures
-    from lcsolver.presolve.unitCorrector import UnitMismatch
-    try:
-        st = as_detected(_as_structures(structures))
-    except UnitMismatch as exc:
-        # Bad units are a finding, not a crash. Asking what is wrong with a
-        # model is exactly when it is most likely to be wrong, so the tool for
-        # asking must not fall over on the commonest fault it exists to find.
-        rep = PresolveReport()
-        rep.structure = _units_diagnosis(exc)
-        return rep
-    # The interesting checks need bounds separated from rows, so fold a copy
-    # rather than making the caller know that. This runs whether or not the
-    # detector already split the declared bounds out: folding does two things,
-    # and only one of them is filling in `bounds`. The other is taking
-    # single-variable rows OUT of the row set, and a model states plenty of
-    # those itself, quite apart from anything declared on a variable. Left in,
-    # they count against every variable they touch, so a quantity computed by
-    # one equality and merely bounded by one row looks like it appears twice
-    # and never registers as output-only. On SPaircraft that hid all 52 of
-    # them -- from the bounds-split form specifically, which is the form the
-    # feature exists for.
-    try:
-        st = fold_singleton_rows(st if st.bounds is not None
-                                 else _with_empty_bounds(st))
-    except Exception:
-        pass
-
-    rep = presolve_report(st)
-    model = st.get("model")
-    guesses = getattr(model, 'defaulted_guesses', None)
-    if guesses:
-        rep.defaulted_guesses = list(guesses)
-    # Wire up the post-solve checks when the model has been solved. `solve()`
-    # marks it; the mark is what distinguishes an answer from an initial
-    # guess, and running these against a guess would describe the guess in the
-    # language of a result.
-    if (x is None and problem is None and model is not None
-            and getattr(model, '_edi_solved', False)):
+    solved = (x is not None and problem is not None) or (
+        x is None and problem is None and model is not None
+        and getattr(model, '_edi_solved', False))
+    if solved:
         try:
-            import numpy as _np
-            import pyomo.environ as _pyo
-
-            from lcsolver.solvers.ipopt.slcp_bridge import build_problem
-
-            _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
-                             dtype=float)
-            _p = build_problem(st, sp_form=True)
-            if _x.size >= _p.n:
-                x, problem = _x[:_p.n], _p
+            post = postsolve_check(structures, x=x, problem=problem,
+                                   names=names, x_min=x_min)
+            rep.degenerate = post.degenerate
+            rep.cancelling = post.cancelling
+            rep.at_floor = post.at_floor
         except Exception:
             pass                    # a check must never block the report
-
-    # The post-solve checks report variable names, and the structures already
-    # carry them -- without this default they printed `<var 2>`, which is the
-    # one thing a reader of a degeneracy report cannot act on.
-    if names is None:
-        try:
-            names = [str(v) for v in st.variables]
-        except Exception:
-            names = None
-
-    if x is not None and problem is not None:
-        try:
-            rep.degenerate = degeneracy_report(problem, x, names=names)
-        except Exception:
-            rep.degenerate = []
-        try:
-            rep.cancelling = cancellation_report(st, x, names=names)
-        except Exception:
-            rep.cancelling = []
-        rep.at_floor = floor_report(
-            x, names or [str(v) for v in st.variables], x_min=x_min)
-    try:
-        rep.structure = structure_report(st, top=structure_top)
-    except Exception:
-        rep.structure = ''
-    try:
-        rep.rigidity = rigidity_report(
-            st, names or [str(v) for v in st.variables])
-    except Exception:
-        rep.rigidity = {}
-    try:
-        rep.unopposed = unopposed_report(
-            st, names or [str(v) for v in st.variables])
-    except Exception:
-        rep.unopposed = []
     return rep
 
 

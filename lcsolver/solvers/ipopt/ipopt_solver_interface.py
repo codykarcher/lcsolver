@@ -35,6 +35,37 @@ from pyomo.opt import SolverStatus, TerminationCondition
 
 
 # ---------------------------------------------------------------------------
+_MA27_PROBE = None
+
+
+def _ma27_available(executable=None):
+    """Does the ipopt executable carry the HSL MA27 linear solver?
+
+    Probed by solving a one-variable problem with ``linear_solver ma27`` --
+    a build without MA27 rejects the option and fails. Cached for the
+    session; only consulted on a FAILED solve to sharpen the error message,
+    so the probe cost is never on the success path.
+    """
+    global _MA27_PROBE
+    if _MA27_PROBE is None:
+        try:
+            import pyomo.environ as pyo
+            from pyomo.opt import TerminationCondition
+
+            probe = pyo.ConcreteModel()
+            probe.x = pyo.Var(initialize=1.0, bounds=(0.5, None))
+            probe.o = pyo.Objective(expr=probe.x)
+            opt = (pyo.SolverFactory('ipopt', executable=executable)
+                   if executable else pyo.SolverFactory('ipopt'))
+            opt.options['linear_solver'] = 'ma27'
+            res = opt.solve(probe, tee=False, load_solutions=False)
+            _MA27_PROBE = (res.solver.termination_condition
+                           == TerminationCondition.optimal)
+        except Exception:
+            _MA27_PROBE = False
+    return _MA27_PROBE
+
+
 def _has_greybox(model):
     """True if the model contains any ExternalGreyBoxBlock (a black-box constraint)."""
     try:
@@ -171,9 +202,16 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 str(TerminationCondition.locallyOptimal),
                 str(TerminationCondition.feasible))
     if not ok:
-        raise RuntimeError(
-            f"IPOPT did not converge: termination_condition={tc}, "
-            f"status={summary['status']}. {summary['message']}".strip())
+        msg = (f"IPOPT did not converge: termination_condition={tc}, "
+               f"status={summary['status']}. {summary['message']}".strip())
+        if route == 'pyomo' and not _ma27_available(executable):
+            msg += (
+                "\nNote: this IPOPT build appears to lack the HSL MA27 "
+                "linear solver, so it is running MUMPS (the shipped "
+                "default). MA27 is markedly more robust on these problems "
+                "-- see docs/ipopt.rst and utilities/install_ipopt.sh for "
+                "building IPOPT with it.")
+        raise RuntimeError(msg)
 
     if route == 'pyomo' and load_solutions:
         m.solutions.load_from(results)

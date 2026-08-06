@@ -114,45 +114,99 @@ def _raise_if_infeasible(structures):
             structures.get('message', 'the model has no feasible point'))
 
 
+class PresolveError(RuntimeError):
+    """The pre-solve checks found the stated problem ill-posed.
+
+    Raised (batched -- every finding in one message) before any solver runs.
+    Pass ``diagnostics='warn'`` to solve() to demote this to a warning.
+    """
+
+
+class SolveResult(dict):
+    """What ``solve`` returns: the solver's result dict with attribute access.
+
+    Every existing key lookup (``res['x']``, ``res['status']``) works
+    unchanged -- this IS a dict. Attribute access reaches the same keys
+    (``res.status``), plus two conveniences: ``res.solution`` is the rich
+    printable :class:`~lcsolver.objects.solution.Solution` attached to the
+    model by the solve (``res['solution']`` remains the flat name->value
+    write-back dict), and ``res.objective`` reads the objective value.
+    """
+
+    def __init__(self, data=None, model=None):
+        super().__init__(data or {})
+        self.__dict__['_model'] = model
+
+    @property
+    def solution(self):
+        sol = getattr(self.__dict__.get('_model'), 'solution', None)
+        return sol if sol is not None else self.get('solution')
+
+    @property
+    def objective(self):
+        return self.get('primal objective', self.get('objective'))
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+
 def _run_diagnostics(structures, level):
     """Structural checks on the way into a solve.
 
-    `level` is 'warn' (default), 'print', or 'off'. The checks cost a fraction
-    of a second and catch the modelling errors that otherwise present as a
-    strange answer: a variable nothing bounds, one nothing determines, one
-    computed and never read. Running them by default is the point -- as
-    opt-in tools nobody ran them.
+    ``'error'`` (the default): findings that make the stated problem
+    ill-posed -- a variable in no constraint, a variable unbounded above or
+    below -- raise a :class:`PresolveError` naming every one, batched, with
+    the fix. A clean model stays silent. ``'warn'`` demotes those errors to a
+    RuntimeWarning (the old behavior); ``'print'`` prints the full report;
+    ``'off'`` skips the checks.
 
-    'warn' reports only what is actionable, so a clean model stays silent.
+    The checks cost a fraction of a second and catch the modelling errors
+    that otherwise present as a strange answer. Variables computed by a
+    black-box constraint are accounted for and do not trip the gate.
     """
     if level in (None, 'off', False):
         return None
     import warnings
 
-    from lcsolver.presolve.reductions import optimization_check
+    from lcsolver.presolve.reductions import presolve_check
 
     try:
-        rep = optimization_check(structures)
+        rep = presolve_check(structures)
     except Exception:
-        return None                      # never fail a solve over a check
+        return None                # never fail a solve over a broken check
     if level == 'print':
         print(rep)
         return rep
     problems = []
     if rep.empty_columns:
-        problems.append(f"{len(rep.empty_columns)} variables appear in no "
-                        f"constraint ({', '.join(rep.empty_columns[:3])})")
+        problems.append(
+            f"{len(rep.empty_columns)} variables appear in no constraint "
+            f"({', '.join(rep.empty_columns[:3])}) -- remove them or "
+            "constrain them")
     if rep.unbounded_above:
-        problems.append(f"{len(rep.unbounded_above)} variables are not upper "
-                        f"bounded ({', '.join(rep.unbounded_above[:3])})")
+        problems.append(
+            f"{len(rep.unbounded_above)} variables are not upper bounded "
+            f"({', '.join(rep.unbounded_above[:3])}) -- add bounds=[lo, hi] "
+            "to the Variable or a constraint that limits them")
     if rep.unbounded_below:
-        problems.append(f"{len(rep.unbounded_below)} variables are not lower "
-                        f"bounded ({', '.join(rep.unbounded_below[:3])})")
+        problems.append(
+            f"{len(rep.unbounded_below)} variables are not lower bounded "
+            f"({', '.join(rep.unbounded_below[:3])}) -- add bounds=[lo, hi] "
+            "to the Variable or a constraint that limits them")
     if problems:
-        warnings.warn(
-            "model diagnostics: " + "; ".join(problems)
-            + ". Call lcsolver.presolve.reductions.optimization_check(structures) for the full report.",
-            RuntimeWarning, stacklevel=3)
+        msg = ("pre-solve check: " + "; ".join(problems)
+               + ". Call lcsolver.presolve.reductions.presolve_check(f) for the "
+                 "full report"
+               + (", or pass diagnostics='warn' to solve() to demote this "
+                  "error to a warning." if level == 'error' else "."))
+        if level == 'error':
+            raise PresolveError(msg)
+        warnings.warn(msg, RuntimeWarning, stacklevel=3)
     return rep
 
 
@@ -209,6 +263,12 @@ def _attach_sensitivities(m, res, wanted):
     import warnings
     _mark_solved(m)
 
+    # Wrap the raw backend dict so callers get attribute access and
+    # `res.solution` (the rich printable Solution) -- see SolveResult. All
+    # further writes below go through normal dict item assignment either way.
+    if isinstance(res, dict) and not isinstance(res, SolveResult):
+        res = SolveResult(res, model=m)
+
     # Holographic constraints are checked on EVERY solve, not only when a
     # diagnostic is asked for. An active one means the answer is sitting on a
     # limit that was declared never to bind -- the edge of a fit, a numerical
@@ -231,6 +291,35 @@ def _attach_sensitivities(m, res, wanted):
                   "the optimum is on a boundary of the model's validity rather "
                   "than of the design. Read solution.summary() for the detail.",
                 RuntimeWarning, stacklevel=3)
+    except Exception:
+        pass                                  # a check must never lose a solve
+
+    # The post-solve quality checks -- variables the optimum does not
+    # determine, cancelling signomial terms, variables on the positivity
+    # floor -- run automatically on a converged solve and ride back on the
+    # result. Informational, not warnings: only the floor check (a symptom of
+    # the ALGORITHM pinning a variable, not the model) warns.
+    try:
+        status = str(res.get('status', '')) if isinstance(res, dict) else ''
+        converged = (res.get('converged') is True
+                     or status.startswith('optimal')
+                     or 'converged' in status) if isinstance(res, dict) else False
+        if converged:
+            from lcsolver.presolve.reductions import postsolve_check
+            post = postsolve_check(m)
+            res['quality'] = {'degenerate': post.degenerate,
+                              'cancelling': post.cancelling,
+                              'at_floor': post.at_floor}
+            res['quality_text'] = post.post_solve_text()
+            if post.at_floor:
+                warnings.warn(
+                    f"{len(post.at_floor)} variables are resting on the "
+                    "solver's positivity floor ("
+                    + ", ".join(nm for nm, _ in post.at_floor[:3])
+                    + (", ..." if len(post.at_floor) > 3 else "")
+                    + ") -- pinned by the algorithm, not the model. See "
+                      "res['quality_text'] for the post-solve report.",
+                    RuntimeWarning, stacklevel=3)
     except Exception:
         pass                                  # a check must never lose a solve
 
@@ -277,7 +366,7 @@ def _apply_start(m, start):
     write_solution(st, {'x': x[:n]}, model=m)
 
 
-def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
+def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
           sensitivities=True, structures=None, start=None, **kwargs):
     """Solve an LCsolver Formulation, choosing a backend automatically.
 
@@ -298,11 +387,14 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     boxes these models carry far better. cvxopt remains available and is still
     the faster choice on a small, well-scaled program.
 
-    ``diagnostics`` runs the structural checks before solving: ``'warn'``
-    (the default) reports only what is actionable, so a clean model stays
-    silent; ``'print'`` shows the full report; ``'off'`` skips them. They cost
-    a fraction of a second and catch the modelling errors that otherwise
-    present as a strange answer rather than as an error.
+    ``diagnostics`` runs the structural checks before solving: ``'error'``
+    (the default) raises a :class:`PresolveError` -- every finding batched in
+    one message -- when the stated problem is ill-posed (variables in no
+    constraint, variables unbounded either way); a clean model stays silent.
+    ``'warn'`` demotes those errors to a RuntimeWarning; ``'print'`` shows
+    the full report; ``'off'`` skips the checks. They cost a fraction of a
+    second and catch the modelling errors that otherwise present as a
+    strange answer rather than as an error.
 
     ``sensitivities`` computes the sensitivity of the optimum to every Constant
     and attaches it to the result and to ``f.solution``. It is on by default --
@@ -412,10 +504,12 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     if want_checks and structures is not None:
         try:
             _run_diagnostics(structures, diagnostics)
-        except InfeasibleProblem:
+        except (InfeasibleProblem, PresolveError):
+            # The gate is the point: an ill-posed problem stops here, before
+            # any solver spends time on it.
             raise
         except Exception:
-            pass                         # a check must never block a solve
+            pass                         # a broken check must not block a solve
 
     if solver == 'cvxopt':
         return _attach_sensitivities(m, cvxopt_solve(m, **kwargs), sensitivities)
@@ -462,6 +556,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
         return _attach_sensitivities(m, ipopt_solve(m, **kwargs),
                                      sensitivities)
 
+    cvxopt_failure = None
     if structured:
         backend = convex_backend
         if backend == 'ipopt' and not _ipopt_available():
@@ -489,6 +584,8 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
         except Exception as e:
             # Fall through, but say why: a silent fallback turns a bug in the
             # structured path into a confusing failure further down.
+            if backend == 'cvxopt':
+                cvxopt_failure = e
             where = ('IPOPT on the raw model' if _ipopt_available()
                      else 'cvxopt' if backend == 'ipopt' else 'nothing else')
             warnings.warn(
@@ -502,6 +599,15 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     if not _ipopt_available():
         # Nothing left to try. cvxopt cannot take a general NLP, so this is a
         # real dead end rather than another fallback -- name it as one.
+        if cvxopt_failure is not None:
+            raise RuntimeError(
+                f'cvxopt failed on this structured problem '
+                f'({type(cvxopt_failure).__name__}: {cvxopt_failure}), and '
+                'no usable IPOPT installation was found to try instead. '
+                'IPOPT is the preferred backend -- it solves models cvxopt '
+                'fails on. Install the ipopt executable and put it on PATH, '
+                'or `pip install cyipopt`. See docs/ipopt.rst.'
+            ) from cvxopt_failure
         raise RuntimeError(
             'this model needs IPOPT and no usable installation was found. '
             + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
@@ -573,11 +679,44 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     }
     if not result.converged:
         import warnings
-        warnings.warn(
-            f"SIA did not converge: {result.status}. The returned point is "
-            f"feasible to {result.max_violation:.2e} with a stationarity "
-            f"residual of {result.stationarity:.2e}; it is the best iterate, "
-            "not a certified optimum.", RuntimeWarning, stacklevel=3)
+        status = str(result.status or '')
+        msg = (f"SIA did not converge: {status}. The returned point is "
+               f"feasible to {result.max_violation:.2e} with a stationarity "
+               f"residual of {result.stationarity:.2e}; it is the best "
+               "iterate, not a certified optimum.")
+        # Say what to DO about it, keyed on how it failed.
+        remedies = []
+        if 'phase 1' in status:
+            report = getattr(result, 'infeasibility_report', None)
+            if report:
+                res['infeasibility_report'] = report
+                msg += ("\nWhere feasibility fails (the L1-elastic optimum's "
+                        "unclosable rows):\n" + str(report))
+            remedies.append(
+                'the blocking constraints named above are where the model '
+                'is inconsistent -- check their signs, units and bounds; if '
+                'the model should be feasible, start closer (better guesses '
+                'or start=)')
+        if 'did not converge within' in status:
+            remedies.append(
+                'raise options=SIAOptions() max_iterations, or try the '
+                'conservative mode (SIAOptions with condense_numerator='
+                'False), which trades speed for a feasibility-preserving '
+                'iteration')
+        if 'trust region collapsed' in status:
+            remedies.append(
+                'try the conservative mode (SIAOptions with '
+                'condense_numerator=False) and run postsolve_check(f) -- a '
+                'collapsing trust region often means a degenerate or '
+                'unopposed variable')
+        if 'sub-problem failure' in status:
+            remedies.append(
+                'check variable scaling and initial guesses; a sub-problem '
+                'failure is usually a wildly scaled column or a guess '
+                'decades from feasibility')
+        if remedies:
+            msg += '\nWhat to try: ' + '; '.join(remedies) + '.'
+        warnings.warn(msg, RuntimeWarning, stacklevel=3)
     res['solution'] = write_solution(structures, res, model=m)
     return res
 

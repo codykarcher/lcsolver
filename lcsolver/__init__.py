@@ -36,7 +36,8 @@ that a broken install fails loudly instead of producing an empty namespace.
 # Build all of the appropriate Pyomo machinery.
 import pyomo.environ  # noqa: F401
 
-from lcsolver.solvers.solver import solve
+from lcsolver.solvers.solver import solve, PresolveError, SolveResult
+from lcsolver.presolve.reductions import presolve_check, postsolve_check
 
 from lcsolver.objects.formulation import Formulation
 

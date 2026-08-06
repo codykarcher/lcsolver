@@ -257,7 +257,12 @@ class SIAOptions:
         self.step_expansion_max = 1e4  # step extension described in solve_sia.
                                        # Set to 1.0 to take the sub-problem's
                                        # step exactly as returned.
-        self.condense_numerator = False
+        # ON by default (2026-08): the condensed-numerator iteration is not
+        # feasibility preserving, but with Phase I restoration steps
+        # (phase1_restore_iterations) repairing any excursion it is faster on
+        # every anchor model and reaches the same certified points. Set False
+        # for the conservative, feasibility-preserving mode.
+        self.condense_numerator = True
         # Seed for the black-box curvature model, in units of |d log g / d log x|.
         # B is built by BFGS from SUCCESSIVE gradients, so it is ZERO on the first
         # iteration and the linearized rows are then not conservative at all --
