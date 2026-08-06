@@ -208,6 +208,21 @@ class BBList(TypeCheckedList):
         self._lookupDict = {}
         self._counter = 0
 
+    def __deepcopy__(self, memo):
+        # The generic list-subclass protocol restores the instance __dict__
+        # (including the already-populated _lookupDict) and THEN replays the
+        # items through our custom ``append``, which trips the duplicate-name
+        # guard on the first item -- so deepcopying any populated BBList
+        # always raised, and Pyomo's clone() responded by silently setting
+        # the enclosing grey-box block's `_ex_model` to None. Rebuild through
+        # ``append`` on an empty instance instead; it reconstructs
+        # _lookupDict and _counter itself.
+        new = self.__class__()
+        memo[id(self)] = new
+        for item in list(self):
+            new.append(copy.deepcopy(item, memo))
+        return new
+
     def __getitem__(self, val):
         if isinstance(val, int):
             return super(BBList, self).__getitem__(val)

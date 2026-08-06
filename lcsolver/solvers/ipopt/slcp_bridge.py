@@ -41,6 +41,95 @@ from lcsolver.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
                                     solve as _slcp_solve)
 
 
+def greybox_blocks(structures):
+    """The active grey-box (black-box constraint) blocks of the detected model.
+
+    The model is reached through ``structures['variables']``, so this sees the
+    same (unit-corrected) model the rest of the structure describes.
+    """
+    variables = structures.get('variables') or []
+    if not variables:
+        return []
+    try:
+        from pyomo.contrib.pynumero.interfaces.external_grey_box import (
+            ExternalGreyBoxBlock,
+        )
+    except Exception:
+        return []
+    model = variables[0].model()
+    return list(model.component_data_objects(ExternalGreyBoxBlock,
+                                             descend_into=True, active=True))
+
+
+def _unwrap_vars(vars_):
+    import pyomo.core.base.var as _var
+
+    out = []
+    for v in vars_:
+        if isinstance(v, _var.ScalarVar):
+            out.append(v)
+        elif isinstance(v, _var.IndexedVar):
+            out.extend(v[i] for i in v.index_set().data())
+        else:
+            out.append(v)
+    return out
+
+
+def _greybox_rows(blocks, structures, n):
+    """Opaque ``Signomial`` equality rows for every grey-box block.
+
+    Each block's output variable is tied to its black box as
+    ``bb(inputs) / output == 1`` -- the ratio form every other opaque row in
+    this file uses, affine-friendly in log space. Values and jacobians come
+    from the block model's own ``set_input_values`` / ``evaluate_outputs`` /
+    ``evaluate_jacobian_outputs``, the same standardized path (units,
+    caching) the native cyipopt grey-box route evaluates through.
+    """
+    col = {id(v): j for j, v in enumerate(structures.get('variables') or [])}
+    rows = []
+    for block in blocks:
+        bb = getattr(block, '_ex_model', None)
+        if bb is None:
+            raise ValueError(
+                f'grey-box block {block.name!r} has no external model. This '
+                'is the signature of a model clone made before '
+                'BBList.__deepcopy__ existed; re-build the formulation.')
+        ins = _unwrap_vars(bb.inputVariables_optimization)
+        outs = _unwrap_vars(bb.outputVariables_optimization)
+        try:
+            in_idx = [col[id(v)] for v in ins]
+            out_idx = [col[id(v)] for v in outs]
+        except KeyError:
+            raise ValueError(
+                f'grey-box block {block.name!r} references a variable that '
+                'the structure detector did not record; cannot map it into '
+                'the problem columns.')
+        in_idx = np.asarray(in_idx, dtype=int)
+
+        def make_fn(bb, in_idx, k, iout):
+            def fn(x):
+                x = np.asarray(x, dtype=float)
+                bb.set_input_values(x[in_idx])
+                vals = np.atleast_1d(np.asarray(bb.evaluate_outputs(),
+                                                dtype=float))
+                jac = bb.evaluate_jacobian_outputs()
+                jac = np.asarray(jac.todense() if hasattr(jac, 'todense')
+                                 else jac, dtype=float)
+                jac = jac.reshape(len(vals), len(in_idx))
+                val = vals[k] / x[iout]
+                g = np.zeros(n)
+                for pos, iin in enumerate(in_idx):
+                    g[iin] += jac[k, pos] / x[iout]
+                g[iout] += -vals[k] / x[iout] ** 2
+                return val, g
+            return fn
+
+        for k, iout in enumerate(out_idx):
+            rows.append(Constraint(Signomial(make_fn(bb, in_idx, k, iout), n),
+                                   '=='))
+    return rows
+
+
 def build_problem(structures, sp_form=True, split_equalities=False):
     """Translate a detected structure into an SLCP :class:`Problem`.
 
@@ -70,6 +159,11 @@ def build_problem(structures, sp_form=True, split_equalities=False):
     # The DENSE row width, not the sparsity pattern: an all-zero column still
     # occupies its place, and narrowing would renumber every variable after it.
     n = max(len(r) - 2 for r in st[st.log_key][1])
+    gb = greybox_blocks(structures)
+    if gb:
+        # A variable that appears only in a grey-box row is invisible to the
+        # algebraic rows and can sit beyond their width.
+        n = max(n, len(structures.get('variables') or []))
 
     def posynomial(terms, what):
         bad = [t.coeff for t in terms if t.coeff <= 0]
@@ -161,6 +255,9 @@ def build_problem(structures, sp_form=True, split_equalities=False):
     if bounds is not None:
         bounds = list(bounds[:n]) + [(None, None)] * max(0, n - len(bounds))
 
+    if gb:
+        constraints.extend(_greybox_rows(gb, structures, n))
+
     names = [str(v) for v in structures.get('variables', [])][:n]
     return Problem(n, objective, constraints, names=names or None,
                    bounds=bounds)
@@ -241,6 +338,10 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
     log, n_original = None, len(structures.get('variables') or [])
+    if presolve and greybox_blocks(structures):
+        # Presolve reasons only about the algebraic rows, so it can fold or
+        # drop a column a grey-box row still references. Skip it.
+        presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
 
@@ -272,6 +373,10 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
     log, n_original = None, len(structures.get('variables') or [])
+    if presolve and greybox_blocks(structures):
+        # Presolve reasons only about the algebraic rows, so it can fold or
+        # drop a column a grey-box row still references. Skip it.
+        presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
 

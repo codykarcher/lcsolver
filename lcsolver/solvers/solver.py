@@ -437,6 +437,31 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
                          ('Linear_Program', 'Quadratic_Program',
                           'Geometric_Program', 'Signomial_Program'))
 
+    from lcsolver.solvers.ipopt.ipopt_solver_interface import _has_greybox
+    if _has_greybox(m):
+        # A black-box (grey-box) constraint cannot enter the algebraic convex
+        # backends, and letting the structured route run without it would
+        # solve a relaxation and report it as the optimum. When the algebraic
+        # part is a GP or SP, the model as a whole is an SP with opaque rows:
+        # route it to SIA, which imposes each black box through its
+        # linearization inside the trust-region loop (the grey-box rows are
+        # appended in slcp_bridge.build_problem). Anything else falls through
+        # to raw IPOPT via cyipopt, the only other route that can evaluate a
+        # Python black box.
+        if (structures is not None and detection_failed is None
+                and (structures['Geometric_Program'][0]
+                     or structures['Signomial_Program'][0])):
+            return _attach_sensitivities(
+                m, _solve_sp(structures, m, **kwargs), sensitivities)
+        if not _ipopt_available():
+            raise RuntimeError(
+                'this model has black-box constraints and its algebraic part '
+                'is not a detected GP/SP, so it needs the raw IPOPT route -- '
+                'and no usable IPOPT installation was found. '
+                '`pip install cyipopt`; see docs/ipopt.rst.')
+        return _attach_sensitivities(m, ipopt_solve(m, **kwargs),
+                                     sensitivities)
+
     if structured:
         backend = convex_backend
         if backend == 'ipopt' and not _ipopt_available():
