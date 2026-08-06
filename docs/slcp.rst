@@ -71,7 +71,7 @@ SLCP has its own problem description, since it needs to know which constraints
 are GP-compatible and needs value/gradient callbacks for the ones that are not::
 
     import numpy as np
-    from lcsolver.solvers.ipopt.slcp import (
+    from lcsolver.solvers.sequential.slcp import (
         Constraint, Posynomial, Problem, Signomial, Options, solve)
 
     # minimize x*y  subject to  x >= 1, y >= 2

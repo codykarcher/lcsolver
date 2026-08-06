@@ -19,7 +19,7 @@ import pytest
 
 # The SIA solver is held back pending publication; without it these exercise
 # nothing, so skip rather than error on a checkout that does not have it.
-pytest.importorskip("lcsolver.solvers.ipopt.sia")
+pytest.importorskip("lcsolver.solvers.sequential.sia")
 
 from lcsolver import Formulation
 from lcsolver.presolve.reductions import (
@@ -38,7 +38,7 @@ from lcsolver.presolve.reductions import (
     reduce_columns,
     restore_columns,
 )
-from lcsolver.solvers.ipopt.slcp_bridge import (
+from lcsolver.solvers.sequential.bridge import (
     build_problem,
     presolve_structures,
     solve_sia,
@@ -569,7 +569,7 @@ def test_cached_and_rebuilt_subproblems_agree():
     land anywhere without either answer being wrong, which is exactly what a
     degenerate variable is.
     """
-    from lcsolver.solvers.ipopt.sia import SIAOptions
+    from lcsolver.solvers.sequential.sia import SIAOptions
 
     def model():
         f = Formulation()
@@ -604,7 +604,7 @@ def test_cached_and_rebuilt_subproblems_agree():
 
 def test_cache_builds_one_model_per_phase():
     """The point of the cache: build once, then only re-point."""
-    from lcsolver.solvers.ipopt.sia import SIAOptions, SubproblemCache
+    from lcsolver.solvers.sequential.sia import SIAOptions, SubproblemCache
 
     st = _detect(_singleton_row_model())
     problem = build_problem(st)
@@ -621,8 +621,8 @@ def test_cache_builds_one_model_per_phase():
 
 def test_a_black_box_body_is_not_cacheable():
     """No conservative model exists for it, so it must be re-linearized."""
-    from lcsolver.solvers.ipopt.sia import SIAOptions, SubproblemCache
-    from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
+    from lcsolver.solvers.sequential.sia import SIAOptions, SubproblemCache
+    from lcsolver.solvers.sequential.slcp import Constraint, Posynomial, Signomial
 
     n = 2
     obj = Posynomial([(1.0, [1.0, 0.0])], n)
@@ -681,7 +681,7 @@ def _sig_equality_model():
 
 def test_signomial_equality_is_a_ratio_with_an_equality_operator():
     """Guards the premise: this really is the case under test."""
-    from lcsolver.solvers.ipopt.slcp import CondensedEquality, PosynomialRatio
+    from lcsolver.solvers.sequential.slcp import CondensedEquality, PosynomialRatio
 
     split = build_problem(_detect(_sig_equality_model()), split_equalities=True)
     single = build_problem(_detect(_sig_equality_model()),
@@ -729,7 +729,7 @@ def test_single_equality_keeps_the_multipliers_well_conditioned():
 
 def test_condensed_equality_reports_the_true_gradient():
     """The KKT test must use the TRUE gradient, not the condensed one."""
-    from lcsolver.solvers.ipopt.slcp import CondensedEquality, Posynomial
+    from lcsolver.solvers.sequential.slcp import CondensedEquality, Posynomial
 
     n = 2
     p = Posynomial([(1.0, [1.0, 0.0]), (1.0, [0.0, 1.0])], n)   # x + y

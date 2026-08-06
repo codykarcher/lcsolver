@@ -99,7 +99,7 @@ class TestWriteBack(unittest.TestCase):
 
 def _ipopt_route_available(route):
     try:
-        from lcsolver.solvers.ipopt.ipopt_solver_interface import _executable_available
+        from lcsolver.solvers.ipopt.NLP import _executable_available
         return _executable_available('ipopt' if route == 'pyomo' else 'cyipopt')
     except Exception:
         return False
@@ -198,7 +198,7 @@ class TestIpoptBlackBox(unittest.TestCase):
     only case the AMPL-based route cannot handle, so it is covered explicitly."""
 
     def test_greybox_is_detected(self):
-        from lcsolver.solvers.ipopt.ipopt_solver_interface import _has_greybox
+        from lcsolver.solvers.ipopt.NLP import _has_greybox
 
         self.assertTrue(_has_greybox(_unit_circle_model()))
         self.assertFalse(_has_greybox(_rosenbrock()))
@@ -269,7 +269,7 @@ class TestConvexIpoptBackend(unittest.TestCase):
     def test_gp_via_ipopt_matches_analytic_optimum(self):
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
-        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
 
         f = _gp_known_optimum()
         s = structure_detector(unit_corrector(f))
@@ -288,7 +288,7 @@ class TestConvexIpoptBackend(unittest.TestCase):
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
         from lcsolver.solvers.solver import cvxopt_solve
-        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
 
         f1 = _gp_known_optimum()
         r1 = cvxopt_solve(f1)
@@ -508,7 +508,7 @@ class TestGPObjectiveForm(unittest.TestCase):
         return f
 
     def test_both_forms_give_the_same_optimum(self):
-        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
         answers = {}
@@ -519,23 +519,23 @@ class TestGPObjectiveForm(unittest.TestCase):
         self.assertAlmostEqual(answers["sum"], answers["auto"], places=5)
 
     def test_auto_picks_sum_for_ordinary_magnitudes(self):
-        from lcsolver.solvers.ipopt.convex import _auto_form
+        from lcsolver.solvers.ipopt.GP import _auto_form
         groups = {0: [(1.0, [1.0, 0.0])], 1: [(2.5, [1.0, 2.0])]}
         self.assertEqual(_auto_form(groups), "sum")
 
     def test_auto_picks_lse_for_large_exponents(self):
-        from lcsolver.solvers.ipopt.convex import _auto_form
+        from lcsolver.solvers.ipopt.GP import _auto_form
         groups = {0: [(1.0, [1.0, 0.0])], 1: [(1.0, [1022.7, 0.0])]}
         self.assertEqual(_auto_form(groups), "lse")
 
     def test_auto_picks_lse_for_large_coefficients(self):
-        from lcsolver.solvers.ipopt.convex import _auto_form
+        from lcsolver.solvers.ipopt.GP import _auto_form
         import math
         groups = {0: [(1.0, [1.0])], 1: [(math.exp(176.0), [1.0])]}
         self.assertEqual(_auto_form(groups), "lse")
 
     def test_invalid_form_is_rejected(self):
-        from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+        from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
         st = structure_detector(unit_corrector(self._box()))
@@ -555,7 +555,7 @@ class TestGPObjectiveForm(unittest.TestCase):
     def _drive_polish(self, results_by_form, lse_raises=False):
         import warnings as _warnings
         from unittest import mock
-        from lcsolver.solvers.ipopt import convex
+        from lcsolver.solvers.ipopt import GP as convex
 
         calls = []
 
@@ -605,7 +605,7 @@ class TestGPObjectiveForm(unittest.TestCase):
         # form='sum' is an explicit user choice; no polish, exactly one solve
         import warnings as _warnings
         from unittest import mock
-        from lcsolver.solvers.ipopt import convex
+        from lcsolver.solvers.ipopt import GP as convex
         calls = []
 
         def fake(m, n, groups, relations, tee, options, method, executable,

@@ -52,8 +52,8 @@ def cvxopt_solve(m, write_back=True):
         res = solve_GP(structures)
         res['problem_structure'] = 'geometric_program'
     elif structures['Signomial_Program'][0]:
-        # from lcsolver.solvers.cvxopt.SP import solve_SP
-        from lcsolver.solvers.cvxopt.SP import solve_SP
+        # from lcsolver.solvers.sequential.pccp import solve_SP
+        from lcsolver.solvers.sequential.pccp import solve_SP
         res = solve_SP(structures,m)
         res['problem_structure'] = 'signomial_program_pccp'
     else:
@@ -372,7 +372,7 @@ def _ipopt_available():
     Cheap and not cached: Pyomo's own availability check is a PATH lookup, and
     caching it would make an IPOPT installed mid-session invisible.
     """
-    from lcsolver.solvers.ipopt.ipopt_solver_interface import _executable_available
+    from lcsolver.solvers.ipopt.NLP import _executable_available
     if _executable_available('ipopt'):
         return True
     try:
@@ -753,7 +753,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                          ('Linear_Program', 'Quadratic_Program',
                           'Geometric_Program', 'Signomial_Program'))
 
-    from lcsolver.solvers.ipopt.ipopt_solver_interface import _has_greybox
+    from lcsolver.solvers.ipopt.NLP import _has_greybox
     if _has_greybox(m):
         # A black-box (grey-box) constraint cannot enter the algebraic convex
         # backends, and letting the structured route run without it would
@@ -867,8 +867,8 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     from lcsolver.postsolve.writeback import write_solution
 
     if sp_method == 'pccp':
-        from lcsolver.solvers.cvxopt.SP import solve_SP
-        from lcsolver.solvers.ipopt.convex import solve_gp_rows_ipopt
+        from lcsolver.solvers.sequential.pccp import solve_SP
+        from lcsolver.solvers.ipopt.GP import solve_gp_rows_ipopt
 
         def _inner(rows, relations, x0=None):
             return solve_gp_rows_ipopt(rows, relations, x0=x0)
@@ -885,7 +885,7 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     if sp_method != 'sia':
         raise ValueError(f"sp_method must be 'sia' or 'pccp'; got {sp_method!r}")
 
-    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.sequential.bridge import solve_sia
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',
@@ -954,7 +954,7 @@ def _convex_ipopt(m, structures=None, **kwargs):
     global-optimality guarantee is preserved. Linear and quadratic programs are
     already convex in their natural variables and go to IPOPT unchanged.
     """
-    from lcsolver.solvers.ipopt.convex import solve_gp_ipopt, solve_lp_qp_ipopt
+    from lcsolver.solvers.ipopt.GP import solve_gp_ipopt, solve_lp_qp_ipopt
     from lcsolver.solvers.ipopt import ipopt_solve
 
     if structures is None:

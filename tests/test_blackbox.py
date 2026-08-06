@@ -698,47 +698,55 @@ class TestEDIBlackBox(unittest.TestCase):
         # pointer has to advance by different amounts. Getting that wrong is
         # silent -- the solve still runs, on derivatives written into the
         # wrong columns -- so the block layout is asserted entry by entry.
-        f = Formulation()
-        x = f.Variable(name='x', guess=1.0, units='', description='vector input', size=3)
-        t = f.Variable(name='t', guess=1.0, units='', description='scalar input')
-        z = f.Variable(name='z', guess=1.0, units='', description='vector output', size=3)
-
+        #
+        # The vector is declared of flexible length, so the one box below is
+        # also the check that a single model serves any number of elements.
         class Scaled(BlackBoxFunctionModel):
             def __init__(self):
                 super().__init__()
                 self.description = 'This model evaluates the function: z_i = t * x_i**2'
-                self.inputs.append(name='x', units='', description='vector input', size=3)
+                self.inputs.append(
+                    name='x', units='', description='vector input', size='inf'
+                )
                 self.inputs.append(name='t', units='', description='scalar input')
                 self.outputs.append(
-                    name='z', units='', description='vector output', size=3
+                    name='z', units='', description='vector output', size='inf'
                 )
                 self.availableDerivative = 1
 
             def BlackBox(self, x, t):
                 x, t = self.sanitizeInputs(x, t, strip_units=True)
                 x = np.asarray(x, dtype=np.float64)
-                # dz/dx is diagonal, one segment per element; dz/dt is a column
+                # dz/dx is diagonal, one element per element; dz/dt is a column
                 return self.packOutputs(t * x**2, [np.diag(2 * t * x), x**2])
 
-        f.Objective(f.sum(z))
-        f.ConstraintList([[z, '==', [x, t], Scaled()]])
+        for n in [3, 5]:
+            f = Formulation()
+            x = f.Variable(
+                name='x', guess=1.0, units='', description='vector input', size=n
+            )
+            t = f.Variable(name='t', guess=1.0, units='', description='scalar input')
+            z = f.Variable(
+                name='z', guess=1.0, units='', description='vector output', size=n
+            )
+            f.Objective(f.sum(z))
+            f.ConstraintList([[z, '==', [x, t], Scaled()]])
 
-        model = f.__dict__['constraint_1'].get_external_model()
-        model.set_input_values(np.array([1.0, 2.0, 3.0, 2.0]))
-        out = model.evaluate_outputs()
-        jac = model.evaluate_jacobian_outputs().todense()
+            xv = np.arange(1.0, n + 1.0)
+            tv = 2.0
+            model = f.__dict__['constraint_1'].get_external_model()
+            model.set_input_values(np.concatenate([xv, [tv]]))
+            out = model.evaluate_outputs()
+            jac = model.evaluate_jacobian_outputs().todense()
 
-        for i, expected in enumerate([2.0, 8.0, 18.0]):
-            self.assertAlmostEqual(out[i], expected)
-
-        expected_jac = [
-            [4.0, 0.0, 0.0, 1.0],
-            [0.0, 8.0, 0.0, 4.0],
-            [0.0, 0.0, 12.0, 9.0],
-        ]
-        for i in range(3):
-            for j in range(4):
-                self.assertAlmostEqual(jac[i, j], expected_jac[i][j])
+            self.assertEqual(np.shape(jac), (n, n + 1))
+            for i in range(n):
+                self.assertAlmostEqual(out[i], tv * xv[i] ** 2)
+                # dz_i/dx_j is zero off the diagonal, and dz_i/dt is the last column
+                for j in range(n):
+                    expected = 2 * tv * xv[i] if i == j else 0.0
+                    self.assertAlmostEqual(jac[i, j], expected)
+                self.assertAlmostEqual(jac[i, n], xv[i] ** 2)
 
     def test_edi_blackbox_example_3(self):
         "Tests a black box example construction"

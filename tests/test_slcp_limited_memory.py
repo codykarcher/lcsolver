@@ -14,8 +14,8 @@ import pyomo.environ as pyo
 import pytest
 
 from lcsolver import Formulation
-from lcsolver.solvers.ipopt.slcp import LimitedMemoryB, Options, _damped_bfgs
-from lcsolver.solvers.ipopt.slcp_bridge import solve_slcp
+from lcsolver.solvers.sequential.slcp import LimitedMemoryB, Options, _damped_bfgs
+from lcsolver.solvers.sequential.bridge import solve_slcp
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
 

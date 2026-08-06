@@ -6,8 +6,8 @@
 
 """Run a detected GP/SP through the SLCP solver.
 
-``lcsolver.solvers.ipopt.slcp`` implements sequential log-convex programming over
-its own :class:`~lcsolver.solvers.ipopt.slcp.Problem` object, which nothing in LCsolver
+``lcsolver.solvers.sequential.slcp`` implements sequential log-convex programming over
+its own :class:`~lcsolver.solvers.sequential.slcp.Problem` object, which nothing in LCsolver
 built. This module is the missing adapter: it turns the row form produced by
 :func:`~lcsolver.presolve.structureDetector.structure_detector` into that object,
 so the same formulation can be solved either way and the two compared.
@@ -35,7 +35,7 @@ than silently dropped.
 import numpy as np
 
 from lcsolver.presolve.detected import as_detected
-from lcsolver.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
+from lcsolver.solvers.sequential.slcp import (CondensedEquality, Constraint, Options,
                                     Posynomial,
                                     PosynomialRatio, Problem, Signomial,
                                     solve as _slcp_solve)
@@ -136,11 +136,11 @@ def build_problem(structures, sp_form=True, split_equalities=False):
     ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
 
     ``True`` (default)
-        Build a :class:`~lcsolver.solvers.ipopt.slcp.PosynomialRatio`, which keeps
+        Build a :class:`~lcsolver.solvers.sequential.slcp.PosynomialRatio`, which keeps
         ``p`` exact in log space and condenses only ``q`` by the AGM
         inequality. Less approximation, and conservative.
     ``False``
-        Build a plain :class:`~lcsolver.solvers.ipopt.slcp.Signomial` -- a
+        Build a plain :class:`~lcsolver.solvers.sequential.slcp.Signomial` -- a
         value/gradient callback over the same ratio -- which SLCP then
         linearizes whole, discarding ``p``'s log-convexity along with ``q``'s
         curvature. This is stock SLCP as the paper describes it, and is the
@@ -326,7 +326,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
 
     ``x0`` is in the natural (not log) variables and must be strictly
     positive; it defaults to the current values of ``structures['variables']``.
-    Returns the SLCP :class:`~lcsolver.solvers.ipopt.slcp.Result`.
+    Returns the SLCP :class:`~lcsolver.solvers.sequential.slcp.Result`.
 
     ``presolve`` (default True) shrinks the problem first via
     :func:`presolve_structures` and puts the removed variables back into
@@ -361,14 +361,14 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
-    :func:`lcsolver.solvers.ipopt.sia.solve_sia`. ``sp_form`` defaults to True here
+    :func:`lcsolver.solvers.sequential.sia.solve_sia`. ``sp_form`` defaults to True here
     and should stay that way -- the conservative condensation is the whole
     basis of the method, and turning it off downgrades every signomial
     constraint to a linearization that then has to be globalized.
     """
     import pyomo.environ as pyo
 
-    from lcsolver.solvers.ipopt.sia import solve_sia as _sia_solve
+    from lcsolver.solvers.sequential.sia import solve_sia as _sia_solve
 
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]

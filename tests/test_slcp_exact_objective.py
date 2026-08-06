@@ -16,8 +16,8 @@ import pyomo.environ as pyo
 import pytest
 
 from lcsolver import Formulation
-from lcsolver.solvers.ipopt.slcp import Options
-from lcsolver.solvers.ipopt.slcp_bridge import build_problem, solve_slcp
+from lcsolver.solvers.sequential.slcp import Options
+from lcsolver.solvers.sequential.bridge import build_problem, solve_slcp
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
 
@@ -46,7 +46,7 @@ def _monomial_objective():
 
 
 def _count(make, **opts):
-    import lcsolver.solvers.ipopt.slcp as S
+    import lcsolver.solvers.sequential.slcp as S
     calls = {"n": 0}
     original = S._solve_pyomo_subproblem
 
@@ -88,7 +88,7 @@ def test_monomial_objective_still_benefits_from_dropping_the_quadratic():
 
 
 def test_fully_log_convex_detection():
-    from lcsolver.solvers.ipopt.slcp import _fully_log_convex
+    from lcsolver.solvers.sequential.slcp import _fully_log_convex
     assert _fully_log_convex(build_problem(
         structure_detector(unit_corrector(_box()))))
 

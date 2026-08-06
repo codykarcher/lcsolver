@@ -38,7 +38,7 @@ from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.solvers.cvxopt.LP import solve_LP
 from lcsolver.solvers.cvxopt.QP import solve_QP
 from lcsolver.solvers.cvxopt.GP import solve_GP
-from lcsolver.solvers.cvxopt.SP import solve_SP
+from lcsolver.solvers.sequential.pccp import solve_SP
 
 from pyomo.common.dependencies import attempt_import
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )

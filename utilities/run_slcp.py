@@ -26,7 +26,7 @@ import numpy as np
 
 sys.path.insert(0, __file__.rsplit('/', 2)[0])
 
-from lcsolver.solvers.ipopt import slcp                      # noqa: E402
+from lcsolver.solvers.sequential import slcp                      # noqa: E402
 from slcp_cases import CASES                   # noqa: E402
 
 METHODS = ('slcp', 'lsqp', 'sqp')
@@ -42,7 +42,7 @@ def gp_reference(problem):
 
     import pyomo.environ as pyo
 
-    from lcsolver.solvers.ipopt.slcp import Posynomial
+    from lcsolver.solvers.sequential.slcp import Posynomial
 
     if not isinstance(problem.objective, Posynomial):
         return None

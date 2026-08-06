@@ -2241,7 +2241,7 @@ def _greybox_covered(st):
     check entry points subtract that false positive.
     """
     try:
-        from lcsolver.solvers.ipopt.slcp_bridge import (_unwrap_vars,
+        from lcsolver.solvers.sequential.bridge import (_unwrap_vars,
                                                         greybox_blocks)
         blocks = greybox_blocks(st)
     except Exception:
@@ -2338,7 +2338,7 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9):
         import numpy as _np
         import pyomo.environ as _pyo
 
-        from lcsolver.solvers.ipopt.slcp_bridge import build_problem
+        from lcsolver.solvers.sequential.bridge import build_problem
 
         _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
                          dtype=float)
@@ -2501,7 +2501,7 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
     on it") also flags every variable pinned by a single-variable *equality*,
     and those are maximally determined rather than free.
 
-    ``problem`` is an :class:`~lcsolver.solvers.ipopt.slcp.Problem`; ``x`` the
+    ``problem`` is an :class:`~lcsolver.solvers.sequential.slcp.Problem`; ``x`` the
     solution. Returns a list of ``(name, value)``.
     """
     import math

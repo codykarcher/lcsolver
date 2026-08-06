@@ -55,7 +55,7 @@ def _time(fn, repeats):
 
 def bench_case(name, build_formulation, slcp_case=None, repeats=5):
     from lcsolver.solvers.ipopt import ipopt_solve
-    from lcsolver.solvers.ipopt.convex import solve_gp_ipopt
+    from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
     from lcsolver.solvers.solver import cvxopt_solve
     from lcsolver.presolve.structureDetector import structure_detector
     from lcsolver.presolve.unitCorrector import unit_corrector
@@ -91,7 +91,7 @@ def bench_case(name, build_formulation, slcp_case=None, repeats=5):
 
     # --- SLCP -----------------------------------------------------------------
     if slcp_case is not None:
-        from lcsolver.solvers.ipopt import slcp as slcp_mod
+        from lcsolver.solvers.sequential import slcp as slcp_mod
 
         def run_slcp():
             problem, x0, _ = slcp_case()

@@ -232,7 +232,7 @@ def problem_to_formulation(problem, x0=None):
     they read the way a user would actually write the model. This is the
     mechanical path.
     """
-    from lcsolver.solvers.ipopt.slcp import Posynomial
+    from lcsolver.solvers.sequential.slcp import Posynomial
 
     if not isinstance(problem.objective, Posynomial):
         raise ValueError('objective must be a posynomial')

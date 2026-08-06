@@ -19,8 +19,8 @@ import pyomo.environ as pyo
 import pytest
 
 from lcsolver import Formulation
-from lcsolver.solvers.ipopt.slcp import Options, SubproblemCache
-from lcsolver.solvers.ipopt.slcp_bridge import build_problem, solve_slcp
+from lcsolver.solvers.sequential.slcp import Options, SubproblemCache
+from lcsolver.solvers.sequential.bridge import build_problem, solve_slcp
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
 
@@ -66,7 +66,7 @@ def test_cache_is_off_by_default():
 def test_cacheability_is_detected():
     """A problem the bridge produces is cacheable; a Signomial body is not."""
     import numpy as np
-    from lcsolver.solvers.ipopt.slcp import (Constraint, Posynomial, Problem,
+    from lcsolver.solvers.sequential.slcp import (Constraint, Posynomial, Problem,
                                         Signomial)
     problem = build_problem(structure_detector(unit_corrector(_box())))
     assert SubproblemCache(problem, Options()).usable

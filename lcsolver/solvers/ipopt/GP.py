@@ -323,7 +323,7 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
             n_ineq += 1
 
     # ---- solve -----------------------------------------------------------
-    from lcsolver.solvers.ipopt.ipopt_solver_interface import (
+    from lcsolver.solvers.ipopt.NLP import (
         _executable_available, _summarize)
     from pyomo.opt import TerminationCondition
 

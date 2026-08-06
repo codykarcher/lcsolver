@@ -162,8 +162,8 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     import pyomo.environ as pyo
 
     from lcsolver.presolve.reductions import _as_structures
-    from lcsolver.solvers.ipopt.sia import SIAOptions, explain_infeasibility
-    from lcsolver.solvers.ipopt.slcp_bridge import (_apply_presolve, _restore,
+    from lcsolver.solvers.sequential.sia import SIAOptions, explain_infeasibility
+    from lcsolver.solvers.sequential.bridge import (_apply_presolve, _restore,
                                                build_problem)
 
     st = _as_structures(model)

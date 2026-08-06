@@ -170,7 +170,7 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
     ``gp_solver`` selects the *inner* GP solve and takes ``(rows, relations,
     x0)``, returning a dict with ``'x'`` and ``'primal objective'``. It
     defaults to the cvxopt backend. Passing
-    ``lcsolver.solvers.ipopt.convex.solve_gp_rows_ipopt`` runs the same PCCP
+    ``lcsolver.solvers.ipopt.GP.solve_gp_rows_ipopt`` runs the same PCCP
     outer loop with IPOPT underneath, which is substantially more robust on
     larger models -- cvxopt stalls with ``status='unknown'`` where IPOPT
     converges. The outer algorithm is identical either way; only the

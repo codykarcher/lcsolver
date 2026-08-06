@@ -120,10 +120,10 @@ def _solve_via(make, path):
             return _objective_of(f)
         st = structure_detector(unit_corrector(f))
         if path == 'sia':
-            from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+            from lcsolver.solvers.sequential.bridge import solve_sia
             return float(solve_sia(st).objective)
         if path == 'slcp':
-            from lcsolver.solvers.ipopt.slcp_bridge import solve_slcp
+            from lcsolver.solvers.sequential.bridge import solve_slcp
             return float(solve_slcp(st).objective)
         raise AssertionError(f'unknown path {path}')
 
@@ -154,7 +154,7 @@ def test_every_path_finds_the_same_optimum(name, make):
 @pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
 def test_presolve_does_not_change_the_answer(name, make):
     """SIA with the presolve pipeline on and off must agree."""
-    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.sequential.bridge import solve_sia
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -172,7 +172,7 @@ def test_presolve_does_not_change_the_answer(name, make):
 @pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
 def test_split_bounds_do_not_change_the_answer(name, make):
     """bounds_as_rows on and off describe the same problem."""
-    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.sequential.bridge import solve_sia
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -214,7 +214,7 @@ def test_example_models_are_unchanged_by_presolve(name):
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.sequential.bridge import solve_sia
         try:
             base = solve_sia(structure_detector(unit_corrector(build())))
             plain = solve_sia(structure_detector(unit_corrector(build())),
@@ -244,7 +244,7 @@ def test_example_models_survive_every_transform(name):
     build = _example(name)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.sequential.bridge import solve_sia
         try:
             res = solve_sia(structure_detector(unit_corrector(build())))
         except Exception as exc:                       # noqa: BLE001
@@ -291,7 +291,7 @@ def test_spaircraft_end_to_end():
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.sequential.bridge import solve_sia
         st = structure_detector(unit_corrector(build()))
         n_vars = len(st['variables'])
         res = solve_sia(st)
