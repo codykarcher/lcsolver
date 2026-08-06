@@ -3,8 +3,6 @@
   <img src="logo/LCsolver.svg" height="100" alt="LCsolver">
 </picture>
 
-# LCsolver
-
 [![tests](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml)
 [![cross-platform](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml)
 [![coverage](https://codecov.io/gh/codykarcher/lcsolver/branch/main/graph/badge.svg)](https://codecov.io/gh/codykarcher/lcsolver)
