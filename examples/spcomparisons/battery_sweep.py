@@ -19,21 +19,21 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE / "components"))
-sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
 import classes, architectures  # noqa: E402  -- needed at module scope too
 
 
 def solve_at(cls_key, range_nmi, maxit=800, arch_key="battery", warm=None):
     warnings.filterwarnings("ignore")
     sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE / "components"))
-    sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+    sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
     import pyomo.environ as pyo
     from pyomo.environ import units as u
     import classes, architectures, aircraft
-    from edi_compat import structure_detector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
-    from edi_compat import unit_corrector
+    from lcsolver_compat import structure_detector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
+    from lcsolver_compat import unit_corrector
     LBF = 0.2248089431
     cl = replace(classes.CLASSES[cls_key], range_nmi=range_nmi)
     cm = unit_corrector(aircraft.build(cl, architectures.ARCHS[arch_key],

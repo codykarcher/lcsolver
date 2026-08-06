@@ -1,8 +1,8 @@
 # Rebuild status
 
-`verified` means the EDI rebuild reproduces the reference solution on every
+`verified` means the LCsolver rebuild reproduces the reference solution on every
 compared variable to the stated tolerance. Run each model's self-check with
-`python <dir>/model.py` — this needs only EDI, not gpkit.
+`python <dir>/model.py` — this needs only LCsolver, not gpkit.
 
 | model | source | status | agreement |
 |---|---|---|---|
@@ -58,7 +58,7 @@ decays as 1/lambda and never approaches it. The paper's Figure 1 reproduces
 correctly with the correction, so the figure was produced with the right
 equation and the error is confined to the printed one.
 
-## EDI bugs found and fixed while porting
+## LCsolver bugs found and fixed while porting
 
 Three, all on this branch or its parent:
 
@@ -76,7 +76,7 @@ Three, all on this branch or its parent:
 
 ## Porting notes
 
-The recurring gotcha moving a gpkit model to EDI is the **radian**. gpkit
+The recurring gotcha moving a gpkit model to LCsolver is the **radian**. gpkit
 uses pint, which treats it as dimensionless, so `Q*omega` is a power and
 `omega*R` a velocity directly. Pyomo keeps the radian as a real dimension, so
 those raise `InconsistentUnitsError` and need an explicit `/units.rad`. This
@@ -101,7 +101,7 @@ Backend choice is **structure dependent** and matters more than it sounds.
 * **GP** -> log-space IPOPT. cvxopt stalls with `status='unknown'` on the
   solar aircraft and on the wing at N=8, where IPOPT converges cleanly.
 * **SP** -> PCCP (penalty convex-concave), whose every subproblem is a GP.
-  EDI now supports PCCP with either inner solver.
+  LCsolver now supports PCCP with either inner solver.
 
 gpkit's reference solutions came from MOSEK, stronger than cvxopt again.
 **A cvxopt stall says almost nothing about the model.** Several models here
@@ -186,7 +186,7 @@ mission, both of which the reference snapshot already covers.
 
 Reference captured (`spaircraft/reference.json`): the D8.2 converges to
 20859.7 lbf of fuel and satisfies every constraint of the unmodified gpkit
-model to 4e-8. The EDI rebuild is not yet written. Four findings about the
+model to 4e-8. The LCsolver rebuild is not yet written. Four findings about the
 reference are recorded in DISCREPANCIES.md §12–15; the sys.path collision in
 §12 in particular will silently corrupt any future re-capture.
 
@@ -207,7 +207,7 @@ Feasibility 3.5e-6. Independently, `crosscheck.py` maps 1174/1174 variables
 and confirms the gpkit optimum satisfies all 3734 constraints to 1.0e-7, so
 the equations are verified separately from the solve.
 
-Getting here needed two EDI fixes and one modelling fix, none of which were
+Getting here needed two LCsolver fixes and one modelling fix, none of which were
 visible from reading the model:
 
 * **`implementVariableBound` built the upper-bound constraint from
@@ -231,9 +231,9 @@ produced confident, wrong answers.
 
 ## Solver comparison: PCCP vs SLCP
 
-`edi/solvers/ipopt/slcp.py` implements sequential log-convex programming, but
-over its own `Problem` object that nothing in EDI constructed — so it could
-not be run on a Formulation at all. `edi/solvers/ipopt/slcp_bridge.py` is the
+`lcsolver/solvers/ipopt/slcp.py` implements sequential log-convex programming, but
+over its own `Problem` object that nothing in LCsolver constructed — so it could
+not be run on a Formulation at all. `lcsolver/solvers/ipopt/slcp_bridge.py` is the
 adapter: numerator-only groups become `Posynomial`s imposed exactly in log
 space, numerator/denominator pairs become `PosynomialRatio`s (numerator exact,
 denominator condensed by AGM — the classical SP treatment), single-term

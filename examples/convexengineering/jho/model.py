@@ -118,7 +118,7 @@ import numpy as np
 from pyomo.environ import units
 from pyomo.core.base.var import IndexedVar
 
-from edi import Formulation
+from lcsolver import Formulation
 from environment import (CLIMB, LOITER, POWER_LAW, BSFC_FIT,
                          JHO_POLAR, NACA0008)
 
@@ -145,7 +145,7 @@ def planform_constants(N: int, lam: float):
 
 
 def fit_constraints(fit, ivar, dvars, mfac=1.0):
-    """EDI constraints for a gpfit fit. See ../solar/environment.py."""
+    """LCsolver constraints for a gpfit fit. See ../solar/environment.py."""
     monos = []
     for k in range(fit["K"]):
         m = fit["c"][k]

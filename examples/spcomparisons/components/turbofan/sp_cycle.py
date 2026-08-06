@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from . import sp_thermo as TH
 from . import sp_maps as MAPS

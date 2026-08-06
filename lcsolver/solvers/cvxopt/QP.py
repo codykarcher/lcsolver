@@ -17,10 +17,10 @@ if not cvxopt_available:
 
 
 def solve_QP(structures):
-    from edi.presolve.structureDetector import require
+    from lcsolver.presolve.structureDetector import require
     require(structures, 'solve_QP')
 
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
     parts = as_detected(structures).linear_parts()
     P = cvxopt.matrix(parts.hessian)
     q = cvxopt.matrix(parts.linear)

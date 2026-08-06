@@ -33,7 +33,7 @@ egb, egb_available = attempt_import(
 
 formulation_available = False
 try:
-    from edi import Formulation
+    from lcsolver import Formulation
 
     formulation_available = True
 except:
@@ -42,7 +42,7 @@ except:
 
 blackbox_available = False
 try:
-    from edi import BlackBoxFunctionModel
+    from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
 except:
@@ -61,12 +61,12 @@ except:
 
 
 @unittest.skipIf(
-    not egb_available, 'Testing edi requires pynumero external grey boxes'
+    not egb_available, 'Testing lcsolver requires pynumero external grey boxes'
 )
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not blackbox_available, 'Blackbox import failed')
-@unittest.skipIf(not numpy_available, 'Testing edi requires numpy')
-@unittest.skipIf(not scipy_available, 'Testing edi requires scipy')
+@unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
+@unittest.skipIf(not scipy_available, 'Testing lcsolver requires scipy')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class EDIExamples(unittest.TestCase):
     def test_edi_example_placeholder(self):
@@ -81,7 +81,7 @@ def create_new(filename):
         try:
             # `examples/` lives at the top level of the standalone repository
             # rather than inside the package (it did live inside it when this was
-            # pyomo.contrib.edi). Import it by file path so the test works
+            # pyomo.contrib.lcsolver). Import it by file path so the test works
             # regardless of whether examples/ is installed with the wheel.
             import os, sys
             _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -11,7 +11,7 @@ This model cannot be solved with cvxopt -- the repo's own ``TESTCONFIG`` says
 ``skipsolvers : cvxopt, mosek_cli``, and the published results came from
 MOSEK, which needs a license. So the GP subproblems are solved with IPOPT via
 ``gpkit_ipopt``, which swaps the numerics while leaving the gpkit model (the
-thing the EDI rebuild is verified against) untouched. See that module's
+thing the LCsolver rebuild is verified against) untouched. See that module's
 docstring; it reproduces gplibrary's SimPleAC to 1.5e-6 against cvxopt.
 
 Validation data

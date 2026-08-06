@@ -50,9 +50,9 @@ os.environ.setdefault("V_HT_FLOOR", "0.01")
 import architectures  # noqa: E402
 import classes  # noqa: E402
 import aircraft  # noqa: E402
-from edi_compat import structure_detector, unit_corrector  # noqa: E402
-from edi.solvers.ipopt.slcp_bridge import solve_sia  # noqa: E402
-from edi.solvers.ipopt.sia import SIAOptions  # noqa: E402
+from lcsolver_compat import structure_detector, unit_corrector  # noqa: E402
+from lcsolver.solvers.ipopt.slcp_bridge import solve_sia  # noqa: E402
+from lcsolver.solvers.ipopt.sia import SIAOptions  # noqa: E402
 
 PAX = [100, 200, 300, 400, 500]
 ARCHS = ["conventional", "d8", "h2burn", "h2fc", "battery"]

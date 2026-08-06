@@ -9,10 +9,10 @@ posynomial, which is the difference between a label and an action.
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.presolve.reductions import structure_report
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver import Formulation
+from lcsolver.presolve.reductions import structure_report
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 
 def _detected(f):
@@ -178,7 +178,7 @@ def test_no_simplification_claim_when_nothing_is_removed():
 # formulation itself.
 
 def test_diagnose_accepts_a_formulation():
-    from edi import optimization_check
+    from lcsolver import optimization_check
     rep = optimization_check(_sp())
     assert 'Signomial Program (SP)' in rep.structure
 
@@ -195,7 +195,7 @@ def test_bad_units_are_diagnosed_not_raised():
     would make to find out why a model misbehaves failed with the very error
     you were looking for, and printed nothing else.
     """
-    from edi import optimization_check
+    from lcsolver import optimization_check
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='m', description='a length')
     t = f.Variable(name='t', guess=1.0, units='s', description='a time')
@@ -313,8 +313,8 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
     So blanking the blame list must not change the verdict: the two are
     independent, and that independence is the point.
     """
-    from edi.presolve.reductions import _gp_after_presolve
-    from edi.presolve.reductions import structure_report as report
+    from lcsolver.presolve.reductions import _gp_after_presolve
+    from lcsolver.presolve.reductions import structure_report as report
     st = _detected(_sp_only_on_paper())
     assert _gp_after_presolve(st) is True
     with_blame = report(st)
@@ -325,7 +325,7 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
 
 def test_a_genuine_sp_is_not_gp_after_presolve():
     """The other side of it: an unremovable signomial must fail the check."""
-    from edi.presolve.reductions import _gp_after_presolve
+    from lcsolver.presolve.reductions import _gp_after_presolve
     assert _gp_after_presolve(_detected(_sp())) is False
 
 
@@ -344,15 +344,15 @@ def _free_rider():
 
 
 def test_post_solve_checks_are_off_before_a_solve():
-    from edi import optimization_check
+    from lcsolver import optimization_check
     rep = optimization_check(_free_rider())
     assert rep.degenerate == [] and rep.post_solve_text() == ''
 
 
 def test_post_solve_checks_turn_on_after_a_solve():
     """Same call, more report -- the point of the auto-wiring."""
-    from edi import optimization_check
-    from edi.solvers.solver import solve
+    from lcsolver import optimization_check
+    from lcsolver.solvers.solver import solve
     f = _free_rider()
     solve(f, sensitivities=False)
     rep = optimization_check(f)
@@ -362,8 +362,8 @@ def test_post_solve_checks_turn_on_after_a_solve():
 
 def test_the_degenerate_variable_is_named():
     """It reported `<var 2>` until `names` was defaulted from the structures."""
-    from edi import optimization_check
-    from edi.solvers.solver import solve
+    from lcsolver import optimization_check
+    from lcsolver.solvers.solver import solve
     f = _free_rider()
     solve(f, sensitivities=False)
     text = optimization_check(f).post_solve_text()
@@ -378,8 +378,8 @@ def test_structures_are_never_auto_wired():
     the author's initial guesses while reporting in the language of a result,
     so it is done only for a Formulation.
     """
-    from edi import optimization_check
-    from edi.solvers.solver import solve
+    from lcsolver import optimization_check
+    from lcsolver.solvers.solver import solve
     f = _free_rider()
     st = _detected(f)                    # detected BEFORE solving
     solve(f, sensitivities=False)

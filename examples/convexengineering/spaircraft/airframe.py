@@ -192,7 +192,7 @@ def add_constants(f, **values):
 def set_constant(handle, name, value):
     """Override a component's ``Constant`` in place.
 
-    EDI constants are mutable Pyomo ``Param``s, so a deck can retune one a
+    LCsolver constants are mutable Pyomo ``Param``s, so a deck can retune one a
     component declared with a different aircraft in mind -- ``SPR`` and
     ``M_fuseD`` are both hard-coded to D8 values in ``fuselage.py`` -- without
     touching the component model or adding a constraint to undo it.

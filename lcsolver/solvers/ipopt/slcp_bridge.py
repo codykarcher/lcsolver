@@ -1,15 +1,15 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
 """Run a detected GP/SP through the SLCP solver.
 
-``edi.solvers.ipopt.slcp`` implements sequential log-convex programming over
-its own :class:`~edi.solvers.ipopt.slcp.Problem` object, which nothing in EDI
+``lcsolver.solvers.ipopt.slcp`` implements sequential log-convex programming over
+its own :class:`~lcsolver.solvers.ipopt.slcp.Problem` object, which nothing in LCsolver
 built. This module is the missing adapter: it turns the row form produced by
-:func:`~edi.presolve.structureDetector.structure_detector` into that object,
+:func:`~lcsolver.presolve.structureDetector.structure_detector` into that object,
 so the same formulation can be solved either way and the two compared.
 
 The row form is already close to what SLCP wants. Rows carry
@@ -34,8 +34,8 @@ than silently dropped.
 
 import numpy as np
 
-from edi.presolve.detected import as_detected
-from edi.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
+from lcsolver.presolve.detected import as_detected
+from lcsolver.solvers.ipopt.slcp import (CondensedEquality, Constraint, Options,
                                     Posynomial,
                                     PosynomialRatio, Problem, Signomial,
                                     solve as _slcp_solve)
@@ -47,11 +47,11 @@ def build_problem(structures, sp_form=True, split_equalities=False):
     ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
 
     ``True`` (default)
-        Build a :class:`~edi.solvers.ipopt.slcp.PosynomialRatio`, which keeps
+        Build a :class:`~lcsolver.solvers.ipopt.slcp.PosynomialRatio`, which keeps
         ``p`` exact in log space and condenses only ``q`` by the AGM
         inequality. Less approximation, and conservative.
     ``False``
-        Build a plain :class:`~edi.solvers.ipopt.slcp.Signomial` -- a
+        Build a plain :class:`~lcsolver.solvers.ipopt.slcp.Signomial` -- a
         value/gradient callback over the same ratio -- which SLCP then
         linearizes whole, discarding ``p``'s log-convexity along with ``q``'s
         curvature. This is stock SLCP as the paper describes it, and is the
@@ -176,17 +176,17 @@ def presolve_structures(structures, verbose=False):
     a value that is feasible for the original problem.
 
     Returns ``(reduced, removed)``. ``removed`` is in
-    :func:`~edi.presolve.reductions.reduce_columns` form and is what
-    :func:`~edi.presolve.reductions.restore_columns` needs to rebuild a full solution.
+    :func:`~lcsolver.presolve.reductions.reduce_columns` form and is what
+    :func:`~lcsolver.presolve.reductions.restore_columns` needs to rebuild a full solution.
 
     Unlike ``structure_detector(bounds_as_rows=False)``, this works on a
     structure whose bounds are still rows: it synthesizes the empty bounds
     array to fold them into. That is a deliberate choice made here rather than
-    in ``edi.presolve.reductions``, because this is the point that knows the consumer --
+    in ``lcsolver.presolve.reductions``, because this is the point that knows the consumer --
     SLCP and SIA both read variable bounds -- whereas the cvxopt backends do
-    not, and ``edi.presolve.reductions`` refuses the conversion for exactly that reason.
+    not, and ``lcsolver.presolve.reductions`` refuses the conversion for exactly that reason.
     """
-    from edi.presolve.reductions import presolve as _presolve_pipeline
+    from lcsolver.presolve.reductions import presolve as _presolve_pipeline
 
     st = dict(structures)
     if st.get('bounds') is None:
@@ -229,7 +229,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
 
     ``x0`` is in the natural (not log) variables and must be strictly
     positive; it defaults to the current values of ``structures['variables']``.
-    Returns the SLCP :class:`~edi.solvers.ipopt.slcp.Result`.
+    Returns the SLCP :class:`~lcsolver.solvers.ipopt.slcp.Result`.
 
     ``presolve`` (default True) shrinks the problem first via
     :func:`presolve_structures` and puts the removed variables back into
@@ -260,14 +260,14 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
-    :func:`edi.solvers.ipopt.sia.solve_sia`. ``sp_form`` defaults to True here
+    :func:`lcsolver.solvers.ipopt.sia.solve_sia`. ``sp_form`` defaults to True here
     and should stay that way -- the conservative condensation is the whole
     basis of the method, and turning it off downgrades every signomial
     constraint to a linearization that then has to be globalized.
     """
     import pyomo.environ as pyo
 
-    from edi.solvers.ipopt.sia import solve_sia as _sia_solve
+    from lcsolver.solvers.ipopt.sia import solve_sia as _sia_solve
 
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]

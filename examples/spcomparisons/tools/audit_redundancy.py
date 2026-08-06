@@ -4,16 +4,16 @@ the s3 duplicate belonged to."""
 import os, sys, json, warnings
 import numpy as np
 warnings.filterwarnings("ignore")
-HERE = "/Users/codykarcher/Dropbox/research/edi/examples/spcomparisons"
+HERE = "/Users/codykarcher/Dropbox/research/lcsolver/examples/spcomparisons"
 sys.path.insert(0, HERE); sys.path.insert(0, HERE + "/components")
-sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
 os.chdir(HERE)
 os.environ["SP_ENGINE"] = "cfm56_hiopr"
 import pyomo.environ as pyo
 import classes, architectures, aircraft, dataclasses
-from edi_compat import structure_detector, unit_corrector
-from edi.solvers.ipopt.slcp_bridge import build_problem
-from edi.solvers.ipopt.sia import _log_g
+from lcsolver_compat import structure_detector, unit_corrector
+from lcsolver.solvers.ipopt.slcp_bridge import build_problem
+from lcsolver.solvers.ipopt.sia import _log_g
 
 ar = dataclasses.replace(architectures.ARCHS["conventional"], lock_mach=True)
 cm = unit_corrector(aircraft.build(classes.CLASSES["b737"], ar,

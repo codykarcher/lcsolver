@@ -1,12 +1,12 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
 """Sensitivity of the optimum to the Constants of a formulation.
 
-This is the EDI analogue of the sensitivity report that `GPkit` prints for a
+This is the LCsolver analogue of the sensitivity report that `GPkit` prints for a
 geometric program: for every ``Constant`` in the model it reports how strongly
 the optimal objective responds to that constant. The reported quantity is the
 log-log sensitivity (an elasticity)
@@ -50,7 +50,7 @@ how many constants the model has.
 
 Where the duals come from
 -------------------------
-The formula needs duals keyed by Pyomo constraint, and EDI has several solver
+The formula needs duals keyed by Pyomo constraint, and LCsolver has several solver
 backends. Rather than reach into each backend's transformed problem, this module
 obtains them in one of two backend-agnostic ways:
 
@@ -201,7 +201,7 @@ def _residual_scale(con, variables):
     """Natural magnitude of a constraint, for a scale-aware feasibility test.
 
     Comparing a residual against the bound alone is useless when the bound is
-    zero, which is the normal case here: EDI moves everything to one side, so a
+    zero, which is the normal case here: LCsolver moves everything to one side, so a
     constraint reads ``body <= 0``. A weight constraint on an aircraft then has
     terms of order 1e4 N and an interior-point solver leaves a residual of order
     1e-1 -- tight to five significant figures, yet an absolute test would call
@@ -272,9 +272,9 @@ def _param_gradient(expr, index):
 
 
 def _constants(model):
-    """Every EDI Constant, as individual ParamData, keyed by name.
+    """Every LCsolver Constant, as individual ParamData, keyed by name.
 
-    An EDI ``Constant`` is a mutable Pyomo ``Param``; an indexed Constant
+    An LCsolver ``Constant`` is a mutable Pyomo ``Param``; an indexed Constant
     contributes one entry per element, matching how GPkit reports vectors.
     """
     out = {}
@@ -514,11 +514,11 @@ def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
 
     Duals are never consulted, so this is immune to the degenerate-active-set
     failure of KKT recovery. Cost: two solves per Constant. Requires that the
-    solve backend writes the solution back onto the model (every EDI backend
+    solve backend writes the solution back onto the model (every LCsolver backend
     does), and leaves the model re-solved at the baseline on exit.
     """
     if solve_fn is None:
-        from edi.solvers.solver import cvxopt_solve as solve_fn
+        from lcsolver.solvers.solver import cvxopt_solve as solve_fn
     obj = _objective(model)
     sens = {}
     for name, pd in _constants(model).items():
@@ -553,7 +553,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     Parameters
     ----------
     model : Formulation
-        A model that already holds a solution. Every EDI backend writes the
+        A model that already holds a solution. Every LCsolver backend writes the
         solution back onto the model, so this is the state after ``solve(f)``.
     normalized : bool
         When True (the default) report the log-log sensitivity
@@ -614,7 +614,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         use_suffix = (method in ('auto', 'suffix')
                       and _duals_from_suffix(model) is not None)
         if not use_suffix:
-            from edi.presolve.unitCorrector import unit_corrector
+            from lcsolver.presolve.unitCorrector import unit_corrector
             model = unit_corrector(model)
 
     obj = _objective(model)

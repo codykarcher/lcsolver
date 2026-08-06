@@ -1,10 +1,10 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""IPOPT interface for EDI formulations.
+"""IPOPT interface for LCsolver formulations.
 
 Unlike the cvxopt backends, which require the formulation to fall into a
 recognized structure (LP, QP, GP, SP) and solve a transformed problem, IPOPT
@@ -75,7 +75,7 @@ def _summarize(results):
 # ---------------------------------------------------------------------------
 def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 load_solutions=True):
-    """Solve an EDI ``Formulation`` with IPOPT.
+    """Solve an LCsolver ``Formulation`` with IPOPT.
 
     Parameters
     ----------
@@ -129,7 +129,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
 
     # Ask the solver for constraint duals. They cost nothing extra and are what
-    # `edi.solvers.sensitivity` uses to report how the optimum responds to each
+    # `lcsolver.solvers.sensitivity` uses to report how the optimum responds to each
     # Constant; without the Suffix those duals would have to be reconstructed
     # from the primal solution.
     if not hasattr(m, 'dual'):
@@ -179,7 +179,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         m.solutions.load_from(results)
 
     # Pyomo has already written the solution onto the model; report it in the
-    # same {name: value} form the other EDI backends use.
+    # same {name: value} form the other LCsolver backends use.
     sol = {}
     for v in m.component_data_objects(pyo.Var, descend_into=True, active=True):
         try:

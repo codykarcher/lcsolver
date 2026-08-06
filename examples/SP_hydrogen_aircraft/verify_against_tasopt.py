@@ -35,10 +35,10 @@ def run(mission=None, tee=True):
     warnings.filterwarnings("ignore")
     import pyomo.environ as pyo
 
-    from edi.presolve.structureDetector import structure_detector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
-    from edi.presolve.unitCorrector import unit_corrector
+    from lcsolver.presolve.structureDetector import structure_detector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
+    from lcsolver.presolve.unitCorrector import unit_corrector
     from examples.SP_hydrogen_aircraft.model import build
 
     fm = build(**(mission or MISSION))

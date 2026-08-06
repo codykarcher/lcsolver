@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from edi import Formulation
+from lcsolver import Formulation
 
 BETZ = 16.0 / 27.0
 
@@ -151,7 +151,7 @@ def build(N: int = 10, lam: float = 3.0, eps: float = 0.05,
 def cp_at(N=10, lam=3.0, eps=0.05, B=3, tip_loss=True) -> float:
     """Solve one operating point and return the total power coefficient."""
     import pyomo.environ as pyo
-    from edi.solvers.solver import solve
+    from lcsolver.solvers.solver import solve
 
     f = build(N=N, lam=lam, eps=eps, B=B, tip_loss=tip_loss)
     solve(f)

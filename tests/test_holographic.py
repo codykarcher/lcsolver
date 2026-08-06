@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -18,9 +18,9 @@ import warnings
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.solvers.holographic import format_holographic, holographic_report
-from edi.solvers.solver import solve
+from lcsolver import Formulation
+from lcsolver.solvers.holographic import format_holographic, holographic_report
+from lcsolver.solvers.solver import solve
 
 
 def _model(cap):
@@ -37,7 +37,7 @@ def _model(cap):
 
 
 def test_declaring_does_not_change_the_constraint():
-    """It is imposed exactly as an ordinary constraint; only EDI's bookkeeping
+    """It is imposed exactly as an ordinary constraint; only LCsolver's bookkeeping
     differs. A cap of 5 must still be enforced."""
     f = _model(5.0)
     solve(f, sensitivities=False)

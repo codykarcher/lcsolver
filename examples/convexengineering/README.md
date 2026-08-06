@@ -1,4 +1,4 @@
-# convexengineering models, rebuilt in EDI
+# convexengineering models, rebuilt in LCsolver
 
 Reimplementations of the GP/SP aircraft-design models published by the MIT
 Convex Engineering Group (https://github.com/convexengineering), together with
@@ -8,13 +8,13 @@ Each model directory holds:
 
 | file | role |
 |---|---|
-| `model.py` | the EDI reimplementation; `build()` returns a `Formulation` |
+| `model.py` | the LCsolver reimplementation; `build()` returns a `Formulation` |
 | `reference.json` | recorded solution of the original gpkit model (committed) |
 | `reference.py` | script that regenerates `reference.json` (needs gpkit) |
 
-Run a model's self-check with `python model.py`. It solves the EDI
+Run a model's self-check with `python model.py`. It solves the LCsolver
 formulation, diffs every variable against `reference.json`, and reports
-feasibility. This needs only EDI — not gpkit.
+feasibility. This needs only LCsolver — not gpkit.
 
 ## Verification approach
 

@@ -18,9 +18,9 @@ os.environ["SP_ENGINE"] = os.environ.get("SP_TECH", "cfm56_era")
 
 import pyomo.environ as pyo
 import classes, architectures, aircraft, dataclasses
-from edi_compat import structure_detector, unit_corrector
-from edi.solvers.ipopt.slcp_bridge import solve_sia, build_problem
-from edi.solvers.ipopt.sia import SIAOptions
+from lcsolver_compat import structure_detector, unit_corrector
+from lcsolver.solvers.ipopt.slcp_bridge import solve_sia, build_problem
+from lcsolver.solvers.ipopt.sia import SIAOptions
 
 ar = dataclasses.replace(architectures.ARCHS["conventional"],
                          lock_mach=True)

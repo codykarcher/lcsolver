@@ -17,10 +17,10 @@ if not cvxopt_available:
 
 
 def solve_LP(structures):
-    from edi.presolve.structureDetector import require
+    from lcsolver.presolve.structureDetector import require
     require(structures, 'solve_LP')
 
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
     parts = as_detected(structures).linear_parts()
     c = cvxopt.matrix(parts.linear)
     objective_shift = parts.shift

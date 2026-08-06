@@ -1,7 +1,7 @@
-"""The adapter from EDI's detected structure to the SLCP/SIA Problem object.
+"""The adapter from LCsolver's detected structure to the SLCP/SIA Problem object.
 
-``edi.solvers.ipopt.slcp`` works on its own ``Problem`` type, which nothing
-else in EDI builds. This bridge is the only path from a ``Formulation`` to
+``lcsolver.solvers.ipopt.slcp`` works on its own ``Problem`` type, which nothing
+else in LCsolver builds. This bridge is the only path from a ``Formulation`` to
 SLCP or SIA, so a defect here is invisible in the solver tests -- the paper's
 problems in ``examples/slcp_cases.py`` construct ``Problem`` objects directly
 and never touch it.
@@ -17,14 +17,14 @@ import pytest
 
 # The SIA solver is held back pending publication; without it these exercise
 # nothing, so skip rather than error on a checkout that does not have it.
-pytest.importorskip("edi.solvers.ipopt.sia")
+pytest.importorskip("lcsolver.solvers.ipopt.sia")
 
-from edi import Formulation
-from edi.solvers.ipopt.sia import SIAOptions, solve_sia
-from edi.solvers.ipopt.slcp import Posynomial, PosynomialRatio
-from edi.solvers.ipopt.slcp_bridge import build_problem
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver import Formulation
+from lcsolver.solvers.ipopt.sia import SIAOptions, solve_sia
+from lcsolver.solvers.ipopt.slcp import Posynomial, PosynomialRatio
+from lcsolver.solvers.ipopt.slcp_bridge import build_problem
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 
 def _equality_model():

@@ -2,7 +2,7 @@
 
 Each rebuilt model lives in its own package under this directory and exposes::
 
-    build()   -> edi.Formulation           the EDI reimplementation
+    build()   -> lcsolver.Formulation           the LCsolver reimplementation
     solve(f)  -> dict                      (optional) custom solve entry
 
 Ground truth comes from the original gpkit models published at
@@ -31,7 +31,7 @@ from pyomo.core.base.var import IndexedVar
 
 
 # ---------------------------------------------------------------------------
-# Extracting a solution from an EDI formulation
+# Extracting a solution from an LCsolver formulation
 # ---------------------------------------------------------------------------
 
 def solution_dict(f) -> dict:
@@ -150,7 +150,7 @@ def compare(model_name: str, actual: dict, reference: dict,
     actual, reference : {name: value}
     only : restrict the comparison to these reference keys
     aliases : {reference_key: rebuilt_key} for names that differ between the
-        gpkit model and the EDI rebuild (gpkit uses LaTeX-ish names).
+        gpkit model and the LCsolver rebuild (gpkit uses LaTeX-ish names).
     """
     aliases = aliases or {}
     keys = only if only is not None else sorted(reference)
@@ -188,9 +188,9 @@ def save_reference(path: str | Path, values: dict, *, source: str,
 # ---------------------------------------------------------------------------
 
 def solve_edi(f, solver: str = "auto", convex_backend: str = "ipopt", **kw):
-    """Solve an EDI formulation, returning (solution_dict, objective, note).
+    """Solve an LCsolver formulation, returning (solution_dict, objective, note).
 
-    ``convex_backend`` defaults to ``"ipopt"`` rather than EDI's own default
+    ``convex_backend`` defaults to ``"ipopt"`` rather than LCsolver's own default
     of ``"cvxopt"``. Both take the same route structurally — a GP is solved in
     log space where it is convex, and a signomial goes through the PCCP
     penalty convex-concave loop whose every subproblem is a GP — but IPOPT is
@@ -204,7 +204,7 @@ def solve_edi(f, solver: str = "auto", convex_backend: str = "ipopt", **kw):
     under-bounded when the actual problem was the backend, so if a model will
     not converge, try both before concluding the model is at fault.
     """
-    from edi.solvers.solver import solve as _solve
+    from lcsolver.solvers.solver import solve as _solve
     import warnings
 
     note = ""
@@ -225,7 +225,7 @@ def feasibility(f, rtol: float = 1e-6, *, correct_units: bool = True) -> tuple:
     1. ``pyo.value(expr)`` evaluates raw magnitudes and ignores units. On a
        unit-annotated model ``Range/V <= T_flight`` evaluates as
        ``58.7 (km*s/m) - 16.3 (hr)``, reporting a 98% violation on a
-       constraint that is satisfied exactly. EDI's own ``unit_corrector``
+       constraint that is satisfied exactly. LCsolver's own ``unit_corrector``
        resolves this, so run it first.
 
     2. Scoring against Pyomo's canonical ``body``. Pyomo rewrites
@@ -239,7 +239,7 @@ def feasibility(f, rtol: float = 1e-6, *, correct_units: bool = True) -> tuple:
     """
     if correct_units:
         try:
-            from edi.presolve.unitCorrector import unit_corrector
+            from lcsolver.presolve.unitCorrector import unit_corrector
             f = unit_corrector(f)
         except Exception:
             pass

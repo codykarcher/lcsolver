@@ -18,9 +18,9 @@ the structural checks find 7. Both are worth running.
 ## Using it
 
 ```python
-from edi.presolve.reductions import presolve_report, degeneracy_report, fold_singleton_rows
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver.presolve.reductions import presolve_report, degeneracy_report, fold_singleton_rows
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 structures = structure_detector(unit_corrector(model), bounds_as_rows=False)
 print(presolve_report(structures))
@@ -54,7 +54,7 @@ counts too: minimising a term with a positive exponent on `x` pushes `x` down.
 
 The subtle part is which *bounds* count. Two obvious rules are both wrong:
 
-* **Count every bound.** EDI gives every variable a default `1e-30..1e30` box,
+* **Count every bound.** LCsolver gives every variable a default `1e-30..1e30` box,
   so everything comes back bounded both ways and the check reports nothing.
 * **Ignore every single-variable row.** Now a hand-written `w >= 1` stops
   counting, and the check reports variables that are perfectly well bounded.
@@ -371,7 +371,7 @@ expose it; it takes a chain.
 ## Running it: `presolve()` and the log
 
 ```python
-from edi.presolve.reductions import presolve
+from lcsolver.presolve.reductions import presolve
 
 reduced, log = presolve(structures)      # order is fixed and safe
 print(log)                               # optional; off by default
@@ -459,7 +459,7 @@ implemented because nothing currently needs it.
 `cancellation_report` looks for the pi-tail failure directly, rather than
 inferring it from a variable parked at 1e-30.
 
-EDI writes a constraint containing a subtraction as a ratio, moving the
+LCsolver writes a constraint containing a subtraction as a ratio, moving the
 negative terms into the denominator alongside the left-hand side, so
 `M_r*c >= A + B - C` becomes `(A + B) / (M_r*c + C) <= 1`. The two terms in
 that denominator are in direct competition: whatever `C` supplies, `M_r` need

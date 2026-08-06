@@ -1,4 +1,4 @@
-"""Sequential inner approximation (edi.solvers.ipopt.sia).
+"""Sequential inner approximation (lcsolver.solvers.ipopt.sia).
 
 The properties being tested are the ones that motivate the method: that a
 problem whose constraints are all exact-or-conservative needs no globalization,
@@ -9,9 +9,9 @@ changing".
 import numpy as np
 import pytest
 
-from edi.solvers.ipopt.slcp import (Constraint, Posynomial, PosynomialRatio,
+from lcsolver.solvers.ipopt.slcp import (Constraint, Posynomial, PosynomialRatio,
                                     Problem, Signomial)
-from edi.solvers.ipopt.sia import SIAOptions, classify, solve_sia
+from lcsolver.solvers.ipopt.sia import SIAOptions, classify, solve_sia
 
 N = 2
 
@@ -165,7 +165,7 @@ def test_unknown_option_is_refused():
 
 def test_cached_signomial_evaluates_once_per_point():
     """Value and gradient come from one call; revisits are free."""
-    from edi.solvers.ipopt.slcp import CachedSignomial
+    from lcsolver.solvers.ipopt.slcp import CachedSignomial
     calls = {"n": 0}
 
     def fn(x):
@@ -184,7 +184,7 @@ def test_cached_signomial_evaluates_once_per_point():
 def test_caching_cuts_black_box_calls_without_changing_the_answer():
     """The reason it exists: a black box costing hours must not be called
     four times per iteration when once will do."""
-    from edi.solvers.ipopt.slcp import CachedSignomial
+    from lcsolver.solvers.ipopt.slcp import CachedSignomial
     counts = {}
 
     def build(wrapper, tag):
@@ -212,7 +212,7 @@ def test_caching_cuts_black_box_calls_without_changing_the_answer():
 
 def test_cache_is_exact_not_interpolating():
     """A nearby-but-different point must trigger a real evaluation."""
-    from edi.solvers.ipopt.slcp import CachedSignomial
+    from lcsolver.solvers.ipopt.slcp import CachedSignomial
     calls = {"n": 0}
 
     def fn(x):

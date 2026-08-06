@@ -69,9 +69,9 @@ def pins_from_truth(name):
 
 
 def solve(f):
-    from edi_compat import structure_detector, unit_corrector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
+    from lcsolver_compat import structure_detector, unit_corrector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
 
     cm = unit_corrector(f)
     st = structure_detector(cm)

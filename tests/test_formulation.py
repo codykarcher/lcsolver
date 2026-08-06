@@ -30,7 +30,7 @@ egb, egb_available = attempt_import(
 
 formulation_available = False
 try:
-    from edi import Formulation
+    from lcsolver import Formulation
 
     formulation_available = True
 except:
@@ -39,7 +39,7 @@ except:
 
 blackbox_available = False
 try:
-    from edi import BlackBoxFunctionModel
+    from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
 except:
@@ -51,18 +51,18 @@ if numpy_available:
 
 
 @unittest.skipIf(
-    not egb_available, 'Testing edi requires pynumero external grey boxes'
+    not egb_available, 'Testing lcsolver requires pynumero external grey boxes'
 )
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not blackbox_available, 'Blackbox import failed')
-@unittest.skipIf(not numpy_available, 'Testing edi requires numpy')
-@unittest.skipIf(not scipy_available, 'Testing edi requires scipy')
+@unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
+@unittest.skipIf(not scipy_available, 'Testing lcsolver requires scipy')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestEDIFormulation(unittest.TestCase):
     def test_edi_formulation_init(self):
         "Tests that a formulation initializes to the correct type and has proper data"
         from pyomo.environ import ConcreteModel
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
 
@@ -81,9 +81,9 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertEqual(f._allConstraint_keys, [])
 
     def test_edi_formulation_variable(self):
-        "Tests the variable constructor in edi.formulation"
+        "Tests the variable constructor in lcsolver.formulation"
         import pyomo
-        from edi import Formulation
+        from lcsolver import Formulation
         from pyomo.environ import Reals, PositiveReals
 
         f = Formulation()
@@ -272,8 +272,8 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertRaises(AttributeError, f.Variable, *('x19', 1.0, 'string'))
 
     def test_edi_formulation_constant(self):
-        "Tests the constant constructor in edi.formulation"
-        from edi import Formulation
+        "Tests the constant constructor in lcsolver.formulation"
+        from lcsolver import Formulation
         from pyomo.environ import Reals, PositiveReals
 
         f = Formulation()
@@ -373,10 +373,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertEqual(len(c11), 2)
 
     def test_edi_formulation_objective(self):
-        "Tests the objective constructor in edi.formulation"
+        "Tests the objective constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -384,15 +384,15 @@ class TestEDIFormulation(unittest.TestCase):
         f.Objective(x + y)
 
     def test_edi_formulation_runtimeobjective(self):
-        "Tests the runtime objective constructor in edi.formulation"
+        "Tests the runtime objective constructor in lcsolver.formulation"
         # TODO: not currently implemented, see:  https://github.com/codykarcher/pyomo/issues/5
         pass
 
     def test_edi_formulation_constraint(self):
-        "Tests the constraint constructor in edi.formulation"
+        "Tests the constraint constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -401,10 +401,10 @@ class TestEDIFormulation(unittest.TestCase):
         f.Constraint(x + y <= 1.0 * units.m)
 
     def test_edi_formulation_runtimeconstraint_tuple(self):
-        "Tests the runtime constraint constructor in edi.formulation"
+        "Tests the runtime constraint constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -451,10 +451,10 @@ class TestEDIFormulation(unittest.TestCase):
         f.RuntimeConstraint(*(z, '==', [x, y], UnitCircle()))
 
     def test_edi_formulation_runtimeconstraint_list(self):
-        "Tests the runtime constraint constructor in edi.formulation"
+        "Tests the runtime constraint constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -501,10 +501,10 @@ class TestEDIFormulation(unittest.TestCase):
         f.RuntimeConstraint(*[[z], ['=='], [x, y], UnitCircle()])
 
     def test_edi_formulation_runtimeconstraint_dict(self):
-        "Tests the runtime constraint constructor in edi.formulation"
+        "Tests the runtime constraint constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -558,10 +558,10 @@ class TestEDIFormulation(unittest.TestCase):
         )
 
     def test_edi_formulation_constraintlist_1(self):
-        "Tests the constraint list constructor in edi.formulation"
+        "Tests the constraint list constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -610,10 +610,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertTrue(len(cl) == 2)
 
     def test_edi_formulation_constraintlist_2(self):
-        "Tests the constraint list constructor in edi.formulation"
+        "Tests the constraint list constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -650,10 +650,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertTrue(len(cl) == 1)
 
     def test_edi_formulation_constraintlist_3(self):
-        "Tests the constraint list constructor in edi.formulation"
+        "Tests the constraint list constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(
@@ -703,10 +703,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertTrue(len(cl) == 1)
 
     def test_edi_formulation_runtimeconstraint_exceptions(self):
-        "Tests the runtime constraint constructor in edi.formulation"
+        "Tests the runtime constraint constructor in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -769,10 +769,10 @@ class TestEDIFormulation(unittest.TestCase):
         )
 
     def test_edi_formulation_getvariables(self):
-        "Tests the get_variables function in edi.formulation"
+        "Tests the get_variables function in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -782,10 +782,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertListEqual(vrs, [x, y])
 
     def test_edi_formulation_getconstants(self):
-        "Tests the get_constants function in edi.formulation"
+        "Tests the get_constants function in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -812,10 +812,10 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertListEqual(csts, [c1, c2])
 
     def test_edi_formulation_getobjectives(self):
-        "Tests the get_objectives function in edi.formulation"
+        "Tests the get_objectives function in lcsolver.formulation"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
@@ -826,13 +826,13 @@ class TestEDIFormulation(unittest.TestCase):
         # not really sure how to check this, so I wont
 
     def test_edi_formulation_getconstraints(self):
-        "Tests the get_constraints, get_explicitConstraints, and get_runtimeConstraints functions in edi.formulation"
+        "Tests the get_constraints, get_explicitConstraints, and get_runtimeConstraints functions in lcsolver.formulation"
         # =================
         # Import Statements
         # =================
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         # ===================
         # Declare Formulation
@@ -920,11 +920,11 @@ class TestEDIFormulation(unittest.TestCase):
         self.assertTrue(len(rcl) == 1)
 
     def test_edi_formulation_checkunits(self):
-        "Tests the check_units function in edi.formulation"
+        "Tests the check_units function in lcsolver.formulation"
         import pyomo
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation
+        from lcsolver import Formulation
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')

@@ -11,8 +11,8 @@ is declared in feet while the neighbouring stations are in metres.
 """
 import pyomo.environ as pyo
 
-from edi import Formulation
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver import Formulation
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 FT_IN_M = 0.3048
 

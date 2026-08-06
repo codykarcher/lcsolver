@@ -27,11 +27,11 @@ then open the file ``docs/_build/html/index.html``
 ::
 
    cd <path_to_edi>
-   pytest --cov-report term-missing --cov=edi -v ./tests/
+   pytest --cov-report term-missing --cov=lcsolver -v ./tests/
 
 or generating html output:
 
 ::
 
    cd <path_to_edi>
-   pytest --cov-report html --cov=edi -v ./tests/
+   pytest --cov-report html --cov=lcsolver -v ./tests/

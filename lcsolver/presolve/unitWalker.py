@@ -104,7 +104,7 @@ if numpy_available:
 #     ureg = pint.UnitRegistry(system='mks')
 
 
-# from edi.presolve.walkerSupportFunctions import (
+# from lcsolver.presolve.walkerSupportFunctions import (
 #     unarySignomial,
 #     no_structure_dict,
 #     monomial_multiplication,
@@ -113,7 +113,7 @@ if numpy_available:
 #     signomial_power_evaluation,
 #     # processMonomial,
 # )
-from edi.presolve.walkerSupportFunctions import (
+from lcsolver.presolve.walkerSupportFunctions import (
     # unarySignomial,
     no_structure_dict,
     # monomial_multiplication,
@@ -209,7 +209,7 @@ def handle_unit_node(visitor, node):
     return unitsPack(expr=K.magnitude, units=K.units)
 
 #: What each unary function does to its argument's units. Mirrors Pyomo's own
-#: table in ``pyomo.core.base.units_container`` so that EDI and
+#: table in ``pyomo.core.base.units_container`` so that LCsolver and
 #: ``pyomo.environ.units.get_units`` agree rather than inventing a second
 #: convention.
 #:

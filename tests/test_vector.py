@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -16,16 +16,16 @@ import pyomo.environ as pyo
 from pyomo.environ import units
 
 try:
-    from edi import Formulation
-    from edi.objects.vector import ShapeMismatch
-    from edi.solvers.solver import solve
+    from lcsolver import Formulation
+    from lcsolver.objects.vector import ShapeMismatch
+    from lcsolver.solvers.solver import solve
 
     available = True
 except Exception:                                    # pragma: no cover
     available = False
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestSummingGuard(unittest.TestCase):
     """`sum(x)` used to return the sum of the index keys, silently.
 
@@ -86,7 +86,7 @@ class TestSummingGuard(unittest.TestCase):
         self.assertIn('f.sum', str(ctx.exception))
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestElementwiseConstraints(unittest.TestCase):
 
     def _f(self):
@@ -126,7 +126,7 @@ class TestElementwiseConstraints(unittest.TestCase):
                 op()
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestElementwiseArithmetic(unittest.TestCase):
     """Building the expressions, not just comparing them.
 
@@ -196,7 +196,7 @@ class TestElementwiseArithmetic(unittest.TestCase):
         self.assertEqual(len(T[:2] / short), 2)
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestKeywordNamedQuantity(unittest.TestCase):
     """A quantity may be named for a Python keyword.
 
@@ -228,7 +228,7 @@ class TestKeywordNamedQuantity(unittest.TestCase):
             f.wing.nonexistent_
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestSlicingAndSequences(unittest.TestCase):
 
     def _f(self, n=4):
@@ -274,7 +274,7 @@ class TestSlicingAndSequences(unittest.TestCase):
             self.assertAlmostEqual(v, 2.0, places=4)
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestMatrices(unittest.TestCase):
 
     def _f(self):
@@ -319,7 +319,7 @@ class TestMatrices(unittest.TestCase):
         self.assertEqual((T[:, :, 1:] >= T[:, :, :-1]).shape, (2, 3, 3))
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestBroadcasting(unittest.TestCase):
     """Shapes are never expanded silently.
 
@@ -371,7 +371,7 @@ class TestBroadcasting(unittest.TestCase):
             S <= v
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestConstraintListAcceptsArrays(unittest.TestCase):
 
     def test_a_flat_array_of_constraints(self):
@@ -398,7 +398,7 @@ class TestConstraintListAcceptsArrays(unittest.TestCase):
         self.assertEqual(len(list(f.component_data_objects(pyo.Constraint))), 3)
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestGroupLookupByName(unittest.TestCase):
     """A group reads like the dictionary of quantities it replaced.
 
@@ -438,7 +438,7 @@ class TestGroupLookupByName(unittest.TestCase):
         self.assertIs(w.lambda_, lam)
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestGroupsExposeTheHelpers(unittest.TestCase):
 
     def test_a_group_forwards_the_vector_operations(self):

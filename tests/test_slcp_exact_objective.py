@@ -15,11 +15,11 @@ Off by default.
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.solvers.ipopt.slcp import Options
-from edi.solvers.ipopt.slcp_bridge import build_problem, solve_slcp
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver import Formulation
+from lcsolver.solvers.ipopt.slcp import Options
+from lcsolver.solvers.ipopt.slcp_bridge import build_problem, solve_slcp
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 M = pyo.units.m
 
@@ -46,7 +46,7 @@ def _monomial_objective():
 
 
 def _count(make, **opts):
-    import edi.solvers.ipopt.slcp as S
+    import lcsolver.solvers.ipopt.slcp as S
     calls = {"n": 0}
     original = S._solve_pyomo_subproblem
 
@@ -88,7 +88,7 @@ def test_monomial_objective_still_benefits_from_dropping_the_quadratic():
 
 
 def test_fully_log_convex_detection():
-    from edi.solvers.ipopt.slcp import _fully_log_convex
+    from lcsolver.solvers.ipopt.slcp import _fully_log_convex
     assert _fully_log_convex(build_problem(
         structure_detector(unit_corrector(_box()))))
 

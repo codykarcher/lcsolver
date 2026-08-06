@@ -1,10 +1,10 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""The Python behaviour EDI's vector guard depends on.
+"""The Python behaviour LCsolver's vector guard depends on.
 
 Iterating an indexed component yields its index KEYS, so ``sum(x)`` adds
 ``0 + 1 + 2`` and returns a plausible number instead of the sum of the
@@ -12,7 +12,7 @@ variables. That is not a nuisance, it is a silent wrong answer: it is how
 ``L_dist_sum == sum(L_dist)`` became ``L_dist_sum == 10`` in a real model, and
 only a unit mismatch further down caught it.
 
-EDI closes that by yielding keys as an ``int`` subclass whose ``__radd__``
+LCsolver closes that by yielding keys as an ``int`` subclass whose ``__radd__``
 refuses. ``sum()`` begins with ``0 + first_item``, which is a *reflected*
 addition, while index arithmetic like ``i + 1`` and ``i - 1`` is a *forward*
 one -- so the guard fires on the accident and leaves the legitimate idiom

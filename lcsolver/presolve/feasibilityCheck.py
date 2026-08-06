@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -131,8 +131,8 @@ class FeasibilityResult:
         The backends take their initial point from the model's current variable
         values, so this is what makes the result passable. Returns the model.
         """
-        from edi.presolve.reductions import _as_structures
-        from edi.solvers.writeback import write_solution
+        from lcsolver.presolve.reductions import _as_structures
+        from lcsolver.solvers.writeback import write_solution
 
         st = _as_structures(model)
         write_solution(st, {'x': np.asarray(self.x, dtype=float)}, model=model)
@@ -142,7 +142,7 @@ class FeasibilityResult:
 def feasibility(model, x0=None, options=None, top=12, presolve=True):
     """Find a feasible point for ``model``, or say what prevents one.
 
-    Accepts a :class:`~edi.objects.formulation.Formulation` or an already
+    Accepts a :class:`~lcsolver.objects.formulation.Formulation` or an already
     detected structure. Runs the elastic Phase I:
 
     .. math::  \\min \\sum_i s_i \\quad\\text{s.t.}\\quad \\log g_i(x) \\le s_i,
@@ -161,9 +161,9 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     """
     import pyomo.environ as pyo
 
-    from edi.presolve.reductions import _as_structures
-    from edi.solvers.ipopt.sia import SIAOptions, explain_infeasibility
-    from edi.solvers.ipopt.slcp_bridge import (_apply_presolve, _restore,
+    from lcsolver.presolve.reductions import _as_structures
+    from lcsolver.solvers.ipopt.sia import SIAOptions, explain_infeasibility
+    from lcsolver.solvers.ipopt.slcp_bridge import (_apply_presolve, _restore,
                                                build_problem)
 
     st = _as_structures(model)
@@ -171,8 +171,8 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
         # The presolve form splits bounds out of the rows, and Phase I reads
         # rows. Detect afresh rather than quietly looking for a point in a
         # problem with no variable bounds.
-        from edi.presolve.structureDetector import structure_detector
-        from edi.presolve.unitCorrector import unit_corrector
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
         st = structure_detector(unit_corrector(model))
 
     if x0 is None:

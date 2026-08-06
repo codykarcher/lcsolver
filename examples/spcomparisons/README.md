@@ -144,13 +144,13 @@ being infeasible turned out to be category 2 or 3.
 
 ### The solver could not answer the question as written
 
-EDI's Phase I minimised the WORST violation: ``min t s.t. log g_i <= t``,
+LCsolver's Phase I minimised the WORST violation: ``min t s.t. log g_i <= t``,
 one shared scalar. That formulation deliberately drives every constraint to a
 common violation level, so a stalled run reported a dozen rows sitting at an
 identical residual with nothing to choose between them. It cannot say which
 row is the problem, because it has equalised them by construction.
 
-Four defects were fixed in ``edi/solvers/ipopt/sia.py``:
+Four defects were fixed in ``lcsolver/solvers/ipopt/sia.py``:
 
 * **Equalities were written ``expr == t``**, forcing every signomial equality
   to the SAME residual. Two that could not be driven to a common value made

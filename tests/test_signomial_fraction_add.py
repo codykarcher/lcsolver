@@ -14,9 +14,9 @@ constraint. ``gpRow_add`` now puts the operands over a common denominator:
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.solvers.solver import solve
-from edi.presolve.detectorSupportFunctions import gpRow_add
+from lcsolver import Formulation
+from lcsolver.solvers.solver import solve
+from lcsolver.presolve.detectorSupportFunctions import gpRow_add
 
 M = pyo.units.m
 
@@ -75,7 +75,7 @@ def test_two_fractions_are_correct_at_row_level():
     """The arithmetic itself is right, which is why the refusal is temporary."""
     f1 = [[1, 1.0, 1.0, 0.0], [-2, 1.0, 0.0, 0.0], [-2, 1.0, 0.0, 1.0]]
     f2 = [[1, 1.0, 0.0, 1.0], [-2, 1.0, 0.0, 0.0], [-2, 1.0, 1.0, 0.0]]
-    from edi.presolve.detectorSupportFunctions import (_posyMultiply,
+    from lcsolver.presolve.detectorSupportFunctions import (_posyMultiply,
                                                         _splitFraction, _retag)
     n1, dd1 = _splitFraction([r[:] for r in f1])
     n2, dd2 = _splitFraction([r[:] for r in f2])

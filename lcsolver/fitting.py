@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -288,7 +288,7 @@ def fit_report(fit, x=None, y=None):
 
 
 def fit_constraints(fit, ivar, dvars, mfac=None):
-    """EDI constraints for a fit, in the form the subproblem holds exactly.
+    """LCsolver constraints for a fit, in the form the subproblem holds exactly.
 
     ``ivar`` is the dependent quantity and ``dvars`` the independent ones. The
     constraint asserts ``ivar >= fit(dvars)``, which is how a GP-compatible fit

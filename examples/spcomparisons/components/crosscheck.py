@@ -1,4 +1,4 @@
-"""Evaluate the EDI rebuild's constraints at gpkit's converged optimum.
+"""Evaluate the LCsolver rebuild's constraints at gpkit's converged optimum.
 
 Cross-substitution: put the *reference* solution into the *rebuilt* model and
 score every constraint. Whichever come back violated name the transcription
@@ -149,7 +149,7 @@ def main() -> None:
           f"{len(uniq)} distinct names unmatched")
     print("  unmatched sample:", uniq[:20])
 
-    from edi_compat import unit_corrector
+    from lcsolver_compat import unit_corrector
     fc = unit_corrector(f)
     rows = []
     n_eval = 0

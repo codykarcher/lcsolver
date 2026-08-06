@@ -14,7 +14,7 @@ def verify_kkt(problem, x, act_tol=1e-6):
     (|log g| <= act_tol, sign-constrained >= 0) + every variable sitting on
     a positivity floor (its bound gradient is a unit vector).
     """
-    from edi.solvers.ipopt.sia import _log_g
+    from lcsolver.solvers.ipopt.sia import _log_g
     from scipy.optimize import lsq_linear
     x = np.asarray(x, dtype=float)
     n = problem.n

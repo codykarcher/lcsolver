@@ -35,7 +35,7 @@ from __future__ import annotations
 from numpy import pi
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 
 def build() -> Formulation:

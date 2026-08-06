@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -16,8 +16,8 @@ import numpy as np
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation, feasibility
-from edi.solvers.solver import solve
+from lcsolver import Formulation, feasibility
+from lcsolver.solvers.solver import solve
 
 
 def _satisfiable():
@@ -87,8 +87,8 @@ def test_a_short_start_is_refused_rather_than_padded():
 
 
 def test_x_is_indexed_like_the_model():
-    from edi.presolve.structureDetector import structure_detector
-    from edi.presolve.unitCorrector import unit_corrector
+    from lcsolver.presolve.structureDetector import structure_detector
+    from lcsolver.presolve.unitCorrector import unit_corrector
     f = _satisfiable()
     st = structure_detector(unit_corrector(f))
     assert len(feasibility(f).x) == len(st['variables'])

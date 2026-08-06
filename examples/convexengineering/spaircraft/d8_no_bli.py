@@ -61,7 +61,7 @@ from pathlib import Path
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from . import airframe, defects, layouts
 from .airframe import pin
@@ -88,7 +88,7 @@ CRUISE_TT41_MAX = 1125.0
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           pi_tail_supports: str = "pinned", faithful: bool = False,
           seed: str | None = None) -> Formulation:
-    """Build the non-ingesting D8. Returns an EDI ``Formulation``.
+    """Build the non-ingesting D8. Returns an LCsolver ``Formulation``.
 
     ``faithful=True`` reproduces the two upstream defects in
     :mod:`~.defects` -- the radians/degrees slip in ``C_L_w_max`` and the

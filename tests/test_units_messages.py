@@ -5,14 +5,14 @@ try:
     import pyomo.environ as pyo
     from pyomo.environ import units
 
-    from edi import Formulation
-    from edi.presolve.unitCorrector import UnitMismatch, unit_corrector
+    from lcsolver import Formulation
+    from lcsolver.presolve.unitCorrector import UnitMismatch, unit_corrector
     available = True
 except Exception:                                    # pragma: no cover
     available = False
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestUnitMessages(unittest.TestCase):
 
     def test_a_mismatch_names_both_sides_and_the_correction(self):
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     unittest.main()
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestUnitMismatchIsFatal(unittest.TestCase):
     """A dimensional error is a modelling error, not a routing decision.
 
@@ -132,7 +132,7 @@ class TestUnitMismatchIsFatal(unittest.TestCase):
     """
 
     def test_solve_raises_rather_than_falling_back(self):
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = Formulation()
         length = f.Variable('L', 1.0, 'm', 'length')
@@ -145,7 +145,7 @@ class TestUnitMismatchIsFatal(unittest.TestCase):
         self.assertIn('Error in units', str(ctx.exception))
 
     def test_a_sound_model_is_unaffected(self):
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
         import pyomo.environ as pyo
 
         f = Formulation()
@@ -156,7 +156,7 @@ class TestUnitMismatchIsFatal(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(f.x), 2.0, places=5)
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestNegatedUnitLeaf(unittest.TestCase):
     """Subtracting a quantity whose coefficient is exactly 1.
 

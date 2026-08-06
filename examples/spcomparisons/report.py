@@ -2,7 +2,7 @@
 
 Weights are normalised to lbf in run.py, so nothing here needs to know which
 component declared newtons and which declared pounds. That mixing is real --
-SPaircraft uses lbf, the hydrogen components use N -- and EDI's unit
+SPaircraft uses lbf, the hydrogen components use N -- and LCsolver's unit
 corrector reconciles it inside the constraints.
 """
 from __future__ import annotations

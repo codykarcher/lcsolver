@@ -36,14 +36,14 @@ if numpy_available:
     import numpy as np
 else:
     raise ImportError(
-        "edi requires numpy to enable black box capability, fix with 'pip install numpy' "
+        "lcsolver requires numpy to enable black box capability, fix with 'pip install numpy' "
     )
 
 if scipy_available:
     import scipy.sparse as sps
 else:
     raise ImportError(
-        "edi requires scipy to enable black box capability, fix with 'pip install scipy' "
+        "lcsolver requires scipy to enable black box capability, fix with 'pip install scipy' "
     )
 
 if egb_available:
@@ -53,7 +53,7 @@ if egb_available:
     )
 else:
     raise ImportError(
-        "edi requires pyomo.contrib.pynumero to be installed to enable black box capability, this should have installed with base pyomo"
+        "lcsolver requires pyomo.contrib.pynumero to be installed to enable black box capability, this should have installed with base pyomo"
     )
 
 

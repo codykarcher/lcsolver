@@ -1,7 +1,7 @@
 # Why SLCP is slow on SPaircraft
 
 > **RETRACTION (read first).** Every SPaircraft measurement below was taken
-> through `edi/solvers/ipopt/slcp_bridge.py`, which at the time **relaxed
+> through `lcsolver/solvers/ipopt/slcp_bridge.py`, which at the time **relaxed
 > equality constraints** — a ratio equality `p/q == 1` became only `p/q <= 1`,
 > and a multi-term posynomial equality `p == 1` became only `p <= 1`. Both drop
 > the lower direction, so the solver was free to push the body below 1.

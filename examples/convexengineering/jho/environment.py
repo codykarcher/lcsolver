@@ -1,6 +1,6 @@
 """Atmosphere and wind data for the Jungle Hawk Owl mission.
 
-Extracted from ``gassolar/environment`` so the EDI model is self-contained.
+Extracted from ``gassolar/environment`` so the LCsolver model is self-contained.
 Latitude 38, 90th-percentile winds, day 355 (winter solstice), which is what
 ``gas.py`` uses by default.
 

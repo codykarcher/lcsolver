@@ -39,8 +39,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from edi.presolve import structure_detector, unit_corrector          # noqa: E402
-from edi.solvers.ipopt.slcp_bridge import solve_sia                  # noqa: E402
+from lcsolver.presolve import structure_detector, unit_corrector          # noqa: E402
+from lcsolver.solvers.ipopt.slcp_bridge import solve_sia                  # noqa: E402
 
 LBF_N = 4.44822161526
 

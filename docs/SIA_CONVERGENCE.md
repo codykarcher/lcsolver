@@ -6,7 +6,7 @@ exact, 171 conservative, 0 linearized).
 ## It is not a bug — they condense differently
 
 For a signomial equality, PCCP condenses the **numerator as well as the
-denominator**. In `edi/solvers/cvxopt/SP.py` the branch is labelled *"signomial
+denominator**. In `lcsolver/solvers/cvxopt/SP.py` the branch is labelled *"signomial
 equality, approximate numerator"*, and it turns
 
     p/q <= 1     into     p_hat/q_hat <= 1

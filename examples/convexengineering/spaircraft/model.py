@@ -43,7 +43,7 @@ import numpy as np
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from .flight_state import add_flight_state
 from .fuselage import add_fuselage
@@ -65,13 +65,13 @@ NCLIMB, NCRUISE = 3, 2
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           pi_tail_supports: str = "pinned",
           seed: str | None = None) -> Formulation:
-    """Build the D8.2. Returns an EDI ``Formulation``.
+    """Build the D8.2. Returns an LCsolver ``Formulation``.
 
     ``seed="reference"`` initialises every variable from ``reference.json``
     instead of the hand-written guesses. That is a statement about the
     *solver*, not the model: the constraints are verified independently by
     ``crosscheck``, which shows the gpkit optimum satisfies all 3713 of them
-    to 1e-7. Seeding only asks whether EDI's PCCP loop can hold and reproduce
+    to 1e-7. Seeding only asks whether LCsolver's PCCP loop can hold and reproduce
     that point, which the naive all-guesses start cannot reach.
     """
     N = Nclimb + Ncruise
@@ -612,7 +612,7 @@ def _bound_constraints(f):
     """The same box as ``_bound_variables``, but expressed as constraints.
 
     Both forms are needed and they are not redundant. Pyomo variable bounds
-    reach the raw-NLP path only: EDI's log-space GP backend extracts the
+    reach the raw-NLP path only: LCsolver's log-space GP backend extracts the
     model into coefficient/exponent rows and builds a *fresh* Pyomo model
     over its own variable vector, so declared bounds never reach the PCCP
     subproblems. Only constraints survive that translation.
@@ -637,7 +637,7 @@ def _bound_variables(f):
     infinitely low cost. The same is needed here: without it the PCCP loop
     runs 301 subproblems and then dies with a non-finite objective gradient.
 
-    The lower bound matters for a second reason beyond divergence. EDI
+    The lower bound matters for a second reason beyond divergence. LCsolver
     declares variables over ``Reals``, so nothing stops a solver iterate from
     going negative -- and this model is full of fractional and negative
     powers (the wing drag polar alone has ``C_L**-1.44114``). One negative
@@ -676,7 +676,7 @@ CHECKS = [
 ]
 
 
-# EDI's PCCP loop defaults to 50 iterations, which is not enough here: the
+# LCsolver's PCCP loop defaults to 50 iterations, which is not enough here: the
 # model has 1174 variables and the sequential-GP sequence is still moving at
 # 50. It settles by ~200, and 500 gives the same answer to seven figures.
 MAX_ITER = 200

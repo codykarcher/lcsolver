@@ -4,7 +4,7 @@ Installing IPOPT
 IPOPT is not an optional extra in the way ``cvxopt`` is. It is the default
 convex backend --- ``solve()`` routes a detected LP, QP, GP or SP to it unless
 told otherwise --- and it is the only backend that can evaluate a black-box
-(grey-box) constraint. A working IPOPT is therefore a working EDI.
+(grey-box) constraint. A working IPOPT is therefore a working LCsolver.
 
 This page covers getting one, and one choice inside it that matters more than
 the rest: the sparse linear solver.
@@ -13,7 +13,7 @@ the rest: the sparse linear solver.
 Two interfaces
 --------------
 
-EDI can reach IPOPT two ways, selected by ``method``:
+LCsolver can reach IPOPT two ways, selected by ``method``:
 
 ``method='pyomo'``
     ``SolverFactory('ipopt')``, Pyomo's AMPL-based interface. Needs the
@@ -27,7 +27,7 @@ EDI can reach IPOPT two ways, selected by ``method``:
 
 ``method='auto'`` (the default) prefers the Pyomo route and switches to cyipopt
 when the model contains a black-box constraint. Installing both is the
-comfortable position; installing neither leaves EDI able to build a formulation
+comfortable position; installing neither leaves LCsolver able to build a formulation
 and unable to solve it.
 
 
@@ -71,7 +71,7 @@ cannot deliver a reliable inertia, IPOPT falls back to adding regularization
 to the Hessian and trying again. Each retry is a wasted factorization, and a
 run that needs many of them converges slowly, stalls on ``Restoration Phase``,
 or terminates on iteration count with a point that is nearly but not quite
-feasible. On the geometric and signomial programs EDI generates --- which are
+feasible. On the geometric and signomial programs LCsolver generates --- which are
 dense in couplings, badly scaled before presolve, and solved repeatedly inside
 the SLCP and SIA loops --- this is the common failure mode, and it presents as
 "the solver is flaky" rather than as "the linear algebra is the problem."
@@ -173,7 +173,7 @@ does not exist --- IPOPT answers with the list::
 
 A more direct test is to solve something and name the solver::
 
-    from edi.solvers.ipopt import ipopt_solve
+    from lcsolver.solvers.ipopt import ipopt_solve
     res = ipopt_solve(f, options={'linear_solver': 'ma27'})
 
 ``Invalid value "ma27" for option linear_solver`` means IPOPT was built without

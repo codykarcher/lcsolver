@@ -3,7 +3,7 @@
 A hydrogen-electric transport aircraft as a signomial program, derived from
 the TASOPT v3 Python port in [`../tasopt/`](../tasopt/).
 
-**Status: solves to a certified KKT point under EDI's default SIA solver.**
+**Status: solves to a certified KKT point under LCsolver's default SIA solver.**
 31 iterations; stationarity, feasibility and complementarity all within 1e-6
 on the true problem; `python -m examples.SP_hydrogen_aircraft.model` runs the
 build, the solve, and the self-checks.
@@ -115,8 +115,8 @@ the detector keeps them conservative. A rewrite MAIDAS could learn.)
 This model is the record of a claim worth keeping: **every SIA failure was a
 model defect, and the solver's failure mode named it.**
 
-1. **Phase 1 "failed after 1 iteration".** An EDI bug, now fixed in
-   `edi/solvers/ipopt/sia.py`: the cached Phase-I subproblem hits IPOPT's
+1. **Phase 1 "failed after 1 iteration".** An LCsolver bug, now fixed in
+   `lcsolver/solvers/ipopt/sia.py`: the cached Phase-I subproblem hits IPOPT's
    iteration limit at `tol=1e-12` where the identical fresh-built model
    solves. A cache must never change *whether* something solves — on cached
    failure it now falls back to a fresh build for that iteration.

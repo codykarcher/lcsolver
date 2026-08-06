@@ -11,10 +11,10 @@
 
 from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
-# from edi.presolve.structureDetector import structure_detector
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
-from edi.solvers.writeback import write_solution
+# from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
+from lcsolver.solvers.writeback import write_solution
 
 
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )
@@ -37,23 +37,23 @@ def cvxopt_solve(m, write_back=True):
     # structures = structure_detector(m)
     # print(structures)
     if structures['Linear_Program'][0]:
-        # from edi.solvers.cvxopt import solve_LP
-        from edi.solvers.cvxopt.LP import solve_LP
+        # from lcsolver.solvers.cvxopt import solve_LP
+        from lcsolver.solvers.cvxopt.LP import solve_LP
         res = solve_LP(structures)
         res['problem_structure'] = 'linear_program'
     elif structures['Quadratic_Program'][0]:
-        # from edi.solvers.cvxopt import solve_QP
-        from edi.solvers.cvxopt.QP import solve_QP
+        # from lcsolver.solvers.cvxopt import solve_QP
+        from lcsolver.solvers.cvxopt.QP import solve_QP
         res = solve_QP(structures)
         res['problem_structure'] = 'quadratic_program'
     elif structures['Geometric_Program'][0]:
-        # from edi.solvers.cvxopt import solve_GP
-        from edi.solvers.cvxopt.GP import solve_GP
+        # from lcsolver.solvers.cvxopt import solve_GP
+        from lcsolver.solvers.cvxopt.GP import solve_GP
         res = solve_GP(structures)
         res['problem_structure'] = 'geometric_program'
     elif structures['Signomial_Program'][0]:
-        # from edi.solvers.cvxopt.SP import solve_SP
-        from edi.solvers.cvxopt.SP import solve_SP
+        # from lcsolver.solvers.cvxopt.SP import solve_SP
+        from lcsolver.solvers.cvxopt.SP import solve_SP
         res = solve_SP(structures,m)
         res['problem_structure'] = 'signomial_program_pccp'
     else:
@@ -109,7 +109,7 @@ def _raise_if_infeasible(structures):
     sentence naming the constraint.
     """
     if isinstance(structures, dict) and structures.get('infeasible'):
-        from edi.presolve.reductions import InfeasibleProblem
+        from lcsolver.presolve.reductions import InfeasibleProblem
         raise InfeasibleProblem(
             structures.get('message', 'the model has no feasible point'))
 
@@ -129,7 +129,7 @@ def _run_diagnostics(structures, level):
         return None
     import warnings
 
-    from edi.presolve.reductions import optimization_check
+    from lcsolver.presolve.reductions import optimization_check
 
     try:
         rep = optimization_check(structures)
@@ -151,7 +151,7 @@ def _run_diagnostics(structures, level):
     if problems:
         warnings.warn(
             "model diagnostics: " + "; ".join(problems)
-            + ". Call edi.presolve.reductions.optimization_check(structures) for the full report.",
+            + ". Call lcsolver.presolve.reductions.optimization_check(structures) for the full report.",
             RuntimeWarning, stacklevel=3)
     return rep
 
@@ -168,7 +168,7 @@ def _ipopt_available():
     Cheap and not cached: Pyomo's own availability check is a PATH lookup, and
     caching it would make an IPOPT installed mid-session invisible.
     """
-    from edi.solvers.ipopt.ipopt_solver_interface import _executable_available
+    from lcsolver.solvers.ipopt.ipopt_solver_interface import _executable_available
     if _executable_available('ipopt'):
         return True
     try:
@@ -214,7 +214,7 @@ def _attach_sensitivities(m, res, wanted):
     # limit that was declared never to bind -- the edge of a fit, a numerical
     # box -- and nothing else about the solve looks wrong when that happens.
     try:
-        from edi.solvers.holographic import (format_holographic,
+        from lcsolver.solvers.holographic import (format_holographic,
                                              holographic_report)
         active = holographic_report(m)
         n_tot = len(getattr(m, '_holographic', ()) or ())
@@ -237,7 +237,7 @@ def _attach_sensitivities(m, res, wanted):
     if not wanted or not isinstance(res, dict):
         return res
     try:
-        from edi.solvers.sensitivity import sensitivities as _sens
+        from lcsolver.solvers.sensitivity import sensitivities as _sens
         out = _sens(m)
     except Exception:
         return res
@@ -261,7 +261,7 @@ def _apply_start(m, start):
     """
     import numpy as _np
 
-    from edi.solvers.writeback import write_solution
+    from lcsolver.solvers.writeback import write_solution
 
     x = getattr(start, 'x', start)
     x = _np.asarray(x, dtype=float).ravel()
@@ -279,7 +279,7 @@ def _apply_start(m, start):
 
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
           sensitivities=True, structures=None, start=None, **kwargs):
-    """Solve an EDI Formulation, choosing a backend automatically.
+    """Solve an LCsolver Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
     named by ``convex_backend``, and everything else -- including any
@@ -333,7 +333,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
 
     ``start`` sets the point the solve begins from, which the backends
     otherwise take from the model's current values. It accepts a
-    :class:`~edi.presolve.feasibilityCheck.FeasibilityResult`, so the feasibility
+    :class:`~lcsolver.presolve.feasibilityCheck.FeasibilityResult`, so the feasibility
     solve composes with this one::
 
         result = feasibility(f)
@@ -350,9 +350,9 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='warn',
     """
     import warnings
 
-    from edi.presolve.reductions import InfeasibleProblem
-    from edi.solvers.ipopt import ipopt_solve
-    from edi.presolve.unitCorrector import UnitMismatch
+    from lcsolver.presolve.reductions import InfeasibleProblem
+    from lcsolver.solvers.ipopt import ipopt_solve
+    from lcsolver.presolve.unitCorrector import UnitMismatch
 
     # Detect once and use the result for both the checks and the solve. These
     # used to be two separate walks of the model, because `optimization_check` needs
@@ -507,11 +507,11 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     That is the whole reason for the default: not speed, though SIA is faster
     here, but that one of them can answer whether it arrived.
     """
-    from edi.solvers.writeback import write_solution
+    from lcsolver.solvers.writeback import write_solution
 
     if sp_method == 'pccp':
-        from edi.solvers.cvxopt.SP import solve_SP
-        from edi.solvers.ipopt.convex import solve_gp_rows_ipopt
+        from lcsolver.solvers.cvxopt.SP import solve_SP
+        from lcsolver.solvers.ipopt.convex import solve_gp_rows_ipopt
 
         def _inner(rows, relations, x0=None):
             return solve_gp_rows_ipopt(rows, relations, x0=x0)
@@ -528,7 +528,7 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     if sp_method != 'sia':
         raise ValueError(f"sp_method must be 'sia' or 'pccp'; got {sp_method!r}")
 
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',
@@ -564,8 +564,8 @@ def _convex_ipopt(m, structures=None, **kwargs):
     global-optimality guarantee is preserved. Linear and quadratic programs are
     already convex in their natural variables and go to IPOPT unchanged.
     """
-    from edi.solvers.ipopt.convex import solve_gp_ipopt, solve_lp_qp_ipopt
-    from edi.solvers.ipopt import ipopt_solve
+    from lcsolver.solvers.ipopt.convex import solve_gp_ipopt, solve_lp_qp_ipopt
+    from lcsolver.solvers.ipopt import ipopt_solve
 
     if structures is None:
         structures = structure_detector(unit_corrector(m))

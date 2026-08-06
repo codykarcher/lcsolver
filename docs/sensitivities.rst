@@ -1,7 +1,7 @@
 Sensitivities
 =============
 
-After a solve, EDI can report how strongly the optimum responds to each
+After a solve, LCsolver can report how strongly the optimum responds to each
 ``Constant`` in the model. This is the same diagnostic ``GPkit`` prints for a
 geometric program, and it is usually the most informative thing you get out of a
 design optimization: it ranks the assumptions in your model by how much they
@@ -12,8 +12,8 @@ Basic use
 
 .. code-block:: python
 
-    from edi import Formulation
-    from edi.solvers.solver import solve
+    from lcsolver import Formulation
+    from lcsolver.solvers.solver import solve
 
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='', description='x')
@@ -73,7 +73,7 @@ How it is computed, and why it is fast
 --------------------------------------
 
 The obvious way to get these numbers is to perturb each constant and re-solve,
-costing ``2N`` solves for ``N`` constants. EDI does not do this. It uses the
+costing ``2N`` solves for ``N`` constants. LCsolver does not do this. It uses the
 envelope theorem, which extracts the same information from the duals of a single
 solve:
 
@@ -99,7 +99,7 @@ symbolically with Pyomo's reverse-mode differentiation. Two consequences:
 Supported problem classes
 -------------------------
 
-Sensitivities are available for every convex structure EDI detects, on either
+Sensitivities are available for every convex structure LCsolver detects, on either
 solver core:
 
 .. list-table::
@@ -139,7 +139,7 @@ presented as exact.
 Where the duals come from
 -------------------------
 
-The formula needs duals keyed by Pyomo constraint. EDI obtains them in one of
+The formula needs duals keyed by Pyomo constraint. LCsolver obtains them in one of
 two ways, reported as ``result['method']``:
 
 ``suffix``
@@ -168,7 +168,7 @@ zeros from a diverged solve is worse than an error.
 
 Two things to keep in mind:
 
-* Call it **after** a solve. Every EDI backend writes the solution back onto the
+* Call it **after** a solve. Every LCsolver backend writes the solution back onto the
   model, so ``solve(f)`` followed by ``f.sensitivities()`` is the intended
   sequence.
 * An indexed ``Constant`` reports one sensitivity per element, named as
@@ -182,7 +182,7 @@ API
     f.sensitivities(normalized=True, method='auto', rtol=1e-4)
     f.print_sensitivities()
 
-    from edi import sensitivities, constraint_duals, format_sensitivities
+    from lcsolver import sensitivities, constraint_duals, format_sensitivities
 
     sensitivities(model, normalized=True, method='auto')
     constraint_duals(model, method='auto')      # {constraint: dual}

@@ -2,7 +2,7 @@
 
 Two things are under test here and they fail in opposite ways.
 
-:mod:`edi.presolve.reductions` is diagnostic -- it never changes the problem, so the way
+:mod:`lcsolver.presolve.reductions` is diagnostic -- it never changes the problem, so the way
 it goes wrong is by reporting nothing useful. The check that matters is that
 it *finds* the defect it is looking for and stays quiet on a clean model.
 
@@ -19,10 +19,10 @@ import pytest
 
 # The SIA solver is held back pending publication; without it these exercise
 # nothing, so skip rather than error on a checkout that does not have it.
-pytest.importorskip("edi.solvers.ipopt.sia")
+pytest.importorskip("lcsolver.solvers.ipopt.sia")
 
-from edi import Formulation
-from edi.presolve.reductions import (
+from lcsolver import Formulation
+from lcsolver.presolve.reductions import (
     InfeasibleProblem,
     PresolveLog,
     assert_equivalent,
@@ -38,16 +38,16 @@ from edi.presolve.reductions import (
     reduce_columns,
     restore_columns,
 )
-from edi.solvers.ipopt.slcp_bridge import (
+from lcsolver.solvers.ipopt.slcp_bridge import (
     build_problem,
     presolve_structures,
     solve_sia,
 )
-from edi.presolve.structureDetector import (
+from lcsolver.presolve.structureDetector import (
     require_bounds_as_rows,
     structure_detector,
 )
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 
 def _detect(f, bounds_as_rows=True):
@@ -146,7 +146,7 @@ def test_unbounded_above_is_reported():
 def test_the_default_box_does_not_rescue_an_unbounded_variable():
     """1e-30..1e30 is not a bound, but a real box is.
 
-    Every EDI variable carries a box, so counting it would make the check
+    Every LCsolver variable carries a box, so counting it would make the check
     vacuous -- that is the mistake this test exists to prevent. The same model
     with a meaningful upper bound must come back clean, which is what
     distinguishes "ignore the value" from "ignore the default".
@@ -412,7 +412,7 @@ def test_cancellation_finds_the_term_that_does_nothing():
     """A subtraction large enough to satisfy the constraint by itself.
 
     This is the pi-tail failure in miniature: `m >= a - c` with `c` far bigger
-    than `a` holds for any `m`, so `m` is disconnected. EDI writes it as
+    than `a` holds for any `m`, so `m` is disconnected. LCsolver writes it as
     `a / (m + c) <= 1`, and the check is that `m`'s share of that denominator
     is negligible.
     """
@@ -569,7 +569,7 @@ def test_cached_and_rebuilt_subproblems_agree():
     land anywhere without either answer being wrong, which is exactly what a
     degenerate variable is.
     """
-    from edi.solvers.ipopt.sia import SIAOptions
+    from lcsolver.solvers.ipopt.sia import SIAOptions
 
     def model():
         f = Formulation()
@@ -604,7 +604,7 @@ def test_cached_and_rebuilt_subproblems_agree():
 
 def test_cache_builds_one_model_per_phase():
     """The point of the cache: build once, then only re-point."""
-    from edi.solvers.ipopt.sia import SIAOptions, SubproblemCache
+    from lcsolver.solvers.ipopt.sia import SIAOptions, SubproblemCache
 
     st = _detect(_singleton_row_model())
     problem = build_problem(st)
@@ -621,8 +621,8 @@ def test_cache_builds_one_model_per_phase():
 
 def test_a_black_box_body_is_not_cacheable():
     """No conservative model exists for it, so it must be re-linearized."""
-    from edi.solvers.ipopt.sia import SIAOptions, SubproblemCache
-    from edi.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
+    from lcsolver.solvers.ipopt.sia import SIAOptions, SubproblemCache
+    from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
 
     n = 2
     obj = Posynomial([(1.0, [1.0, 0.0])], n)
@@ -681,7 +681,7 @@ def _sig_equality_model():
 
 def test_signomial_equality_is_a_ratio_with_an_equality_operator():
     """Guards the premise: this really is the case under test."""
-    from edi.solvers.ipopt.slcp import CondensedEquality, PosynomialRatio
+    from lcsolver.solvers.ipopt.slcp import CondensedEquality, PosynomialRatio
 
     split = build_problem(_detect(_sig_equality_model()), split_equalities=True)
     single = build_problem(_detect(_sig_equality_model()),
@@ -729,7 +729,7 @@ def test_single_equality_keeps_the_multipliers_well_conditioned():
 
 def test_condensed_equality_reports_the_true_gradient():
     """The KKT test must use the TRUE gradient, not the condensed one."""
-    from edi.solvers.ipopt.slcp import CondensedEquality, Posynomial
+    from lcsolver.solvers.ipopt.slcp import CondensedEquality, Posynomial
 
     n = 2
     p = Posynomial([(1.0, [1.0, 0.0]), (1.0, [0.0, 1.0])], n)   # x + y
@@ -849,7 +849,7 @@ def test_an_equality_uses_both_endpoints_not_just_the_minimum():
 
 
 def test_propagation_works_on_a_linear_program():
-    """EDI solves LPs too, and the same arithmetic applies in natural space."""
+    """LCsolver solves LPs too, and the same arithmetic applies in natural space."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x', bounds=[-100.0, 100.0])
     y = f.Variable('y', 1.0, '', 'y', bounds=[-100.0, 5.0])
@@ -987,8 +987,8 @@ def test_sensitivities_survive_monomial_elimination():
     original model. So long as the full primal vector is restored, the
     reduction is invisible to it.
     """
-    from edi.solvers.sensitivity import sensitivities
-    from edi.solvers.writeback import write_solution
+    from lcsolver.solvers.sensitivity import sensitivities
+    from lcsolver.solvers.writeback import write_solution
 
     fm = _constant_model()
     st = _detect(fm)
@@ -1168,7 +1168,7 @@ def test_the_checker_notices_a_transform_that_lies():
 # ---------------------------------------------------------------------------
 def test_a_backend_refuses_a_structure_it_cannot_read():
     """Declared rather than remembered: the whole point of the registry."""
-    from edi.presolve.structureDetector import features, require
+    from lcsolver.presolve.structureDetector import features, require
 
     rows = _detect(_active_bound_model(), bounds_as_rows=True)
     split = _detect(_active_bound_model(), bounds_as_rows=False)
@@ -1183,7 +1183,7 @@ def test_a_backend_refuses_a_structure_it_cannot_read():
 
 
 def test_an_unknown_consumer_is_not_second_guessed():
-    from edi.presolve.structureDetector import require
+    from lcsolver.presolve.structureDetector import require
     require(_detect(_active_bound_model(), bounds_as_rows=False), 'something_new')
 
 
@@ -1191,7 +1191,7 @@ def test_an_unknown_consumer_is_not_second_guessed():
 # the typed view
 # ---------------------------------------------------------------------------
 def test_detected_names_what_the_dict_only_implied():
-    from edi.presolve.detected import Detected
+    from lcsolver.presolve.detected import Detected
 
     gp = _detect(_active_bound_model(), bounds_as_rows=False)
     assert isinstance(gp, Detected)
@@ -1331,7 +1331,7 @@ def test_terms_parses_each_row_once_however_often_it_is_asked():
     the solve just stops finishing. On SPaircraft it cost four minutes inside
     `fold_singleton_rows` against an eleven-second solve.
     """
-    import edi.presolve.detected as detected
+    import lcsolver.presolve.detected as detected
 
     st = _detect(_rich_model(), bounds_as_rows=False)
     indices = [0] + st.constraint_indices
@@ -1369,7 +1369,7 @@ def test_a_rebuilt_structure_does_not_answer_from_the_old_cache():
 
 
 def test_term_values_match_direct_evaluation():
-    from edi.presolve.reductions import _eval_terms
+    from lcsolver.presolve.reductions import _eval_terms
 
     st = _detect(_rich_model(), bounds_as_rows=False)
     x = np.linspace(1.5, 4.0, st.n_variables)
@@ -1384,7 +1384,7 @@ def test_term_values_match_direct_evaluation():
 
 
 def test_the_typed_view_is_idempotent():
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
 
     st = _detect(_active_bound_model(), bounds_as_rows=False)
     assert as_detected(st) is st
@@ -1472,7 +1472,7 @@ def test_presolve_report_agrees_with_reduce_columns():
 def test_a_disconnected_variable_keeps_the_guess_it_was_given():
     """Nothing constrains it, so the author's guess is the only information.
 
-    EDI requires a guess so that it means something. A variable in no
+    LCsolver requires a guess so that it means something. A variable in no
     constraint is where it means the most -- there is nothing else to go on --
     and reporting a default of 1.0 instead throws away the one number supplied.
     """

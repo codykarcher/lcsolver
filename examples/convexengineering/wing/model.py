@@ -113,7 +113,7 @@ from __future__ import annotations
 import numpy as np
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 G = 9.81  # m/s^2, gpkitmodels.g
 
@@ -166,7 +166,7 @@ def planform_constants(N: int, lam: float = 0.5):
 
 
 def fit_constraints(fit, ivar, dvars, mfac=1.0):
-    """Build the EDI constraint(s) for a gpfit fit.
+    """Build the LCsolver constraint(s) for a gpfit fit.
 
     Mirrors ``gpfit.fit_constraintset.FitCS``:
 

@@ -1,13 +1,13 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
 """What a solve produced, held on its own and printed on request.
 
 Pyomo reloads a solution onto the model, so ``pyo.value(m.x)`` answers after a
-solve. That is convenient and EDI keeps doing it, but it leaves the result with
+solve. That is convenient and LCsolver keeps doing it, but it leaves the result with
 nowhere to live: to see what happened you must already know which variables to
 ask about, one at a time, and which model object to ask -- and asking the wrong
 one returns the initial guess with no indication anything is wrong, because
@@ -188,7 +188,7 @@ class Solution:
                                                           ndecimal) + ['']
 
         if self.holographic:
-            from edi.solvers.holographic import format_holographic
+            from lcsolver.solvers.holographic import format_holographic
             L += [format_holographic(self.holographic), '']
 
         L += ['Sensitivities', '-------------']

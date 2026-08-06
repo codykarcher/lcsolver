@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -323,7 +323,7 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
             n_ineq += 1
 
     # ---- solve -----------------------------------------------------------
-    from edi.solvers.ipopt.ipopt_solver_interface import (
+    from lcsolver.solvers.ipopt.ipopt_solver_interface import (
         _executable_available, _summarize)
     from pyomo.opt import TerminationCondition
 
@@ -381,7 +381,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
                    method='auto', executable=None, form='auto'):
     """Solve a detected geometric program with IPOPT in log space.
 
-    Returns a dict shaped like the other EDI backends: ``status``,
+    Returns a dict shaped like the other LCsolver backends: ``status``,
     ``primal objective`` (in the ORIGINAL variables), ``x`` (original
     variables, in ``structures['variables']`` order), and ``solution``.
     """
@@ -401,7 +401,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
     res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
                               method=method, executable=executable, form=form)
     if model is not None:
-        from edi.solvers.writeback import write_solution
+        from lcsolver.solvers.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)
     return res
 
@@ -414,5 +414,5 @@ def solve_lp_qp_ipopt(m, **kwargs):
     needed: the model goes to IPOPT unchanged and the solution is loaded back by
     Pyomo in the usual way.
     """
-    from edi.solvers.ipopt import ipopt_solve
+    from lcsolver.solvers.ipopt import ipopt_solve
     return ipopt_solve(m, **kwargs)

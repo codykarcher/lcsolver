@@ -7,7 +7,7 @@ or undone.
 
 | package | why |
 |---|---|
-| `edi` (editable) | you asked for it directly |
+| `lcsolver` (editable) | you asked for it directly |
 | `ad` | dependency of the `solar` reference models |
 | `pypdf` | reading the papers |
 | `openmdao` | required by pycycle |

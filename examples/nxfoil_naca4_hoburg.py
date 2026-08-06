@@ -47,9 +47,9 @@ sys.path.insert(0, os.path.expanduser(
 warnings.simplefilter('ignore')
 
 import slcp_cases as C                                            # noqa: E402
-from edi.fitting import fit_max_affine, fit_report                # noqa: E402
-from edi.solvers.ipopt.slcp import Constraint, Problem, Signomial   # noqa: E402
-from edi.solvers.ipopt.sia import SIAOptions, solve_sia            # noqa: E402
+from lcsolver.fitting import fit_max_affine, fit_report                # noqa: E402
+from lcsolver.solvers.ipopt.slcp import Constraint, Problem, Signomial   # noqa: E402
+from lcsolver.solvers.ipopt.sia import SIAOptions, solve_sia            # noqa: E402
 
 #: Explicit, for the reason given in `nxfoil_hoburg`: the two nxfoil entry
 #: points have different defaults, and the examples must agree to be compared.

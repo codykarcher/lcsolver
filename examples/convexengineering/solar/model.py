@@ -122,7 +122,7 @@ from pyomo.environ import units
 
 from pyomo.core.base.var import IndexedVar
 
-from edi import Formulation
+from lcsolver import Formulation
 from airfoils import DAI1336A, NACA0008
 from environment import ENVIRONMENT, fit_constraints
 

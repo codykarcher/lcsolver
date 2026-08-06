@@ -1,19 +1,19 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""`from edi import units` gives Pyomo's units container.
+"""`from lcsolver import units` gives Pyomo's units container.
 
-This used to be a name collision. ``edi.units`` was the package holding
+This used to be a name collision. ``lcsolver.units`` was the package holding
 unitCorrector and unitWalker, and Python binds a submodule onto its parent
-package as it imports it -- so the first ``from edi.units.unitCorrector import
+package as it imports it -- so the first ``from lcsolver.units.unitCorrector import
 ...`` anywhere, including the lazy imports inside ``solve()``, replaced the
 name with the package and turned ``units.m`` into an AttributeError partway
 through a session.
 
-Those modules now live in :mod:`edi.presolve` with the rest of the
+Those modules now live in :mod:`lcsolver.presolve` with the rest of the
 pre-solve chain, so the name is simply free. These tests pin both halves: the
 proxy is Pyomo's own object, and nothing in the package reclaims the name.
 """
@@ -23,7 +23,7 @@ import sys
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation, units
+from lcsolver import Formulation, units
 
 
 def test_it_is_pyomos_container():
@@ -32,7 +32,7 @@ def test_it_is_pyomos_container():
 
 
 def test_usable_in_a_model_and_solves():
-    from edi.solvers.solver import solve
+    from lcsolver.solvers.solver import solve
     f = Formulation()
     x = f.Variable(name='x', guess=5.0, units='m', description='x')
     y = f.Variable(name='y', guess=5.0, units='m', description='y')
@@ -46,37 +46,37 @@ def test_usable_in_a_model_and_solves():
 def test_nothing_reclaims_the_name():
     """The regression that motivated the move.
 
-    Importing the pre-solve modules must leave ``edi.units`` alone. It did not
+    Importing the pre-solve modules must leave ``lcsolver.units`` alone. It did not
     when they lived under that name.
     """
-    import edi
-    from edi.presolve.unitCorrector import unit_corrector   # noqa: F401
-    from edi.presolve.unitWalker import unitsPack           # noqa: F401
-    assert edi.units is pyo.units
+    import lcsolver
+    from lcsolver.presolve.unitCorrector import unit_corrector   # noqa: F401
+    from lcsolver.presolve.unitWalker import unitsPack           # noqa: F401
+    assert lcsolver.units is pyo.units
 
 
 def test_edi_units_is_not_a_package_any_more():
-    """``import edi.units.<anything>`` must fail rather than resolve."""
+    """``import lcsolver.units.<anything>`` must fail rather than resolve."""
     with pytest.raises(ModuleNotFoundError):
-        __import__('edi.units.unitCorrector')
+        __import__('lcsolver.units.unitCorrector')
 
 
-@pytest.mark.parametrize('first', ['edi', 'presolve'],
-                         ids=['edi-first', 'presolve-first'])
+@pytest.mark.parametrize('first', ['lcsolver', 'presolve'],
+                         ids=['lcsolver-first', 'presolve-first'])
 def test_both_import_orderings_in_a_fresh_interpreter(first):
-    """Import order must not decide what ``edi.units`` means.
+    """Import order must not decide what ``lcsolver.units`` means.
 
     Run out of process: within one session the modules are already in
     sys.modules, which is precisely the state that hid the original bug.
     """
-    lead = ('import edi' if first == 'edi'
-            else 'from edi.presolve.unitCorrector import unit_corrector')
+    lead = ('import lcsolver' if first == 'lcsolver'
+            else 'from lcsolver.presolve.unitCorrector import unit_corrector')
     code = (f'{lead}\n'
-            'import edi, pyomo.environ as pyo\n'
-            'from edi.presolve.unitCorrector import unit_corrector\n'
-            'from edi.presolve.structureDetector import structure_detector\n'
-            'assert edi.units is pyo.units, type(edi.units)\n'
-            'from edi import units\n'
+            'import lcsolver, pyomo.environ as pyo\n'
+            'from lcsolver.presolve.unitCorrector import unit_corrector\n'
+            'from lcsolver.presolve.structureDetector import structure_detector\n'
+            'assert lcsolver.units is pyo.units, type(lcsolver.units)\n'
+            'from lcsolver import units\n'
             'assert units is pyo.units\n'
             'print("ok")\n')
     out = subprocess.run([sys.executable, '-c', code],
@@ -87,7 +87,7 @@ def test_both_import_orderings_in_a_fresh_interpreter(first):
 
 def test_the_presolve_package_exposes_the_chain():
     """One import for the whole pre-solve pipeline."""
-    from edi.presolve import (optimization_check, structure_detector,
+    from lcsolver.presolve import (optimization_check, structure_detector,
                               structure_report, unit_corrector)
     assert all(callable(fn) for fn in (unit_corrector, structure_detector,
                                        optimization_check, structure_report))

@@ -1,5 +1,5 @@
 ---
-title: 'EDI: An Engineering Design Interface for Pyomo'
+title: 'LCsolver: An Engineering Design Interface for Pyomo'
 tags:
   - Python
   - optimization
@@ -36,7 +36,7 @@ NOTE TO AUTHORS (delete before submission)
 Engineering design optimization problems are usually assembled by hand from three
 awkwardly-fitting pieces: an algebraic modeling language, a set of physical units,
 and one or more external analysis codes that cannot be expressed algebraically at
-all. `EDI` — the Engineering Design Interface — is a lightweight layer over the
+all. `LCsolver` is a lightweight layer over the
 Pyomo modeling language [@bynum2021pyomo] that makes these three pieces fit
 together. It provides a `Formulation` object that behaves exactly like a Pyomo
 `ConcreteModel` while adding unit-aware variable and constant declarations, a
@@ -63,14 +63,14 @@ General algebraic modeling languages such as Pyomo impose no such restriction, b
 leave the engineer to manage units manually and to hand-roll the interface to any
 external analysis code.
 
-`EDI` targets the gap. An engineer writes a single unit-annotated model in which
-some constraints are algebraic and others are evaluated by external codes; `EDI`
+`LCsolver` targets the gap. An engineer writes a single unit-annotated model in which
+some constraints are algebraic and others are evaluated by external codes; `LCsolver`
 checks unit consistency, detects the mathematical structure of the algebraic
 portion, and routes the problem to a solver appropriate to that structure. The same
 model can therefore be solved as a geometric program when it happens to be one, and
 as a general nonlinear program when it is not, without being rewritten.
 
-`EDI` began as a contribution to Pyomo itself and is distributed here as a
+`LCsolver` began as a contribution to Pyomo itself and is distributed here as a
 standalone package so that it can evolve independently of the Pyomo release cycle.
 
 # Functionality
@@ -90,7 +90,7 @@ standalone package so that it can evolve independently of the Pyomo release cycl
   Sequential Log-Convex Programming; and anything else, including models
   containing black-box constraints, to IPOPT via Pyomo. Solutions are written
   back onto the model in every case.
-- **Sensitivities to constants.** After a solve, `EDI` reports the log-log
+- **Sensitivities to constants.** After a solve, `LCsolver` reports the log-log
   sensitivity of the optimum to every declared constant, ranking a model's
   assumptions by how much they actually matter. These are obtained from the
   constraint duals via the envelope theorem, so they cost one solve rather than
@@ -99,7 +99,7 @@ standalone package so that it can evolve independently of the Pyomo release cycl
   quadratic and geometric programs on either solver core, and as a local
   approximation from the final convex subproblem of a signomial program.
 - **Sequential Log-Convex Programming.** For the common case of a model that is
-  *almost* GP-compatible, `EDI` implements SLCP [@karcher2022slcp]. Posynomial and
+  *almost* GP-compatible, `LCsolver` implements SLCP [@karcher2022slcp]. Posynomial and
   monomial constraints are imposed exactly in a log-convex subproblem while the
   remainder — including constraints evaluated by external codes — is linearized
   in log space. This recovers much of the conditioning and reliability of a
@@ -111,7 +111,7 @@ standalone package so that it can evolve independently of the Pyomo release cycl
 
 ```python
 from pyomo.environ import units
-from edi import Formulation
+from lcsolver import Formulation
 
 f = Formulation()
 x = f.Variable(name='x', guess=1.0, units='m',   description='x variable')

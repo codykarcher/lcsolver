@@ -80,7 +80,7 @@ _FREE_Y_ENG = bool(_os.environ.get("FREE_Y_ENG"))
 from numpy import cos, pi, tan
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from components.far import add_far, link as far_link
 from components.noise import add_noise
@@ -135,7 +135,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           # is unmaintained-but-frozen.
           wing_model: str = "tasopt",
           sweep_deg: float | None = None):
-    """Build the LH2 D8.2. Returns an EDI ``Formulation``.
+    """Build the LH2 D8.2. Returns an LCsolver ``Formulation``.
 
     This is SPaircraft with the kerosene fuel system replaced by a liquid
     hydrogen one -- the same 1,172-variable airframe, trim chain, tails and
@@ -162,7 +162,7 @@ def build(size_class, arch, Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
     instead of the hand-written guesses. That is a statement about the
     *solver*, not the model: the constraints are verified independently by
     ``crosscheck``, which shows the gpkit optimum satisfies all 3713 of them
-    to 1e-7. Seeding only asks whether EDI's PCCP loop can hold and reproduce
+    to 1e-7. Seeding only asks whether LCsolver's PCCP loop can hold and reproduce
     that point, which the naive all-guesses start cannot reach.
     """
     N = Nclimb + Ncruise
@@ -3352,7 +3352,7 @@ def _bound_constraints(f):
     """The same box as ``_bound_variables``, but expressed as constraints.
 
     Both forms are needed and they are not redundant. Pyomo variable bounds
-    reach the raw-NLP path only: EDI's log-space GP backend extracts the
+    reach the raw-NLP path only: LCsolver's log-space GP backend extracts the
     model into coefficient/exponent rows and builds a *fresh* Pyomo model
     over its own variable vector, so declared bounds never reach the PCCP
     subproblems. Only constraints survive that translation.
@@ -3377,7 +3377,7 @@ def _bound_variables(f):
     infinitely low cost. The same is needed here: without it the PCCP loop
     runs 301 subproblems and then dies with a non-finite objective gradient.
 
-    The lower bound matters for a second reason beyond divergence. EDI
+    The lower bound matters for a second reason beyond divergence. LCsolver
     declares variables over ``Reals``, so nothing stops a solver iterate from
     going negative -- and this model is full of fractional and negative
     powers (the wing drag polar alone has ``C_L**-1.44114``). One negative
@@ -3416,7 +3416,7 @@ CHECKS = [
 ]
 
 
-# EDI's PCCP loop defaults to 50 iterations, which is not enough here: the
+# LCsolver's PCCP loop defaults to 50 iterations, which is not enough here: the
 # model has 1174 variables and the sequential-GP sequence is still moving at
 # 50. It settles by ~200, and 500 gives the same answer to seven figures.
 MAX_ITER = 200
@@ -3464,7 +3464,7 @@ def verify(tee: bool = True) -> dict:
     """Solve the LH2 D8.2 and return its headline weights, in lbf.
 
     ``presolve=False`` is not a preference. Adding the cryogenic tank to this
-    model makes EDI's presolve overflow in ``restore_columns`` ->
+    model makes LCsolver's presolve overflow in ``restore_columns`` ->
     ``_solve_for`` -> ``_eval_terms`` (``math.exp`` of an accumulated log).
     The kerosene SPaircraft with the identical solver path presolves fine, and
     the trigger is not the near-zero ``f_wingfuel`` -- it reproduces at 1e-6,
@@ -3477,10 +3477,10 @@ def verify(tee: bool = True) -> dict:
     import pyomo.environ as pyo
     from pyomo.environ import units as u
 
-    from edi_compat import structure_detector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
-    from edi_compat import unit_corrector
+    from lcsolver_compat import structure_detector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
+    from lcsolver_compat import unit_corrector
 
     warnings.filterwarnings("ignore")
     fm = build(seed="reference")

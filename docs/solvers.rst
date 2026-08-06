@@ -1,7 +1,7 @@
 Solvers and Backends
 ====================
 
-EDI inspects a formulation, classifies its algebraic structure, and routes it to
+LCsolver inspects a formulation, classifies its algebraic structure, and routes it to
 a backend suited to that structure. This page describes the available routes and
 what they cost.
 
@@ -10,7 +10,7 @@ Choosing a Backend
 
 The default requires no decision::
 
-    from edi.solvers.solver import solve
+    from lcsolver.solvers.solver import solve
 
     result = solve(f)
 
@@ -116,6 +116,6 @@ This can be disabled with ``write_back=False`` if only the result dictionary is
 wanted.
 
 A note on ``cvxopt``: it can return a non-converged point with
-``status='unknown'`` and raise nothing. EDI issues a ``RuntimeWarning`` in that
+``status='unknown'`` and raise nothing. LCsolver issues a ``RuntimeWarning`` in that
 case rather than letting the point pass for a solution. If you see it, the
 IPOPT convex backend is worth trying.

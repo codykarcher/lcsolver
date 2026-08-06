@@ -30,7 +30,7 @@ egb, egb_available = attempt_import(
 
 formulation_available = False
 try:
-    from edi import Formulation
+    from lcsolver import Formulation
 
     formulation_available = True
 except:
@@ -39,7 +39,7 @@ except:
 
 blackbox_available = False
 try:
-    from edi import BlackBoxFunctionModel
+    from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
 except:
@@ -52,19 +52,19 @@ if numpy_available:
 
 
 @unittest.skipIf(
-    not egb_available, 'Testing edi requires pynumero external grey boxes'
+    not egb_available, 'Testing lcsolver requires pynumero external grey boxes'
 )
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not blackbox_available, 'Blackbox import failed')
-@unittest.skipIf(not numpy_available, 'Testing edi requires numpy')
-@unittest.skipIf(not scipy_available, 'Testing edi requires scipy')
+@unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
+@unittest.skipIf(not scipy_available, 'Testing lcsolver requires scipy')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestEDIBlackBox(unittest.TestCase):
     def test_edi_blackbox_variable(self):
         "Tests the black box variable class"
         from pyomo.environ import units
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -101,8 +101,8 @@ class TestEDIBlackBox(unittest.TestCase):
     def test_edi_blackbox_tcl(self):
         "Tests the black box type checked list class"
         from pyomo.environ import units
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -121,8 +121,8 @@ class TestEDIBlackBox(unittest.TestCase):
     def test_edi_blackbox_bbl(self):
         "Tests the black box BBList class"
         from pyomo.environ import units
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -153,8 +153,8 @@ class TestEDIBlackBox(unittest.TestCase):
         "Tests some of the exceptions in the black box model class"
         import numpy as np
         from pyomo.environ import units
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -173,7 +173,7 @@ class TestEDIBlackBox(unittest.TestCase):
 
     def test_edi_blackbox_etc_1(self):
         "Tests a black box assertion issue"
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -188,8 +188,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -245,8 +245,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -294,8 +294,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -350,8 +350,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
 
         # pyomo collapses 'value * units.dimensionless' back to a plain float in
         # several cases, so a dimensionless black box cannot be relied on to hand
@@ -402,8 +402,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='', description='x variable', size=3)
@@ -444,8 +444,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='x variable')
@@ -485,8 +485,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
 
         class UnitCircle(BlackBoxFunctionModel):
             def __init__(self, badValue=False, badJacobian=False):
@@ -555,8 +555,8 @@ class TestEDIBlackBox(unittest.TestCase):
         "Tests a black box example construction"
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -617,7 +617,7 @@ class TestEDIBlackBox(unittest.TestCase):
         "Tests a black box example construction"
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         f = Formulation()
         x = f.Variable(
@@ -692,8 +692,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -763,8 +763,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -827,8 +827,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -888,8 +888,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -920,7 +920,7 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
 
         class SignomialTest(BlackBoxFunctionModel):
             def __init__(self):
@@ -978,7 +978,7 @@ class TestEDIBlackBox(unittest.TestCase):
         s = SignomialTest()
         ivals = [[x] for x in np.linspace(-2, 2, 11)]
 
-        # How the black box may be called using EDI
+        # How the black box may be called using LCsolver
         bbo = s.BlackBox(**{'x': 0.5})
         bbo = s.BlackBox({'x': 0.5})
         bbo = s.BlackBox(**{'x': 0.5, 'optn': True})
@@ -1010,7 +1010,7 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
         from pyomo.common.formatting import tostr
 
         class PassThrough(BlackBoxFunctionModel):
@@ -1076,7 +1076,7 @@ class TestEDIBlackBox(unittest.TestCase):
 
         xv = np.eye(2) * units.dimensionless
 
-        # How the black box may be called using EDI
+        # How the black box may be called using LCsolver
         bbo = bb.BlackBox(**{'x': xv})
         bbo = bb.BlackBox({'x': xv})
         bbo = bb.BlackBox(**{'x': xv, 'optn': True})
@@ -1099,8 +1099,8 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         from pyomo.environ import units
         import pyomo.environ as pyo
-        from edi import Formulation
-        from edi.objects.blackBoxFunctionModel import (
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import (
             BlackBoxFunctionModel_Variable,
             TypeCheckedList,
             BBList,
@@ -1191,7 +1191,7 @@ class TestEDIBlackBox(unittest.TestCase):
         import numpy as np
         import pyomo.environ as pyo
         from pyomo.environ import units
-        from edi import Formulation, BlackBoxFunctionModel
+        from lcsolver import Formulation, BlackBoxFunctionModel
         from pyomo.common.formatting import tostr
 
         class PassThrough(BlackBoxFunctionModel):

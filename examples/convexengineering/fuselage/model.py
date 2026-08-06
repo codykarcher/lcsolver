@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from edi import Formulation
+from lcsolver import Formulation
 
 G = 9.81  # m/s^2, gpkitmodels.g
 THOMSEN_P = 1.6075

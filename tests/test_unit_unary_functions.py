@@ -22,8 +22,8 @@ The rules mirror ``pyomo.core.base.units_container`` so the two agree.
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.presolve.unitCorrector import UnitMismatch, unit_corrector
+from lcsolver import Formulation
+from lcsolver.presolve.unitCorrector import UnitMismatch, unit_corrector
 
 #: (name, callable, rule). 'dimensionless' takes a dimensionless argument and
 #: returns one; 'same' preserves units; 'sqrt' halves the exponents.
@@ -106,20 +106,20 @@ def test_ceil_preserves_units():
 
 def test_unknown_function_says_so():
     """An unhandled function should name itself, not fail as a unit mismatch."""
-    from edi.presolve.unitWalker import _UNARY_UNITS
+    from lcsolver.presolve.unitWalker import _UNARY_UNITS
     assert 'sqrt' in _UNARY_UNITS and 'sin' in _UNARY_UNITS
     # The table is the contract with pyomo's own; if pyomo grows a function we
     # do not know, the error names it rather than reporting a bogus mismatch.
     from pyomo.core.base.units_container import PintUnitExtractionVisitor
     pyomo_known = set(PintUnitExtractionVisitor.unary_function_method_map)
     assert pyomo_known == set(_UNARY_UNITS), (
-        'EDI and pyomo disagree about which unary functions exist: '
+        'LCsolver and pyomo disagree about which unary functions exist: '
         f'{pyomo_known ^ set(_UNARY_UNITS)}')
 
 
 def test_solves_end_to_end_with_sqrt():
     """The whole path, not just the walker."""
-    from edi.solvers.solver import solve
+    from lcsolver.solvers.solver import solve
     f = Formulation()
     S = f.Variable(name='S', guess=30.0, units='m^2', description='area')
     AR = f.Variable(name='AR', guess=20.0, units='-', description='AR')

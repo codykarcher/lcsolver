@@ -5,7 +5,7 @@ Overview
 --------
 Variables are the mathematical representation of individual decisions being considered by the optimizer.  In engineering design, variables are often representations of geometric parameters and operating conditions.  
 
-Using the EDI package, variables can be defined as both scalar (``pyomo.core.base.var.ScalarVar``) and vector/matrix/tensor (``pyomo.core.base.var.IndexedVar``), and can exist in many mathematical spaces (All Real, Integers, etc).
+Using the LCsolver package, variables can be defined as both scalar (``pyomo.core.base.var.ScalarVar``) and vector/matrix/tensor (``pyomo.core.base.var.IndexedVar``), and can exist in many mathematical spaces (All Real, Integers, etc).
 
 The Variable constructor is a very thin wrapper, and so experienced pyomo users will not see any significant differences from base pyomo.  
 
@@ -13,11 +13,11 @@ The Variable constructor is a very thin wrapper, and so experienced pyomo users 
 Construction
 ------------
 
-Variables are constructed by 1) creating an instance of a new variable in a EDI Formulation and 2) passing out this newly constructed variable to be used in objective and constraint construction.  
+Variables are constructed by 1) creating an instance of a new variable in a LCsolver Formulation and 2) passing out this newly constructed variable to be used in objective and constraint construction.  
 
 .. py:function:: f.Variable(name, guess, units, description='', size=None, bounds=None, domain=None)
 
-    Declares a variable in a pyomo.edi.formulation
+    Declares a variable in a pyomo.lcsolver.formulation
 
    :param name: The name of the variable for the purposes of tracking in the formulation.  Commonly, this will be the same as the variable name in local namespace.
    :type  name: str

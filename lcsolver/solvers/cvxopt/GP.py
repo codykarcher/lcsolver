@@ -18,7 +18,7 @@ if not cvxopt_available:
 
 
 def solve_GP(structures):
-    from edi.presolve.structureDetector import require
+    from lcsolver.presolve.structureDetector import require
     require(structures, 'solve_GP')
     # print(structures)
     # cody

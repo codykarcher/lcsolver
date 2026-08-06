@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -39,7 +39,7 @@ A variable bounded on only one side is not necessarily wrong -- plenty of
 quantities only need a floor -- but an unbounded direction is where an
 optimizer runs away, and it is worth seeing the list.
 
-A bound counts only if it says something. EDI gives every variable a default
+A bound counts only if it says something. LCsolver gives every variable a default
 1e-30..1e30 box, so counting bounds naively would pronounce everything bounded
 both ways and report nothing at all. But throwing out every single-variable
 row goes too far the other way: a hand-written ``w >= 1`` is a real modelling
@@ -59,7 +59,7 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass, field
 
-from edi.presolve.detected import Term, as_detected
+from lcsolver.presolve.detected import Term, as_detected
 
 class InfeasibleProblem(ValueError):
     """Presolve proved the model infeasible before any solve was attempted."""
@@ -75,7 +75,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "optimization_check", "floor_report", "structure_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
-#: A bound at or beyond these is treated as no bound at all. EDI's default box
+#: A bound at or beyond these is treated as no bound at all. LCsolver's default box
 #: is exactly 1e-30..1e30, and models routinely restate it; either way it was
 #: chosen to keep the solver in positive territory, not to say anything about
 #: the design, so it must not count as bounding.
@@ -186,7 +186,7 @@ class PresolveReport:
         """The report, as a string. ``print(report.summary())``.
 
         Same text as ``str(report)``; named to match
-        :meth:`~edi.objects.solution.Solution.summary`, which is what a reader
+        :meth:`~lcsolver.objects.solution.Solution.summary`, which is what a reader
         will have seen first.
         """
         return str(self)
@@ -301,13 +301,13 @@ def _rows_of(structures):
     """``(rows, operators, key)`` for the log-space encoding.
 
     Signomial before geometric, which used to be duplicated here as folklore.
-    :attr:`~edi.presolve.detected.Detected.log_key` names it now, and names
+    :attr:`~lcsolver.presolve.detected.Detected.log_key` names it now, and names
     why: a model can satisfy several structure flags at once, so "which kind
     is this" and "which encoding are the terms in" are different questions.
     """
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
 
-    from edi.presolve.unitCorrector import UnitMismatch
+    from lcsolver.presolve.unitCorrector import UnitMismatch
     model = None if isinstance(structures, dict) else structures
     try:
         st = as_detected(_as_structures(structures))
@@ -1166,7 +1166,7 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
         # DISCONNECTED variable that is the only information anyone has about
         # it -- nothing in the model constrains it, so the guess is the answer
         # -- and reporting 1.0 instead silently discards the one number the
-        # author supplied. EDI requires a guess precisely so it means
+        # author supplied. LCsolver requires a guess precisely so it means
         # something; this is where it means the most.
         try:
             import pyomo.environ as pyo
@@ -1340,7 +1340,7 @@ def restore_columns(removed, x_reduced, n_original=None):
 def cancellation_report(structures, x, tol=1e-6, names=None):
     """Terms in a signomial constraint that contribute nothing at ``x``.
 
-    EDI writes a constraint containing a subtraction as a ratio ``p/q <= 1``,
+    LCsolver writes a constraint containing a subtraction as a ratio ``p/q <= 1``,
     moving the negative terms into the denominator alongside the left-hand
     side. So ``M_r*c >= A + B - C`` becomes ``(A + B) / (M_r*c + C) <= 1``, and
     the two terms in that denominator are in direct competition: whatever ``C``
@@ -1430,7 +1430,7 @@ def evaluate(structures, x):
         obj = float(shift or 0.0) + sum(float(ci) * x[i]
                                         for i, ci in enumerate(c) if i < len(x))
         if parts.hessian is not None:
-            # EDI stores the quadratic COEFFICIENT matrix, not the Hessian,
+            # LCsolver stores the quadratic COEFFICIENT matrix, not the Hessian,
             # so the objective is x'Px + q'x + shift with no factor of a half:
             # `x**2 + y**2` gives P = I, and x'Ix = 2 at (1,1), matching the
             # Pyomo objective. cvxopt.solvers.qp minimises (1/2) x'Px + q'x,
@@ -2002,8 +2002,8 @@ def _as_structures(obj):
     """
     if isinstance(obj, dict):
         return obj
-    from edi.presolve.structureDetector import structure_detector
-    from edi.presolve.unitCorrector import unit_corrector
+    from lcsolver.presolve.structureDetector import structure_detector
+    from lcsolver.presolve.unitCorrector import unit_corrector
     return structure_detector(unit_corrector(obj), bounds_as_rows=False)
 
 
@@ -2098,7 +2098,7 @@ def structure_report(structures, top=5, simplify=True) -> str:
     ``top`` caps how many blocking constraints are listed per class; the rest
     are counted. Set ``top=None`` for all of them.
     """
-    from edi.presolve.unitCorrector import UnitMismatch
+    from lcsolver.presolve.unitCorrector import UnitMismatch
     try:
         st = as_detected(_as_structures(structures))
     except UnitMismatch as exc:
@@ -2254,13 +2254,13 @@ def optimization_check(structures, x=None, problem=None, names=None,
         report = optimization_check(f)
         print(report.summary())
     """
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
 
     # Accept the formulation itself. Detecting structure is how this runs,
     # not what the caller wants, and `optimization_check(f)` is the call
     # people try first.
     model = None if isinstance(structures, dict) else structures
-    from edi.presolve.unitCorrector import UnitMismatch
+    from lcsolver.presolve.unitCorrector import UnitMismatch
     try:
         st = as_detected(_as_structures(structures))
     except UnitMismatch as exc:
@@ -2302,7 +2302,7 @@ def optimization_check(structures, x=None, problem=None, names=None,
             import numpy as _np
             import pyomo.environ as _pyo
 
-            from edi.solvers.ipopt.slcp_bridge import build_problem
+            from lcsolver.solvers.ipopt.slcp_bridge import build_problem
 
             _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
                              dtype=float)
@@ -2357,7 +2357,7 @@ def _with_empty_bounds(structures):
         width = max((len(r) - 2 for r in rows), default=0)
         n = max(width, len(st.get("variables") or []))
         st["bounds"] = [(None, None)] * n
-    from edi.presolve.detected import as_detected
+    from lcsolver.presolve.detected import as_detected
     return as_detected(st)
 
 
@@ -2417,7 +2417,7 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
     on it") also flags every variable pinned by a single-variable *equality*,
     and those are maximally determined rather than free.
 
-    ``problem`` is an :class:`~edi.solvers.ipopt.slcp.Problem`; ``x`` the
+    ``problem`` is an :class:`~lcsolver.solvers.ipopt.slcp.Problem`; ``x`` the
     solution. Returns a list of ``(name, value)``.
     """
     import math

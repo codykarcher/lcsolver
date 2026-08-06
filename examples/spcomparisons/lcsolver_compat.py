@@ -1,15 +1,15 @@
-"""Import shim for EDI's pre-solve chain.
+"""Import shim for LCsolver's pre-solve chain.
 
 The package these live in has been renamed twice mid-session
-(edi.structure/edi.units -> edi.preconditioner -> edi.presolve), each time
+(lcsolver.structure/lcsolver.units -> lcsolver.preconditioner -> lcsolver.presolve), each time
 breaking every import in this study at once. This tries them in reverse
 chronological order so a rename costs one edit here rather than thirty-one
 across the tree.
 """
 _LAYOUTS = (
-    ("edi.presolve.structureDetector", "edi.presolve.unitCorrector"),
-    ("edi.preconditioner.structureDetector", "edi.preconditioner.unitCorrector"),
-    ("edi.structure.structureDetector", "edi.units.unitCorrector"),
+    ("lcsolver.presolve.structureDetector", "lcsolver.presolve.unitCorrector"),
+    ("lcsolver.preconditioner.structureDetector", "lcsolver.preconditioner.unitCorrector"),
+    ("lcsolver.structure.structureDetector", "lcsolver.units.unitCorrector"),
 )
 
 structure_detector = unit_corrector = None
@@ -22,7 +22,7 @@ for _sd, _uc in _LAYOUTS:
     except Exception:
         continue
 if structure_detector is None:
-    raise ImportError("could not locate EDI's structure detector in any known "
+    raise ImportError("could not locate LCsolver's structure detector in any known "
                       f"layout; tried {[l[0] for l in _LAYOUTS]}")
 
 __all__ = ["structure_detector", "unit_corrector"]

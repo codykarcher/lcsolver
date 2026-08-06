@@ -60,14 +60,14 @@ def solve_warm(cls_key, arch_key, warm_values, maxit=2000):
     """Solve one case with every matching variable pre-set from ``warm_values``."""
     warnings.filterwarnings("ignore")
     sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE / "components"))
-    sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+    sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
     import pyomo.environ as pyo
     from pyomo.environ import units as u
     import classes, architectures, aircraft
-    from edi_compat import structure_detector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
-    from edi_compat import unit_corrector
+    from lcsolver_compat import structure_detector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
+    from lcsolver_compat import unit_corrector
 
     LBF = 0.2248089431
     cl, ar = classes.CLASSES[cls_key], architectures.ARCHS[arch_key]

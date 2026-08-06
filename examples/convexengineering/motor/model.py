@@ -18,7 +18,7 @@ the weight through ``W >= Qstar*Qmax*g`` and leaves the voltage constant
 Angular velocity and the radian
 -------------------------------
 gpkit uses pint, which treats the radian as dimensionless, so ``Q*omega``
-is a power directly. Pyomo (and therefore EDI) treats the radian as a real
+is a power directly. Pyomo (and therefore LCsolver) treats the radian as a real
 dimension, so ``N*m*rpm`` will not convert to kW and the same expression
 raises ``InconsistentUnitsError``.
 
@@ -30,13 +30,13 @@ explicit ``/units.rad``:
 
 This is bookkeeping, not a model change: dividing by one radian is dividing
 by one. It is called out because it is the single most likely place for a
-gpkit model to fail to port cleanly to EDI.
+gpkit model to fail to port cleanly to LCsolver.
 """
 from __future__ import annotations
 
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 G = 9.81  # m/s^2, gpkitmodels.g
 

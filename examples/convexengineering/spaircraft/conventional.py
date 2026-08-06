@@ -79,7 +79,7 @@ from pathlib import Path
 from numpy import cos, pi
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from . import airframe, defects, layouts
 from .airframe import pin, set_constant
@@ -111,7 +111,7 @@ M_FT = 3.28083990
 
 def build(Nclimb: int = NCLIMB, Ncruise: int = NCRUISE,
           faithful: bool = False, seed: str | None = None) -> Formulation:
-    """Build the 737-800. Returns an EDI ``Formulation``.
+    """Build the 737-800. Returns an LCsolver ``Formulation``.
 
     ``subs/optimal737.py`` converts its sweeps correctly, so the only upstream
     defect reaching this deck is the ``M_4a`` inconsistency in the shared

@@ -65,7 +65,7 @@ from pyomo.environ import units
 
 import components.technology as _technology
 
-from edi import Formulation
+from lcsolver import Formulation
 
 # ---------------------------------------------------------------------------
 # Component efficiencies and gas properties, from Engine.setvals()
@@ -319,7 +319,7 @@ G2, G25 = 1.398, 1.354
 
 
 def build(engine: str = "CFM56") -> Formulation:
-    """Build the standalone EDI turbofan for one of the validated engines.
+    """Build the standalone LCsolver turbofan for one of the validated engines.
 
     This is the engine on its own test stand: it creates its own ambient
     state, pins the operating points from ``MISSIONS``, applies the published
@@ -1076,7 +1076,7 @@ if __name__ == "__main__":
     sol, obj, note = solve_edi(fm)
     ref = load_reference(Path(__file__).with_name("reference.json"))[name]
 
-    # gpkit's reference keys -> how to read the same quantity out of the EDI
+    # gpkit's reference keys -> how to read the same quantity out of the LCsolver
     # solution. W_engine is declared in newtons here and reported in lbf there.
     N_SEG = len(MISSIONS[name])
     LBF = LBF_N

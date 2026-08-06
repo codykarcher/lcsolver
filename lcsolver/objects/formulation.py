@@ -28,7 +28,7 @@ from pyomo.environ import units as pyomo_units
 from pyomo.core.base.var import IndexedVar
 from pyomo.core.base.param import IndexedParam
 
-from edi.objects.vector import (
+from lcsolver.objects.vector import (
     VectorComponent,
     VectorArray,
     as_array,
@@ -129,7 +129,7 @@ def _unwrap_0d(result):
 class EDIVar(VectorComponent, IndexedVar):
     """An indexed Variable that also reads as a vector.
 
-    The behaviour is in :class:`~edi.objects.vector.VectorComponent`; this is
+    The behaviour is in :class:`~lcsolver.objects.vector.VectorComponent`; this is
     only the pairing with Pyomo's class. Declared here rather than there so
     that the vector module stays free of Pyomo component internals.
     """
@@ -319,9 +319,9 @@ class Formulation(ConcreteModel):
 
     @property
     def solution(self):
-        """The current values, as a :class:`~edi.objects.solution.Solution`.
+        """The current values, as a :class:`~lcsolver.objects.solution.Solution`.
 
-        Pyomo reloads a solution onto the model, and EDI keeps doing that, so
+        Pyomo reloads a solution onto the model, and LCsolver keeps doing that, so
         `pyo.value(f.x)` answers after a solve. This is the same information
         with somewhere to live: objective, every variable and constant with its
         units and description, and the sensitivities once computed, printable
@@ -331,7 +331,7 @@ class Formulation(ConcreteModel):
         detected structure holds the unit-corrected clone's variables, and that
         clone is never solved -- reading it returns the initial guess.
         """
-        from edi.objects.solution import Solution
+        from lcsolver.objects.solution import Solution
 
         return Solution.from_model(self, sensitivities=self._sensitivity_cache,
                                    ambiguous=getattr(self, '_ambiguous_cache',
@@ -342,7 +342,7 @@ class Formulation(ConcreteModel):
 
     def solution_with_sensitivities(self, **kwargs):
         """The solution, with sensitivities computed and attached."""
-        from edi.objects.solution import Solution
+        from lcsolver.objects.solution import Solution
 
         ambiguous = None
         try:
@@ -413,7 +413,7 @@ class Formulation(ConcreteModel):
             AR = f.Variable('AR', units='-', description='aspect ratio')
 
         Variables that took a default are recorded and reported by
-        ``edi.presolve.optimization_check``, so the omission stays visible
+        ``lcsolver.presolve.optimization_check``, so the omission stays visible
         rather than
         becoming invisible.
         """
@@ -461,7 +461,7 @@ class Formulation(ConcreteModel):
         if units is None:
             raise ValueError(
                 f"Variable {name!r} needs units. Use '-' for a dimensionless "
-                "quantity; EDI requires them so that unit errors are caught "
+                "quantity; LCsolver requires them so that unit errors are caught "
                 "rather than propagated.")
         if domain is None:
             domain = Reals
@@ -697,7 +697,7 @@ class Formulation(ConcreteModel):
 
         So they are declared, not merely written, and every solve checks them
         and says so. Nothing about the constraint itself changes -- it is
-        imposed exactly as an ordinary one -- only that EDI knows to watch it.
+        imposed exactly as an ordinary one -- only that LCsolver knows to watch it.
         """
         return self.Constraint(expr, holographic=True)
 
@@ -795,7 +795,7 @@ class Formulation(ConcreteModel):
 
         The reason this exists rather than plain ``sum``: iterating an indexed
         Pyomo component yields its index KEYS, so ``sum(x)`` returns
-        ``0 + 1 + 2``. EDI refuses that now, and this is what it points at.
+        ``0 + 1 + 2``. LCsolver refuses that now, and this is what it points at.
         """
         return _unwrap_0d(as_array(vector).sum(axis=axis))
 
@@ -806,7 +806,7 @@ class Formulation(ConcreteModel):
     def broadcast_rows(self, vector, n):
         """``vector`` repeated as each of ``n`` rows -> ``(n, len(vector))``.
 
-        EDI never broadcasts silently, so this is how a per-column limit is
+        LCsolver never broadcasts silently, so this is how a per-column limit is
         compared against a matrix.
         """
         return broadcast_rows(vector, n)
@@ -888,20 +888,20 @@ class Formulation(ConcreteModel):
         The numbers come from the constraint duals via the envelope theorem, so
         they cost one solve regardless of how many constants the model has, and
         every partial derivative is taken symbolically rather than by
-        differencing. See :mod:`edi.solvers.sensitivity` for the details.
+        differencing. See :mod:`lcsolver.solvers.sensitivity` for the details.
 
         Returns
         -------
         dict
-            See :func:`edi.solvers.sensitivity.sensitivities`.
+            See :func:`lcsolver.solvers.sensitivity.sensitivities`.
         """
-        from edi.solvers.sensitivity import sensitivities as _sens
+        from lcsolver.solvers.sensitivity import sensitivities as _sens
 
         return _sens(self, normalized=normalized, **kwargs)
 
     def print_sensitivities(self, **kwargs):
         """Print the sensitivity table, sorted by magnitude."""
-        from edi.solvers.sensitivity import format_sensitivities
+        from lcsolver.solvers.sensitivity import format_sensitivities
 
         print(format_sensitivities(self.sensitivities(**kwargs)))
 
@@ -913,8 +913,8 @@ class Formulation(ConcreteModel):
         exponents, and classifying the uncorrected form can call the same
         model by a different name.
         """
-        from edi.presolve.structureDetector import structure_detector
-        from edi.presolve.unitCorrector import unit_corrector
+        from lcsolver.presolve.structureDetector import structure_detector
+        from lcsolver.presolve.unitCorrector import unit_corrector
         return structure_detector(unit_corrector(self), bounds_as_rows=False)
 
     def structure_report(self, top=5):
@@ -927,17 +927,17 @@ class Formulation(ConcreteModel):
         ``top`` caps the constraints listed per class; ``top=None`` lists all.
         Returns the text and prints nothing.
         """
-        from edi.presolve.reductions import structure_report as _report
+        from lcsolver.presolve.reductions import structure_report as _report
         return _report(self, top=top)
 
     def optimization_check(self, top=5):
         """Every structural check, in one call: structure, then presolve.
 
         The pre-solve half of the report -- it needs no solution. Pass the
-        solved model to `edi.presolve.optimization_check` directly for
+        solved model to `lcsolver.presolve.optimization_check` directly for
         the degeneracy and cancellation checks, which do.
         """
-        from edi.presolve.reductions import optimization_check
+        from lcsolver.presolve.reductions import optimization_check
         return optimization_check(self, structure_top=top)
 
     def check_units(self):

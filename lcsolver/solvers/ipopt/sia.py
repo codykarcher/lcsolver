@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -95,7 +95,7 @@ import math
 import numpy as np
 import pyomo.environ as pyo
 
-from edi.solvers.ipopt.slcp import (CondensedEquality, Posynomial,
+from lcsolver.solvers.ipopt.slcp import (CondensedEquality, Posynomial,
                                     seat_step_in_bounds,
                                     PosynomialRatio, Problem, Signomial)
 
@@ -617,7 +617,7 @@ def _polish_ipopt(problem, x, options):
     or None if the model contains black-box rows, Ipopt fails, or the
     result does not verify.
     """
-    from edi.solvers.ipopt.slcp import (Posynomial, PosynomialRatio,
+    from lcsolver.solvers.ipopt.slcp import (Posynomial, PosynomialRatio,
                                         CondensedEquality)
 
     def _sumexp(m, terms):
@@ -1083,7 +1083,7 @@ class SubproblemCache:
     instead of a full-length coefficient vector. That is the difference between
     a handful of scalars per constraint and an n-term expression per constraint.
 
-    This is the same device as :class:`~edi.solvers.ipopt.slcp.SubproblemCache`,
+    This is the same device as :class:`~lcsolver.solvers.ipopt.slcp.SubproblemCache`,
     but the SIA sub-problem is easier to cache than SLCP's for two reasons.
     There is no BFGS quadratic, which is the one part SLCP has to rebuild every
     iteration; and a problem that is cacheable at all has no black-box

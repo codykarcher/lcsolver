@@ -5,7 +5,7 @@ Point GPLIBRARY at it::
 
     GPLIBRARY=~/src/gplibrary python reference.py
 
-The resulting reference.json is committed, so verifying the EDI rebuild does
+The resulting reference.json is committed, so verifying the LCsolver rebuild does
 not require gpkit.
 """
 from __future__ import annotations

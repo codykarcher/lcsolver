@@ -1,7 +1,7 @@
 """One model, every path, the same answer.
 
 The property this file asserts is the one no unit test here can: that the
-several routes from a Formulation to a number agree. EDI carries four
+several routes from a Formulation to a number agree. LCsolver carries four
 representations of a problem -- the Pyomo model, the detected structure, the
 cvxopt backends' own matrices, and the SLCP ``Problem`` -- and every conversion
 between them is somewhere a transformation can quietly change the problem while
@@ -31,10 +31,10 @@ import pytest
 
 pyo = pytest.importorskip('pyomo.environ')
 
-from edi import Formulation  # noqa: E402
-from edi.solvers import solver as solver_module  # noqa: E402
-from edi.presolve.structureDetector import structure_detector  # noqa: E402
-from edi.presolve.unitCorrector import unit_corrector  # noqa: E402
+from lcsolver import Formulation  # noqa: E402
+from lcsolver.solvers import solver as solver_module  # noqa: E402
+from lcsolver.presolve.structureDetector import structure_detector  # noqa: E402
+from lcsolver.presolve.unitCorrector import unit_corrector  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
@@ -120,10 +120,10 @@ def _solve_via(make, path):
             return _objective_of(f)
         st = structure_detector(unit_corrector(f))
         if path == 'sia':
-            from edi.solvers.ipopt.slcp_bridge import solve_sia
+            from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
             return float(solve_sia(st).objective)
         if path == 'slcp':
-            from edi.solvers.ipopt.slcp_bridge import solve_slcp
+            from lcsolver.solvers.ipopt.slcp_bridge import solve_slcp
             return float(solve_slcp(st).objective)
         raise AssertionError(f'unknown path {path}')
 
@@ -154,7 +154,7 @@ def test_every_path_finds_the_same_optimum(name, make):
 @pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
 def test_presolve_does_not_change_the_answer(name, make):
     """SIA with the presolve pipeline on and off must agree."""
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -172,7 +172,7 @@ def test_presolve_does_not_change_the_answer(name, make):
 @pytest.mark.parametrize('name,make', SMALL, ids=[n for n, _ in SMALL])
 def test_split_bounds_do_not_change_the_answer(name, make):
     """bounds_as_rows on and off describe the same problem."""
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -214,7 +214,7 @@ def test_example_models_are_unchanged_by_presolve(name):
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from edi.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
         try:
             base = solve_sia(structure_detector(unit_corrector(build())))
             plain = solve_sia(structure_detector(unit_corrector(build())),
@@ -238,13 +238,13 @@ def test_example_models_survive_every_transform(name):
     worst violation, at a solved point -- rather than a remembered number, so
     it applies to any model without knowing anything about it.
     """
-    from edi.presolve.reductions import (assert_equivalent, fold_singleton_rows,
+    from lcsolver.presolve.reductions import (assert_equivalent, fold_singleton_rows,
                               presolve)
 
     build = _example(name)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from edi.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
         try:
             res = solve_sia(structure_detector(unit_corrector(build())))
         except Exception as exc:                       # noqa: BLE001
@@ -291,7 +291,7 @@ def test_spaircraft_end_to_end():
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from edi.solvers.ipopt.slcp_bridge import solve_sia
+        from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
         st = structure_detector(unit_corrector(build()))
         n_vars = len(st['variables'])
         res = solve_sia(st)
@@ -342,7 +342,7 @@ def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
     belongs and the constraint matrix where the right-hand side does -- which
     both `evaluate` and `propagate_bounds` did until `linear_parts` existed.
     """
-    from edi.presolve.reductions import evaluate, propagate_bounds
+    from lcsolver.presolve.reductions import evaluate, propagate_bounds
 
     f, expected = make()
     st = structure_detector(unit_corrector(f), bounds_as_rows=False)
@@ -376,13 +376,13 @@ def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
 def test_quadratic_objective_convention_is_consistent():
     """A QP with a LINEAR term, where a stray factor of two moves the optimum.
 
-    EDI stores the quadratic COEFFICIENT matrix, so the objective is
+    LCsolver stores the quadratic COEFFICIENT matrix, so the objective is
     x'Px + q'x. cvxopt.solvers.qp minimises (1/2) x'Px + q'x, and solve_QP
     passes 2*P to compensate. With q = 0 a missing factor would be invisible --
     a positive scaling leaves the argmin alone -- so this uses q != 0, where
     minimising (1/2)(x^2+y^2) - 4x lands at x=4 instead of x=2.
     """
-    from edi.presolve.reductions import evaluate
+    from lcsolver.presolve.reductions import evaluate
 
     def make():
         f = Formulation()

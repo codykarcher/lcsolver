@@ -26,9 +26,9 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 warnings.simplefilter('ignore')
 
-from edi.fitting import fit_max_affine, evaluate_fit, fit_report
-from edi.solvers.ipopt.slcp import Constraint, Problem
-from edi.solvers.ipopt.sia import solve_sia, SIAOptions
+from lcsolver.fitting import fit_max_affine, evaluate_fit, fit_report
+from lcsolver.solvers.ipopt.slcp import Constraint, Problem
+from lcsolver.solvers.ipopt.sia import solve_sia, SIAOptions
 import slcp_cases as C
 
 

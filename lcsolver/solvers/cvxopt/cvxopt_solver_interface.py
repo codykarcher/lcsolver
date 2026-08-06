@@ -29,16 +29,16 @@ from pyomo.core.base.var import ScalarVar, _GeneralVarData, IndexedVar
 from pyomo.common.log import LogStream
 from pyomo.common.tee import capture_output, TeeStream
 
-# from edi.presolve.structureDetector import structure_detector
-# from edi.solvers.cvxopt.LP import solve_LP
-# from edi.solvers.cvxopt.QP import solve_QP
-# from edi.solvers.cvxopt.GP import solve_GP
+# from lcsolver.presolve.structureDetector import structure_detector
+# from lcsolver.solvers.cvxopt.LP import solve_LP
+# from lcsolver.solvers.cvxopt.QP import solve_QP
+# from lcsolver.solvers.cvxopt.GP import solve_GP
 
-from edi.presolve.structureDetector import structure_detector
-from edi.solvers.cvxopt.LP import solve_LP
-from edi.solvers.cvxopt.QP import solve_QP
-from edi.solvers.cvxopt.GP import solve_GP
-from edi.solvers.cvxopt.SP import solve_SP
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.solvers.cvxopt.LP import solve_LP
+from lcsolver.solvers.cvxopt.QP import solve_QP
+from lcsolver.solvers.cvxopt.GP import solve_GP
+from lcsolver.solvers.cvxopt.SP import solve_SP
 
 from pyomo.common.dependencies import attempt_import
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )

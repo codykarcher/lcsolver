@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 import sys
-sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
 from .fits_maps import fit_sma
 from ..model import fitzgerald_coeffs
 

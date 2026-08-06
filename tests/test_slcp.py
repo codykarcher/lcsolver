@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -12,7 +12,7 @@ import pyomo.common.unittest as unittest
 import pyomo.environ as pyo
 from pyomo.common.dependencies import attempt_import, numpy as np, numpy_available
 
-slcp, slcp_available = attempt_import('edi.solvers.ipopt.slcp')
+slcp, slcp_available = attempt_import('lcsolver.solvers.ipopt.slcp')
 
 
 def _ipopt_available():
@@ -27,7 +27,7 @@ ipopt_available = _ipopt_available()
 
 def _xy_problem():
     """min x*y  s.t.  1/x <= 1, 2/y <= 1.  Optimum (1, 2), objective 2."""
-    from edi.solvers.ipopt.slcp import Constraint, Posynomial, Problem
+    from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Problem
 
     objective = Posynomial([(1.0, [1, 1])], 2)
     constraints = [
@@ -43,7 +43,7 @@ class TestSLCPComponents(unittest.TestCase):
     """The problem-description primitives."""
 
     def test_posynomial_value_and_gradient(self):
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         p = Posynomial([(2.0, [1, 0]), (3.0, [0, 2])], 2)
         x = np.array([5.0, 4.0])
@@ -53,7 +53,7 @@ class TestSLCPComponents(unittest.TestCase):
 
     def test_log_gradient_matches_equation_11(self):
         """d log f(e^y)/dy_i = x_i/f * df/dx_i."""
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         p = Posynomial([(2.0, [1, 0]), (3.0, [0, 2])], 2)
         x = np.array([5.0, 4.0])
@@ -61,19 +61,19 @@ class TestSLCPComponents(unittest.TestCase):
         self.assertTrue(np.allclose(p.log_grad(x), expected))
 
     def test_negative_coefficient_rejected(self):
-        from edi.solvers.ipopt.slcp import Posynomial
+        from lcsolver.solvers.ipopt.slcp import Posynomial
 
         self.assertRaises(ValueError, Posynomial, [(-1.0, [1, 0])], 2)
 
     def test_multiterm_posynomial_equality_rejected(self):
         """A multi-term posynomial equality is not GP-compatible."""
-        from edi.solvers.ipopt.slcp import Constraint, Posynomial
+        from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial
 
         body = Posynomial([(1.0, [1, 0]), (1.0, [0, 1])], 2)
         self.assertRaises(ValueError, Constraint, body, '==')
 
     def test_posynomial_is_exact_in_logspace(self):
-        from edi.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
+        from lcsolver.solvers.ipopt.slcp import Constraint, Posynomial, Signomial
 
         posy = Constraint(Posynomial([(1.0, [1, 1])], 2), '<=')
         self.assertTrue(posy.exact_in_logspace)
@@ -216,7 +216,7 @@ class TestSLCPSolve(unittest.TestCase):
         min x  s.t.  2/(x + y) <= 1 and y <= 1, so x >= 1 at the optimum.
         The ratio is not a sum of monomials, hence a Signomial.
         """
-        from edi.solvers.ipopt.slcp import (Constraint, Posynomial, Problem,
+        from lcsolver.solvers.ipopt.slcp import (Constraint, Posynomial, Problem,
                                             Signomial)
 
         def ratio(x):

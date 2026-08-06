@@ -6,9 +6,9 @@ try:
     import pyomo.environ as pyo
     from pyomo.environ import units
 
-    from edi import Formulation
-    from edi.objects.solution import Entry, Solution
-    from edi.solvers import solver as solver_module
+    from lcsolver import Formulation
+    from lcsolver.objects.solution import Entry, Solution
+    from lcsolver.solvers import solver as solver_module
     available = True
 except Exception:                                    # pragma: no cover
     available = False
@@ -28,7 +28,7 @@ def _model():
     return f
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestSolution(unittest.TestCase):
 
     def _solved(self):
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     unittest.main()
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestEmptyPrefixGroup(unittest.TestCase):
     """A group that namespaces nothing must not claim the whole model.
 
@@ -159,7 +159,7 @@ class TestEmptyPrefixGroup(unittest.TestCase):
     """
 
     def test_an_empty_prefix_does_not_swallow_every_name(self):
-        from edi.objects.solution import Solution, Entry
+        from lcsolver.objects.solution import Solution, Entry
         sol = Solution(objective=1.0,
                        variables={'x': Entry('x', 1.0), 'y': Entry('y', 2.0)},
                        groups=[('', 'eng')])
@@ -167,14 +167,14 @@ class TestEmptyPrefixGroup(unittest.TestCase):
         self.assertEqual(sol.display_name('y'), 'y')
 
     def test_a_real_prefix_still_applies(self):
-        from edi.objects.solution import Solution, Entry
+        from lcsolver.objects.solution import Solution, Entry
         sol = Solution(objective=1.0,
                        variables={'Eng_M': Entry('Eng_M', 1.0)},
                        groups=[('Eng_', 'eng')])
         self.assertEqual(sol.display_name('Eng_M'), 'eng.M')
 
 
-@unittest.skipIf(not available, 'EDI import failed')
+@unittest.skipIf(not available, 'LCsolver import failed')
 class TestSensitivityDisplay(unittest.TestCase):
     """`top`, the threshold, and hiding what the problem does not determine."""
 
@@ -184,7 +184,7 @@ class TestSensitivityDisplay(unittest.TestCase):
         return text.split('Sensitivities', 1)[1]
 
     def _solution(self, n=6, ambiguous=()):
-        from edi.objects.solution import Solution, Entry
+        from lcsolver.objects.solution import Solution, Entry
         sens = {f'c{i}': (n - i) * 1.0 for i in range(n)}
         constants = {k: Entry(k, 1.0, None, '') for k in sens}
         return Solution(objective=1.0, constants=constants,
@@ -199,7 +199,7 @@ class TestSensitivityDisplay(unittest.TestCase):
 
     def test_top_selects_on_magnitude_not_display_order(self):
         """Grouped names sort last for display but must not sort last for `top`."""
-        from edi.objects.solution import Solution, Entry
+        from lcsolver.objects.solution import Solution, Entry
         sens = {'plain': 0.5, 'wing_AR': 9.0}
         sol = Solution(objective=1.0,
                        constants={k: Entry(k, 1.0) for k in sens},
@@ -230,7 +230,7 @@ class TestSensitivityDisplay(unittest.TestCase):
 
         Asking Pyomo to evaluate it raises and logs a page of ERROR lines.
         """
-        from edi.solvers.solver import solve
+        from lcsolver.solvers.solver import solve
 
         f = Formulation()
         x = f.Variable('x', 1.0, 'm', 'a scalar')

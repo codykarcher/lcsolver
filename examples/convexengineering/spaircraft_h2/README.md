@@ -128,18 +128,18 @@ deliberately at *component* level, where inputs can be matched exactly.
 
 ## A presolve bug this exposed
 
-`verify()` passes `presolve=False`. Adding the cryogenic tank makes EDI's
+`verify()` passes `presolve=False`. Adding the cryogenic tank makes LCsolver's
 presolve overflow:
 
 ```
-edi/presolve.py restore_columns -> _solve_for -> _eval_terms
+lcsolver/presolve.py restore_columns -> _solve_for -> _eval_terms
 OverflowError: math range error      (math.exp of an accumulated log)
 ```
 
 The kerosene SPaircraft presolves fine through the identical path, and the
 trigger is *not* the near-zero `f_wingfuel` — it reproduces at 1e-6, 1e-4 and
 1e-2 alike. It is one of the tank's fractional-power rows creating a column
-presolve eliminates and then cannot back-solve. Worth fixing in EDI; recorded
+presolve eliminates and then cannot back-solve. Worth fixing in LCsolver; recorded
 here rather than worked around silently.
 
 ## Two traps worth knowing
@@ -149,7 +149,7 @@ here rather than worked around silently.
   that still reports "converged" — a wing heavier than the dry weight, in the
   first run of this port.
 * **The model mixes lbf and N.** SPaircraft declares weights in lbf, the tank
-  and wing box in N, and EDI's corrector reconciles them inside the
+  and wing box in N, and LCsolver's corrector reconciles them inside the
   constraints. Read `pyomo.environ.units.get_units(v)` before scaling
   anything; assuming one or the other silently rescales half the buildup.
 

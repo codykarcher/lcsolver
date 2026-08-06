@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -34,7 +34,7 @@ power one. For a **GP** the comparison is linear in ``y = log x`` and each term
 is a monomial ``c_k * prod x_j**a_jk``. The arithmetic that operates on the
 terms is identical; only the space in which the comparison is made differs.
 
-That is not a theory. :func:`~edi.presolve.reductions._tighten_linear` already serves
+That is not a theory. :func:`~lcsolver.presolve.reductions._tighten_linear` already serves
 bound propagation for both from one implementation, with ``space`` the only
 thing distinguishing them, and the LP path fell out of the GP one for free.
 :attr:`Detected.space` names that distinction so the rest of the code can rely
@@ -128,7 +128,7 @@ class Detected(dict):
         this one, the unit check, the precheck report and the feasibility
         result -- so a reader does not have to remember which is which.
         """
-        from edi.presolve.reductions import structure_report
+        from lcsolver.presolve.reductions import structure_report
         return structure_report(self, top=top)
 
     # -- what kind of problem is this ------------------------------------
@@ -353,7 +353,7 @@ class Detected(dict):
         Returns ``{name: value}``, or a list in column order with
         ``as_array=True``, which is the form the solvers want.
         """
-        from edi.solvers.writeback import _name_of, _resolve_on
+        from lcsolver.solvers.writeback import _name_of, _resolve_on
 
         import pyomo.environ as pyo
 

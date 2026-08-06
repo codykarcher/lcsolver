@@ -13,8 +13,8 @@
 import numpy as np
 import pyomo.environ as pyo
 from pyomo.environ import units
-from edi.objects.formulation import Formulation
-from edi.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+from lcsolver.objects.formulation import Formulation
+from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
 
 # ===================
 # Declare Formulation
@@ -88,7 +88,7 @@ f.ConstraintList(
 # =======================
 # f.pprint()
 
-from edi.solvers.solver import solve
+from lcsolver.solvers.solver import solve
 
 # `solve` detects that this is a geometric program and solves it in log space,
 # where it is convex, so the answer is a global optimum rather than a local

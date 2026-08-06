@@ -13,7 +13,7 @@ not installed here and needs a license.
 So we swap only the numerics. gpkit still assembles the model, still runs the
 sequential-GP loop, still packs and checks the result; this plugin receives the
 same ``(c, A, k)`` triple cvxopt would have and returns the same four keys.
-The gpkit *model* -- the thing an EDI rebuild is verified against -- is
+The gpkit *model* -- the thing an LCsolver rebuild is verified against -- is
 untouched, which is the whole point: a reference solution is only worth
 anything if the reference model is unmodified.
 

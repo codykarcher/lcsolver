@@ -197,9 +197,9 @@ for mod in ("components.technology", "components.turbofan.model",
     if mod in sys.modules:
         importlib.reload(sys.modules[mod])
 import classes, architectures, aircraft, dataclasses
-from edi_compat import structure_detector, unit_corrector
-from edi.solvers.ipopt.slcp_bridge import solve_sia
-from edi.solvers.ipopt.sia import SIAOptions
+from lcsolver_compat import structure_detector, unit_corrector
+from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+from lcsolver.solvers.ipopt.sia import SIAOptions
 
 ar = dataclasses.replace(architectures.ARCHS["conventional"],
                          lock_mach=True)
@@ -380,7 +380,7 @@ if os.environ.get("REF_CASE"):
         sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
                            "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
         from kkt_verify import verify_kkt
-        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        from lcsolver.solvers.ipopt.slcp_bridge import build_problem as _bpv
         _s3, _f3, _m3 = verify_kkt(_bpv(st, sp_form=True), res.x)
         print(f"  REF_CASE VERIFIER: stationarity {_s3:.3e} "
               f"feasibility {_f3:.3e}", flush=True)
@@ -412,7 +412,7 @@ if os.environ.get("POLISH"):
         sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
                            "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
         from kkt_verify import verify_kkt
-        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        from lcsolver.solvers.ipopt.slcp_bridge import build_problem as _bpv
         _s2, _f2, _m2 = verify_kkt(_bpv(st, sp_form=True), res.x)
         print(f"  POLISH VERIFIER: stationarity {_s2:.3e} "
               f"feasibility {_f2:.3e}", flush=True)
@@ -519,14 +519,14 @@ if os.environ.get("AUDIT_VAR"):
 
 if os.environ.get("AUDIT_GP"):
     import numpy as _np
-    from edi.solvers.ipopt.slcp_bridge import build_problem as _bp
+    from lcsolver.solvers.ipopt.slcp_bridge import build_problem as _bp
     cm_g = build_warmed(warm0)
     st_g = structure_detector(cm_g)
     pb = _bp(st_g, sp_form=True)
     x0 = _np.array([float(pyo.value(v)) for v in st_g["variables"]],
                    dtype=float)[:pb.n]
     x0 = _np.where(x0 > 0, x0, 1.0)
-    from edi.solvers.ipopt.sia import _log_g
+    from lcsolver.solvers.ipopt.sia import _log_g
     scored = []
     for ci, c in enumerate(pb.constraints):
         try:
@@ -581,7 +581,7 @@ for label, pred in passes:
         sys.path.insert(0, "/private/tmp/claude-501/-Users-codykarcher"
                            "/30345fc2-ed63-4738-8b70-2861477928ba/scratchpad")
         from kkt_verify import verify_kkt
-        from edi.solvers.ipopt.slcp_bridge import build_problem as _bpv
+        from lcsolver.solvers.ipopt.slcp_bridge import build_problem as _bpv
         _stat, _feas, _m = verify_kkt(_bpv(st, sp_form=True), res.x)
         print(f"  VERIFIER (unsplit, least-squares duals): "
               f"stationarity {_stat:.3e}  feasibility {_feas:.3e}",

@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -15,7 +15,7 @@ certificate for the wrong function.
 import numpy as np
 import pyomo.common.unittest as unittest
 
-from edi.fitting import (evaluate_fit, fit_constraints, fit_max_affine,
+from lcsolver.fitting import (evaluate_fit, fit_constraints, fit_max_affine,
                          fit_report)
 
 
@@ -129,7 +129,7 @@ class TestFitConstraints(unittest.TestCase):
         loose = fit_max_affine(x, y, K=2)
         tight = fit_max_affine(x, y, K=2, conservative='shift')
 
-        from edi import Formulation
+        from lcsolver import Formulation
         f = Formulation()
         w = f.Variable('w', 1.0, '-', 'dependent')
         u = f.Variable('u', 1.0, '-', 'independent')

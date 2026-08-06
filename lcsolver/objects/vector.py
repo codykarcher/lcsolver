@@ -1,6 +1,6 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
@@ -34,7 +34,7 @@ negative indexing and comparisons work on the declared quantity directly.
 
 Shapes are never broadcast silently. A one-dimensional quantity is a column,
 and anything that does not line up raises and names
-:func:`~edi.objects.formulation.Formulation.broadcast_rows` /
+:func:`~lcsolver.objects.formulation.Formulation.broadcast_rows` /
 ``broadcast_cols``. Numpy would happily expand a length-3 vector across the
 rows of a 2x3 matrix, which is a wrong answer whenever the author meant
 columns, and nothing downstream could tell the difference.
@@ -48,7 +48,7 @@ __all__ = ["Index", "IndexTuple", "VectorArray", "VectorComponent",
 
 
 _SUM_MESSAGE = (
-    "sum(x) over an EDI vector would add its index keys (0 + 1 + 2 ...), not "
+    "sum(x) over an LCsolver vector would add its index keys (0 + 1 + 2 ...), not "
     "its elements, because iterating an indexed component yields keys. Use "
     "f.sum(x), or sum(x.values()), or sum(x[i] for i in x)."
 )
@@ -133,7 +133,7 @@ class VectorArray(np.ndarray):
             if right.shape != left.shape:
                 raise ShapeMismatch(
                     f"cannot compare shapes {left.shape} and {right.shape} "
-                    f"with '{symbol}'. EDI does not broadcast silently: a "
+                    f"with '{symbol}'. LCsolver does not broadcast silently: a "
                     "length-n vector is a column, and numpy would expand it "
                     "across rows just as readily, which is a different model. "
                     "Say which you mean with f.broadcast_rows(v, n) or "

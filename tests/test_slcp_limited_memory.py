@@ -13,11 +13,11 @@ import numpy as np
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.solvers.ipopt.slcp import LimitedMemoryB, Options, _damped_bfgs
-from edi.solvers.ipopt.slcp_bridge import solve_slcp
-from edi.presolve.structureDetector import structure_detector
-from edi.presolve.unitCorrector import unit_corrector
+from lcsolver import Formulation
+from lcsolver.solvers.ipopt.slcp import LimitedMemoryB, Options, _damped_bfgs
+from lcsolver.solvers.ipopt.slcp_bridge import solve_slcp
+from lcsolver.presolve.structureDetector import structure_detector
+from lcsolver.presolve.unitCorrector import unit_corrector
 
 M = pyo.units.m
 

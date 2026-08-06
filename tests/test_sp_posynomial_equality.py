@@ -19,8 +19,8 @@ evaluating to 13.8 instead of 1 at a point known to satisfy the model.
 import pyomo.environ as pyo
 import pytest
 
-from edi import Formulation
-from edi.solvers.solver import solve
+from lcsolver import Formulation
+from lcsolver.solvers.solver import solve
 
 M = pyo.units.m
 

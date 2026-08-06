@@ -62,7 +62,7 @@ wing, tank, stack and powertrain are the derived parts.
 """
 from __future__ import annotations
 
-from edi import Formulation
+from lcsolver import Formulation
 
 from .cryo_tank import add_cryo_tank
 from .fuel_cell import add_fuel_cell
@@ -75,7 +75,7 @@ PI = 3.141592653589793
 
 def build(N: int = N_CRUISE, *, W_pay: float = 1.8e5, R_req: float = 3.0e6,
           R_fuse: float = 1.9, l_cabin: float = 26.0) -> Formulation:
-    """Build the aircraft. Returns an EDI ``Formulation``.
+    """Build the aircraft. Returns an LCsolver ``Formulation``.
 
     The mission is parameterised so the same model can fly other aircraft
     classes: ``W_pay`` payload (N), ``R_req`` range (m), ``R_fuse`` fuselage
@@ -257,11 +257,11 @@ def verify(max_iterations: int = 400, tee: bool = False,
 
     import pyomo.environ as pyo
 
-    from edi.presolve.structureDetector import structure_detector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia, build_problem, \
+    from lcsolver.presolve.structureDetector import structure_detector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia, build_problem, \
         _apply_presolve
-    from edi.solvers.ipopt.sia import SIAOptions, classify
-    from edi.presolve.unitCorrector import unit_corrector
+    from lcsolver.solvers.ipopt.sia import SIAOptions, classify
+    from lcsolver.presolve.unitCorrector import unit_corrector
 
     fm = build(**mission)
     unit_corrector(fm)

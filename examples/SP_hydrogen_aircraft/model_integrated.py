@@ -35,7 +35,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from edi import Formulation
+from lcsolver import Formulation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "convexengineering"))
 from spaircraft.flight_state import add_flight_state   # noqa: E402

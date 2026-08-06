@@ -34,11 +34,11 @@ from openmdao.components.interp_util.interp import InterpND
 
 from .fits import fit_signomial_2d
 
-sys_path_root = "/Users/codykarcher/Dropbox/research/edi"
+sys_path_root = "/Users/codykarcher/Dropbox/research/lcsolver"
 import sys as _sys
 if sys_path_root not in _sys.path:
     _sys.path.insert(0, sys_path_root)
-from edi.fitting import fit_max_affine, evaluate_fit
+from lcsolver.fitting import fit_max_affine, evaluate_fit
 
 
 def fit_sma(X, y, K=8, alphas=(1., 2., 4.),

@@ -20,9 +20,9 @@ os.environ.setdefault("V_HT_FLOOR", "0.01")
 # D8 only: os.environ["H_FIELD_FT"] = "0.0"; os.environ["T_FIELD_K"] = "288.15"
 
 import classes, architectures, aircraft
-from edi_compat import structure_detector, unit_corrector
-from edi.solvers.ipopt.slcp_bridge import solve_sia
-from edi.solvers.ipopt.sia import SIAOptions
+from lcsolver_compat import structure_detector, unit_corrector
+from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+from lcsolver.solvers.ipopt.sia import SIAOptions
 
 # ---- 2. Class + architecture, with per-case overrides
 cl = dataclasses.replace(classes.CLASSES["b737"])        # + overrides, see table

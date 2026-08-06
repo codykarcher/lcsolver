@@ -25,7 +25,7 @@ cvxopt, cvxopt_available = attempt_import( "cvxopt" )
 if not cvxopt_available:
     raise ImportError('The Signomial Programming solver currently requires cvxopt')
 
-# from edi.presolve.detectorSupportFunctions import (
+# from lcsolver.presolve.detectorSupportFunctions import (
 #      # gpRow_add,
 #      # gpRow_subtract,
 #      gpRow_multiply,
@@ -36,13 +36,13 @@ if not cvxopt_available:
 #      # checkLinear,
 #      # unstructured_dict,
 # )
-from edi.presolve.detectorSupportFunctions import (
+from lcsolver.presolve.detectorSupportFunctions import (
      gpRow_multiply,
      gpRow_divide,
 )
 
-# from edi.solvers.cvxopt.GP import solve_GP
-from edi.solvers.cvxopt.GP import solve_GP
+# from lcsolver.solvers.cvxopt.GP import solve_GP
+from lcsolver.solvers.cvxopt.GP import solve_GP
 
 def evaluate_posynomial(gpRows,x_star):
     N_vars = len(gpRows[0])-2
@@ -159,7 +159,7 @@ def pccp_modification(constraintList,penalty_exponent=5.0):
 
 
 def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp = True, penalty_exponent=5.0, gp_solver=None):
-    from edi.presolve.structureDetector import require
+    from lcsolver.presolve.structureDetector import require
     require(structures, 'solve_SP')
     """Solve a signomial program by PCCP (penalty convex-concave).
 
@@ -170,7 +170,7 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
     ``gp_solver`` selects the *inner* GP solve and takes ``(rows, relations,
     x0)``, returning a dict with ``'x'`` and ``'primal objective'``. It
     defaults to the cvxopt backend. Passing
-    ``edi.solvers.ipopt.convex.solve_gp_rows_ipopt`` runs the same PCCP
+    ``lcsolver.solvers.ipopt.convex.solve_gp_rows_ipopt`` runs the same PCCP
     outer loop with IPOPT underneath, which is substantially more robust on
     larger models -- cvxopt stalls with ``status='unknown'`` where IPOPT
     converges. The outer algorithm is identical either way; only the

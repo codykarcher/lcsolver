@@ -92,7 +92,7 @@ from pyomo.common.dependencies import numpy, numpy_available
 if numpy_available:
     import numpy as np
 
-# from edi.presolve.walkerSupportFunctions import (
+# from lcsolver.presolve.walkerSupportFunctions import (
 #     unarySignomial,
 #     no_structure_dict,
 #     monomial_multiplication,
@@ -101,7 +101,7 @@ if numpy_available:
 #     signomial_power_evaluation,
 #     # processMonomial,
 # )
-from edi.presolve.walkerSupportFunctions import (
+from lcsolver.presolve.walkerSupportFunctions import (
     no_structure_dict,
     monomial_multiplication,
     signomial_multiplication,
@@ -508,6 +508,6 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
             return opt
         except:
             raise RuntimeError(
-                'Structure walker encountered an error when processing type %s, contact the EDI developers'
+                'Structure walker encountered an error when processing type %s, contact the LCsolver developers'
                 % (node.__class__)
             )

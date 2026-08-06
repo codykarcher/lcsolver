@@ -57,8 +57,8 @@ station-by-station over the preceding sessions).
    optimization at the same tech level.
 
 ## Repo geography
-- Repo: ~/Dropbox/research/edi, branch `convexengineering-rebuild`, remote
-  `origin` (github.com/codykarcher/edi). NEVER add Co-Authored-By trailers.
+- Repo: ~/Dropbox/research/lcsolver, branch `convexengineering-rebuild`, remote
+  `origin` (github.com/codykarcher/lcsolver). NEVER add Co-Authored-By trailers.
   Commit style: long-form messages explaining WHY with measured evidence
   (read `git log` for the house voice). Push after committing.
 - Aircraft model: `examples/spcomparisons/aircraft.py` (~3,000 lines).
@@ -66,7 +66,7 @@ station-by-station over the preceding sessions).
   (CFM56, TASOPT_737800, GE90, D82_SPaircraft...), ETAS efficiency table,
   station naming 0/1.8/2/2.1/2.5/3/4/4a/4.1/4.5/4.9/5/6/7/8, per-segment
   arrays size N=5.
-- Solver: SIA via `edi.solvers.ipopt.slcp_bridge.solve_sia`; options MUST
+- Solver: SIA via `lcsolver.solvers.ipopt.slcp_bridge.solve_sia`; options MUST
   include ipopt_options tol=1e-9 and constr_viol_tol=1e-9 (subproblems at
   1e-12 falsely report infeasible), stationarity_tolerance=1e-5,
   condense_numerator=True, 200-iteration cap (past 200 = not converging; do

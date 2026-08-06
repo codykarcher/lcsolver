@@ -66,7 +66,7 @@ from __future__ import annotations
 import numpy as np
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 G = 9.81
 G_U = G * units.m / units.s**2
@@ -103,7 +103,7 @@ def planform_constants(N: int, lam: float):
 
 
 def fit_constraints(fit, ivar, dvars, mfac=1.0):
-    """EDI constraints for a gpfit fit. K>1 max-affine gives one per term."""
+    """LCsolver constraints for a gpfit fit. K>1 max-affine gives one per term."""
     monos = []
     for k in range(fit["K"]):
         m = fit["c"][k]

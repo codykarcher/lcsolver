@@ -1,4 +1,4 @@
-"""Hoburg's UAV, as an EDI Formulation.
+"""Hoburg's UAV, as an LCsolver Formulation.
 
 Source
 ------
@@ -38,7 +38,7 @@ small.
 
 Two ways of being free
 ----------------------
-The ten split across the two mechanisms EDI has, and the split is instructive.
+The ten split across the two mechanisms LCsolver has, and the split is instructive.
 
 Nine are **monomial equalities**, eliminated by Gaussian elimination on the
 exponent matrix. ``c_tip == c_root * lambda`` counts: a product of two variables
@@ -57,21 +57,21 @@ does lambda sit in a single live constraint and become output-only.
 
 The modelling lesson is that neither mechanism is something to design around.
 Write the quantity you want to read, in whichever direction the algebra is
-natural. Whether it is free is EDI's problem.
+natural. Whether it is free is LCsolver's problem.
 """
 from __future__ import annotations
 
 import numpy as np
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 N_SEG = 3                       # outbound, return, sprint
 OUT, RET, SPRINT = 0, 1, 2
 
 
 def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
-    """Hoburg's UAV. Returns an EDI ``Formulation`` ready to solve.
+    """Hoburg's UAV. Returns an LCsolver ``Formulation`` ready to solve.
 
     ``recover=False`` drops the dimensional-recovery block, for measuring
     what it costs. The answer is nothing; see the module docstring.
@@ -285,7 +285,7 @@ def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
     # `c_tip == c_root*lambda` away with it. Nine go the first way, lambda the
     # second.
     #
-    # So write the quantity you want to read. Whether it is free is EDI's
+    # So write the quantity you want to read. Whether it is free is LCsolver's
     # problem, not the modeller's.
     if not recover:
         f.ConstraintList(cons)
@@ -322,7 +322,7 @@ def build(n_seg: int = N_SEG, recover: bool = True) -> Formulation:
 if __name__ == '__main__':
     import warnings
     warnings.simplefilter('ignore')
-    from edi.solvers.solver import solve
+    from lcsolver.solvers.solver import solve
 
     f = build()
     solve(f)                       # sensitivities are on by default

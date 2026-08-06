@@ -1,15 +1,15 @@
 #  ___________________________________________________________________________
 #
-#  EDI: The Engineering Design Interface
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""The SLCP paper's problems written as EDI ``Formulation`` objects.
+"""The SLCP paper's problems written as LCsolver ``Formulation`` objects.
 
 ``slcp_cases`` states these problems in the low-level ``Problem`` form the SLCP
 driver consumes. This module states the *geometric-program* ones the way a user
 would actually write them -- unit-annotated ``Formulation`` objects -- so they
-can be routed through EDI's ordinary solver machinery.
+can be routed through LCsolver's ordinary solver machinery.
 
 That serves two purposes: it is what the documentation shows, and it lets the
 same model be handed to every available backend so their costs can be compared
@@ -20,7 +20,7 @@ import numpy as np
 import pyomo.environ as pyo
 from pyomo.environ import units
 
-from edi import Formulation
+from lcsolver import Formulation
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +221,10 @@ def hoburg_gp():
 
 # ---------------------------------------------------------------------------
 def problem_to_formulation(problem, x0=None):
-    """Convert a GP-compatible ``slcp_cases.Problem`` into an EDI ``Formulation``.
+    """Convert a GP-compatible ``slcp_cases.Problem`` into an LCsolver ``Formulation``.
 
     Only valid when the objective and every constraint are posynomial or
-    monomial. Useful for putting an existing ``Problem`` through EDI's ordinary
+    monomial. Useful for putting an existing ``Problem`` through LCsolver's ordinary
     solver machinery -- for instance to benchmark backends on it -- without
     transcribing it a second time by hand.
 
@@ -232,7 +232,7 @@ def problem_to_formulation(problem, x0=None):
     they read the way a user would actually write the model. This is the
     mechanical path.
     """
-    from edi.solvers.ipopt.slcp import Posynomial
+    from lcsolver.solvers.ipopt.slcp import Posynomial
 
     if not isinstance(problem.objective, Posynomial):
         raise ValueError('objective must be a posynomial')

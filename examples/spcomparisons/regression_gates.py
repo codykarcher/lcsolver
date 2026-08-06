@@ -18,7 +18,7 @@ os.environ["TECH"] = "cfm56_era"
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "components"))
-sys.path.insert(0, "/Users/codykarcher/Dropbox/research/edi")
+sys.path.insert(0, "/Users/codykarcher/Dropbox/research/lcsolver")
 
 warnings.filterwarnings("ignore")
 
@@ -74,9 +74,9 @@ def solve_case(cls_key="b737", arch_key="conventional_M"):
     import pyomo.environ as pyo
     from pyomo.environ import units as u
     import classes, architectures, aircraft
-    from edi_compat import structure_detector, unit_corrector
-    from edi.solvers.ipopt.slcp_bridge import solve_sia
-    from edi.solvers.ipopt.sia import SIAOptions
+    from lcsolver_compat import structure_detector, unit_corrector
+    from lcsolver.solvers.ipopt.slcp_bridge import solve_sia
+    from lcsolver.solvers.ipopt.sia import SIAOptions
 
     LBF = 0.2248089431
     t0 = time.time()

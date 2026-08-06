@@ -115,11 +115,11 @@ fuel-volume model has been added that makes the problem an SP.
 
 ---
 
-## 4. EDI `examples/Kirschen2sp.py` — unit errors
+## 4. LCsolver `examples/Kirschen2sp.py` — unit errors
 
 **Status: corrected separately** (see git history on this branch's parent).
 
-Six unit/typo defects were found and fixed in the pre-existing EDI example
+Six unit/typo defects were found and fixed in the pre-existing LCsolver example
 before this rebuild started, including a missing `V_TO**2` in the takeoff
 constraint and a `rdot_req / I_z` that should have been a product. The model
 is now dimensionally consistent throughout but still does not converge; the
@@ -127,7 +127,7 @@ author confirms it was never in working order.
 
 ---
 
-## 5. EDI: `structure_detector` crashes on unclassifiable models
+## 5. LCsolver: `structure_detector` crashes on unclassifiable models
 
 **Status: fixed.**
 
@@ -144,7 +144,7 @@ message naming the offending constraint and side.
 
 ---
 
-## 6. EDI: constant-only constraints silently defeat structure detection
+## 6. LCsolver: constant-only constraints silently defeat structure detection
 
 **Status: fixed.** This one produced a *wrong answer*, not a crash.
 
@@ -238,7 +238,7 @@ Two traps, both of which silently return a clean bill of health:
 The following was written before the cause was found, and is kept because the
 reasoning in it turned out to be right.
 
-The EDI rebuild of `gplibrary/GP/aircraft/wing` solves cleanly but reaches a
+The LCsolver rebuild of `gplibrary/GP/aircraft/wing` solves cleanly but reaches a
 different point than the gpkit reference:
 
 | quantity | rebuild | reference | delta |
@@ -275,7 +275,7 @@ the difference is in the model, not the solver.
 
 ---
 
-## 9. EDI: cvxopt non-convergence surfaced as ZeroDivisionError
+## 9. LCsolver: cvxopt non-convergence surfaced as ZeroDivisionError
 
 **Status: fixed.**
 

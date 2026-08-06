@@ -12,11 +12,11 @@ The Objective constructor is a very thin wrapper on pyomo ``Objective``, and so 
 Construction
 ------------
 
-Objectives are constructed by creating an instance of a new objective in a EDI Formulation 
+Objectives are constructed by creating an instance of a new objective in a LCsolver Formulation 
 
 .. py:function:: f.Objective(expr, sense=minimize)
 
-    Declares an objective in a pyomo.edi.formulation
+    Declares an objective in a pyomo.lcsolver.formulation
 
    :param expr: The expression to be optimized
    :type  expr: pyomo expression
@@ -30,7 +30,7 @@ Objectives are constructed by creating an instance of a new objective in a EDI F
 Relation to Pyomo Objective
 ---------------------------
 
-The EDI objective constructor is essentially a direct pass through to base pyomo.  Objectives will be added to the ``pyomo.ConcreteModel`` in increasing order with key ``objective_###`` where the the index of the objective appears after the underscore.  First objective is labeled as ``objective_1``, and objective names are never padded with zeros.
+The LCsolver objective constructor is essentially a direct pass through to base pyomo.  Objectives will be added to the ``pyomo.ConcreteModel`` in increasing order with key ``objective_###`` where the the index of the objective appears after the underscore.  First objective is labeled as ``objective_1``, and objective names are never padded with zeros.
 
 
 Examples
