@@ -589,6 +589,9 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                                 outputJacobian[ptr_row, ptr_col] = corrected_value
                                 ptr_row += 1
                             ptr_row = ptr_row_cache
+                            # A scalar input occupies one column of the block,
+                            # which the next input must start after.
+                            ptr_col += 1
                             ptr_row_step = len(validIndices)
 
                         # elif ishape == 0 and oshape == 0: # Handled by the scalar case above
@@ -618,6 +621,10 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                                 ptr_col = ptr_col_cache
                                 ptr_row += 1
                             ptr_row = ptr_row_cache
+                            # The block spans one column per input element; the
+                            # inner loop rewinds ptr_col for the next row, so
+                            # step past the whole block once the rows are done.
+                            ptr_col = ptr_col_cache + len(validIndices_i)
                             ptr_row_step = len(validIndices_o)
 
                     else:

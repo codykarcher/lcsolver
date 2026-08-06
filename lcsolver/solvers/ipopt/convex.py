@@ -252,7 +252,7 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
     if res_lse['primal objective'] < res['primal objective'] * (1.0 - GP_SUM_VERIFY_RTOL):
         import warnings
         warnings.warn(
-            "the 'sum'-form GP solve reported optimality at an objective of "
+            "[LC-W204] the 'sum'-form GP solve reported optimality at an objective of "
             f"{res['primal objective']:.6g}, but the 'lse' verification solve "
             f"reached {res_lse['primal objective']:.6g}; the 'sum' result was "
             "a false optimum (its KKT residuals deflated below IPOPT's "

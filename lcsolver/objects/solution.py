@@ -73,7 +73,7 @@ class Solution:
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
                  solver=None, structure=None, groups=None, ambiguous=None,
-                 holographic=None, report=None):
+                 holographic=None, report=None, messages=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
@@ -94,6 +94,9 @@ class Solution:
         #: A dict stashed by solve() on the model (``_solve_report``); None
         #: when the model was solved some other way.
         self.report = dict(report) if report else None
+        #: Code-tagged messages ([LC-Wxxx] ...) the solve captured instead of
+        #: printing. Rendered in the summary's Post Solve Report.
+        self.messages = list(messages or [])
         #: ``[(flat_prefix, dotted_path)]``, longest first, for display only.
         self.groups = sorted(groups or [], key=lambda p: -len(p[0]))
 
@@ -212,8 +215,8 @@ class Solution:
         if r.get('gp_form'):
             solved += f" [gp form: {r['gp_form']}]"
         lines.append(solved)
-        if r.get('status'):
-            lines.append(f"   Status: {r['status']}")
+        # Status is reported in the Post Solve Report at the end of the
+        # summary, next to the captured messages, not here.
         return lines
 
     def summary(self, ndecimal=2, sensitivity_tol=1e-8, top=None,
@@ -297,6 +300,15 @@ class Solution:
         if self.status or self.solver or self.structure:
             bits = [b for b in (self.structure, self.solver, self.status) if b]
             L.append('(' + '; '.join(str(b) for b in bits) + ')')
+        if (self.report and self.report.get('status')) or self.messages:
+            import textwrap
+            L += ['', 'Post Solve Report', '-----------------']
+            if self.report and self.report.get('status'):
+                L.append(f"   Status: {self.report['status']}")
+            for msg in self.messages:
+                L += textwrap.wrap(msg, width=76, initial_indent='   ',
+                                   subsequent_indent='       ')
+            L.append('')
         return '\n'.join(L)
 
     def __str__(self):
@@ -385,4 +397,5 @@ class Solution:
                    structure=structure, ambiguous=ambiguous,
                    holographic=holographic,
                    report=report or getattr(model, '_solve_report', None),
+                   messages=getattr(model, '_solve_messages', None),
                    groups=cls._group_paths(getattr(model, '_groups', {})))

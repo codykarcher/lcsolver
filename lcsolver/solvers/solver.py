@@ -64,7 +64,7 @@ def cvxopt_solve(m, write_back=True):
     if res.get('status') not in ('optimal', None):
         import warnings
         warnings.warn(
-            f"cvxopt returned status={res.get('status')!r}; the reported point may "
+            f"[LC-W205] cvxopt returned status={res.get('status')!r}; the reported point may "
             f"be infeasible or non-optimal. Consider convex_backend='ipopt'.",
             RuntimeWarning, stacklevel=2)
 
@@ -91,7 +91,7 @@ def cvxopt_solve(m, write_back=True):
             # error was recorded in a dict key that nothing reads.
             import warnings
             warnings.warn(
-                f"the solve succeeded but writing the solution back onto the "
+                f"[LC-W206] the solve succeeded but writing the solution back onto the "
                 f"model failed ({type(e).__name__}: {e}). pyo.value() will "
                 f"return the initial guess, not the solution; the values are "
                 f"in result['x'].", RuntimeWarning, stacklevel=2)
@@ -352,9 +352,11 @@ def _run_diagnostics(structures, level):
                  "full report"
                + (", or pass diagnostics='warn' to solve() to demote this "
                   "error to a warning." if level == 'error' else "."))
+        from lcsolver.core import codes
         if level == 'error':
-            raise PresolveError(msg)
-        warnings.warn(msg, RuntimeWarning, stacklevel=3)
+            raise PresolveError(codes.tag(codes.ILL_POSED, msg))
+        warnings.warn(codes.tag(codes.PRESOLVE_FINDINGS, msg),
+                      RuntimeWarning, stacklevel=3)
     return rep
 
 
@@ -457,7 +459,7 @@ def _attach_sensitivities(m, res, wanted):
         m._holographic_cache = active
         if active:
             warnings.warn(
-                f"{len(active)} of {n_tot} holographic constraints are ACTIVE "
+                f"[LC-W301] {len(active)} of {n_tot} holographic constraints are ACTIVE "
                 f"at the solution ("
                 + ", ".join(d['name'] for d in active[:3])
                 + (", ..." if len(active) > 3 else "")
@@ -487,7 +489,7 @@ def _attach_sensitivities(m, res, wanted):
             res['quality_text'] = post.post_solve_text()
             if post.at_floor:
                 warnings.warn(
-                    f"{len(post.at_floor)} variables are resting on the "
+                    f"[LC-W304] {len(post.at_floor)} variables are resting on the "
                     "solver's positivity floor ("
                     + ", ".join(nm for nm, _ in post.at_floor[:3])
                     + (", ..." if len(post.at_floor) > 3 else "")
@@ -563,7 +565,10 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                           diagnostics=diagnostics,
                           sensitivities=sensitivities, structures=structures,
                           start=start, **kwargs)
-    msgs = [f'{w.category.__name__}: {w.message}' for w in caught]
+    # Code-tagged messages ([LC-Wxxx] ...) stand alone; anything untagged
+    # (third-party warnings) keeps its category as context.
+    msgs = [str(w.message) if str(w.message).startswith('[LC-')
+            else f'{w.category.__name__}: {w.message}' for w in caught]
     if isinstance(res, dict):
         res['messages'] = msgs
     try:
@@ -736,7 +741,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
     if detection_failed is not None:
         warnings.warn(
-            f"structure detection failed ({type(detection_failed).__name__}: "
+            f"[LC-W102] structure detection failed ({type(detection_failed).__name__}: "
             f"{detection_failed}); solving with IPOPT instead.",
             RuntimeWarning, stacklevel=2)
         structured = False
@@ -781,7 +786,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             # for a black-box constraint), so a silent downgrade would hide a
             # missing install for as long as the models stayed convex.
             warnings.warn(
-                'no usable IPOPT installation was found; solving this '
+                '[LC-W202] no usable IPOPT installation was found; solving this '
                 'structured problem with cvxopt instead. The answer is the '
                 'same, but IPOPT is the default backend and is required for '
                 'black-box constraints. Install the ipopt executable or '
@@ -803,7 +808,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             where = ('IPOPT on the raw model' if _ipopt_available()
                      else 'cvxopt' if backend == 'ipopt' else 'nothing else')
             warnings.warn(
-                f"the structured backend failed ({type(e).__name__}: {e}); "
+                f"[LC-W201] the structured backend failed ({type(e).__name__}: {e}); "
                 f"falling back to {where}.",
                 RuntimeWarning, stacklevel=2)
             if not _ipopt_available() and backend == 'ipopt':
@@ -898,7 +903,7 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     if not result.converged:
         import warnings
         status = str(result.status or '')
-        msg = (f"SIA did not converge: {status}. The returned point is "
+        msg = (f"[LC-W203] SIA did not converge: {status}. The returned point is "
                f"feasible to {result.max_violation:.2e} with a stationarity "
                f"residual of {result.stationarity:.2e}; it is the best "
                "iterate, not a certified optimum.")

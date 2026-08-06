@@ -650,13 +650,13 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     # than return a table of quiet zeros.
     if len(duals) == 0:
         warnings.warn(
-            "no binding constraints were found, so every sensitivity will be "
+            "[LC-W302] no binding constraints were found, so every sensitivity will be "
             "the objective's own dependence on each constant. If the model was "
             "expected to have active constraints, the solve probably did not "
             "converge.", RuntimeWarning, stacklevel=2)
     elif residual is not None and residual > KKT_RESIDUAL_WARN:
         warnings.warn(
-            f"the recovered duals satisfy the stationarity condition only to "
+            f"[LC-W302] the recovered duals satisfy the stationarity condition only to "
             f"a relative residual of {residual:.2e}. The returned "
             f"sensitivities are unreliable; this usually means the solve did "
             f"not converge or the active set is ambiguous.",
@@ -707,7 +707,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
                            if r > DUAL_AMBIGUITY_TOL)
         if ambiguous:
             warnings.warn(
-                f"{len(ambiguous)} of {len(out)} sensitivities are not "
+                f"[LC-W303] {len(ambiguous)} of {len(out)} sensitivities are not "
                 f"determined by the problem: the active set is degenerate, so "
                 f"the duals are not unique and these values depend on which "
                 f"dual vector was recovered. They are listed under "

@@ -99,11 +99,22 @@ def test_messages_captured_not_printed():
         warnings.simplefilter('always')
         sol = solve(f)
     assert not caught                       # nothing escaped to the console
-    assert any('holographic' in m for m in sol.messages)
+    # messages carry codes from the master list in lcsolver.core
+    from lcsolver.core import codes
+    assert any(codes.HOLOGRAPHIC_ACTIVE in m for m in sol.messages)
+    assert all(m.startswith('[LC-') for m in sol.messages
+               if 'holographic' in m or 'sensitivities' in m)
     # sol.report is the Report text; sol.objective carries units
     assert 'auto-detected as a geometric program' in sol.report
     assert sol.objective.to('m').magnitude == pytest.approx(1.0, rel=1e-6)
     assert sol.optimality_status is True
+    # the summary ends with a Post Solve Report owning status + messages
+    text = sol.summary()
+    assert 'Post Solve Report' in text
+    post = text.split('Post Solve Report')[1]
+    assert 'Status: optimal' in post
+    assert codes.HOLOGRAPHIC_ACTIVE in post
+    assert 'Status:' not in text.split('Objective')[0]  # not in top Report
 
 
 def test_summary_report_section():
