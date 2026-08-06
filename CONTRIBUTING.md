@@ -61,12 +61,14 @@ cd docs && python -m sphinx . _build/html
 
 ## Scope
 
-LCsolver aims to stay a thin, readable layer over Pyomo. Contributions that add
-engineering-design conveniences — units handling, black-box interfaces, structure
-detection, solver routing — are in scope. Contributions that duplicate functionality
-better provided by Pyomo itself generally are not.
+LCS is the home for solver contributions, such as new algorithms, approaches, or
+means of facilitating human interface with optimization problems.  Contributions 
+that duplicate functionality better provided by Pyomo itself are generally not 
+in scope.  Similarly, models beyond those with the express purpose of serving
+as examples or test cases are out of scope for this package, but can be 
+contributed to the appropriate LCpackage repository.  
 
 ## Conduct
 
 Be civil and stay on the technical substance. Harassment or abusive behavior is
-not tolerated; reports go to cody.karcher@csulb.edu.
+not tolerated; reports go to cody.karcher@gmail.com.
