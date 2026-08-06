@@ -687,6 +687,59 @@ class TestEDIBlackBox(unittest.TestCase):
         sm = f.__dict__['constraint_1'].get_external_model().summary
         e_print = f.__dict__['constraint_1'].get_external_model().__repr__()
 
+    def test_edi_blackbox_mixed_vector_and_scalar_inputs(self):
+        "A box mixing vector and scalar inputs lands each jacobian block in its own columns"
+        import numpy as np
+        from lcsolver import Formulation, BlackBoxFunctionModel
+
+        # The assembled jacobian is laid out one column block per input. A
+        # vector input claims len(input) columns and a scalar input claims
+        # one, so a box that mixes the two is the case where the column
+        # pointer has to advance by different amounts. Getting that wrong is
+        # silent -- the solve still runs, on derivatives written into the
+        # wrong columns -- so the block layout is asserted entry by entry.
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='', description='vector input', size=3)
+        t = f.Variable(name='t', guess=1.0, units='', description='scalar input')
+        z = f.Variable(name='z', guess=1.0, units='', description='vector output', size=3)
+
+        class Scaled(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'This model evaluates the function: z_i = t * x_i**2'
+                self.inputs.append(name='x', units='', description='vector input', size=3)
+                self.inputs.append(name='t', units='', description='scalar input')
+                self.outputs.append(
+                    name='z', units='', description='vector output', size=3
+                )
+                self.availableDerivative = 1
+
+            def BlackBox(self, x, t):
+                x, t = self.sanitizeInputs(x, t, strip_units=True)
+                x = np.asarray(x, dtype=np.float64)
+                # dz/dx is diagonal, one segment per element; dz/dt is a column
+                return self.packOutputs(t * x**2, [np.diag(2 * t * x), x**2])
+
+        f.Objective(f.sum(z))
+        f.ConstraintList([[z, '==', [x, t], Scaled()]])
+
+        model = f.__dict__['constraint_1'].get_external_model()
+        model.set_input_values(np.array([1.0, 2.0, 3.0, 2.0]))
+        out = model.evaluate_outputs()
+        jac = model.evaluate_jacobian_outputs().todense()
+
+        for i, expected in enumerate([2.0, 8.0, 18.0]):
+            self.assertAlmostEqual(out[i], expected)
+
+        expected_jac = [
+            [4.0, 0.0, 0.0, 1.0],
+            [0.0, 8.0, 0.0, 4.0],
+            [0.0, 0.0, 12.0, 9.0],
+        ]
+        for i in range(3):
+            for j in range(4):
+                self.assertAlmostEqual(jac[i, j], expected_jac[i][j])
+
     def test_edi_blackbox_example_3(self):
         "Tests a black box example construction"
         import numpy as np

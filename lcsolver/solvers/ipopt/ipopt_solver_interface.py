@@ -160,7 +160,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
 
     # Ask the solver for constraint duals. They cost nothing extra and are what
-    # `lcsolver.solvers.sensitivity` uses to report how the optimum responds to each
+    # `lcsolver.postsolve.sensitivity` uses to report how the optimum responds to each
     # Constant; without the Suffix those duals would have to be reconstructed
     # from the primal solution.
     if not hasattr(m, 'dual'):

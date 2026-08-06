@@ -19,7 +19,7 @@ import pyomo.environ as pyo
 import pytest
 
 from lcsolver import Formulation
-from lcsolver.solvers.holographic import format_holographic, holographic_report
+from lcsolver.postsolve.holographic import format_holographic, holographic_report
 from lcsolver.solvers.solver import solve
 
 

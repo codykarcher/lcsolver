@@ -247,7 +247,7 @@ class Solution:
                                                           ndecimal) + ['']
 
         if self.holographic:
-            from lcsolver.solvers.holographic import format_holographic
+            from lcsolver.postsolve.holographic import format_holographic
             L += [format_holographic(self.holographic), '']
 
         L += ['Sensitivities', '-------------']

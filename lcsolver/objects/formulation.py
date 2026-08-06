@@ -890,20 +890,20 @@ class Formulation(ConcreteModel):
         The numbers come from the constraint duals via the envelope theorem, so
         they cost one solve regardless of how many constants the model has, and
         every partial derivative is taken symbolically rather than by
-        differencing. See :mod:`lcsolver.solvers.sensitivity` for the details.
+        differencing. See :mod:`lcsolver.postsolve.sensitivity` for the details.
 
         Returns
         -------
         dict
-            See :func:`lcsolver.solvers.sensitivity.sensitivities`.
+            See :func:`lcsolver.postsolve.sensitivity.sensitivities`.
         """
-        from lcsolver.solvers.sensitivity import sensitivities as _sens
+        from lcsolver.postsolve.sensitivity import sensitivities as _sens
 
         return _sens(self, normalized=normalized, **kwargs)
 
     def print_sensitivities(self, **kwargs):
         """Print the sensitivity table, sorted by magnitude."""
-        from lcsolver.solvers.sensitivity import format_sensitivities
+        from lcsolver.postsolve.sensitivity import format_sensitivities
 
         print(format_sensitivities(self.sensitivities(**kwargs)))
 

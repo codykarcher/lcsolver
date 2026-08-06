@@ -14,7 +14,7 @@ from pyomo.common.dependencies import attempt_import
 # from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
-from lcsolver.solvers.writeback import write_solution
+from lcsolver.postsolve.writeback import write_solution
 
 
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )
@@ -450,7 +450,7 @@ def _attach_sensitivities(m, res, wanted):
     # limit that was declared never to bind -- the edge of a fit, a numerical
     # box -- and nothing else about the solve looks wrong when that happens.
     try:
-        from lcsolver.solvers.holographic import (format_holographic,
+        from lcsolver.postsolve.holographic import (format_holographic,
                                              holographic_report)
         active = holographic_report(m)
         n_tot = len(getattr(m, '_holographic', ()) or ())
@@ -505,7 +505,7 @@ def _attach_sensitivities(m, res, wanted):
     if not wanted or not isinstance(res, dict):
         return res
     try:
-        from lcsolver.solvers.sensitivity import sensitivities as _sens
+        from lcsolver.postsolve.sensitivity import sensitivities as _sens
         out = _sens(m)
     except Exception:
         return res
@@ -529,7 +529,7 @@ def _apply_start(m, start):
     """
     import numpy as _np
 
-    from lcsolver.solvers.writeback import write_solution
+    from lcsolver.postsolve.writeback import write_solution
 
     x = getattr(start, 'x', start)
     x = _np.asarray(x, dtype=float).ravel()
@@ -864,7 +864,7 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     That is the whole reason for the default: not speed, though SIA is faster
     here, but that one of them can answer whether it arrived.
     """
-    from lcsolver.solvers.writeback import write_solution
+    from lcsolver.postsolve.writeback import write_solution
 
     if sp_method == 'pccp':
         from lcsolver.solvers.cvxopt.SP import solve_SP

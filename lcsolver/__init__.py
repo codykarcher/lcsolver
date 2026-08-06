@@ -51,7 +51,7 @@ from lcsolver.objects.blackBoxFunctionModel import (
     TypeCheckedList,
 )
 
-from lcsolver.solvers.sensitivity import (
+from lcsolver.postsolve.sensitivity import (
     sensitivities,
     constraint_duals,
     format_sensitivities,

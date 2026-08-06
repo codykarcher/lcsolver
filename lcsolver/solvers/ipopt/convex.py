@@ -401,7 +401,7 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
     res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
                               method=method, executable=executable, form=form)
     if model is not None:
-        from lcsolver.solvers.writeback import write_solution
+        from lcsolver.postsolve.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)
     return res
 

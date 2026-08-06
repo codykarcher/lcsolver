@@ -96,7 +96,11 @@ def create_new(filename):
 
 
 # filename -> whether the example needs the ipopt executable
-pythonFileList = {"readme_example.py": False, "aircraft_gp.py": True}
+pythonFileList = {
+    "readme_example.py": False,
+    "aircraft_gp.py": True,
+    "hoburg_blackbox.py": True,
+}
 
 for filename, needs_ipopt in pythonFileList.items():
     testName = 'test_DocumentationExample_%d' % (testIndex)

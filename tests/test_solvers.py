@@ -373,7 +373,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         import gc
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
-        from lcsolver.solvers.writeback import write_solution
+        from lcsolver.postsolve.writeback import write_solution
 
         f = _indexed_gp()
         s = structure_detector(unit_corrector(f))

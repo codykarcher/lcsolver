@@ -353,7 +353,7 @@ class Detected(dict):
         Returns ``{name: value}``, or a list in column order with
         ``as_array=True``, which is the form the solvers want.
         """
-        from lcsolver.solvers.writeback import _name_of, _resolve_on
+        from lcsolver.postsolve.writeback import _name_of, _resolve_on
 
         import pyomo.environ as pyo
 

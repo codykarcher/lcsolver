@@ -987,8 +987,8 @@ def test_sensitivities_survive_monomial_elimination():
     original model. So long as the full primal vector is restored, the
     reduction is invisible to it.
     """
-    from lcsolver.solvers.sensitivity import sensitivities
-    from lcsolver.solvers.writeback import write_solution
+    from lcsolver.postsolve.sensitivity import sensitivities
+    from lcsolver.postsolve.writeback import write_solution
 
     fm = _constant_model()
     st = _detect(fm)

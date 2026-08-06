@@ -299,12 +299,12 @@ class TestParameterGradient(unittest.TestCase):
     """
 
     def _index(self, f):
-        from lcsolver.solvers.sensitivity import _constants
+        from lcsolver.postsolve.sensitivity import _constants
         return {id(pd): n for n, pd in _constants(f).items()}
 
     def test_a_constant_appearing_twice_is_not_counted_twice(self):
         """The walker yields a repeated Param once per occurrence."""
-        from lcsolver.solvers.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import _param_gradient
         f = Formulation()
         x = f.Variable('x', 1.0, '')
         a = f.Constant('a', 3.0, '')
@@ -313,7 +313,7 @@ class TestParameterGradient(unittest.TestCase):
         self.assertAlmostEqual(g['a'], 2.0, places=12)     # d(2ax)/da = 2x
 
     def test_constants_absent_from_an_expression_are_omitted(self):
-        from lcsolver.solvers.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import _param_gradient
         f = Formulation()
         x = f.Variable('x', 2.0, '')
         a = f.Constant('a', 3.0, '')
@@ -325,7 +325,7 @@ class TestParameterGradient(unittest.TestCase):
 
     def test_a_plain_number_has_no_gradient(self):
         """Bounds are often literals, and were reaching the walker as floats."""
-        from lcsolver.solvers.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import _param_gradient
         f = Formulation()
         x = f.Variable('x', 1.0, '')
         f.Constant('a', 3.0, '')
@@ -334,7 +334,7 @@ class TestParameterGradient(unittest.TestCase):
         self.assertEqual(_param_gradient(None, self._index(f)), {})
 
     def test_it_agrees_with_differentiating_one_at_a_time(self):
-        from lcsolver.solvers.sensitivity import _param_gradient, _d, _constants
+        from lcsolver.postsolve.sensitivity import _param_gradient, _d, _constants
         f = Formulation()
         x = f.Variable('x', 2.0, '')
         y = f.Variable('y', 3.0, '')
@@ -361,7 +361,7 @@ class TestDualAmbiguity(unittest.TestCase):
 
     def test_a_nondegenerate_problem_reports_nothing_ambiguous(self):
         from lcsolver.solvers.ipopt import ipopt_solve
-        from lcsolver.solvers.sensitivity import DUAL_AMBIGUITY_TOL
+        from lcsolver.postsolve.sensitivity import DUAL_AMBIGUITY_TOL
 
         f = _gp()
         ipopt_solve(f)
@@ -394,7 +394,7 @@ class TestDualAmbiguity(unittest.TestCase):
 
     def test_the_ambiguity_measure_is_a_relative_size(self):
         from lcsolver.solvers.ipopt import ipopt_solve
-        from lcsolver.solvers.sensitivity import dual_ambiguity
+        from lcsolver.postsolve.sensitivity import dual_ambiguity
 
         f = _gp()
         ipopt_solve(f)

@@ -132,7 +132,7 @@ class FeasibilityResult:
         values, so this is what makes the result passable. Returns the model.
         """
         from lcsolver.presolve.reductions import _as_structures
-        from lcsolver.solvers.writeback import write_solution
+        from lcsolver.postsolve.writeback import write_solution
 
         st = _as_structures(model)
         write_solution(st, {'x': np.asarray(self.x, dtype=float)}, model=model)
