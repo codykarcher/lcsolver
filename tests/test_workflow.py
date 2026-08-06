@@ -87,6 +87,26 @@ def test_solve_returns_solveresult():
     assert res.objective == pytest.approx(2.0, rel=1e-5)
 
 
+def test_summary_report_section():
+    """The Report says what was detected/prescribed and what ran."""
+    f = _well_posed()
+    sol = solve(f)
+    text = sol.summary()
+    assert 'Report' in text
+    assert 'auto-detected as a geometric program' in text
+    assert 'Solved with' in text
+    # prescribed route reports itself as prescribed, not auto-detected
+    f2 = _well_posed()
+    sol2 = solve(f2, solver='ipopt', diagnostics='off')
+    text2 = sol2.summary()
+    assert "prescribed (solver='ipopt')" in text2
+    assert 'auto-detected' not in text2.split('Objective')[0] \
+        or 'bypassing auto-detection' in text2
+    # a model solved outside solve() has no report and no section
+    from lcsolver.objects.solution import Solution
+    assert Solution().summary().count('Report') == 0
+
+
 def test_named_accessors_with_units():
     """variables()/constants()/sensitivities()/dimensioned_sensitivities().
 

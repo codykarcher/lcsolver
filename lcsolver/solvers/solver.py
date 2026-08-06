@@ -385,6 +385,32 @@ def _attach_sensitivities(m, res, wanted):
     if isinstance(res, dict) and not isinstance(res, SolveResult):
         res = SolveResult(res, model=m)
 
+    # Stash how this solve went, for the solution's Report section: what was
+    # detected, what was prescribed, what actually ran.
+    try:
+        req = getattr(m, '_solve_request', None) or {}
+        n_greybox = 0
+        try:
+            from pyomo.contrib.pynumero.interfaces.external_grey_box import (
+                ExternalGreyBoxBlock,
+            )
+            n_greybox = sum(1 for _ in m.component_data_objects(
+                ExternalGreyBoxBlock, descend_into=True, active=True))
+        except Exception:
+            pass
+        if isinstance(res, dict):
+            m._solve_report = {
+                'structure': res.get('problem_structure'),
+                'solver': res.get('solver'),
+                'status': res.get('status'),
+                'gp_form': res.get('gp form'),
+                'requested_solver': req.get('solver'),
+                'convex_backend': req.get('convex_backend'),
+                'greybox': n_greybox,
+            }
+    except Exception:
+        pass
+
     # Holographic constraints are checked on EVERY solve, not only when a
     # diagnostic is asked for. An active one means the answer is sitting on a
     # limit that was declared never to bind -- the edge of a fit, a numerical
@@ -560,6 +586,13 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
     from lcsolver.presolve.reductions import InfeasibleProblem
     from lcsolver.solvers.ipopt import ipopt_solve
+
+    # Remembered so the solution's Report section can say, accurately,
+    # whether the route was auto-detected or prescribed.
+    try:
+        m._solve_request = {'solver': solver, 'convex_backend': convex_backend}
+    except Exception:
+        pass
     from lcsolver.presolve.unitCorrector import UnitMismatch
 
     # Detect once and use the result for both the checks and the solve. These

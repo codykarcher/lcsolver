@@ -338,7 +338,9 @@ class Formulation(ConcreteModel):
                                                      None),
                                    holographic=getattr(self,
                                                        '_holographic_cache',
-                                                       None))
+                                                       None),
+                                   report=getattr(self, '_solve_report',
+                                                  None))
 
     def solution_with_sensitivities(self, **kwargs):
         """The solution, with sensitivities computed and attached."""

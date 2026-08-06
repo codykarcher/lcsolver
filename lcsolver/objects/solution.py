@@ -73,7 +73,7 @@ class Solution:
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
                  solver=None, structure=None, groups=None, ambiguous=None,
-                 holographic=None):
+                 holographic=None, report=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
@@ -90,6 +90,10 @@ class Solution:
         self.status = status
         self.solver = solver
         self.structure = structure
+        #: How the solve went: detected/prescribed structure, route, status.
+        #: A dict stashed by solve() on the model (``_solve_report``); None
+        #: when the model was solved some other way.
+        self.report = dict(report) if report else None
         #: ``[(flat_prefix, dotted_path)]``, longest first, for display only.
         self.groups = sorted(groups or [], key=lambda p: -len(p[0]))
 
@@ -162,6 +166,56 @@ class Solution:
                 + u.center(w[2]) + ('   ' + d.ljust(w[3]) if d else '')
                 for n, v, u, d in zip(shown, vals, uts, des)]
 
+    _STRUCTURE_NAMES = {
+        'linear_program': 'linear program (LP)',
+        'quadratic_program': 'quadratic program (QP)',
+        'geometric_program': 'geometric program (GP)',
+        'signomial_program_sia': 'signomial program (SP)',
+        'signomial_program_pccp': 'signomial program (SP)',
+        'nonlinear_program': 'general nonlinear program (NLP)',
+    }
+    _SOLVER_NAMES = {
+        'pyomo': 'IPOPT (executable, AMPL interface)',
+        'cyipopt': 'IPOPT (in-process, cyipopt)',
+        'cvxopt': 'cvxopt',
+    }
+
+    def _report_lines(self):
+        """How the problem was classified and solved, stated accurately.
+
+        'auto-detected' is only claimed when the router actually chose;
+        a prescribed solver or backend is reported as prescribed.
+        """
+        r = self.report or {}
+        structure = self._STRUCTURE_NAMES.get(r.get('structure'),
+                                              r.get('structure') or
+                                              'unknown structure')
+        solver = self._SOLVER_NAMES.get(r.get('solver'),
+                                        r.get('solver') or 'unknown solver')
+        requested = r.get('requested_solver')
+        n_bb = r.get('greybox') or 0
+        bb = (f', with {n_bb} black-box constraint'
+              + ('s' if n_bb != 1 else '') if n_bb else '')
+
+        lines = []
+        if requested in (None, 'auto'):
+            lines.append(f'   Problem auto-detected as a {structure}{bb}')
+        else:
+            lines.append(f"   Solver prescribed (solver={requested!r}), "
+                         f'bypassing auto-detection; run as a '
+                         f'{structure}{bb}')
+        solved = f'   Solved with {solver}'
+        if (r.get('convex_backend') not in (None, 'ipopt')
+                and r.get('structure') != 'nonlinear_program'
+                and requested in (None, 'auto')):
+            solved += f" (convex backend prescribed: {r['convex_backend']})"
+        if r.get('gp_form'):
+            solved += f" [gp form: {r['gp_form']}]"
+        lines.append(solved)
+        if r.get('status'):
+            lines.append(f"   Status: {r['status']}")
+        return lines
+
     def summary(self, ndecimal=2, sensitivity_tol=1e-8, top=None,
                 show_ambiguous=False):
         """The table, as a string.
@@ -176,6 +230,8 @@ class Solution:
         look exactly like answers.
         """
         L = ['']
+        if self.report:
+            L += ['Report', '------'] + self._report_lines() + ['']
         if self.objective is not None:
             L += ['Objective', '---------',
                   '   ' + _fmt(self.objective, ndecimal) + ' '
@@ -265,7 +321,8 @@ class Solution:
 
     @classmethod
     def from_model(cls, model, sensitivities=None, status=None, solver=None,
-                   structure=None, ambiguous=None, holographic=None):
+                   structure=None, ambiguous=None, holographic=None,
+                   report=None):
         """Read the model's current values into a Solution.
 
         Deliberately reads the model handed to it rather than any structure
@@ -327,4 +384,5 @@ class Solution:
                    sensitivities=sensitivities, status=status, solver=solver,
                    structure=structure, ambiguous=ambiguous,
                    holographic=holographic,
+                   report=report or getattr(model, '_solve_report', None),
                    groups=cls._group_paths(getattr(model, '_groups', {})))
