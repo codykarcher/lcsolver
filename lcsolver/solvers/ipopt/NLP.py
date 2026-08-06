@@ -188,6 +188,16 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         results = opt.solve(m, tee=tee, load_solutions=False)
     else:
         opt = pyo.SolverFactory('cyipopt')
+        # cyipopt being importable is not enough. PyNumero builds the NLP
+        # through a compiled ASL library that ships with neither pyomo nor
+        # cyipopt, and pyomo's own error for its absence names a component
+        # most users have never heard of and no way to get it.
+        from lcsolver.environment import _pynumero_asl_available
+        if opt.available(exception_flag=False) and not _pynumero_asl_available():
+            raise SolverUnavailable(
+                "the in-process (cyipopt) route needs Pyomo's PyNumero ASL "
+                "library, which is not installed. `pyomo build-extensions` "
+                "compiles it, or run `lcsolver-install-solvers`.")
         if not opt.available(exception_flag=False):
             raise SolverUnavailable(
                 "neither the 'ipopt' executable nor cyipopt is available. "

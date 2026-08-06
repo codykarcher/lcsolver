@@ -337,6 +337,12 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
         opt = ipopt_solver_factory(executable)
     else:
         opt = pyo.SolverFactory('cyipopt')
+        from lcsolver.environment import _pynumero_asl_available
+        if opt.available(exception_flag=False) and not _pynumero_asl_available():
+            raise SolverUnavailable(
+                "the in-process (cyipopt) route needs Pyomo's PyNumero ASL "
+                "library, which is not installed. Run "
+                "`lcsolver-install-solvers`.")
     if not opt.available(exception_flag=False):
         raise SolverUnavailable(
             'no usable IPOPT installation found for the convex backend; run '

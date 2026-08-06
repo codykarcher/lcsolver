@@ -256,6 +256,27 @@ class BBList(TypeCheckedList):
             raise ValueError('Input must be an integer or a valid variable name')
 
     def append(*args, **kwargs):
+        """Declare one input or output of a black box.
+
+        The call every `BlackBoxFunctionModel` subclass makes in its
+        ``__init__``, and the reason a box can be given a model's variables at
+        all. Takes ``name, units, description, size`` positionally or by
+        keyword, in that order, and builds the
+        `BlackBoxFunctionModel_Variable` itself::
+
+            self.inputs.append(name='x', units='ft', description='the x variable')
+            self.inputs.append('r', 'm', 'radii', np.inf)
+
+        ``description`` defaults to empty and ``size`` to 0, meaning a scalar;
+        ``np.inf`` declares a dimension of flexible length. An already-built
+        variable object may be appended instead of its parts.
+
+        Order is what identifies these afterwards -- the model's variables are
+        paired with them by position -- so a duplicate name is refused rather
+        than silently shadowing: two inputs called ``'x'`` would make the
+        by-name lookup wrong for one of them, and `parseInputs` keys its run
+        cases by name.
+        """
         args = list(args)
         self = args.pop(0)
 
@@ -322,6 +343,67 @@ errorString = 'This function is calling to the base class and has not been defin
 
 
 class BlackBoxFunctionModel(ExternalGreyBoxModel):
+    """Base class for wrapping an analysis code so it can be a constraint.
+
+    Subclass it, declare what goes in and what comes out, and write
+    ``BlackBox``. The model can then constrain the outputs to equal the box
+    evaluated at the inputs, and the solver calls it at every iterate::
+
+        class UnitCircle(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'This model evaluates z = x**2 + y**2'
+
+                self.inputs.append(name='x', units='ft', description='the x variable')
+                self.inputs.append(name='y', units='ft', description='the y variable')
+                self.outputs.append(name='z', units='ft**2', description='the result')
+
+                self.availableDerivative = 1
+
+            def BlackBox(self, x, y):
+                x, y = self.sanitizeInputs(x, y, strip_units=True)
+                return self.packOutputs(x**2 + y**2, [2 * x, 2 * y])
+
+        f.ConstraintList([[z, '==', [x, y], UnitCircle()]])
+
+    The declarations are what makes this more than a function pointer. An
+    analysis code has units it works in and shapes it expects, and they are
+    routinely not the model's -- the box above thinks in feet while the model
+    is in metres, and neither side's source says so anywhere. Because both
+    declared, the conversion happens at the boundary in both directions, values
+    and jacobian alike, and a shape that does not match its declaration raises
+    there rather than being quietly reshaped somewhere deeper. The alternative,
+    which is what wrapping an analysis code by hand looks like, is a factor of
+    0.3048 living in a comment.
+
+    Three attributes are set in ``__init__``:
+
+    ``inputs``, ``outputs``
+        `BBList` of declarations, appended in the order the box takes them.
+        ``append`` accepts ``name, units, description, size`` positionally or
+        by keyword. Order matters: the model's variables are matched to these
+        by position, not by name (see `Formulation.RuntimeConstraint`).
+    ``description``
+        A sentence about the model, printed by `getSummary`.
+    ``availableDerivative``
+        The highest derivative the box can return -- 0 for values only, 1 for
+        values and a jacobian. `parseInputs` reports it back to the box so one
+        implementation can serve both. A box used inside a solve must supply
+        the jacobian: the solver asks for it separately from the values, and
+        LCsolver has nothing to fall back on if it is absent.
+
+    A box can be evaluated on its own -- ``UnitCircle().BlackBox(0.5*units.m,
+    0.5*units.m)`` -- which is worth doing before putting it in a model, since
+    it is where a units or shape mistake announces itself with the shortest
+    stack.
+
+    The rest of the class is either machinery the solver calls (`input_names`,
+    `set_input_values`, `evaluate_outputs`, `evaluate_jacobian_outputs`, from
+    Pyomo's ``ExternalGreyBoxModel``, all driven by `fillCache`) or helpers a
+    ``BlackBox`` implementation calls: `sanitizeInputs`, `packOutputs`,
+    `parseInputs`, `convert`, `pyomo_value`.
+    """
+
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def __init__(self):
@@ -347,6 +429,14 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     def setOptimizationVariables(
         self, inputVariables_optimization, outputVariables_optimization
     ):
+        """Record which of the model's variables this box is wired to.
+
+        Called by `Formulation.RuntimeConstraint` when the box is attached, not
+        by a model author. The two lists are matched to `inputs` and `outputs`
+        by position, and that pairing is what the unit conversion at each
+        evaluation reads: entry ``i`` of this list is in the model's units,
+        ``self.inputs[i]`` says what units the box wants.
+        """
         self.inputVariables_optimization = inputVariables_optimization
         self.outputVariables_optimization = outputVariables_optimization
 
@@ -354,6 +444,13 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # pyomo things
     # ---------------------------------------------------------------------------------------------------------------------
     def input_names(self):
+        """The model-side input names, one per scalar, for pynumero.
+
+        Part of Pyomo's ``ExternalGreyBoxModel`` interface rather than
+        something to call. An indexed variable is unwrapped here into one name
+        per element -- ``x[0]``, ``x[1]``, ... -- because the solver deals in a
+        flat vector and needs a name for each column of it.
+        """
         inputs_unwrapped = []
         for ivar in self.inputVariables_optimization:
             if isinstance(ivar, pyomo.core.base.var.ScalarVar):
@@ -368,6 +465,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         return [ip.__str__() for ip in inputs_unwrapped]
 
     def output_names(self):
+        """The model-side output names, one per scalar. See `input_names`."""
         outputs_unwrapped = []
         for ovar in self.outputVariables_optimization:
             if isinstance(ovar, pyomo.core.base.var.ScalarVar):
@@ -382,20 +480,41 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         return [op.__str__() for op in outputs_unwrapped]
 
     def set_input_values(self, input_values):
+        """The solver's flat vector for the next iterate. Invalidates the cache.
+
+        Part of Pyomo's ``ExternalGreyBoxModel`` interface. Dropping the cache
+        here is what ties the box to the iterate: the outputs and the jacobian
+        are asked for in separate calls, so they must be recomputed once and
+        only once per point, and never carried across one.
+        """
         self._input_values = input_values
         self._cache = None
 
     def evaluate_outputs(self):
+        """The output values at the current iterate. Calls `fillCache`."""
         self.fillCache()
         opts = self._cache['pyomo_outputs']
         return opts
 
     def evaluate_jacobian_outputs(self):
+        """The jacobian at the current iterate, sparse. Calls `fillCache`.
+
+        Asked for separately from the values but computed with them, in one
+        call to `BlackBox` -- an analysis code is usually expensive enough that
+        evaluating it twice per iterate would be the dominant cost.
+        """
         self.fillCache()
         jac = self._cache['pyomo_jacobian']
         return jac
 
     def post_init_setup(self, defaultVal=1.0):
+        """Give the box a starting input vector, once its length is known.
+
+        Called by `Formulation.RuntimeConstraint` after the box is attached,
+        which is the first moment the number of scalar inputs exists -- it
+        comes from the model's variables, not from the declarations, since a
+        declared input may be of flexible length.
+        """
         # _NunwrappedInputs is assigned when the black box is attached to a
         # Formulation (see formulation.py); at construction time it is still
         # None. numpy >= 2.0 rejects None as a shape, so fall back to a scalar
@@ -404,6 +523,14 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self._input_values = np.ones(() if n is None else n) * defaultVal
 
     def attachUnits(self, val, unts):
+        """Give a bare number the units it is understood to already be in.
+
+        A plain float or ndarray coming back from a box is taken to be a
+        magnitude in the units declared for that output, so attaching ``unts``
+        loses no information and puts the value on the normal conversion path.
+        Anything that already carries units is returned untouched, so this is
+        safe to apply to either.
+        """
         # A black box that works in dimensionless quantities naturally returns
         # plain numbers: pyomo collapses expressions such as
         # 'float * dimensionless' back to a float, and numpy operations on
@@ -421,6 +548,29 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         return val
 
     def fillCache(self):
+        """Cross the boundary once: call `BlackBox` and store what came back.
+
+        This is where the model's world and the box's world are reconciled, and
+        it is the whole reason the inputs and outputs are declared. Going in,
+        the solver's flat vector is cut back up into the shapes the box's
+        variables have, each piece converted from the model's units into the
+        units the box declared, and size-checked. Coming out, values and every
+        jacobian entry are converted the other way -- an entry of
+        ``d(output)/d(input)`` being converted in the compound units
+        ``output units / input units``, which is the part no one gets right by
+        hand -- and laid into a dense array that becomes the sparse block the
+        solver reads.
+
+        Cached because the solver asks for values and jacobian separately and
+        an analysis code is usually the expensive thing in the loop;
+        `set_input_values` drops the cache, so there is exactly one call to
+        `BlackBox` per iterate.
+
+        The result is published only once every step has succeeded. Filling
+        ``self._cache`` in place left a partial but non-None cache behind
+        whenever anything raised, and the next call then skipped the rebuild
+        and failed with a ``KeyError`` that hid the original error.
+        """
         if self._cache is None:
             # Build into a local dict and only publish it once every step has
             # succeeded.  Populating self._cache in place leaves a partially
@@ -675,9 +825,47 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # These models must be defined in each individual model, just placeholders here
     def BlackBox(*args, **kwargs):
+        """The analysis itself. Every subclass defines this; the base refuses.
+
+        LCsolver calls it with one argument per declared input, in declaration
+        order, each carrying the units that input was declared with. So the
+        first line of a ``BlackBox`` is almost always
+        ``self.sanitizeInputs(..., strip_units=True)``, which converts and
+        size-checks them and hands back plain numbers to compute with.
+
+        What comes back has to be in the declared *output* units, and this is
+        the half that is easy to get wrong, because the jacobian's units are
+        not written down anywhere -- ``d z / d x`` is ``ft**2 / ft`` and
+        nothing in the code says so. `packOutputs` derives them and is the
+        recommended way to return::
+
+            return self.packOutputs(z, [dzdx, dzdy])
+
+        Returning them by hand is equally valid, in which case the contract is:
+        a single-output box returns ``(value, [dv_din0, dv_din1, ...])``, and a
+        multi-output box returns ``([v0, v1, ...], [[...], [...]])`` -- one
+        jacobian row per output, one entry per input. Drop the second element
+        entirely for a box that returns values only.
+
+        The signature is the subclass's to choose. ``def BlackBox(self, x, y)``
+        is the ordinary form. ``def BlackBox(self, *args, **kwargs)`` fronted by
+        `parseInputs` is what a box is written as when it should also accept a
+        batch of run cases, keyword inputs, or options of its own.
+
+        The base class raises ``AttributeError``: reaching it means the
+        subclass never defined the one method it exists to define.
+        """
         raise AttributeError(errorString)
 
     def convert(self, val, unts):
+        """Convert a value to ``unts``, whether it is a scalar or an array.
+
+        ``pyomo_units.convert`` handles a united scalar and nothing else; an
+        array of them has to be converted element by element, which is what
+        this adds. A bare number is treated as dimensionless first, so it
+        converts only into a dimensionless target and raises otherwise rather
+        than being assumed to be in whatever was wanted.
+        """
         try:
             val = val * pyomo_units.dimensionless
         except:
@@ -703,6 +891,13 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             raise ValueError('Invalid type passed to unit conversion function')
 
     def pyomo_value(self, val):
+        """The number behind a united value, elementwise for an array.
+
+        ``pyo.value`` on an array of united elements raises; this walks it.
+        The magnitude is in whatever units the value was carrying, so this is
+        only safe once the value has been converted -- which is why
+        `sanitizeInputs` converts before it strips.
+        """
         try:
             return pyo.value(val)
         except:
@@ -720,6 +915,57 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def parseInputs(self, *args, **kwargs):
+        """Normalise however a ``BlackBox`` was called into a list of run cases.
+
+        Writing a black box is expensive, so it is worth having one serve every
+        way it might be reached: the solver calling it with one value per
+        input, a script sweeping a vector of them, a caller passing a dict, a
+        caller passing options the box understands but the optimizer knows
+        nothing about. This turns all of those into the same thing. A box that
+        wants that generality opens with::
+
+            def BlackBox(self, *args, **kwargs):
+                runCases, returnMode, extras = self.parseInputs(*args, **kwargs)
+
+        Every one of these is understood, and each yields the run cases you
+        would expect::
+
+            bb(x, y)                        # positional, in declaration order
+            bb(x=x, y=y)                    # by name, or a mix of the two
+            bb({'x': x, 'y': y})            # one case as a dict
+            bb({'x': xs, 'y': ys})          # one case per element of xs, ys
+            bb([{'x': x, 'y': y}, {...}])   # a list of cases as dicts
+            bb([[x, y], [x, y]])            # a list of cases as sequences
+
+        ``bb([x, y])`` is deliberately *not* in that list. It is ambiguous
+        between one case and a batch, and rather than guess, the error names
+        the four ways to say which was meant.
+
+        Returns ``(runCases, returnMode, extras)``.
+
+        ``runCases`` is a list of dicts keyed by declared input name, values
+        already converted into the declared input units and size-checked, since
+        each case goes through `sanitizeInputs` on the way through. There is
+        always a list, even for a single case: ``runCases[0]['x']``.
+
+        ``returnMode`` tells the box what shape its return should take, and is
+        the only way it can know, because the call ``bb(x, y)`` and the call
+        ``bb({'x': xs, 'y': ys})`` produce identical run-case lists when the
+        vectors have length one. It is ``availableDerivative`` when the call
+        described several cases, and ``-availableDerivative - 1`` -- so,
+        negative -- when it described exactly one. Negative therefore means
+        "one fewer level of indexing on the way out", and the derivative order
+        is recovered as ``-(returnMode + 1)``, which is what the idiom
+        ``if returnMode < 0: returnMode = -1 * (returnMode + 1)`` at the bottom
+        of a batch-capable box is doing.
+
+        ``extras`` is everything passed that was not a declared input: extra
+        keywords as themselves, extra positional arguments collected under
+        ``extras['remainingArgs']``. This is where a box finds its own options
+        -- a tolerance, a mesh level, a run mode -- and it is only ever
+        populated for the positional/keyword call forms; the dict and list-of-
+        cases forms return ``{}``, having no room for anything else.
+        """
         args = list(args)  # convert tuple to list
 
         inputNames = [self.inputs[i].name for i in range(0, len(self.inputs))]
@@ -909,6 +1155,19 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def sizeCheck(self, size, ipval_correctUnits):
+        """Check a value against a declared size, and raise if it disagrees.
+
+        ``size`` is the decoded form held on a
+        `BlackBoxFunctionModel_Variable`: ``0`` for a scalar, an integer, or a
+        list with one entry per dimension. A dimension stored as
+        ``FLEXIBLE_LENGTH`` (-1) was declared ``np.inf`` and is skipped, which
+        is what lets one box serve a three-element vector in one model and a
+        ten-element one in another.
+
+        The rank has to match as well as the lengths. A value of the right
+        total size but the wrong shape is a different quantity, and numpy would
+        take it without comment.
+        """
         if size is not None:
             szVal = ipval_correctUnits
             if isinstance(
@@ -1097,6 +1356,14 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def checkOutputs(self, *args, **kwargs):
+        """Not implemented; raises ``NotImplementedError``.
+
+        The output-side counterpart of `sanitizeInputs`, left unfinished
+        because `packOutputs` covers what a box actually needs -- attaching or
+        converting the declared units on the way out -- and the checking half
+        of it happens in `fillCache`, where the value has to be converted
+        anyway. The body is kept, commented, for whoever finishes it.
+        """
         raise NotImplementedError('Contact developers to use this function')
         # nameList = [self.outputs[i].name for i in range(0,len(self.outputs))]
         # if len(args) + len(kwargs.values()) > len(nameList):
@@ -1151,6 +1418,15 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def getSummary(self, whitespace=6):
+        """The box's declarations as a printable table, returned as a string.
+
+        Description, then inputs and outputs with their units, sizes and
+        descriptions. This is what a box knows about itself and all a caller
+        can know about it, so it is the answer to "what does this thing take?"
+        -- particularly for a box that came from somewhere else. ``whitespace``
+        is the padding between columns; `summary` is the same thing as a
+        property.
+        """
         pstr = '\n'
         pstr += 'Model Description\n'
         pstr += '=================\n'
@@ -1274,6 +1550,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
     @property
     def summary(self):
+        """`getSummary` with the default spacing -- ``print(box.summary)``."""
         return self.getSummary()
 
     # ---------------------------------------------------------------------------------------------------------------------

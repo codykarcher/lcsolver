@@ -14,7 +14,13 @@ contributed sub-package of [Pyomo](https://github.com/Pyomo/pyomo), the
 months, and has since been used successfully on a variety of projects. The
 complete commit log of the original work is visible in the
 [`edi_dev` branch comparison](https://github.com/Pyomo/pyomo/compare/main...codykarcher:pyomo:edi_dev)
-against Pyomo `main`.
+against Pyomo `main`.  The decision to spin off at this time has been 
+taken to allow for this package to grow organically to meet upcoming
+needs.  The recent flurry of updates have been primarily due to the 
+development of a new solver, general clean up, and quality of life
+improvements on a package that has been stable for almost three years.
+Generative AI has helped to clear the backlog and is disclosed in the
+disclosure statement in the paper.  
 
 ## Recent Master's Theses at CSULB
 

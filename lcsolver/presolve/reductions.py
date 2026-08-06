@@ -2375,7 +2375,7 @@ def optimization_check(structures, x=None, problem=None, names=None,
     nobody runs them. This is the entry point that makes them the default.
 
     It runs on both sides of a solve, which is why it is not called a
-    *pre*check:
+    *precheck*:
 
     **Before** -- needs nothing but the model. What class of problem it is,
     what stops it being a simpler one, and the variables that are output-only,

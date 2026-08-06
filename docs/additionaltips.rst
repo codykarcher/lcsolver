@@ -1,37 +1,46 @@
 Additional Tips
 ---------------
 
-* Developers may need to install the following additional packages:
+* Developers need the test and documentation extras. Both are declared in
+  ``pyproject.toml``, so install them by name rather than one package at a
+  time --- that way the list cannot drift from what the build actually uses:
 
 ::
 
-   pip install pytest
-   pip install pytest-cov
-   pip install sphinx
-   pip install sphinx_rtd_theme
-   pip install sphinx_copybutton
+   pip install -e ".[test,docs]"
 
 
-* If you wish to build the documentation locally, use:
+* To build the documentation locally:
 
 ::
 
-   cd <path_to_edi>/docs
-   make html
+   cd docs
+   python -m sphinx . _build/html
 
-then open the file ``docs/_build/html/index.html``
-
-
-* Unit tests and coverage can be run locally using:
+then open ``docs/_build/html/index.html``. Add ``-W`` to turn warnings into
+errors, which is how the documentation is expected to build:
 
 ::
 
-   cd <path_to_edi>
+   python -m sphinx -W . _build/html
+
+
+* Unit tests and coverage can be run from the repository root:
+
+::
+
    pytest --cov-report term-missing --cov=lcsolver -v ./tests/
 
 or generating html output:
 
 ::
 
-   cd <path_to_edi>
    pytest --cov-report html --cov=lcsolver -v ./tests/
+
+By default this skips the tests marked ``slow`` and ``veryslow``, which are the
+cross-path and full-model comparisons. To run everything, as continuous
+integration does:
+
+::
+
+   pytest -m "" ./tests/

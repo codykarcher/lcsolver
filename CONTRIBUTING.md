@@ -68,5 +68,7 @@ better provided by Pyomo itself generally are not.
 
 ## Code of conduct
 
-Participation in this project is governed by the expectation that contributors treat
-one another with respect. Harassment or abusive behavior is not tolerated.
+Participation in this project is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md) — the Contributor Covenant v2.1.
+Harassment or abusive behavior is not tolerated. Reports go to
+cody.karcher@csulb.edu.

@@ -1,0 +1,46 @@
+# Citation metadata, read by GitHub to render a "Cite this repository" button
+# and by citation managers. Keep `version` in sync with pyproject.toml and
+# lcsolver/__init__.py.
+#
+# When the JOSS paper is accepted, add a `preferred-citation:` block pointing
+# at it, and add the Zenodo DOI as `doi:` below. Until then this file describes
+# the software itself.
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "LCsolver: An Engineering Design Interface for Pyomo"
+abstract: >-
+  A lightweight layer over the Pyomo modeling language for engineering design
+  optimization: unit-aware model declaration, a structured interface for
+  wrapping black-box analysis codes as differentiable constraints, automatic
+  detection of linear, quadratic, geometric and signomial structure, and
+  routing to a solver appropriate to that structure.
+type: software
+version: 0.1.0
+license: BSD-3-Clause
+repository-code: "https://github.com/codykarcher/lcsolver"
+url: "https://github.com/codykarcher/lcsolver"
+keywords:
+  - optimization
+  - engineering design
+  - geometric programming
+  - signomial programming
+  - Pyomo
+authors:
+  - family-names: Karcher
+    given-names: Cody J.
+    orcid: "https://orcid.org/0000-0002-6062-6465"
+    affiliation: "California State University, Long Beach"
+  - family-names: Bynum
+    given-names: Michael L.
+    affiliation: "Sandia National Laboratories"
+references:
+  - type: article
+    title: "A Method of Sequential Log-Convex Programming for Engineering Design"
+    authors:
+      - family-names: Karcher
+        given-names: Cody
+      - family-names: Haimes
+        given-names: Robert
+    journal: "Optimization and Engineering"
+    year: 2022
+    doi: "10.1007/s11081-022-09750-3"

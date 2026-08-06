@@ -75,7 +75,7 @@ dependencies = [
 parallel = ["mpi4py"]
 plotting = ["matplotlib", "pandas"]
 solvers  = []                       # back-compat alias; cvxopt is now a hard dependency
-docs     = ["sphinx", "sphinx-rtd-theme"]
+docs     = ["sphinx", "sphinx-rtd-theme", "myst-parser"]   # myst-parser: docs/*.md technical notes
 test     = ["pytest", "pytest-cov"]
 
 # The solver bootstrap and the environment report. Both are plain Python so
@@ -95,6 +95,11 @@ artifacts = ["lcsolver/scripts/*.sh"]
 [tool.hatch.build.targets.sdist]
 include = ["lcsolver", "tests", "docs", "utilities", "examples",
            "environment.yml", "README.md", "LICENSE", "pyproject.toml"]
+# `docs` is included wholesale, so a local `python -m sphinx . _build/html`
+# would otherwise ship its entire rendered output inside the sdist. It is
+# gitignored, so this never shows up in a git-based build and only bites
+# whoever runs `python -m build` in a working tree they have built docs in.
+exclude = ["docs/_build"]
 
 [project.urls]
 Homepage = "https://github.com/codykarcher/lcsolver"

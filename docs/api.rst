@@ -48,6 +48,18 @@ Black-box constraints
    :undoc-members:
    :show-inheritance:
 
+:class:`~lcsolver.objects.blackBoxFunctionModel.BlackBoxFunctionModel_Variable`
+is exported under three shorter aliases, because declaring inputs and outputs is
+the one place its full name would be typed repeatedly. They are the same class,
+not subclasses:
+
+.. py:class:: lcsolver.BlackBoxVariable
+.. py:class:: lcsolver.BBVariable
+.. py:class:: lcsolver.BBV
+
+   Aliases of
+   :class:`~lcsolver.objects.blackBoxFunctionModel.BlackBoxFunctionModel_Variable`.
+
 
 Solving
 -------
@@ -80,6 +92,17 @@ Checks run before the solve
    :members:
    :undoc-members:
    :show-inheritance:
+
+The model checks themselves live in :mod:`lcsolver.presolve.reductions`
+alongside the presolve machinery, which is internal. Only the entry points are
+public, so they are listed individually rather than by pulling in the module.
+
+.. autofunction:: lcsolver.presolve.reductions.optimization_check
+.. autofunction:: lcsolver.presolve.reductions.presolve_check
+.. autofunction:: lcsolver.presolve.reductions.postsolve_check
+.. autofunction:: lcsolver.presolve.reductions.structure_report
+.. autofunction:: lcsolver.presolve.reductions.rigidity_report
+.. autofunction:: lcsolver.presolve.reductions.rigidity_text
 
 
 The solution, and the checks run after the solve

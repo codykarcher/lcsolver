@@ -87,11 +87,15 @@ class Step:
     printed and approved before any of it runs.
     """
 
-    def __init__(self, description, command=None, action=None, env=None):
+    def __init__(self, description, command=None, action=None, env=None,
+                 optional=False):
         self.description = description
         self.command = command
         self.action = action
         self.env = env
+        # A step whose failure is worth reporting but not worth aborting
+        # the install over.
+        self.optional = optional
 
     def show(self):
         if self.command:
@@ -336,48 +340,38 @@ def _pynumero_asl_available():
         return False
 
 
-#: conda-forge's ``pynumero_libraries`` is prebuilt, but only for these. There
-#: is no osx-arm64 build, which is most current Macs, so it cannot be the only
-#: route.
-_PYNUMERO_CONDA_PLATFORMS = ('linux-64', 'osx-64', 'win-64')
-
-
-def _conda_subdir(conda):
-    """The conda platform string, for deciding whether a package exists."""
-    try:
-        import json
-        out = subprocess.run([conda['exe'], 'info', '--json'],
-                             capture_output=True, text=True, timeout=120)
-        return json.loads(out.stdout).get('platform')
-    except Exception:
-        return None
-
-
 def _plan_pynumero_asl(conda):
     """Get the PyNumero ASL library, which is not where you would expect.
 
-    ``pyomo download-extensions`` does **not** provide it --- that command
-    fetches gjh and MC++ and reports success, which is a convincing way to
-    believe the problem is solved when nothing has changed. The library is
-    either compiled by ``pyomo build-extensions`` or installed prebuilt from
-    conda-forge's ``pynumero_libraries``.
+    Two dead ends first, because both look like the answer:
 
-    Prefer the prebuilt one where it exists, because building needs cmake and
-    a compiler; fall back to building, which is the only route on osx-arm64.
+    ``pyomo download-extensions`` does not provide it. That command fetches
+    gjh and MC++, prints "Finished downloading Pyomo extensions" and exits 0,
+    which is a convincing way to believe the problem is solved when nothing
+    has changed.
+
+    conda-forge's ``pynumero_libraries`` does provide it, but its newest build
+    (1.3) requires Python <= 3.8, so on any current interpreter conda cannot
+    solve for it at all.
+
+    That leaves compiling it, which is what ``pyomo build-extensions`` does.
+    It needs cmake and a C compiler, and it is why this step is allowed to
+    fail without failing the install: an environment that cannot build it
+    still has a perfectly good executable route, and loses only the black-box
+    models that must go in-process.
     """
-    if conda and _conda_subdir(conda) in _PYNUMERO_CONDA_PLATFORMS:
-        return Step(
-            "install Pyomo's PyNumero libraries from conda-forge (cyipopt "
-            "cannot evaluate a model without them)",
-            command=[conda['exe'], 'install', '-y', '-c', 'conda-forge',
-                     'pynumero_libraries'])
-
     return Step(
-        "build Pyomo's PyNumero ASL library (cyipopt cannot evaluate a model "
-        "without it; needs cmake and a C compiler)",
+        "build Pyomo's PyNumero ASL library, so cyipopt can evaluate a model "
+        "at all (needs cmake and a C compiler)",
+        # `pyomo build-extensions` builds *every* extension and fails as a
+        # whole when any of them cannot be built -- on a stock macOS runner it
+        # dies on MC++ wanting pybind11, having never reached PyNumero. This
+        # calls the PyNumero builder directly, so the only thing that can fail
+        # is the thing we actually want.
         command=[sys.executable, '-c',
-                 'from pyomo.scripting.pyomo_main import main; '
-                 'raise SystemExit(main(["build-extensions"]))'])
+                 'from pyomo.contrib.pynumero.build import build_pynumero; '
+                 'build_pynumero()'],
+        optional=True)
 
 
 def _ma27_build_root(args):
@@ -610,7 +604,11 @@ def main(argv=None):
     # ---- run --------------------------------------------------------------
     for step in steps:
         code = step.run()
-        if code:
+        if code and step.optional:
+            print(f'\nwarning: this step failed ({code}) and the install '
+                  f'continues without it:\n  {step.description}',
+                  file=sys.stderr)
+        elif code:
             print(f'\nerror: step failed ({code}): {step.description}',
                   file=sys.stderr)
             return code

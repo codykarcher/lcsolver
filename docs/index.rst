@@ -19,6 +19,29 @@ the way out, and reports sensitivities with every solve.
 Design Interface". It is now developed and distributed independently.)
 
 
+Statement of Need
+-----------------
+
+Design optimization in aerospace, energy, and mechanical engineering is
+characterized by models that mix closed-form physics with legacy analysis
+codes, and by quantities that carry units whose mismatch is a common and
+expensive source of error. Disciplined convex modeling packages such as CVXPY
+and geometric-programming packages such as GPkit give excellent ergonomics and
+strong guarantees, but only within their problem class, and neither
+accommodates an arbitrary external solver in the constraint set. General
+algebraic modeling languages such as Pyomo impose no such restriction, but
+leave the engineer to manage units by hand and to write the interface to any
+external analysis code from scratch.
+
+LCsolver targets that gap: an engineer writes a single unit-annotated model in
+which some constraints are algebraic and others are evaluated by external
+codes, and LCsolver checks unit consistency, detects the mathematical
+structure of the algebraic portion, and routes the problem to a solver
+appropriate to that structure. The same model can be solved as a geometric
+program when it happens to be one, and as a general nonlinear program when it
+is not, without being rewritten.
+
+
 Installation
 ------------
 
@@ -88,12 +111,17 @@ Reference
 Technical Notes
 ---------------
 
-Three longer engineering notes live alongside the documentation source in the
-repository, for readers who want the machinery rather than the interface:
-``docs/PRESOLVE.md`` (the presolve reductions and their invariants),
-``docs/SIA_CONVERGENCE.md`` (the SIA convergence argument), and
-``docs/SLCP_PERFORMANCE.md`` (measured SLCP behavior across the paper's test
-problems).
+Three longer engineering notes, for readers who want the machinery rather than
+the interface: the presolve reductions and their invariants, the SIA
+convergence argument, and measured SLCP behavior across the paper's test
+problems.
+
+.. toctree::
+   :maxdepth: 2
+
+   PRESOLVE.md
+   SIA_CONVERGENCE.md
+   SLCP_PERFORMANCE.md
 
 
 Developers

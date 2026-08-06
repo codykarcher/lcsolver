@@ -253,6 +253,23 @@ print(sol.summary())
 ```
 <!-- END readme_example -->
 
+## Citing LCsolver
+
+Citation metadata is in [CITATION.cff](CITATION.cff), which GitHub renders as a
+"Cite this repository" button and most reference managers read directly.
+
+The algorithm behind the SLCP route is published separately:
+
+> Karcher, C. and Haimes, R., "A Method of Sequential Log-Convex Programming for
+> Engineering Design," *Optimization and Engineering*, 2022.
+> [doi:10.1007/s11081-022-09750-3](https://doi.org/10.1007/s11081-022-09750-3)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a bug, ask a question,
+or open a pull request, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the
+conduct expected of participants.
+
 ## Acknowledgement
 
 This package is spun out of Pyomo, acknowledged below.

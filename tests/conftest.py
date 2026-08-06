@@ -47,12 +47,35 @@ def _ipopt_present():
     return _IPOPT_PRESENT
 
 
+_ASL_PRESENT = None
+
+
+def _asl_present():
+    """Is Pyomo's compiled PyNumero ASL library available?
+
+    A second environment gap of the same kind as a missing IPOPT: cyipopt
+    cannot build an NLP without it, so the in-process route -- and therefore
+    every black-box model -- cannot run. It is not installable by pip and not
+    installable by conda on a current Python; it has to be compiled.
+    """
+    global _ASL_PRESENT
+    if _ASL_PRESENT is None:
+        try:
+            from lcsolver.environment import _pynumero_asl_available
+            _ASL_PRESENT = bool(_pynumero_asl_available())
+        except Exception:
+            _ASL_PRESENT = False
+    return _ASL_PRESENT
+
+
 def _convert(exc):
-    if _ipopt_present():
-        # IPOPT is installed and something still reported it missing. That is
-        # a real defect, not an environment gap.
-        raise exc
-    pytest.skip(f'no IPOPT on this machine: {exc}')
+    if not _ipopt_present():
+        pytest.skip(f'no IPOPT on this machine: {exc}')
+    if 'PyNumero ASL' in str(exc) and not _asl_present():
+        pytest.skip(f'no PyNumero ASL library on this machine: {exc}')
+    # Everything the solve needs is installed and something still reported it
+    # missing. That is a real defect, not an environment gap.
+    raise exc
 
 
 @pytest.hookimpl(wrapper=True)

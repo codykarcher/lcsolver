@@ -41,9 +41,13 @@ jobs:
         # otherwise only ever be exercised on a developer's mac.
         run: |
           lcsolver-install-solvers --dry-run
-          lcsolver-check-solvers --no-probe; rc=$?
-          # 3 is "no IPOPT here", which is the expected state on a CI runner.
-          # 1 would mean the report itself crashed, and should fail the job.
+          # `cmd; rc=$?` does not work here: this shell runs with `set -e`, so
+          # a non-zero exit aborts the step before the guard below is reached.
+          # `|| rc=$?` is the form that lets the status be inspected.
+          rc=0
+          lcsolver-check-solvers --no-probe || rc=$?
+          # 3 is "no IPOPT here", the expected state on a CI runner. 1 would
+          # mean the report itself crashed, and should fail the job.
           if [ $rc -ne 0 ] && [ $rc -ne 3 ]; then exit $rc; fi
         shell: bash
 

@@ -363,12 +363,20 @@ def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch)
     steps, _ = install._plan_default(report, conda=None, args=_Args())
 
     assert len(steps) == 1
-    # Either route is correct; what must not happen is `download-extensions`,
-    # which fetches gjh and MC++, reports success, and leaves the ASL
-    # library exactly as absent as it was.
     joined = ' '.join(steps[0].command)
-    assert 'pynumero_libraries' in joined or 'build-extensions' in joined
+    assert 'build_pynumero' in joined
+
+    # Two routes that look right and are not. `download-extensions` fetches
+    # gjh and MC++, reports success and leaves the library exactly as absent
+    # as it was. conda-forge's `pynumero_libraries` does contain it, but its
+    # newest build wants Python <= 3.8, so conda cannot solve for it at all on
+    # a current interpreter.
     assert 'download-extensions' not in joined
+    assert 'pynumero_libraries' not in joined
+
+    # And it must not sink the whole install: an environment that cannot
+    # compile it still has a working executable route.
+    assert steps[0].optional is True
 
 
 def test_the_asl_library_is_not_refetched_when_present(tmp_path, monkeypatch):
