@@ -16,26 +16,6 @@ complete commit log of the original work is visible in the
 [`edi_dev` branch comparison](https://github.com/Pyomo/pyomo/compare/main...codykarcher:pyomo:edi_dev)
 against Pyomo `main`.
 
-## Peer-Reviewed Foundations
-
-The algorithms at the center of the package were developed and published
-across three peer-reviewed papers:
-
-- Karcher, C. J., "[Logspace Sequential Quadratic Programming for Design
-  Optimization](https://doi.org/10.2514/1.J060950)," *AIAA Journal*, Vol. 60,
-  2022. ([arXiv:2105.14441](https://arxiv.org/abs/2105.14441))
-- Karcher, C. J., "[A Method of Sequential Log-Convex Programming for
-  Engineering Design](https://doi.org/10.1007/s11081-022-09750-3),"
-  *Optimization and Engineering*, 2022.
-  ([arXiv:2201.08436](https://arxiv.org/abs/2201.08436))
-- Karcher, C. J., "[Data Fitting with Signomial Programming Compatible
-  Difference of Convex Functions](https://doi.org/10.1007/s11081-022-09717-4),"
-  *Optimization and Engineering*, 2022.
-
-The SLCP and SIA machinery in `lcsolver/solvers/sequential/` implements and
-extends the first two; the companion fitting methods are distributed as the
-[lcfit](https://github.com/codykarcher/lcfit) package.
-
 ## Recent Master's Theses at CSULB
 
 Two recent master's theses in the Department of Mechanical and Aerospace
