@@ -18,6 +18,19 @@ from pyomo.core.base.units_container import pint_available
 
 cvxopt, cvxopt_available = attempt_import("cvxopt")
 
+
+def _ipopt_available():
+    """Is there a usable IPOPT? Several tests below assert what the
+    IPOPT route does, and without one `solve` falls back to cvxopt --
+    which answers correctly but by a different path, with different
+    duals, different report text and a different number of detector
+    walks. Those tests are about the route, not about the answer."""
+    try:
+        from lcsolver.environment import ipopt_available
+        return bool(ipopt_available())
+    except Exception:
+        return False
+
 try:
     from lcsolver import Formulation
 
@@ -239,8 +252,6 @@ class TestIpoptBlackBox(unittest.TestCase):
         self.assertEqual(r['solver'], 'cyipopt')
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 def _gp_known_optimum():
@@ -310,13 +321,24 @@ class TestConvexIpoptBackend(unittest.TestCase):
         self.assertIn('ipopt', str(r.get('solver', '')).lower())
         self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
 
-    @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
-    def test_solve_defaults_to_cvxopt_for_structured(self):
+    @unittest.skipIf(not (_ipopt_route_available('pyomo')
+                          or _ipopt_route_available('cyipopt')),
+                     'no IPOPT backend available')
+    def test_solve_defaults_to_ipopt_for_structured(self):
+        """`solve()` with nothing asked for goes to ipopt, not cvxopt.
+
+        `solve(m, solver='auto', convex_backend='ipopt', ...)` is the
+        signature, so asserting only the structure and the answer cannot tell
+        the two backends apart -- both get this model right. The 'solver' key
+        is set by the ipopt route and absent from the cvxopt one, so it is
+        what distinguishes them.
+        """
         from lcsolver.solvers.solver import solve
 
         f = _gp_known_optimum()
         r = solve(f)
         self.assertEqual(r.get('problem_structure'), 'geometric_program')
+        self.assertIn('ipopt', str(r.get('solver', '')).lower())
         self.assertAlmostEqual(pyo.value(f.x), 1.0, places=4)
 
 
@@ -384,13 +406,17 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(f.sK[2]), 3.0)
         self.assertAlmostEqual(pyo.value(f.y), 5.0)
 
-    @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
-    def test_indexed_gp_solves_and_writes_back_cvxopt(self):
+    @unittest.skipIf(not (_ipopt_route_available('pyomo')
+                          or _ipopt_route_available('cyipopt')),
+                     'no IPOPT backend available')
+    def test_indexed_gp_solves_and_writes_back(self):
+        """An indexed GP through the default route, written back per element."""
         from lcsolver.solvers.solver import solve
 
         f = _indexed_gp()
         r = solve(f, solver='auto')
         self.assertEqual(r.get('problem_structure'), 'geometric_program')
+        self.assertIn('ipopt', str(r.get('solver', '')).lower())
         self.assertIsNone(r.get('writeback_error'))
         for i in range(4):
             self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
@@ -449,6 +475,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         for i in range(4):
             self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
 
+    @unittest.skipIf(not _ipopt_available(),
+                     'this is the fallback FROM IPOPT, so it needs one to fall back from')
     def test_auto_fallback_warns_instead_of_swallowing(self):
         """A failing structured backend must not fall through in silence."""
         import warnings
@@ -475,16 +503,27 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         finally:
             solver_module._convex_ipopt = original
 
+    @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_is_still_reachable_on_request(self):
-        """Changing the default must not remove the backend."""
+        """Changing the default must not remove the backend.
+
+        Asserting the answer alone would pass with ipopt silently serving the
+        request, which is the whole thing this is here to catch. cvxopt
+        returns its own cone payload -- 'dual objective', 'z', 's' -- and no
+        'solver' key, so those are the evidence that it ran.
+        """
         from lcsolver.solvers import solver as solver_module
 
         f = _gp_known_optimum()
-        solver_module.solve(f, solver='auto', convex_backend='cvxopt')
+        r = solver_module.solve(f, solver='auto', convex_backend='cvxopt')
+        self.assertIn('dual objective', r)
+        self.assertNotIn('ipopt', str(r.get('solver', '')).lower())
         self.assertAlmostEqual(pyo.value(f.x), 1.0, places=5)
         self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
 
 
+@unittest.skipIf(not _ipopt_available(),
+                 'both objective forms are IPOPT-side transformations')
 class TestGPObjectiveForm(unittest.TestCase):
     """The GP backend can write posynomials two ways; neither suits everything.
 
@@ -689,6 +728,8 @@ class TestConstantOnlyConstraints(unittest.TestCase):
 
 
 @unittest.skipIf(not formulation_available, 'LCsolver import failed')
+@unittest.skipIf(not _ipopt_available(),
+                 'counts detector walks on the IPOPT route; the cvxopt fallback walks again')
 class TestSolveDetectsOnce(unittest.TestCase):
     """`solve` walks the model once, not once per consumer.
 
@@ -849,3 +890,7 @@ class TestSuppliedStructures:
         split = structure_detector(unit_corrector(f), bounds_as_rows=False)
         with pytest.raises(ValueError, match='bounds_as_rows'):
             solve(f, structures=split, sensitivities=False)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -21,7 +21,7 @@ Variables are constructed by 1) creating an instance of a new variable in a LCso
 
    :param name: The name of the variable for the purposes of tracking in the formulation.  Commonly, this will be the same as the variable name in local namespace.
    :type  name: str
-   :param guess: The initial guess of the variable.  For scalar variables, this should be a valid float or int for the specified domain.  For vector variables, this will most often also be a single float or int, but a dictionary of index-value pairs is also accepted as in accordance with base pyomo.  Numpy arrays will be supported in a future release (see `this issue <https://github.com/codykarcher/pyomo/issues/1>`_)
+   :param guess: The initial guess of the variable.  For scalar variables, this should be a valid float or int for the specified domain.  For vector, matrix and tensor variables, a single float or int is given to every element; a nested list or a numpy array of the declared shape is laid out onto the index set with the first index outermost, so ``guess[i][j]`` is element ``(i, j)``; and a dictionary of index-value pairs is accepted as in accordance with base pyomo.  An array whose shape does not match ``size`` is refused rather than reshaped, because a transposed array is a different model and would solve without complaint.
    :type  guess: float or int or dict
    :param units: The units of the variable.  Every entry in a vector variable must have the same units.  Entries of '', ' ', '-', 'None', and 'dimensionless' all become units.dimensionless
    :type  units: str or pyomo.core.base.units_container._PyomoUnit

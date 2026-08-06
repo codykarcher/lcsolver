@@ -1,7 +1,7 @@
 # ===========
 # Description
 # ===========
-# The Hoburg UAV sizing problem, with profile drag supplied by a black box.
+# The Hoburg UAV sizing problem, formulated as a Geometric Program
 # From:  Hoburg and Abbeel
 #        Geometric Programming for Aircraft Design Optimization
 #        AIAA Journal
@@ -11,39 +11,34 @@
 # for minimum fuel: steady level flight, landing, drag build-up, propulsive
 # efficiency, Breguet range, weight build-up and wing structure.
 #
-# In the pure GP statement each segment carries an explicit five term
-# posynomial fit for profile drag,
+# Profile drag is the paper's five term posynomial fit, one row covering all
+# three segments at once,
 #
-#     1 >= sum_k a_k C_L^b_k tau^c_k Re^d_k C_Dp^e_k
+#     1 >= sum_k a_k C_L^b_k tau^c_k Re^d_k C_D_p^e_k
 #
-# Here that posynomial is hidden inside a black box: an opaque function
-# C_Dp = f(C_L, Re, tau) that solves the same fit implicitly and returns the
-# result with derivatives, the way an external analysis code (XFOIL, a neural
-# surrogate, CFD) would plug in. The optimizer never sees the algebra. The box
-# takes the whole mission at once and never learns how long it is, so the same
-# one serves three segments here or ten in another model.
+# See hoburg_blackbox.py for the same model with that row replaced by an
+# opaque analysis code. The two are identical apart from that one constraint,
+# and reach the same optimum.
 #
-# Because the box solves the same relation the posynomial states, the optimum
-# is unchanged at W_fuel = 5911.3 N. Only the solver's visibility into the
-# structure changes, which is the point: any posynomial can be swapped for any
-# analysis code without touching the rest of the model.
+# The wing structure is written in the paper's non-dimensional variables, so
+# the last block recovers the dimensional geometry -- span, chords, spar
+# thicknesses -- from them. That block costs the model its GP label: q == 1 +
+# lambda is a posynomial equality, and a GP admits only monomial ones. So the
+# statement is a Signomial Program AS WRITTEN, and the Report says so.
 #
-# hoburg.py is this model with the fit written out, and the two are line for
-# line the same apart from that one constraint -- including the last block,
-# which recovers the dimensional geometry from the paper's non-dimensional
-# structure variables. One of its rows, q == 1 + lambda, is a posynomial
-# equality, so this statement would be a Signomial Program even without the
-# black box. Here it makes no difference to the routing: a black box sends the
-# model to SIA either way.
+# It is a Geometric Program AS SOLVED. The presolve removes every row that
+# blocked it, leaving something convex in log space -- one convex solve, global
+# optimum. The router dispatches on the as-written class, which is why the
+# Report also names SIA: that loop is handed a GP and converges in a couple of
+# iterations. `structure_report` states both classifications side by side.
 
 # =================
 # Import Statements
 # =================
 import numpy as np
-from scipy.optimize import brentq
 
 import lcsolver
-from lcsolver import Formulation, BlackBoxFunctionModel, units
+from lcsolver import Formulation, units
 
 # ===================
 # Declare Formulation
@@ -135,98 +130,6 @@ V_stall_max = f.Constant(name="V_stall_max", value=38.0     , units="m/s"   , de
 w_bar       = f.Constant(name="w_bar"      , value=0.5      , units="-"     , description="Spar box width per chord")
 W_fixed     = f.Constant(name="W_fixed"    , value=14700.0  , units="N"     , description="Fixed weight")
 
-# ===================
-# Declare a Black Box
-# ===================
-# Coefficients of the profile drag fit (Hoburg and Abbeel, "dragFit"):
-#     1 >= sum_k a_k C_L^b_k tau^c_k Re^d_k C_Dp^e_k
-# They live inside the box, where the optimizer cannot see them.
-_DRAG_FIT = [
-    (2.56,     5.88, -3.32, -1.54, -2.26),
-    (3.80e-9, -0.92,  6.23, -1.38, -9.57),
-    (2.20e-3, -0.01,  0.03,  0.14, -0.73),
-    (1.19e4,   9.78,  1.76, -1.00, -0.91),
-    (6.14e-6,  6.53, -0.52, -0.99, -5.19),
-]
-
-
-class ProfileDrag(BlackBoxFunctionModel):
-    """C_Dp = f(C_L, Re, tau), by an implicit solve of the drag fit.
-
-    Stands in for any external drag analysis. Every segment is evaluated in
-    one call: C_L and Re arrive as vectors, tau is the single airfoil they
-    share. How many segments there are is not the box's business -- it reads
-    the length off the vectors it is handed, so the same box serves this
-    three segment mission or a ten segment one unchanged.
-    """
-
-    def __init__(self):
-        # Initialize the black box model
-        super().__init__()
-
-        # A brief description of the model
-        self.description = 'Profile drag from an implicit solve of the drag fit'
-
-        # Declare the black box model inputs. A size of np.inf is a vector of
-        # whatever length the model supplies; tau is declared a scalar.
-        self.inputs.append(name='C_L', units='-', size=np.inf, description='Lift coefficient')
-        self.inputs.append(name='Re' , units='-', size=np.inf, description="Reynold's number")
-        self.inputs.append(name='tau', units='-', description='Airfoil thickness to chord ratio')
-
-        # Declare the black box model outputs
-        self.outputs.append(
-            name='C_D_p', units='-', size=np.inf, description='Profile drag coefficient'
-        )
-
-        # Declare the maximum available derivative
-        self.availableDerivative = 1
-
-    def BlackBox(self, C_L, Re, tau):  # The actual function that does things
-        # Convert to the declared input units and strip to plain floats
-        C_L, Re, tau = self.sanitizeInputs(C_L, Re, tau, strip_units=True)
-        C_L = np.asarray(C_L, dtype=float)
-        Re = np.asarray(Re, dtype=float)
-
-        n = len(C_L)  # however many segments the model asked for
-        C_D_p = np.zeros(n)
-        dC_L = np.zeros(n)
-        dRe = np.zeros(n)
-        dtau = np.zeros(n)
-
-        for i in range(n):
-
-            def F(cdp):
-                return sum(a * C_L[i] ** b * tau ** c * Re[i] ** d * cdp ** g_
-                           for a, b, c, d, g_ in _DRAG_FIT) - 1.0
-
-            # Every exponent on C_Dp in the fit is negative, so F is strictly
-            # decreasing in C_Dp and the root is unique. The bracket is widened
-            # adaptively because the optimizer evaluates the box at intermediate
-            # iterates far from the optimum.
-            lo, hi = 1e-8, 1.0
-            while F(hi) > 0.0 and hi < 1e6:
-                hi *= 10.0
-            while F(lo) < 0.0 and lo > 1e-30:
-                lo /= 10.0
-            C_D_p[i] = brentq(F, lo, hi, xtol=1e-14, rtol=1e-14)
-
-            # Implicit differentiation: dC_Dp/dz = -(dF/dz) / (dF/dC_Dp)
-            dF_dcdp = dF_dCL = dF_dRe = dF_dtau = 0.0
-            for a, b, c, d, g_ in _DRAG_FIT:
-                t = a * C_L[i] ** b * tau ** c * Re[i] ** d * C_D_p[i] ** g_
-                dF_dcdp += g_ * t / C_D_p[i]
-                dF_dCL += b * t / C_L[i]
-                dF_dRe += d * t / Re[i]
-                dF_dtau += c * t / tau
-            dC_L[i] = -dF_dCL / dF_dcdp
-            dRe[i] = -dF_dRe / dF_dcdp
-            dtau[i] = -dF_dtau / dF_dcdp
-
-        # Each segment's drag depends only on its own C_L and Re, so those two
-        # jacobian blocks are diagonal; every segment shares the one tau.
-        return self.packOutputs(C_D_p, [np.diag(dC_L), np.diag(dRe), dtau])
-
-
 # =====================
 # Declare the Objective
 # =====================
@@ -305,40 +208,27 @@ f.ConstraintList([
         w_spar == w_bar * c_bar,
         M_root == M_r_bar * c_bar,
 
-        # Profile Drag, supplied by the black box rather than the posynomial fit
-        [ C_D_p, '==', [C_L, Re, tau], ProfileDrag() ],
+        # Profile Drag, the paper's five term fit. C_L and Re are per segment
+        # and tau is the one airfoil they share, so this single row applies to
+        # all three segments.
+          2.56    * C_L** 5.88 * tau**-3.32 * Re**-1.54 * C_D_p**-2.26
+        + 3.80e-9 * C_L**-0.92 * tau** 6.23 * Re**-1.38 * C_D_p**-9.57
+        + 2.20e-3 * C_L**-0.01 * tau** 0.03 * Re** 0.14 * C_D_p**-0.73
+        + 1.19e4  * C_L** 9.78 * tau** 1.76 * Re**-1.00 * C_D_p**-0.91
+        + 6.14e-6 * C_L** 6.53 * tau**-0.52 * Re**-0.99 * C_D_p**-5.19
+            <= 1.0 * units.dimensionless,
     ])
 
-# =============================================
-# Black Box can be run as a function!
-# =============================================
-drag = ProfileDrag()
-bbo = drag.BlackBox(np.array([0.6, 0.6, 0.2]) * units.dimensionless,
-                    np.array([3.0e6, 3.0e6, 8.0e6]) * units.dimensionless,
-                    0.12 * units.dimensionless)
-
-# The same box, no longer a three segment mission, sweeping five lift
-# coefficients at fixed Reynolds number
-sweep = drag.BlackBox(np.linspace(0.2, 0.8, 5) * units.dimensionless,
-                      np.full(5, 5.0e6) * units.dimensionless,
-                      0.12 * units.dimensionless)
-
-# =======================
+# ===========
 # Solve Model
-# =======================
-# `solve` sees the black box constraint and routes the model to SIA, which
-# imposes the box through its linearization inside a trust region loop while
-# keeping every algebraic constraint exact.
+# ===========
+# `solve` detects the class, eliminates the posynomial equality in the presolve,
+# and hands the SP loop what is left, which is convex in log space -- so the
+# answer is a global optimum rather than a local one. It also runs the
+# structural checks and computes the sensitivity of the optimum to every
+# Constant.
 sol = lcsolver.solve(f)
 
 # The summary prints the objective, every variable with its units and
 # description, then the sensitivity of the optimum to each Constant.
-#
-# Read the Post Solve Report before the sensitivities on this model. It raises
-# LC-W302: the duals recovered from the SIA solve do not satisfy stationarity,
-# so the sensitivities are not to be trusted. They are not merely imprecise --
-# finite differencing the solve gives d log(W_fuel) / d log(V_stall_max) =
-# -0.30 against the +0.16 reported, the wrong sign. That is the check earning
-# its place: a GP hands back exact sensitivities from its duals, and it is
-# tempting to assume a black-box solve does too.
 print(sol.summary())

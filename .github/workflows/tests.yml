@@ -18,13 +18,30 @@ jobs:
   # disagree about what the problem IS, which is the defect class this
   # repository actually produces. It found four real bugs in its first two
   # runs, one of them introduced hours earlier the same day.
+  #
+  # Runs under conda for the same reason the coverage job does: the cross-path
+  # suite compares five routes and four of them are IPOPT routes, so on a
+  # pip-only runner it skips in its entirety and reports success having
+  # compared nothing.
   integration:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.11'}
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: lcsolver
+          auto-activate-base: false
       - run: pip install -e ".[test]"
+      - run: lcsolver-check-solvers
       - run: pytest -m "slow and not veryslow" -q
       - run: pytest -m veryslow -q          # SPaircraft, about half a minute
         timeout-minutes: 15
+
+# Coverage lives in its own workflow, coverage.yml, rather than as a third job
+# here. A GitHub Actions badge addresses a workflow, not a job, so a coverage
+# job in this file could not be badged separately from the tests it sits
+# beside -- the two would share one status and one badge.

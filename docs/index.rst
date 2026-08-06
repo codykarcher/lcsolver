@@ -55,7 +55,6 @@ User's Guide
    variables.rst
    constants.rst
    objectives.rst
-   blackboxobjectives.rst
    constraints.rst
    blackboxconstraints.rst
    advancedruntimeconstraints.rst
@@ -65,7 +64,6 @@ User's Guide
    ipopt.rst
    results.rst
    sensitivities.rst
-   slcp.rst
    examples.rst
    additionaltips.rst
 

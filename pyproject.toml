@@ -12,6 +12,7 @@ license = "BSD-3-Clause"
 license-files = ["LICEN[CS]E.*"]
 authors = [
   {name = "Cody Karcher", email = "cody.karcher@csulb.edu"},
+  {name = "Michael L. Bynum"},
 ]
 maintainers = [
   {name = "Cody Karcher", email = "cody.karcher@csulb.edu"},
@@ -35,22 +36,57 @@ classifiers = [
 
 # Hard dependencies only. Anything requiring a system library or a compiler
 # toolchain belongs in an extra below.
+#
+# cvxopt is here rather than in an extra because it publishes wheels for every
+# interpreter and platform this package supports -- cp310-cp314 on macOS
+# arm64/x86_64, manylinux and musllinux x86_64/aarch64, and win_amd64, with
+# cp39 covered by 1.3.2 -- so it needs no compiler and no system library, and
+# the "extras are for things that need a toolchain" rule does not apply to it.
+# It was optional before, which was not true in practice: importing lcsolver
+# imports lcsolver.solvers.solver, and that module refused to load without
+# cvxopt. The extra is kept below as a no-op alias so existing install
+# instructions keep working.
 dependencies = [
   "pyomo",
   "numpy",
   "scipy",
   "pint",
+  "cvxopt",
 ]
 
 # Optional extras. mpi4py in particular requires a working MPI installation and
 # must NOT be a hard dependency: it breaks `pip install lcsolver` on machines without
 # MPI, which includes most reviewer and CI environments.
+#
+# IPOPT is deliberately absent: there is no pip-installable IPOPT. cyipopt is
+# sdist-only on PyPI for every release to date, so `pip install cyipopt`
+# compiles against an IPOPT that must already exist, and no wheel anywhere
+# ships the `ipopt` executable. Getting IPOPT is the job of
+# `lcsolver-install-solvers` (see lcsolver/install.py).
 [project.optional-dependencies]
 parallel = ["mpi4py"]
 plotting = ["matplotlib", "pandas"]
-solvers  = ["cvxopt"]
+solvers  = []                       # back-compat alias; cvxopt is now a hard dependency
 docs     = ["sphinx", "sphinx-rtd-theme"]
-test     = ["pytest"]
+test     = ["pytest", "pytest-cov"]
+
+# The solver bootstrap and the environment report. Both are plain Python so
+# they run identically on Windows, where a shell script would not.
+[project.scripts]
+lcsolver-install-solvers = "lcsolver.install:main"
+lcsolver-check-solvers = "lcsolver.environment:main"
+
+# install_ipopt.sh lives inside the package rather than in utilities/ so that
+# `lcsolver-install-solvers --ma27` works from a wheel install, where
+# utilities/ was never installed. Named explicitly so a future build-backend
+# default that ships only *.py cannot quietly drop it.
+[tool.hatch.build.targets.wheel]
+packages = ["lcsolver"]
+artifacts = ["lcsolver/scripts/*.sh"]
+
+[tool.hatch.build.targets.sdist]
+include = ["lcsolver", "tests", "docs", "utilities", "examples",
+           "environment.yml", "README.md", "LICENSE", "pyproject.toml"]
 
 [project.urls]
 Homepage = "https://github.com/codykarcher/lcsolver"

@@ -74,6 +74,8 @@ import math
 import numpy as np
 import pyomo.environ as pyo
 
+from lcsolver.core.errors import SolverUnavailable
+
 
 # ---------------------------------------------------------------------------
 # Problem description
@@ -1042,11 +1044,12 @@ def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
     Shared by the rebuild path and the cached one, so both report failures the
     same way.
     """
-    opt = pyo.SolverFactory('ipopt')
+    from lcsolver.environment import ipopt_solver_factory
+    opt = ipopt_solver_factory()
     if not opt.available(exception_flag=False):
-        raise RuntimeError(
+        raise SolverUnavailable(
             'SLCP needs IPOPT to solve its sub-problems; no usable installation '
-            'was found. Install the ipopt executable or `pip install cyipopt`.')
+            'was found. Run `lcsolver-install-solvers`; see docs/ipopt.rst.')
     for k, v in (options.ipopt_options or {}).items():
         opt.options[k] = v
 
@@ -1289,6 +1292,17 @@ def solve(problem, x0, method='slcp', options=None):
     """
     if method not in ('slcp', 'lsqp', 'sqp'):
         raise ValueError("method must be one of 'slcp', 'lsqp', 'sqp'")
+
+    # Same precondition as SIA: every sub-problem is an IPOPT solve, so
+    # without one the loop makes no progress and returns the starting point
+    # dressed as a result. Say what is actually wrong instead.
+    from lcsolver.environment import ipopt_available
+    if not ipopt_available():
+        raise SolverUnavailable(
+            'SLCP solves every sub-problem with IPOPT, and no usable '
+            'installation was found. Run `lcsolver-install-solvers`; see '
+            'docs/ipopt.rst.')
+
     options = options or Options()
 
     n = problem.n

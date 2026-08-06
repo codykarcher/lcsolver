@@ -49,6 +49,8 @@ import math
 
 import pyomo.environ as pyo
 
+from lcsolver.core.errors import SolverUnavailable
+
 
 # ---------------------------------------------------------------------------
 def _group_rows(rows):
@@ -331,18 +333,26 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
     if route == 'auto':
         route = 'pyomo' if _executable_available('ipopt') else 'cyipopt'
     if route == 'pyomo':
-        opt = (pyo.SolverFactory('ipopt', executable=executable)
-               if executable else pyo.SolverFactory('ipopt'))
+        from lcsolver.environment import ipopt_solver_factory
+        opt = ipopt_solver_factory(executable)
     else:
         opt = pyo.SolverFactory('cyipopt')
     if not opt.available(exception_flag=False):
-        raise RuntimeError(
-            'no usable IPOPT installation found for the convex backend; install '
-            'the ipopt executable or `pip install cyipopt`')
-    for k, v in (options or {}).items():
-        opt.options[k] = v
+        raise SolverUnavailable(
+            'no usable IPOPT installation found for the convex backend; run '
+            '`lcsolver-install-solvers`')
 
-    results = opt.solve(m, tee=tee) if route == 'cyipopt' else opt.solve(m, tee=tee)
+    # The two routes take options by different mechanisms, and only the AMPL
+    # one has an `options` mapping: PyomoCyIpoptSolver takes them as a solve()
+    # argument and raises AttributeError on `opt.options[...]`. Setting
+    # linear_solver on the cyipopt route is exactly what an MA27 user needs to
+    # do, so this has to be right on both.
+    if route == 'cyipopt':
+        results = opt.solve(m, tee=tee, options=dict(options or {}))
+    else:
+        for k, v in (options or {}).items():
+            opt.options[k] = v
+        results = opt.solve(m, tee=tee)
     summary = _summarize(results)
 
     tc = summary['termination_condition']
@@ -407,12 +417,25 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
 
 
 # ---------------------------------------------------------------------------
-def solve_lp_qp_ipopt(m, **kwargs):
+def solve_lp_qp_ipopt(m, structure='linear_program', **kwargs):
     """LP/QP with IPOPT.
 
     These are already convex in their natural variables, so no transformation is
     needed: the model goes to IPOPT unchanged and the solution is loaded back by
     Pyomo in the usual way.
+
+    ``structure`` is what the detector found, and is stamped onto the result so
+    the solution's Report says so. Without it the model goes through
+    ``ipopt_solve``, which labels everything it is handed a
+    ``nonlinear_program`` -- and a detected LP came back reporting itself as a
+    general NLP, contradicting ``f.structure_report()`` on the same model.
     """
     from lcsolver.solvers.ipopt import ipopt_solve
-    return ipopt_solve(m, **kwargs)
+
+    res = ipopt_solve(m, **kwargs)
+    try:
+        res['problem_structure'] = structure
+        m._edi_last_problem_structure = structure
+    except Exception:
+        pass
+    return res

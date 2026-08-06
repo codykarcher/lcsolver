@@ -33,18 +33,19 @@ try:
     from lcsolver import Formulation
 
     formulation_available = True
-except:
+except ImportError:
+    # Narrow on purpose. A bare `except` here turns any breakage inside the
+    # package -- a SyntaxError, a NameError -- into `not available`, and the
+    # skipIf below then quietly skips this whole file instead of failing.
     pass
-    # formulation_available = False
 
 blackbox_available = False
 try:
     from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
-except:
+except ImportError:
     pass
-    # blackbox_available = False
 
 if numpy_available:
     import numpy as np
@@ -382,6 +383,7 @@ class TestEDIFormulation(unittest.TestCase):
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         f.Objective(x + y)
+        self.assertEqual(len(f.get_objectives()), 1)
 
     def test_edi_formulation_runtimeobjective(self):
         "Tests the runtime objective constructor in lcsolver.formulation"
@@ -399,6 +401,7 @@ class TestEDIFormulation(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         f.Objective(x + y)
         f.Constraint(x + y <= 1.0 * units.m)
+        self.assertEqual(len(f.get_explicitConstraints()), 1)
 
     def test_edi_formulation_runtimeconstraint_tuple(self):
         "Tests the runtime constraint constructor in lcsolver.formulation"
@@ -449,6 +452,11 @@ class TestEDIFormulation(unittest.TestCase):
         f.Constraint(z <= 1 * units.m**2)
 
         f.RuntimeConstraint(*(z, '==', [x, y], UnitCircle()))
+        # the three call forms below must all register the same thing: one
+        # explicit constraint and one runtime constraint
+        self.assertEqual(len(f.get_runtimeConstraints()), 1)
+        self.assertEqual(len(f.get_explicitConstraints()), 1)
+        self.assertEqual(len(f.get_constraints()), 2)
 
     def test_edi_formulation_runtimeconstraint_list(self):
         "Tests the runtime constraint constructor in lcsolver.formulation"
@@ -499,6 +507,9 @@ class TestEDIFormulation(unittest.TestCase):
         f.Constraint(z <= 1 * units.m**2)
 
         f.RuntimeConstraint(*[[z], ['=='], [x, y], UnitCircle()])
+        self.assertEqual(len(f.get_runtimeConstraints()), 1)
+        self.assertEqual(len(f.get_explicitConstraints()), 1)
+        self.assertEqual(len(f.get_constraints()), 2)
 
     def test_edi_formulation_runtimeconstraint_dict(self):
         "Tests the runtime constraint constructor in lcsolver.formulation"
@@ -556,6 +567,9 @@ class TestEDIFormulation(unittest.TestCase):
                 'black_box': UnitCircle(),
             }
         )
+        self.assertEqual(len(f.get_runtimeConstraints()), 1)
+        self.assertEqual(len(f.get_explicitConstraints()), 1)
+        self.assertEqual(len(f.get_constraints()), 2)
 
     def test_edi_formulation_constraintlist_1(self):
         "Tests the constraint list constructor in lcsolver.formulation"
@@ -948,8 +962,6 @@ class TestEDIFormulation(unittest.TestCase):
         )
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
@@ -1042,3 +1054,78 @@ class TestGroupsAndGuesses(unittest.TestCase):
         self.assertIs(f.wing.AR, ar)          # and through the group
         self.assertEqual({v.name for v in f.get_variables()},
                          {'plain', 'wing_AR'})
+
+
+@unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
+@unittest.skipIf(not pint_available, 'Testing units requires pint')
+class TestArrayInitialization(unittest.TestCase):
+    """Initial values given as an array, laid out onto the index set.
+
+    Pyomo wants a dict keyed by the index tuple, and a nested list handed to it
+    raises `KeyError: "Index '0' is not valid for indexed component 'e'"`,
+    which names neither the shape it wanted nor the shape it got. The
+    comprehension that works is noise in a model file.
+    """
+
+    def test_a_matrix_constant_from_a_nested_list(self):
+        f = Formulation()
+        e = f.Constant('e', [[3.0, 5.0, 9.0], [8.0, 4.0, 3.0]], 'kg',
+                       'a matrix', size=[2, 3])
+        self.assertEqual(pyo.value(e[0, 1]), 5.0)
+        self.assertEqual(pyo.value(e[1, 2]), 3.0)   # outer level is the row
+
+    def test_a_matrix_variable_guess_from_a_numpy_array(self):
+        import numpy as np
+
+        f = Formulation()
+        M = f.Variable('M', np.arange(6.0).reshape(2, 3), 'm', 'a matrix',
+                       size=[2, 3])
+        self.assertEqual(pyo.value(M[1, 0]), 3.0)
+
+    def test_three_dimensions(self):
+        import numpy as np
+
+        f = Formulation()
+        T = f.Variable('T', np.arange(8.0).reshape(2, 2, 2), 'm', 'a tensor',
+                       size=[2, 2, 2])
+        self.assertEqual(pyo.value(T[1, 0, 1]), 5.0)
+
+    def test_a_flat_list_still_works(self):
+        f = Formulation()
+        c = f.Constant('c', [1.0, 2.0], '-', 'a vector', size=2)
+        self.assertEqual([pyo.value(c[i]) for i in (0, 1)], [1.0, 2.0])
+
+    def test_a_scalar_still_reaches_every_element(self):
+        f = Formulation()
+        x = f.Variable('x', 2.0, 'm', 'a vector', size=4)
+        self.assertEqual([pyo.value(x[i]) for i in range(4)], [2.0] * 4)
+
+    def test_a_dict_still_works(self):
+        f = Formulation()
+        c = f.Constant('c', {0: 1.0, 1: 2.0}, '-', 'a vector', size=2)
+        self.assertEqual(pyo.value(c[1]), 2.0)
+
+    def test_a_transposed_array_is_refused(self):
+        """The reason the shape is checked rather than reshaped."""
+        f = Formulation()
+        with self.assertRaises(ValueError) as ctx:
+            f.Constant('e', [[3.0, 5.0, 9.0], [8.0, 4.0, 3.0]], '-', 'e',
+                       size=[3, 2])
+        self.assertIn('[2, 3]', str(ctx.exception))
+        self.assertIn('transposed', str(ctx.exception))
+
+    def test_a_wrong_length_is_refused(self):
+        f = Formulation()
+        with self.assertRaises(ValueError) as ctx:
+            f.Constant('c', [1.0, 2.0, 3.0], '-', 'c', size=4)
+        self.assertIn('size=4', str(ctx.exception))
+
+    def test_an_array_with_no_size_is_refused(self):
+        f = Formulation()
+        with self.assertRaises(ValueError) as ctx:
+            f.Constant('c', [1.0, 2.0], '-', 'c')
+        self.assertIn('size=2', str(ctx.exception))
+
+
+if __name__ == '__main__':
+    unittest.main()

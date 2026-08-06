@@ -513,13 +513,17 @@ def test_output_values_are_post_computed_correctly():
 def test_eliminating_outputs_shrinks_the_solved_problem():
     st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
     small, removed = reduce_columns(st)
-    kept, _ = reduce_columns(st, eliminate_outputs=False)
+    kept, kept_removed = reduce_columns(st, eliminate_outputs=False)
 
     assert len(small['variables']) == len(st['variables']) - 2
     assert small['info']['N_cons_total'] == st['info']['N_cons_total'] - 2
     assert small['info']['N_vars_output'] == 2
-    # with the mode off, nothing is removed and the constraints stay
+    # with the mode off, nothing is removed and the constraints stay -- both
+    # halves of that sentence, since the variable count alone would still pass
+    # if the defining rows had been dropped
     assert len(kept['variables']) == len(st['variables'])
+    assert not kept_removed
+    assert kept['info']['N_cons_total'] == st['info']['N_cons_total']
 
 
 def test_a_bounded_output_is_not_eliminated():
@@ -1183,8 +1187,15 @@ def test_a_backend_refuses_a_structure_it_cannot_read():
 
 
 def test_an_unknown_consumer_is_not_second_guessed():
+    """A consumer `require` has never heard of is allowed, not rejected.
+
+    The check is that it returns rather than raising: guessing at the needs of
+    an unknown backend would block one that is perfectly able to read the
+    structure it was handed.
+    """
     from lcsolver.presolve.structureDetector import require
-    require(_detect(_active_bound_model(), bounds_as_rows=False), 'something_new')
+    st = _detect(_active_bound_model(), bounds_as_rows=False)
+    assert require(st, 'something_new') is None
 
 
 # ---------------------------------------------------------------------------
@@ -1435,7 +1446,11 @@ def test_evaluate_counts_bound_violations_in_natural_space():
 def test_equivalence_check_works_on_a_linear_program():
     """assert_equivalent must cover LPs, not only the log-space models."""
     st = _detect(_lp_with_negatives(), bounds_as_rows=False)
-    assert_equivalent(st, st, [3.0, -1.0])
+    # Independently rebuilt rather than `assert_equivalent(st, st, ...)`, which
+    # compares an object with itself and so can only fail if the checker is
+    # broken outright.
+    same = _detect(_lp_with_negatives(), bounds_as_rows=False)
+    assert_equivalent(st, same, [3.0, -1.0])
 
     key = st.linear_key
     broken = dict(st)

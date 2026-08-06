@@ -95,6 +95,8 @@ import math
 import numpy as np
 import pyomo.environ as pyo
 
+from lcsolver.core.errors import SolverUnavailable
+
 from lcsolver.solvers.sequential.slcp import (CondensedEquality, Posynomial,
                                     seat_step_in_bounds,
                                     PosynomialRatio, Problem, Signomial)
@@ -671,7 +673,8 @@ def _polish_ipopt(problem, x, options):
         return None
     m.obj = pyo.Objective(expr=_sumexp(m, problem.objective.terms),
                           sense=pyo.minimize)
-    opt = pyo.SolverFactory('ipopt')
+    from lcsolver.environment import ipopt_solver_factory
+    opt = ipopt_solver_factory()
     if not opt.available(exception_flag=False):
         return None
     for k, v in (options.ipopt_options or {}).items():
@@ -1644,11 +1647,12 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
     n = problem.n
     cons = problem.constraints
 
-    opt = pyo.SolverFactory("ipopt")
+    from lcsolver.environment import ipopt_solver_factory
+    opt = ipopt_solver_factory()
     if not opt.available(exception_flag=False):
-        raise RuntimeError(
+        raise SolverUnavailable(
             "SIA needs IPOPT to solve its sub-problems; no usable installation "
-            "was found. Install the ipopt executable or `pip install cyipopt`.")
+            "was found. Run `lcsolver-install-solvers`; see docs/ipopt.rst.")
     for k, v in (options.ipopt_options or {}).items():
         opt.options[k] = v
     results = opt.solve(m, tee=options.tee, load_solutions=False)
@@ -2164,6 +2168,18 @@ def explain_infeasibility(problem, x, options=None, has_blackbox=False,
     stays positive -- the ones that must be relaxed -- together with the
     variables each touches.
     """
+    # The elastic Phase I is a sequence of IPOPT solves. With no IPOPT every
+    # one of them fails, nothing moves, the slacks stay at their starting
+    # zeros, and the report concludes the model is feasible at the initial
+    # guess -- which is the most damaging possible wrong answer here, since
+    # this function exists to be believed about feasibility.
+    from lcsolver.environment import ipopt_available
+    if not ipopt_available():
+        raise SolverUnavailable(
+            'the feasibility check solves its elastic sub-problems with '
+            'IPOPT, and no usable installation was found. Run '
+            '`lcsolver-install-solvers`; see docs/ipopt.rst.')
+
     options = options or SIAOptions()
     x1, it, feasible, slacks, mults = _phase1_l1(
         problem, np.asarray(x, dtype=float).copy(), options, has_blackbox,
@@ -2314,6 +2330,20 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
 
 def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     """Solve a signomial program by sequential inner approximation."""
+    # Checked here, before anything else, because every sub-problem is an
+    # IPOPT solve and the loop degrades quietly without one: each sub-problem
+    # fails, the trust region never moves, and SIA returns after zero
+    # iterations with `converged=False` and the objective *evaluated at the
+    # initial guess*. That is a plausible-looking number produced by no
+    # optimization at all, and the caller has to read `converged` to know it.
+    # A missing install should say so.
+    from lcsolver.environment import ipopt_available
+    if not ipopt_available():
+        raise SolverUnavailable(
+            'SIA solves every sub-problem with IPOPT, and no usable '
+            'installation was found. Run `lcsolver-install-solvers`; see '
+            'docs/ipopt.rst.')
+
     options = options or SIAOptions()
     x = np.asarray(x0, dtype=float).copy()
     if np.any(x <= 0):

@@ -288,7 +288,26 @@ def parseDict_GP(ix,rv,N_vars_unwrapped,variableMap):
     return collapseGProws(gpRows)
 
 
-def checkObjectiveHessian_PD(gpRows):
+def checkObjectiveHessian_PSD(gpRows):
+    """Is the objective a convex quadratic? Returns ``[bool, P, q, r]``.
+
+    Convexity of a quadratic objective is positive SEMI-definiteness of its
+    Hessian, and that is what is tested here. It used to test for positive
+    definiteness, which rejected the commonest engineering QP there is: any
+    model where some variable does not appear in the objective has a singular
+    Hessian, so a control or tracking problem that penalizes the inputs and
+    leaves the states to the dynamics rows was never detected as a QP. It
+    still solved -- as a general NLP, giving up the convexity guarantee and
+    the exact duals, with the Report and ``structure_report`` both saying so
+    only in the sense of not mentioning a QP at all.
+
+    A semi-definite Hessian can leave the problem unbounded along its null
+    space, but so can a linear objective, and an LP is detected without
+    complaint; the pre-solve bound checks are what catch that, for both.
+
+    An all-zero Hessian is affine, not quadratic, and is left to
+    :func:`checkLinear` -- otherwise every LP would be reported as a QP.
+    """
     N_vars = len(gpRows[0])-2
     hessian = np.zeros([N_vars,N_vars])
     P = np.zeros([N_vars,N_vars])
@@ -328,11 +347,24 @@ def checkObjectiveHessian_PD(gpRows):
     if onlyZeros:
         return [False,None,None,None]
 
-    eigenvalues, eigenvectors = np.linalg.eig(hessian)
-    if min(eigenvalues) > 0:
+    # eigvalsh rather than eig: the Hessian is symmetric by construction
+    # above, and the symmetric routine is what guarantees real eigenvalues.
+    # `eig` can hand back a complex array on a symmetric matrix, and `min` of
+    # that raises rather than answering.
+    eigenvalues = np.linalg.eigvalsh(hessian)
+    # Scaled, because "zero" for a Hessian built from stiffnesses of 1e5 is
+    # not the same number as for one built from drag coefficients.
+    tol = 1e-10 * max(1.0, float(np.max(np.abs(eigenvalues))))
+    if min(eigenvalues) >= -tol:
         return [True,P,q,r]
     else:
         return [False,None,None,None]
+
+
+#: The old name. Kept because it appears in commented-out import lists around
+#: the package, and because what it tested is the thing this docstring is
+#: about.
+checkObjectiveHessian_PD = checkObjectiveHessian_PSD
 
 def checkLinear(gpRows):
     N_vars = len(gpRows[0])-2

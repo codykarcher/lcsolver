@@ -57,6 +57,34 @@ else:
     )
 
 
+#: How a dimension of flexible length is stored, and what ``sizeCheck`` looks
+#: for when deciding to skip a dimension.
+FLEXIBLE_LENGTH = -1
+
+_SIZE_ERROR = (
+    'Invalid size %r.  A dimension must be an integer, or np.inf '
+    "(equivalently the string 'inf') for a vector of flexible length."
+)
+
+
+def _decode_size_entry(val):
+    """One declared dimension, as the integer stored internally.
+
+    ``np.inf`` and the string ``'inf'`` both mean flexible length. Any other
+    string is still accepted as flexible: that was the only way to declare it
+    before, and a model written against it should keep working.
+    """
+    if isinstance(val, str):
+        return FLEXIBLE_LENGTH
+    if isinstance(val, (float, np.floating)):
+        if val == np.inf:
+            return FLEXIBLE_LENGTH
+        raise ValueError(_SIZE_ERROR % (val,))
+    if isinstance(val, bool) or not isinstance(val, (int, np.integer)):
+        raise ValueError(_SIZE_ERROR % (val,))
+    return int(val)
+
+
 class BlackBoxFunctionModel_Variable(object):
     def __init__(self, name, units, description='', size=0):
         # Order matters
@@ -119,42 +147,38 @@ class BlackBoxFunctionModel_Variable(object):
 
     @size.setter
     def size(self, val):
-        invalid = False
+        """The declared shape: 0 for a scalar, an integer, or one per dimension.
+
+        A dimension may be declared of flexible length with ``np.inf``, in
+        which case the box takes whatever the model hands it and that
+        dimension's length check is skipped -- so one model can serve a
+        three element vector here and a ten element one there. The string
+        ``'inf'`` means the same thing, which is what this accepted before
+        numpy's constant was allowed.
+        """
         if isinstance(val, (list, tuple)):
             sizeTemp = []
             for x in val:
-                if isinstance(x, str):
-                    # is a vector of unknown length, should be 'inf', but any string accepted
-                    x = -1
-                    # pass
-                elif not isinstance(x, int):
-                    raise ValueError(
-                        'Invalid size.  Must be an integer or list/tuple of integers'
-                    )
+                x = _decode_size_entry(x)
                 if x == 1:
                     raise ValueError(
                         'A value of 1 is not valid for defining size.  Use fewer dimensions.'
                     )
                 sizeTemp.append(x)
-            self._size = val
+            # Store the decoded dimensions rather than the declaration as
+            # written. sizeCheck skips a dimension by comparing it against -1,
+            # so leaving an np.inf or an 'inf' in the list made a
+            # multidimensional flexible size fail its own length check.
+            self._size = sizeTemp
+        elif val is None:
+            self._size = 0  # set to scalar
         else:
-            if val is None:
-                self._size = 0  # set to scalar
-            elif isinstance(val, str):
-                # is a 1D vector of unknown length, should be 'inf', but any string accepted
-                self._size = -1
-                # pass
-            elif isinstance(val, int):
-                if val == 1:
-                    raise ValueError(
-                        'A value of 1 is not valid for defining size.  Use 0 to indicate a scalar value.'
-                    )
-                else:
-                    self._size = val
-            else:
+            val = _decode_size_entry(val)
+            if val == 1:
                 raise ValueError(
-                    'Invalid size.  Must be an integer or list/tuple of integers'
+                    'A value of 1 is not valid for defining size.  Use 0 to indicate a scalar value.'
                 )
+            self._size = val
 
     # =====================================================================================================================
     # Define the description

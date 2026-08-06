@@ -5,7 +5,7 @@
 
 [![tests](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/tests.yml)
 [![cross-platform](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/test.yml)
-[![coverage](https://codecov.io/gh/codykarcher/lcsolver/branch/main/graph/badge.svg)](https://codecov.io/gh/codykarcher/lcsolver)
+[![coverage](https://github.com/codykarcher/lcsolver/actions/workflows/coverage.yml/badge.svg)](https://github.com/codykarcher/lcsolver/actions/workflows/coverage.yml)
 
 LCsolver is a lightweight wrapper on the Pyomo language that is targeted at composing engineering design optimization problems.  The language and interface have been designed to mimic many of the features found in [GPkit](https://github.com/convexengineering/gpkit) and [CVXPY](https://github.com/cvxpy/cvxpy) while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
 
@@ -21,6 +21,8 @@ LCsolver began as a contribution to Pyomo itself (`pyomo.contrib.lcsolver`) and 
 
 Two steps, because one of the solvers cannot come from pip. `pip install lcsolver` gets you the package and cvxopt; it cannot get you IPOPT, which is the default backend — there is no IPOPT executable on PyPI, and cyipopt is published there as source only, so it compiles against an IPOPT that has to exist already.
 
+**You do not need IPOPT to try LCsolver.** After `pip install lcsolver` alone, a detected LP, QP, GP or SP solves through cvxopt — `solve()` says so and falls back on its own — and the test suite passes, skipping what it cannot run. IPOPT is needed for general nonlinear programs, for black-box constraints, and for the SLCP and SIA routes.
+
 **Everything in one command (recommended):**
 
 ```
@@ -34,7 +36,7 @@ pip install -e .
 **Or pip, then the solver bootstrap:**
 
 ```
-pip install git+https://github.com/codykarcher/lcsolver.git
+pip install lcsolver
 lcsolver-install-solvers
 ```
 

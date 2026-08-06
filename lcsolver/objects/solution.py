@@ -73,7 +73,8 @@ class Solution:
     def __init__(self, objective=None, objective_units=None, variables=None,
                  constants=None, sensitivities=None, status=None,
                  solver=None, structure=None, groups=None, ambiguous=None,
-                 holographic=None, report=None, messages=None):
+                 holographic=None, holographic_total=0, report=None,
+                 messages=None):
         self.objective = objective
         self.objective_units = objective_units
         self.variables = dict(variables or {})
@@ -87,6 +88,9 @@ class Solution:
         #: Holographic constraints found ACTIVE at this solution. Non-empty
         #: means the answer is on a limit that was declared never to bind.
         self.holographic = list(holographic or [])
+        #: How many were DECLARED, so the report can say "2 of 3" rather than
+        #: "2 of 2" and understate how much of the model was being watched.
+        self.holographic_total = holographic_total or len(self.holographic)
         self.status = status
         self.solver = solver
         self.structure = structure
@@ -248,7 +252,8 @@ class Solution:
 
         if self.holographic:
             from lcsolver.postsolve.holographic import format_holographic
-            L += [format_holographic(self.holographic), '']
+            L += [format_holographic(self.holographic,
+                                     total=self.holographic_total), '']
 
         L += ['Sensitivities', '-------------']
         if not self.constants:
@@ -344,6 +349,10 @@ class Solution:
         """
         import pyomo.environ as pyo
 
+        from lcsolver.postsolve.holographic import (
+            holographic_total as _holographic_total,
+        )
+
         def expand(components):
             """One entry per element, so a vector prints as its members.
 
@@ -396,6 +405,7 @@ class Solution:
                    sensitivities=sensitivities, status=status, solver=solver,
                    structure=structure, ambiguous=ambiguous,
                    holographic=holographic,
+                   holographic_total=_holographic_total(model),
                    report=report or getattr(model, '_solve_report', None),
                    messages=getattr(model, '_solve_messages', None),
                    groups=cls._group_paths(getattr(model, '_groups', {})))

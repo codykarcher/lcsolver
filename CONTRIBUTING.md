@@ -35,8 +35,19 @@ much easier to advise on concrete code.
 git clone <your fork>
 cd lcsolver
 python -m pip install -e ".[test,docs]"
+lcsolver-install-solvers          # IPOPT; pip cannot supply it
 python -m pytest tests/
 ```
+
+The solver bootstrap is a separate step because IPOPT is not pip-installable —
+there is no IPOPT executable on PyPI and cyipopt is published there as source
+only. `conda env create -f environment.yml` does the same job in one command if
+you would rather start from conda. Tests that need IPOPT skip cleanly without
+it, so the suite runs either way; a good deal of it is then not being exercised.
+
+`lcsolver-check-solvers` reports which `ipopt` binary is actually being used and
+which linear solver it carries, which is worth checking before concluding that
+a solver-related test failure is your change.
 
 Note that `mpi4py` is an optional extra (`.[parallel]`) and requires a working MPI
 installation. It is not needed to run the test suite.

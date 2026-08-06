@@ -14,6 +14,14 @@ returned by solve().
 
 import warnings
 
+
+def _ipopt_available():
+    try:
+        from lcsolver.environment import ipopt_available
+        return bool(ipopt_available())
+    except Exception:
+        return False
+
 import pytest
 
 pyo = pytest.importorskip('pyomo.environ')
@@ -87,6 +95,9 @@ def test_solve_returns_solveresult():
     assert res.objective == pytest.approx(2.0, rel=1e-5)
 
 
+@pytest.mark.skipif(
+    not _ipopt_available(),
+    reason='the Report names the route that solved it, and the cvxopt fallback reports a different one')
 def test_messages_captured_not_printed():
     """Solve warnings land in sol.messages; the console stays clean."""
     f = Formulation()

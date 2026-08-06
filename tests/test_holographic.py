@@ -24,7 +24,11 @@ from lcsolver.solvers.solver import solve
 
 
 def _model(cap):
-    """min A/(x*y) s.t. x*y >= A -- x and y want to grow without bound."""
+    """min A/(x*y) s.t. x*y >= A -- x and y want to grow without bound.
+
+    The objective falls monotonically in x and y, so the caps bind wherever
+    they are put: this is the model for the ACTIVE case, at any cap.
+    """
     f = Formulation()
     x = f.Variable(name='x', guess=2.0, units='m', description='x')
     y = f.Variable(name='y', guess=2.0, units='m', description='y')
@@ -33,6 +37,23 @@ def _model(cap):
     f.ConstraintList([x * y >= A])
     f.HolographicConstraintList([x <= cap * pyo.units.m,
                                  y <= cap * pyo.units.m])
+    return f
+
+
+def _interior_model():
+    """min x + A/x -- the optimum is at sqrt(A), far inside the caps.
+
+    The inactive case needs an objective with an interior minimum. Merely
+    putting the caps far away does not make them inactive if the objective
+    still runs at them, which is what makes this a different model rather
+    than _model() with a bigger number.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=2.0, units='m', description='x')
+    A = f.Constant(name='A', value=2.0, units='m^2', description='A')
+    f.Objective(x + A / x)
+    f.HolographicConstraintList([x <= 1e6 * pyo.units.m,
+                                 x >= 1e-6 * pyo.units.m])
     return f
 
 
@@ -57,10 +78,11 @@ def test_active_is_detected_and_warned():
 
 def test_inactive_is_silent():
     """The common case must cost nothing and say nothing."""
-    f = _model(1e6)
+    f = _interior_model()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         solve(f, sensitivities=False)
+    assert abs(float(f.solution['x']) - 2.0 ** 0.5) < 1e-6   # interior, not capped
     assert not [w for w in caught if 'holographic' in str(w.message)]
     assert f.solution.holographic == []
     assert 'holographic' not in f.solution.summary(top=0)
@@ -112,9 +134,12 @@ def test_a_holographic_equality_is_called_out():
 
 
 def test_report_reads_the_current_point():
+    """It reports the point the model is at, which before a solve is the guess."""
     f = _model(5.0)
-    assert holographic_report(f) == [] or True    # guesses, not a solution
+    # x = y = 2 against a cap of 5: nothing is binding at the starting point
+    assert holographic_report(f) == []
     solve(f, sensitivities=False)
+    # and both are binding once the solve has written the answer back
     assert len(holographic_report(f)) == 2
 
 
@@ -126,3 +151,36 @@ def test_groups_forward_the_declaration():
     f.ConstraintList([x >= 1.0 * pyo.units.m])
     grp.HolographicConstraint(x <= 9.0 * pyo.units.m)
     assert len(f._holographic) == 1
+
+
+# --- "n of N" has to be a true fraction -------------------------------------
+# The summary called format_holographic without a total, so it printed the
+# active count on both sides -- "2 of 2" for a model declaring three, which
+# reads as though every watched limit had been hit.
+
+def test_the_report_counts_what_was_declared_not_what_is_active():
+    from lcsolver.postsolve.holographic import holographic_total
+
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', size=3, bounds=[0.0, 9.0],
+                   description='x')
+    cap = f.Constant(name='cap', value=[2.0, 2.0, 8.0], units='m', size=3,
+                     description='cap')
+    f.Objective(-f.sum(x))
+    f.ConstraintList([x <= 5.0 * pyo.units.m])
+    f.HolographicConstraintList([x <= cap])
+
+    assert holographic_total(f) == 3            # one per element, not one name
+    solve(f, sensitivities=False)
+    text = f.solution.summary()
+    assert '2 of 3 are ACTIVE' in text          # x[2] is capped at 5, not 8
+
+
+def test_the_total_is_zero_when_none_were_declared():
+    from lcsolver.postsolve.holographic import holographic_total
+
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='x')
+    f.Objective(x)
+    f.ConstraintList([x >= 1.0 * pyo.units.m])
+    assert holographic_total(f) == 0

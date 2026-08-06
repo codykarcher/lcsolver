@@ -27,7 +27,21 @@ diagnostic. It costs one expression evaluation per declared constraint.
 """
 from __future__ import annotations
 
-__all__ = ["holographic_report", "format_holographic"]
+__all__ = ["holographic_report", "holographic_total", "format_holographic"]
+
+
+def _datas(con):
+    """The constraint data objects behind a declared name.
+
+    A holographic constraint declared over a vector -- ``r <= r_max`` on a
+    length-3 quantity -- is three constraints, and both the count of what was
+    declared and the walk over what is active have to agree on that or the
+    report says "2 of 2 are ACTIVE" about a model with three.
+    """
+    try:
+        return list(con.values()) if hasattr(con, 'values') else [con]
+    except Exception:
+        return [con]
 
 
 def _margin(body, lo, hi):
@@ -69,11 +83,7 @@ def holographic_report(model, rtol=1e-6):
         con = getattr(model, nm, None)
         if con is None:
             continue
-        try:
-            datas = list(con.values()) if hasattr(con, 'values') else [con]
-        except Exception:
-            datas = [con]
-        for cd in datas:
+        for cd in _datas(con):
             try:
                 body = float(pyo.value(cd.body))
                 lo = None if cd.lower is None else float(pyo.value(cd.lower))
@@ -104,6 +114,23 @@ def holographic_report(model, rtol=1e-6):
                                   'equality': False, 'expr': expr})
     found.sort(key=lambda d: d['margin'])
     return found
+
+
+def holographic_total(model):
+    """How many holographic constraints the model declares.
+
+    Counted the same way :func:`holographic_report` walks them, so "n of N"
+    is a true fraction. Zero when none were declared.
+    """
+    names = getattr(model, '_holographic', None)
+    if not names:
+        return 0
+    total = 0
+    for nm in names:
+        con = getattr(model, nm, None)
+        if con is not None:
+            total += len(_datas(con))
+    return total
 
 
 def format_holographic(active, total=None, k=8):

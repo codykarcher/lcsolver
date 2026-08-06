@@ -1,0 +1,58 @@
+# Coverage, with no third-party service involved.
+#
+# The badge in the README is this workflow's own status badge, so "coverage |
+# passing" means the floor below was met on the last run of main. Nothing is
+# uploaded anywhere and no account or token is needed; the repository reports
+# on itself.
+#
+# `--cov-fail-under` is the part that does the work. A percentage on a badge is
+# a number nobody looks at, and one that drifts down a point per release
+# without ever announcing itself. A floor turns a regression into a failed
+# build, which is the only version of this that stays true.
+#
+# Raise the floor when the real number moves up. It is deliberately a few
+# points below the current figure so that ordinary churn does not fail a build
+# that has nothing wrong with it.
+
+name: coverage
+
+on: [push, pull_request]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}          # conda needs a login shell
+    steps:
+      - uses: actions/checkout@v4
+
+      # Conda rather than pip, and this is the only reason it is worth the
+      # extra minute: IPOPT cannot come from pip, so a pip-only runner has no
+      # IPOPT, and every route that needs one -- SIA, the convex ipopt
+      # backend, all eleven examples -- skips. Coverage measured there would
+      # describe the runner rather than the test suite, and would fall without
+      # anything being wrong.
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: lcsolver
+          auto-activate-base: false
+
+      - name: Install the package
+        run: pip install -e ".[test]"
+
+      - name: Confirm the solvers are really here
+        # If this prints no IPOPT, the coverage number below is measuring a
+        # broken environment and the floor would fail for the wrong reason.
+        run: lcsolver-check-solvers
+
+      - name: Run the whole suite under coverage
+        # -m "" so the slow and veryslow markers are included. They are the
+        # only tests that walk the cross-path and full-model routes, and
+        # leaving them out understates coverage by several points.
+        run: |
+          pytest tests/ -m "" -q \
+            --cov=lcsolver --cov-report=term-missing \
+            --cov-fail-under=80
+        timeout-minutes: 30

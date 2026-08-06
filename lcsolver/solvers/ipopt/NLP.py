@@ -33,9 +33,24 @@ solve ``pyo.value(f.x)`` returns the optimum rather than the initial guess.
 import pyomo.environ as pyo
 from pyomo.opt import SolverStatus, TerminationCondition
 
+from lcsolver.core.errors import SolverUnavailable
+
 
 # ---------------------------------------------------------------------------
-_MA27_PROBE = None
+def _resolve_executable(executable=None):
+    """Which ipopt binary to drive.
+
+    An explicit argument wins; otherwise ``LCSOLVER_IPOPT_EXECUTABLE`` if set,
+    otherwise whatever ``PATH`` produces. The environment variable exists
+    because ``conda activate`` prepends ``$CONDA_PREFIX/bin`` to ``PATH`` on
+    every new shell, so a source build of IPOPT made specifically to get MA27
+    loses to the conda MUMPS one silently and permanently. Pinning the path is
+    the only advice that survives the next terminal window.
+    """
+    if executable:
+        return executable
+    from lcsolver.environment import ipopt_executable
+    return ipopt_executable()
 
 
 def _ma27_available(executable=None):
@@ -46,24 +61,8 @@ def _ma27_available(executable=None):
     session; only consulted on a FAILED solve to sharpen the error message,
     so the probe cost is never on the success path.
     """
-    global _MA27_PROBE
-    if _MA27_PROBE is None:
-        try:
-            import pyomo.environ as pyo
-            from pyomo.opt import TerminationCondition
-
-            probe = pyo.ConcreteModel()
-            probe.x = pyo.Var(initialize=1.0, bounds=(0.5, None))
-            probe.o = pyo.Objective(expr=probe.x)
-            opt = (pyo.SolverFactory('ipopt', executable=executable)
-                   if executable else pyo.SolverFactory('ipopt'))
-            opt.options['linear_solver'] = 'ma27'
-            res = opt.solve(probe, tee=False, load_solutions=False)
-            _MA27_PROBE = (res.solver.termination_condition
-                           == TerminationCondition.optimal)
-        except Exception:
-            _MA27_PROBE = False
-    return _MA27_PROBE
+    from lcsolver.environment import linear_solver_available
+    return linear_solver_available('ma27', _resolve_executable(executable))
 
 
 def _has_greybox(model):
@@ -82,7 +81,9 @@ def _has_greybox(model):
 
 def _executable_available(name='ipopt'):
     try:
-        opt = pyo.SolverFactory(name)
+        executable = _resolve_executable() if name == 'ipopt' else None
+        opt = (pyo.SolverFactory(name, executable=executable) if executable
+               else pyo.SolverFactory(name))
         return bool(opt.available(exception_flag=False))
     except Exception:
         return False
@@ -140,6 +141,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     """
     options = dict(options or {})
     greybox = _has_greybox(m)
+    # Resolved once here so the route choice, the solve and the MA27 diagnosis
+    # all talk about the same binary.
+    executable = _resolve_executable(executable)
 
     # ---- choose the route -------------------------------------------------
     if method == 'auto':
@@ -168,13 +172,13 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
 
     # ---- solve ------------------------------------------------------------
     if route == 'pyomo':
-        opt = (pyo.SolverFactory('ipopt', executable=executable)
-               if executable else pyo.SolverFactory('ipopt'))
+        from lcsolver.environment import ipopt_solver_factory
+        opt = ipopt_solver_factory(executable)
         if not opt.available(exception_flag=False):
-            raise RuntimeError(
-                "the 'ipopt' executable was not found. Install IPOPT and put it "
-                "on PATH, pass executable='/path/to/ipopt', or use "
-                "method='cyipopt' (pip install cyipopt).")
+            raise SolverUnavailable(
+                "the 'ipopt' executable was not found. Run "
+                "`lcsolver-install-solvers` to get one, pass "
+                "executable='/path/to/ipopt', or use method='cyipopt'.")
         for k, v in options.items():
             opt.options[k] = v
         # Defer loading: with load_solutions=True Pyomo raises a bare
@@ -185,12 +189,16 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     else:
         opt = pyo.SolverFactory('cyipopt')
         if not opt.available(exception_flag=False):
-            raise RuntimeError(
+            raise SolverUnavailable(
                 "neither the 'ipopt' executable nor cyipopt is available. "
-                "Install one of them: a system IPOPT build, or `pip install cyipopt`.")
-        for k, v in options.items():
-            opt.options[k] = v
-        results = opt.solve(m, tee=tee)
+                "Run `lcsolver-install-solvers` to install both; note that "
+                "`pip install cyipopt` on its own compiles against an IPOPT "
+                "that has to exist already.")
+        # PyomoCyIpoptSolver has no `options` mapping -- it takes them as a
+        # solve() argument, and `opt.options[k] = v` raises AttributeError.
+        # This is the route black-box models are forced onto, and
+        # linear_solver is the option most worth setting on it.
+        results = opt.solve(m, tee=tee, options=dict(options))
 
     # ---- interpret --------------------------------------------------------
     summary = _summarize(results)

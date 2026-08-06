@@ -33,18 +33,19 @@ try:
     from lcsolver import Formulation
 
     formulation_available = True
-except:
+except ImportError:
+    # Narrow on purpose. A bare `except` here turns any breakage inside the
+    # package -- a SyntaxError, a NameError -- into `not available`, and the
+    # skipIf below then quietly skips this whole file instead of failing.
     pass
-    # formulation_available = False
 
 blackbox_available = False
 try:
     from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
-except:
+except ImportError:
     pass
-    # blackbox_available = False
 
 
 if numpy_available:
@@ -180,8 +181,12 @@ class TestEDIBlackBox(unittest.TestCase):
             BlackBoxFunctionModel,
         )
 
+        # Matched on the message, not just the type: AttributeError is the
+        # commonest accidental exception, so a bare assertRaises here would be
+        # satisfied by a typo anywhere inside the call.
         bbfm = BlackBoxFunctionModel()
-        self.assertRaises(AttributeError, bbfm.BlackBox, ())
+        with self.assertRaisesRegex(AttributeError, 'has not been defined'):
+            bbfm.BlackBox(())
 
     def test_edi_blackbox_etc_2(self):
         "Tests a black box assertion issue"
@@ -687,6 +692,61 @@ class TestEDIBlackBox(unittest.TestCase):
         sm = f.__dict__['constraint_1'].get_external_model().summary
         e_print = f.__dict__['constraint_1'].get_external_model().__repr__()
 
+    def test_edi_blackbox_flexible_length_declaration(self):
+        "np.inf and 'inf' both declare a dimension of flexible length"
+        import numpy as np
+        from pyomo.environ import units
+        from lcsolver.objects.blackBoxFunctionModel import (
+            BlackBoxFunctionModel_Variable,
+            FLEXIBLE_LENGTH,
+        )
+
+        def declared(size):
+            return BlackBoxFunctionModel_Variable('x', '', 'a variable', size=size).size
+
+        # np.inf is the spelling to reach for; the string is what this took
+        # before the constant was allowed, and still means the same thing
+        self.assertEqual(declared(np.inf), FLEXIBLE_LENGTH)
+        self.assertEqual(declared('inf'), FLEXIBLE_LENGTH)
+
+        # A concrete length is unaffected, and a scalar is still 0
+        self.assertEqual(declared(3), 3)
+        self.assertEqual(declared(0), 0)
+        self.assertEqual(declared(None), 0)
+
+        # A size is decoded per dimension, so one axis can be pinned while
+        # another floats. The decoded value is what gets stored -- sizeCheck
+        # recognizes a flexible dimension by its integer, not by 'inf'.
+        self.assertEqual(declared([2, np.inf]), [2, FLEXIBLE_LENGTH])
+        self.assertEqual(declared((np.inf, 2)), [FLEXIBLE_LENGTH, 2])
+
+        # and that decoding is what makes the length check skip the axis
+        model = BlackBoxFunctionModel_Variable('x', '', 'a variable', size=[np.inf, 2])
+        bb = BlackBoxFunctionModel()
+        bb.sizeCheck(model.size, np.ones([3, 2]) * units.dimensionless)
+        bb.sizeCheck(model.size, np.ones([7, 2]) * units.dimensionless)
+        self.assertRaises(
+            ValueError,
+            bb.sizeCheck,
+            *(model.size, np.ones([3, 3]) * units.dimensionless)
+        )
+
+        # Anything that is neither an integer nor a flexible length is refused
+        self.assertRaises(ValueError, declared, *(3.5,))
+        self.assertRaises(ValueError, declared, *(1,))
+
+        # The model side is the other half of the contract: a Variable is what
+        # supplies the length, so it cannot be flexible itself
+        from lcsolver import Formulation
+
+        f = Formulation()
+        with self.assertRaises(ValueError) as ctx:
+            f.Variable(name='x', guess=1.0, units='', description='x', size=np.inf)
+        self.assertIn('flexible length', str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            f.Constant(name='c', value=1.0, units='', description='c', size=[2, np.inf])
+        self.assertIn('flexible length', str(ctx.exception))
+
     def test_edi_blackbox_mixed_vector_and_scalar_inputs(self):
         "A box mixing vector and scalar inputs lands each jacobian block in its own columns"
         import numpy as np
@@ -706,11 +766,11 @@ class TestEDIBlackBox(unittest.TestCase):
                 super().__init__()
                 self.description = 'This model evaluates the function: z_i = t * x_i**2'
                 self.inputs.append(
-                    name='x', units='', description='vector input', size='inf'
+                    name='x', units='', description='vector input', size=np.inf
                 )
                 self.inputs.append(name='t', units='', description='scalar input')
                 self.outputs.append(
-                    name='z', units='', description='vector output', size='inf'
+                    name='z', units='', description='vector output', size=np.inf
                 )
                 self.availableDerivative = 1
 
@@ -1280,7 +1340,7 @@ class TestEDIBlackBox(unittest.TestCase):
                     self.pyomo_value(runCases[i]['x']) for i in range(0, len(runCases))
                 ]
                 y = [
-                    self.pyomo_value(runCases[i]['x']) for i in range(0, len(runCases))
+                    self.pyomo_value(runCases[i]['y']) for i in range(0, len(runCases))
                 ]
 
                 u = []
@@ -1320,9 +1380,32 @@ class TestEDIBlackBox(unittest.TestCase):
                             )
                         return opt
 
+        # A pass-through returns its inputs, so the outputs are the check: u is
+        # x and v is y. Asserting it is what distinguishes a working box from
+        # one that reads the same input twice -- which is what this fixture did
+        # while nothing looked at the answer.
         bb = PassThrough()
-        bbo = bb.BlackBox(1.0, 1.0)
-        bbo = bb.BlackBox({'x': np.linspace(0, 10, 11), 'y': np.linspace(0, 10, 11)})
+
+        # One case: (values, jacobian). u is x and v is y, and the jacobian of
+        # a pass-through is the identity. Distinct x and y on purpose -- with
+        # equal inputs a box that read the same one twice would look correct,
+        # which is how this fixture came to do exactly that unnoticed.
+        values, jac = bb.BlackBox(1.0, 2.0)
+        self.assertAlmostEqual(pyo.value(values[0]), 1.0)
+        self.assertAlmostEqual(pyo.value(values[1]), 2.0)
+        self.assertAlmostEqual(pyo.value(jac[0][0]), 1.0)
+        self.assertAlmostEqual(pyo.value(jac[0][1]), 0.0)
+        self.assertAlmostEqual(pyo.value(jac[1][0]), 0.0)
+        self.assertAlmostEqual(pyo.value(jac[1][1]), 1.0)
+
+        # Many cases: one [values, jacobian] per row of the inputs
+        xs = np.linspace(0, 10, 11)
+        ys = np.linspace(10, 20, 11)
+        cases = bb.BlackBox({'x': xs, 'y': ys})
+        self.assertEqual(len(cases), len(xs))
+        for i, (vals, _jac) in enumerate(cases):
+            self.assertAlmostEqual(pyo.value(vals[0]), xs[i])
+            self.assertAlmostEqual(pyo.value(vals[1]), ys[i])
 
 
 if __name__ == '__main__':

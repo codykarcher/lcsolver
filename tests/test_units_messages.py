@@ -115,8 +115,6 @@ class TestUnitMessages(unittest.TestCase):
         self.assertNotIn('unit errors:', msg)
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 @unittest.skipIf(not available, 'LCsolver import failed')
@@ -193,3 +191,86 @@ class TestNegatedUnitLeaf(unittest.TestCase):
     def test_a_variable_minus_a_bare_unit_converts(self):
         text = str(self._rebuilt(units.ft * 0 + 3.0 * units.m - units.ft))
         self.assertIn('2.695', text)     # 3.0 - 0.3048
+
+
+@unittest.skipIf(not available, 'LCsolver import failed')
+class TestUnitCheck(unittest.TestCase):
+    """`unit_check` is exported from the package and had no test at all.
+
+    It is the diagnostic form of `unit_corrector`: same work, but it reports
+    a mismatch instead of raising, which is what a caller asking "what is
+    wrong with my model" needs -- that is exactly when the model is most
+    likely to be wrong, and an exception is the least useful answer.
+    """
+
+    @staticmethod
+    def _balanced():
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='m', description='y')
+        f.Objective(x + y)
+        f.Constraint(x + y <= 1.0 * units.m)
+        return f
+
+    @staticmethod
+    def _mismatched():
+        """`x + y` with x in metres and y in seconds cannot be balanced."""
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        y = f.Variable(name='y', guess=1.0, units='s', description='y')
+        f.Objective(x + y)
+        f.Constraint(x >= 1.0 * units.m)
+        return f
+
+    def test_a_balanced_model_reports_ok_and_hands_back_the_model(self):
+        from lcsolver import unit_check
+
+        check = unit_check(self._balanced())
+        self.assertTrue(check)                  # __bool__ is the quick answer
+        self.assertTrue(check.ok)
+        self.assertIsNotNone(check.model)
+        self.assertEqual(check.failures, [])
+        self.assertEqual(check.n_objectives, 1)
+        self.assertEqual(check.n_constraints, 1)
+
+    def test_the_summary_counts_what_it_checked(self):
+        from lcsolver import unit_check
+
+        text = unit_check(self._balanced()).summary()
+        self.assertIn('balanced', text)
+        self.assertIn('1 objective', text)      # singular, not '1 objectives'
+        self.assertIn('1 constraint', text)
+        self.assertEqual(text, str(unit_check(self._balanced())))
+
+    def test_it_raises_by_default_on_a_mismatch(self):
+        from lcsolver import unit_check
+
+        with self.assertRaises(UnitMismatch):
+            unit_check(self._mismatched())
+
+    def test_it_reports_instead_of_raising_when_asked(self):
+        from lcsolver import unit_check
+
+        check = unit_check(self._mismatched(), raise_on_error=False)
+        self.assertFalse(check)
+        self.assertIsNone(check.model)          # there is no corrected model
+        self.assertEqual(len(check.failures), 1)
+        text = check.summary()
+        self.assertIn('units', text)
+        # and it says why nothing downstream can run, rather than only failing
+        self.assertIn('structure detector', text)
+
+    def test_the_plural_is_right_for_several_of_each(self):
+        from lcsolver import unit_check
+
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='m', description='x')
+        f.Objective(x)
+        f.Constraint(x >= 1.0 * units.m)
+        f.Constraint(x <= 9.0 * units.m)
+        text = unit_check(f).summary()
+        self.assertIn('2 constraints', text)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -348,6 +348,9 @@ class TestParameterGradient(unittest.TestCase):
             self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
 
 
+@unittest.skipIf(not _ipopt_available(),
+                 'the ambiguity measure is read off the duals the IPOPT route '
+                 'returns; the cvxopt fallback recovers a different dual vector')
 class TestDualAmbiguity(unittest.TestCase):
     """Which sensitivities the problem actually determines.
 

@@ -84,8 +84,8 @@ standalone package so that it can evolve independently of the Pyomo release cycl
 - **Structure detection.** A model walker classifies the algebraic structure of the
   formulation, recognizing linear, quadratic, geometric, and signomial forms.
 - **Solver routing.** Detected structure is dispatched to an appropriate backend:
-  linear, quadratic and geometric programs to `cvxopt` or, optionally, to IPOPT
-  applied to the log-transformed problem; signomial programs to a solver built on
+  linear, quadratic and geometric programs to IPOPT applied to the
+  log-transformed problem, or to `cvxopt`; signomial programs to a solver built on
   successive monomial approximation with a penalty convex–concave step, or to
   Sequential Log-Convex Programming; and anything else, including models
   containing black-box constraints, to IPOPT via Pyomo. Solutions are written

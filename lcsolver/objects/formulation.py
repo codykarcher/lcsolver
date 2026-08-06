@@ -106,6 +106,87 @@ def decodeUnits(u_val):
 
 
 
+def _reject_flexible_size(what, name, size):
+    """A component of the model cannot be of unknown length.
+
+    ``np.inf`` is how a *black box* declares an input whose length it takes
+    from whatever it is handed, which is what lets one box serve a three
+    element vector in one model and a ten element one in another. A Variable
+    or a Constant is the thing doing the handing, so it has to say how many
+    elements it has. Worth its own message because the two declarations sit
+    a few lines apart in a model file and read alike.
+    """
+    for entry in (size if isinstance(size, (list, tuple)) else [size]):
+        if isinstance(entry, str) or (
+            isinstance(entry, (float, _np.floating)) and _np.isinf(entry)
+        ):
+            raise ValueError(
+                f"{what} {name!r} cannot be declared of flexible length. "
+                "np.inf is for a black-box input, which takes its length from "
+                f"the component it is given; a {what} must state how many "
+                "elements it has.")
+
+
+def _index_map(what, name, values, size, keyword):
+    """An array of initial values, laid out onto the component's index set.
+
+    Pyomo initializes an indexed component from a dict keyed by the index --
+    ``(i, j)`` for a matrix -- and a nested list handed to it instead fails
+    with ``KeyError: "Index '0' is not valid for indexed component 'e'"``,
+    which names neither the shape it wanted nor the shape it got. Writing the
+    dict comprehension by hand is the workaround, and it is noise in a file
+    whose whole purpose is to be read::
+
+        value={(i, j): dist[i][j] for i in range(3) for j in range(4)}
+        value=[[15.0, 40.0, 90.0, 130.0], ...]          # this, instead
+
+    Numpy's layout is used, because everything else about an LCsolver vector
+    already follows it: the outer level is the FIRST index, so ``values[i][j]``
+    is element ``(i, j)``.
+
+    The shape has to match ``size`` exactly. That is the part that matters: a
+    3x4 array quietly accepted for a 4x3 declaration is a transposed model
+    that solves and answers a different question -- the same reason
+    :mod:`lcsolver.objects.vector` refuses to broadcast silently.
+
+    A single number is left alone, since Pyomo gives it to every element, and
+    so is a dict, which is already in the form Pyomo wants.
+    """
+    if values is None or isinstance(values, (dict, _Unset)):
+        return values
+    if not isinstance(values, (list, tuple, _np.ndarray)):
+        return values
+
+    # Anything that is not a concrete shape -- np.inf, a string, a float --
+    # is left to `_reject_flexible_size` and Pyomo's own size validation,
+    # which have better messages for it than a shape comparison would.
+    dims = list(size) if isinstance(size, (list, tuple)) else [size]
+    if any(not isinstance(dim, (int, _np.integer)) or isinstance(dim, bool)
+           for dim in dims if dim is not None):
+        return values
+
+    arr = _np.asarray(values, dtype=object)
+    shape = tuple(size) if isinstance(size, (list, tuple)) else (
+        () if size in (None, 0) else (int(size),))
+
+    if shape == ():
+        want = arr.shape[0] if arr.ndim == 1 else list(arr.shape)
+        raise ValueError(
+            f"{what} {name!r} was declared without a size, so it is a single "
+            f"quantity, but {keyword} holds {arr.size} values. Declare "
+            f"size={want} to make it a vector.")
+    if arr.shape != shape:
+        declared = list(shape) if len(shape) > 1 else shape[0]
+        raise ValueError(
+            f"{what} {name!r} was declared size={declared} but {keyword} has "
+            f"shape {list(arr.shape)}. LCsolver will not reshape it: a "
+            "transposed array is a different model and it would solve without "
+            "complaint. Give the values in the declared shape, first index "
+            "outermost.")
+    return {(idx[0] if len(idx) == 1 else idx): arr[idx]
+            for idx in _np.ndindex(arr.shape)}
+
+
 class _Unset:
     """Sentinel for an omitted guess, distinct from a guess of None."""
     def __repr__(self):
@@ -491,7 +572,10 @@ class Formulation(ConcreteModel):
             if bounds[0] > bounds[1]:
                 raise ValueError("Lower bound is higher than upper bound")
 
+        guess = _index_map('Variable', name, guess, size, 'guess')
+
         if size is not None:
+            _reject_flexible_size('Variable', name, size)
             if isinstance(size, (list, tuple)):
                 for i in range(0, len(size)):
                     if not isinstance(size[i], int):
@@ -579,7 +663,10 @@ class Formulation(ConcreteModel):
             if within not in domainList:
                 raise RuntimeError("Invalid within")
 
+        value = _index_map('Constant', name, value, size, 'value')
+
         if size is not None:
+            _reject_flexible_size('Constant', name, size)
             if isinstance(size, (list, tuple)):
                 for i in range(0, len(size)):
                     if not isinstance(size[i], int):

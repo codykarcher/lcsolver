@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 
 project = "LCsolver"
-copyright = "2023-2026, NTESS and Cody J. Karcher"
+copyright = "2023-2026, Cody J. Karcher, Michael L. Bynum, and NTESS"
 author = "Cody J. Karcher"
 
 try:

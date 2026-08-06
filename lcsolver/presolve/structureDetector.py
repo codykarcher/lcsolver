@@ -45,7 +45,7 @@ else:
 #      gpRow_divide,
 #      # collapseGProws,
 #      parseDict_GP,
-#      checkObjectiveHessian_PD,
+#      checkObjectiveHessian_PSD,
 #      checkLinear,
 #      unstructured_dict,
 # )
@@ -56,7 +56,7 @@ from lcsolver.presolve.detectorSupportFunctions import (
      gpRow_divide,
      # collapseGProws,
      parseDict_GP,
-     checkObjectiveHessian_PD,
+     checkObjectiveHessian_PSD,
      checkLinear,
      unstructured_dict,
 )
@@ -546,7 +546,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
 
             # check hessian of objective
             # Checks for positive definate, returns [true/false, P, q, r], only true if quadratic, not if linear
-            quadraticCheck = checkObjectiveHessian_PD(gpRows)
+            quadraticCheck = checkObjectiveHessian_PSD(gpRows)
 
             # if its positive definite
             if quadraticCheck[0]:
@@ -565,7 +565,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                     structures['Linear_Program'][1] = linearCheck[1:] + [None,None]
                 else:
                     _blame(structures, ['Linear_Program'], 'the objective',
-                           'is neither affine nor a positive-definite quadratic',
+                           'is neither affine nor a convex quadratic',
                            row=0)
                     structures['Linear_Program'][0] = False  
 

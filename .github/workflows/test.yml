@@ -40,12 +40,71 @@ jobs:
         # built on all three operating systems, which is the part that would
         # otherwise only ever be exercised on a developer's mac.
         run: |
-          python -m lcsolver.install --dry-run
-          python -m lcsolver.environment --no-probe; rc=$?
+          lcsolver-install-solvers --dry-run
+          lcsolver-check-solvers --no-probe; rc=$?
           # 3 is "no IPOPT here", which is the expected state on a CI runner.
           # 1 would mean the report itself crashed, and should fail the job.
           if [ $rc -ne 0 ] && [ $rc -ne 3 ]; then exit $rc; fi
         shell: bash
 
       - name: Run test suite
+        # Must be green with no IPOPT installed. Tests that need one skip
+        # (see tests/conftest.py); this job is the standing proof that a plain
+        # `pip install lcsolver` leaves a usable, verifiable package.
         run: python -m pytest tests/ -v
+
+  # The job above proves the bare install works but never touches an IPOPT
+  # code path, which is most of the library. This one installs IPOPT and runs
+  # the same suite, so the tests the other job skips are actually executed
+  # somewhere -- otherwise "skipped" quietly becomes "never run again".
+  with-solvers:
+    name: with IPOPT (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    defaults:
+      run:
+        shell: bash -el {0}          # conda needs a login shell to activate
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the environment from environment.yml
+        # The same file the README tells users to use, so this job also keeps
+        # that instruction honest.
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: lcsolver
+          auto-activate-base: false
+
+      - name: Install lcsolver
+        run: python -m pip install -e ".[test]"
+
+      - name: Show what the solver environment actually is
+        run: lcsolver-check-solvers
+
+      - name: Run test suite
+        run: python -m pytest tests/ -v
+
+      - name: Run the cross-path integration suite
+        # Only meaningful with IPOPT: four of its five paths are IPOPT paths.
+        run: |
+          python -m pytest tests/ -m "slow and not veryslow" -q
+          python -m pytest tests/ -m veryslow -q
+
+      - name: No test may be skipped for a missing IPOPT here
+        # The point of this job. If a test skips because IPOPT is missing on a
+        # runner that just installed IPOPT, the skip logic is broken and is
+        # hiding real coverage -- which is exactly the failure this whole
+        # arrangement risks.
+        run: |
+          python -m pytest tests/ -q -rs > report.txt 2>&1 || true
+          if grep -qi "no IPOPT on this machine\|needs IPOPT\|IPOPT is not available" report.txt; then
+            echo "::error::tests skipped for a missing IPOPT in the with-solvers job"
+            grep -i "IPOPT" report.txt
+            exit 1
+          fi

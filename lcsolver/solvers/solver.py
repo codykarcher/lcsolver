@@ -15,13 +15,32 @@ from pyomo.common.dependencies import attempt_import
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
 from lcsolver.postsolve.writeback import write_solution
+from lcsolver.core.errors import SolverUnavailable
 
 
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )
-if not cvxopt_available:
-    raise ImportError('The CVXOPT solver requires cvxopt')
+
+
+def _require_cvxopt():
+    """Raise only when a cvxopt backend is actually asked for.
+
+    cvxopt is a declared dependency, so in a normal install this never fires.
+    It is checked here rather than at module import because this module is on
+    the path of ``import lcsolver`` itself: raising at import time meant that
+    force-uninstalling cvxopt, or installing with ``--no-deps``, made the whole
+    package unimportable rather than making one backend unavailable.
+    """
+    if not cvxopt_available:
+        raise ImportError(
+            "the cvxopt backend requires cvxopt, which is not importable. It "
+            "is a dependency of lcsolver, so this usually means the install "
+            "was done with --no-deps or cvxopt was removed afterwards; "
+            "`pip install cvxopt` restores it. The IPOPT backend "
+            "(convex_backend='ipopt', the default) does not need cvxopt.")
+
 
 def cvxopt_solve(m, write_back=True):
+    _require_cvxopt()
     cvxopt.solvers.options['show_progress'] = False
     cvxopt.solvers.options['maxiters'] = 100
     cvxopt.solvers.options['feastol'] = 1e-6
@@ -451,9 +470,10 @@ def _attach_sensitivities(m, res, wanted):
     # box -- and nothing else about the solve looks wrong when that happens.
     try:
         from lcsolver.postsolve.holographic import (format_holographic,
-                                             holographic_report)
+                                             holographic_report,
+                                             holographic_total)
         active = holographic_report(m)
-        n_tot = len(getattr(m, '_holographic', ()) or ())
+        n_tot = holographic_total(m)
         if isinstance(res, dict):
             res['holographic_active'] = active
         m._holographic_cache = active
@@ -675,6 +695,18 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # itself, so it reads either form and returns the same report. The walk is
     # not cheap: on SPaircraft it is four to six seconds, against an
     # eleven-second solve.
+    # Validated here rather than where it is read. `_solve_sp` does check it,
+    # but by then it runs inside the structured-backend `try`, so its
+    # ValueError is caught by the fallback handler, reported as "the
+    # structured backend failed", and retried on the raw NLP route -- which
+    # then dies with `ipopt_solve() got an unexpected keyword argument
+    # 'sp_method'`. A misspelled option is a mistake in the call, not a
+    # backend failure, and must not be retried.
+    _sp_method = kwargs.get('sp_method', 'sia')
+    if _sp_method not in ('sia', 'pccp'):
+        raise ValueError(
+            f"sp_method must be 'sia' or 'pccp'; got {_sp_method!r}")
+
     want_checks = diagnostics not in (None, 'off', False)
     # Bind the corrected clone to a local: `structures['variables']` holds only
     # the VarData objects, and if the clone were collected here their parent
@@ -770,11 +802,11 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             return _attach_sensitivities(
                 m, _solve_sp(structures, m, **kwargs), sensitivities)
         if not _ipopt_available():
-            raise RuntimeError(
+            raise SolverUnavailable(
                 'this model has black-box constraints and its algebraic part '
                 'is not a detected GP/SP, so it needs the raw IPOPT route -- '
-                'and no usable IPOPT installation was found. '
-                '`pip install cyipopt`; see docs/ipopt.rst.')
+                'and no usable IPOPT installation was found. Run '
+                '`lcsolver-install-solvers`; see docs/ipopt.rst.')
         return _attach_sensitivities(m, ipopt_solve(m, **kwargs),
                                      sensitivities)
 
@@ -792,8 +824,8 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 '[LC-W202] no usable IPOPT installation was found; solving this '
                 'structured problem with cvxopt instead. The answer is the '
                 'same, but IPOPT is the default backend and is required for '
-                'black-box constraints. Install the ipopt executable or '
-                '`pip install cyipopt` -- see docs/ipopt.rst.',
+                'black-box constraints. Run `lcsolver-install-solvers` -- see '
+                'docs/ipopt.rst.',
                 RuntimeWarning, stacklevel=2)
             backend = 'cvxopt'
         try:
@@ -822,20 +854,18 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         # Nothing left to try. cvxopt cannot take a general NLP, so this is a
         # real dead end rather than another fallback -- name it as one.
         if cvxopt_failure is not None:
-            raise RuntimeError(
+            raise SolverUnavailable(
                 f'cvxopt failed on this structured problem '
                 f'({type(cvxopt_failure).__name__}: {cvxopt_failure}), and '
                 'no usable IPOPT installation was found to try instead. '
                 'IPOPT is the preferred backend -- it solves models cvxopt '
-                'fails on. Install the ipopt executable and put it on PATH, '
-                'or `pip install cyipopt`. See docs/ipopt.rst.'
+                'fails on. Run `lcsolver-install-solvers`. See docs/ipopt.rst.'
             ) from cvxopt_failure
-        raise RuntimeError(
+        raise SolverUnavailable(
             'this model needs IPOPT and no usable installation was found. '
             + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
                'it. ' if not structured else '')
-            + "Install the 'ipopt' executable and put it on PATH, or "
-              '`pip install cyipopt`. See docs/ipopt.rst.')
+            + 'Run `lcsolver-install-solvers`. See docs/ipopt.rst.')
     return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
 
 
@@ -963,7 +993,11 @@ def _convex_ipopt(m, structures=None, **kwargs):
     if structures['Geometric_Program'][0]:
         return solve_gp_ipopt(structures, model=m, **kwargs)
     if structures['Linear_Program'][0] or structures['Quadratic_Program'][0]:
-        return solve_lp_qp_ipopt(m, **kwargs)
+        return solve_lp_qp_ipopt(
+            m,
+            structure=('linear_program' if structures['Linear_Program'][0]
+                       else 'quadratic_program'),
+            **kwargs)
     if structures['Signomial_Program'][0]:
         return _solve_sp(structures, m, **kwargs)
     # Nothing structured left to exploit.

@@ -33,18 +33,19 @@ try:
     from lcsolver import Formulation
 
     formulation_available = True
-except:
+except ImportError:
+    # Narrow on purpose. A bare `except` here turns any breakage inside the
+    # package -- a SyntaxError, a NameError -- into `not available`, and the
+    # skipIf below then quietly skips this whole file instead of failing.
     pass
-    # formulation_available = False
 
 blackbox_available = False
 try:
     from lcsolver import BlackBoxFunctionModel
 
     blackbox_available = True
-except:
+except ImportError:
     pass
-    # blackbox_available = False
 
 if numpy_available:
     import numpy as np
@@ -64,6 +65,21 @@ class TestEDISnippets(unittest.TestCase):
         from lcsolver import Formulation
 
         f = Formulation()
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 0, 0, 0, 0),
+        )
         # END: Formulation_Snippet_01
 
     def test_edi_snippet_formuation_02(self):
@@ -72,6 +88,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Formulation_Snippet_02
 
     def test_edi_snippet_formuation_03(self):
@@ -80,6 +111,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         c = f.Constant(name='c', value=1.0, units='')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
+        )
         # END: Formulation_Snippet_03
 
     def test_edi_snippet_formuation_04(self):
@@ -91,6 +137,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='')
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Formulation_Snippet_04
 
     def test_edi_snippet_formuation_05(self):
@@ -103,6 +164,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='')
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y, sense=maximize)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Formulation_Snippet_05
 
     def test_edi_snippet_formuation_06(self):
@@ -117,6 +193,21 @@ class TestEDISnippets(unittest.TestCase):
         f.Constraint(x**2 + y**2 <= 1.0)
         f.Constraint(x >= 0)
         f.Constraint(y <= 0)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 3, 0),
+        )
         # END: Formulation_Snippet_06
 
     def test_edi_snippet_formuation_07(self):
@@ -129,6 +220,21 @@ class TestEDISnippets(unittest.TestCase):
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y)
         f.ConstraintList([x**2 + y**2 <= 1.0, x >= 0, y <= 0])
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 3, 0),
+        )
         # END: Formulation_Snippet_07
 
     def test_edi_snippet_formuation_08(self):
@@ -144,6 +250,21 @@ class TestEDISnippets(unittest.TestCase):
         constraintList = [x**2 + y**2 <= 1.0, x >= 0, y <= 0]
 
         f.ConstraintList(constraintList)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 3, 0),
+        )
         # END: Formulation_Snippet_08
 
     def test_edi_snippet_formuation_09(self):
@@ -210,6 +331,21 @@ class TestEDISnippets(unittest.TestCase):
 
         # BEGIN: Formulation_Snippet_13
         f.RuntimeConstraint(*([z], ['=='], [x, y], UnitCircle()))
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (3, 0, 1, 1, 5),
+        )
         # END: Formulation_Snippet_13
 
     def test_edi_snippet_formuation_14(self):
@@ -277,6 +413,21 @@ class TestEDISnippets(unittest.TestCase):
 
         # BEGIN: Formulation_Snippet_18
         f.ConstraintList([z <= 1 * units.m**2, ([z], ['=='], [x, y], UnitCircle())])
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (3, 0, 1, 5, 5),
+        )
         # END: Formulation_Snippet_18
 
     def test_edi_snippet_variables_01(self):
@@ -285,6 +436,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_01
 
     def test_edi_snippet_variables_02(self):
@@ -293,6 +459,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable('x', 1.0, 'm')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_02
 
     def test_edi_snippet_variables_03(self):
@@ -306,6 +487,21 @@ class TestEDISnippets(unittest.TestCase):
             units='m',
             description='The x variable',
             bounds=[-10, 10],
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
         )
         # END: Variables_Snippet_03
 
@@ -322,6 +518,21 @@ class TestEDISnippets(unittest.TestCase):
             description='The x variable',
             domain=Integers,
         )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_04
 
     def test_edi_snippet_variables_05(self):
@@ -331,6 +542,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units=units.m, description='The x variable')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_05
 
     def test_edi_snippet_variables_06(self):
@@ -341,6 +567,21 @@ class TestEDISnippets(unittest.TestCase):
         f = Formulation()
         x = f.Variable(
             name='x', guess=1.0, units='m', description='The x variable', size=5
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
         )
         # END: Variables_Snippet_06
 
@@ -353,6 +594,21 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Variable(
             name='x', guess=1.0, units='m', description='The x variable', size=[10, 2]
         )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_07
 
     def test_edi_snippet_variables_08(self):
@@ -364,6 +620,21 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Variable(
             name='x', guess=1.0, units='kg*m/s**2', description='The x variable'
         )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (1, 0, 0, 0, 0),
+        )
         # END: Variables_Snippet_08
 
     def test_edi_snippet_constants_01(self):
@@ -372,6 +643,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units='m', description='A constant c')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
+        )
         # END: Constants_Snippet_01
 
     def test_edi_snippet_constants_02(self):
@@ -380,6 +666,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant('c', 1.0, 'm')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
+        )
         # END: Constants_Snippet_02
 
     def test_edi_snippet_constants_03(self):
@@ -389,6 +690,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units=units.m, description='A constant c')
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
+        )
         # END: Constants_Snippet_03
 
     def test_edi_snippet_constants_04(self):
@@ -399,6 +715,21 @@ class TestEDISnippets(unittest.TestCase):
         f = Formulation()
         x = f.Constant(
             name='c', value=1.0, units='m', description='A constant c', size=5
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
         )
         # END: Constants_Snippet_04
 
@@ -411,6 +742,21 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Constant(
             name='c', value=1.0, units='m', description='A constant c', size=[10, 2]
         )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
+        )
         # END: Constants_Snippet_05
 
     def test_edi_snippet_constants_06(self):
@@ -421,6 +767,21 @@ class TestEDISnippets(unittest.TestCase):
         f = Formulation()
         x = f.Constant(
             name='c', value=1.0, units='kg*m/s**2', description='A constant c'
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (0, 1, 0, 0, 0),
         )
         # END: Constants_Snippet_06
 
@@ -433,6 +794,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x + y)  # Default is minimize
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_01
 
     def test_edi_snippet_objectives_02(self):
@@ -444,6 +820,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4)  # Default is minimize
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_02
 
     def test_edi_snippet_objectives_03(self):
@@ -456,6 +847,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4, sense=minimize)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_03
 
     def test_edi_snippet_objectives_04(self):
@@ -468,6 +874,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4, sense=1)  # 1 corresponds to minimize
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_04
 
     def test_edi_snippet_objectives_05(self):
@@ -480,6 +901,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(-c * x**4 - y**4, sense=maximize)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_05
 
     def test_edi_snippet_objectives_06(self):
@@ -492,6 +928,21 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(-c * x**4 - y**4, sense=-1)  # -1 corresponds to maximize
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_06
 
     def test_edi_snippet_objectives_07(self):
@@ -522,6 +973,21 @@ class TestEDISnippets(unittest.TestCase):
             + y[1, 0] ** 4
             + y[1, 1] ** 4
         )  # Default is minimize
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 0, 0),
+        )
         # END: Objectives_Snippet_07
 
     def test_edi_snippet_constraints_01(self):
@@ -536,6 +1002,21 @@ class TestEDISnippets(unittest.TestCase):
         f.Objective(c * x + y)
         f.ConstraintList(
             [x**2 + y**2 <= 1.0 * units.m**2, x <= 0.75 * units.m, x >= y]
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 3, 0),
         )
         # END: Constraints_Snippet_01
 
@@ -552,6 +1033,21 @@ class TestEDISnippets(unittest.TestCase):
         f.Constraint(x**2 + y**2 <= 1.0 * units.m**2)
         f.Constraint(x <= 0.75 * units.m)
         f.Constraint(x >= y)
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 3, 0),
+        )
         # END: Constraints_Snippet_02
 
     def test_edi_snippet_constraints_03(self):
@@ -592,6 +1088,21 @@ class TestEDISnippets(unittest.TestCase):
                 y[1, 1] >= 1.0 * units.m,
                 x[0] >= y[0, 0],
             ]
+        )
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (2, 1, 1, 6, 0),
         )
         # END: Constraints_Snippet_03
 
@@ -642,6 +1153,12 @@ class TestEDISnippets(unittest.TestCase):
                 #     returnVal[1]    = jacobian
                 #     returnVal[1][0] = derivative_scalarOutput_wrt_0th_input
                 return y, [dydx]
+
+        # Constructing it is the check that the declaration still parses, and
+        # the names are the ones the documentation shows.
+        box = Parabola()
+        self.assertEqual([i.name for i in box.inputs], ['x'])
+        self.assertEqual([o.name for o in box.outputs], ['y'])
 
         # END: RuntimeConstraints_Snippet_01
 
@@ -708,6 +1225,12 @@ class TestEDISnippets(unittest.TestCase):
                 #     returnVal[1]    = jacobian
                 #     returnVal[1][0] = derivative_scalarOutput_wrt_0th_input
                 return y, [dydx]
+
+        # Constructing it is the check that the declaration still parses, and
+        # the names are the ones the documentation shows.
+        box = Parabola()
+        self.assertEqual([i.name for i in box.inputs], ['x'])
+        self.assertEqual([o.name for o in box.outputs], ['y'])
                 # END: RuntimeConstraints_Snippet_09
 
     def test_edi_snippet_runtimeconstraints_03(self):
@@ -751,6 +1274,21 @@ class TestEDISnippets(unittest.TestCase):
 
         f.ConstraintList([(z, '==', [x, y], UnitCircle()), z <= 1 * units.m**2])
 
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (3, 0, 1, 1, 1),
+        )
+
     def test_edi_snippet_runtimeconstraints_04(self):
         import numpy as np
         import pyomo.environ as pyo
@@ -785,7 +1323,7 @@ class TestEDISnippets(unittest.TestCase):
                     self.pyomo_value(runCases[i]['x']) for i in range(0, len(runCases))
                 ]
                 y = [
-                    self.pyomo_value(runCases[i]['x']) for i in range(0, len(runCases))
+                    self.pyomo_value(runCases[i]['y']) for i in range(0, len(runCases))
                 ]
 
                 u = []
@@ -826,8 +1364,24 @@ class TestEDISnippets(unittest.TestCase):
                         return opt
 
         bb = PassThrough()
-        bbo = bb.BlackBox(1.0, 1.0)
-        bbo = bb.BlackBox({'x': np.linspace(0, 10, 11), 'y': np.linspace(0, 10, 11)})
+
+        # A pass-through returns its inputs: u is x and v is y. Distinct
+        # values on purpose -- with x == y a box that read the same input
+        # twice looks correct, and this snippet did exactly that, uncaught,
+        # because nothing here looked at an answer.
+        values, jac = bb.BlackBox(1.0, 2.0)
+        self.assertAlmostEqual(pyo.value(values[0]), 1.0)
+        self.assertAlmostEqual(pyo.value(values[1]), 2.0)
+        self.assertAlmostEqual(pyo.value(jac[0][0]), 1.0)
+        self.assertAlmostEqual(pyo.value(jac[1][1]), 1.0)
+
+        xs = np.linspace(0, 10, 11)
+        ys = np.linspace(10, 20, 11)
+        cases = bb.BlackBox({'x': xs, 'y': ys})
+        self.assertEqual(len(cases), len(xs))
+        for i, (vals, _j) in enumerate(cases):
+            self.assertAlmostEqual(pyo.value(vals[0]), xs[i])
+            self.assertAlmostEqual(pyo.value(vals[1]), ys[i])
 
     def test_edi_snippet_runtimeconstraints_10(self):
         # BEGIN: RuntimeConstraints_Snippet_10
@@ -868,6 +1422,21 @@ class TestEDISnippets(unittest.TestCase):
                 return z, [dzdx, dzdy]  # return z, grad(z), hess(z)...
 
         f.ConstraintList([(z, '==', [x, y], UnitCircle()), z <= 1 * units.m**2])
+
+        # The snippet must build the model the documentation says
+        # it does. Executing without raising is not that: every
+        # assertion in this file was missing, so a snippet that
+        # silently stopped registering a constraint still passed.
+        self.assertEqual(
+            (
+                len(f.get_variables()),
+                len(f.get_constants()),
+                len(f.get_objectives()),
+                len(f.get_explicitConstraints()),
+                len(f.get_runtimeConstraints()),
+            ),
+            (3, 0, 1, 1, 1),
+        )
         # END: RuntimeConstraints_Snippet_10
 
     def test_edi_snippet_advancedRTC_01(self):
@@ -946,6 +1515,15 @@ class TestEDISnippets(unittest.TestCase):
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], True, optn=False)
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], optn1=True, optn2=False)
+
+        # y = max(-6x - 6, x**4 - 3x**2). At x = 0.5 the quartic branch wins:
+        # 0.0625 - 0.75 = -0.6875, with slope 4x**3 - 6x = -2.5. Every call
+        # above discarded its result, so nothing checked that the box
+        # computes the function the documentation shows.
+        value, grad = s.BlackBox(0.5)
+        self.assertAlmostEqual(pyo.value(value), -0.6875)
+        self.assertAlmostEqual(pyo.value(grad[0]), -2.5)
+        self.assertEqual(len(s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])), 11)
         # END: AdvancedRTC_Snippet_01
 
     def test_edi_snippet_advancedRTC_02(self):
@@ -1025,6 +1603,15 @@ class TestEDISnippets(unittest.TestCase):
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], True, optn=False)
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], optn1=True, optn2=False)
+
+        # y = max(-6x - 6, x**4 - 3x**2). At x = 0.5 the quartic branch wins:
+        # 0.0625 - 0.75 = -0.6875, with slope 4x**3 - 6x = -2.5. Every call
+        # above discarded its result, so nothing checked that the box
+        # computes the function the documentation shows.
+        value, grad = s.BlackBox(0.5)
+        self.assertAlmostEqual(pyo.value(value), -0.6875)
+        self.assertAlmostEqual(pyo.value(grad[0]), -2.5)
+        self.assertEqual(len(s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])), 11)
 
 
 if __name__ == '__main__':

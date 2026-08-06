@@ -145,8 +145,6 @@ class TestSolution(unittest.TestCase):
         self.assertEqual(sol.to_dict(), {'x': 1.0, 'c': 3.0})
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 @unittest.skipIf(not available, 'LCsolver import failed')
@@ -245,3 +243,7 @@ class TestSensitivityDisplay(unittest.TestCase):
         for i in range(3):
             self.assertIn(f'v[{i}]', text)
         self.assertIn('a vector', text)           # description from the parent
+
+
+if __name__ == '__main__':
+    unittest.main()

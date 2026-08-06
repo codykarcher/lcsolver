@@ -21,8 +21,7 @@ It then classifies the structure and dispatches:
   default**, solving in log space (below); ``cvxopt`` is the automatic
   fallback when no IPOPT is installed, and can be chosen explicitly with
   ``convex_backend='cvxopt'``;
-* a detected **SP** goes to **SIA**, sequential inner approximation
-  (:doc:`slcp`);
+* a detected **SP** goes to **SIA**, sequential inner approximation;
 * a model with **black-box constraints** goes to SIA as well, each box
   imposed as an opaque row inside the trust-region loop -- letting the
   structured route run without them would solve a relaxation and report it
@@ -120,7 +119,7 @@ global-optimality guarantee, but solvability at all.
 (and SIA, its certified successor) are algorithms for signomial programs;
 applying one to a pure geometric program means paying for a sequence of convex
 subproblems where one would do. They earn their cost only when the model is
-*not* fully GP-compatible -- a signomial row, a black box -- see :doc:`slcp`.
+*not* fully GP-compatible -- a signomial row, a black box.
 
 Writing the Solution Back
 -------------------------

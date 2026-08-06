@@ -39,6 +39,11 @@ import pyomo.environ  # noqa: F401
 from lcsolver.solvers.solver import solve, PresolveError, SolveResult
 from lcsolver.presolve.reductions import presolve_check, postsolve_check
 
+# Which solvers this install actually has. Exposed here as well as on the
+# command line (`lcsolver-check-solvers`) because "why is this model slow" and
+# "which linear solver am I on" are the same question more often than not.
+from lcsolver.environment import check_solvers
+
 from lcsolver.objects.formulation import Formulation
 
 from lcsolver.objects.blackBoxFunctionModel import (

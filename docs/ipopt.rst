@@ -1,10 +1,11 @@
 Installing IPOPT
 ================
 
-IPOPT is not an optional extra in the way ``cvxopt`` is. It is the default
-convex backend --- ``solve()`` routes a detected LP, QP, GP or SP to it unless
-told otherwise --- and it is the only backend that can evaluate a black-box
-(grey-box) constraint. A working IPOPT is therefore a working LCsolver.
+IPOPT is the one piece of LCsolver that ``pip`` cannot install for you, and the
+one it needs most. It is the default convex backend --- ``solve()`` routes a
+detected LP, QP, GP or SP to it unless told otherwise --- and it is the only
+backend that can evaluate a black-box (grey-box) constraint. A working IPOPT is
+therefore a working LCsolver.
 
 This page covers getting one, and one choice inside it that matters more than
 the rest: the sparse linear solver.
@@ -31,16 +32,39 @@ comfortable position; installing neither leaves LCsolver able to build a formula
 and unable to solve it.
 
 
+Why pip cannot do this for you
+------------------------------
+
+``pip install lcsolver`` installs everything except IPOPT, and no change to the
+dependency metadata would fix that:
+
+* There is no IPOPT executable on PyPI, under any name.
+* cyipopt is published on PyPI as an **sdist only** --- no wheels, in any
+  release to date. ``pip install cyipopt`` therefore *compiles*, against an
+  IPOPT that must already be installed and discoverable by ``pkg-config``. On
+  a machine with no IPOPT it fails, which is why it cannot be a dependency.
+
+So IPOPT comes from conda-forge, from a system package manager, or from
+source. ``lcsolver-install-solvers`` picks whichever of those applies, prints
+the commands, and asks before running them.
+
+
 The quick way, and what it costs you
 ------------------------------------
 
 ::
 
-    conda install -c conda-forge ipopt        # executable and library
-    pip install cyipopt                       # the in-process route
+    lcsolver-install-solvers        # conda-forge if available, else brew/apt,
+                                    # else a source build
 
-That gives you a working IPOPT in a minute, and it is the right first move.
-Be aware of what it ships with.
+or, from a clone::
+
+    conda env create -f environment.yml
+    conda activate lcsolver
+    pip install -e .
+
+Either gives you a working IPOPT in a minute or two, and it is the right first
+move. Be aware of what it ships with.
 
 IPOPT does not factorize anything itself. Every interior-point iteration solves
 a symmetric indefinite KKT system, and that work is handed to a third-party
@@ -108,11 +132,19 @@ Getting it:
 
 1. Register at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/ and accept the
    academic licence.
-2. Download and extract the archive, so that you have a directory
-   ``<root>/MA27/ma27-1.0.0``.
-3. Build IPOPT against it with ``tools/install_ipopt.sh`` (next section).
+2. Download and extract the archive anywhere.
+3. Point the installer at it::
 
-If you would rather not register, stay on the conda-forge MUMPS build and pass
+       lcsolver-install-solvers --ma27 /path/to/ma27-1.0.0
+
+That one command is both the first-install route and the upgrade route: run on
+a machine that already has the conda MUMPS build, it builds IPOPT against MA27,
+relinks cyipopt against the new build, and prints the environment to export.
+Nothing about the existing MUMPS install is removed --- see
+`Which one am I actually using?`_ below, because with both present that
+question stops being rhetorical.
+
+If you would rather not register, stay on the MUMPS build and pass
 ``options={'linear_solver': 'mumps'}`` explicitly --- a MUMPS-only build will
 otherwise reject IPOPT's ``ma27`` default with ``Invalid value "ma27" for
 option linear_solver``.
@@ -121,12 +153,19 @@ option linear_solver``.
 Building IPOPT with MA27
 ------------------------
 
-``tools/install_ipopt.sh`` clones IPOPT and the ThirdParty helpers, builds ASL
-and HSL, and configures IPOPT against both::
+Under ``--ma27`` the installer runs ``lcsolver/scripts/install_ipopt.sh``,
+which clones IPOPT and the ThirdParty helpers, builds ASL and HSL, and
+configures IPOPT against both. It can also be run directly, which is unchanged
+from how it has always worked::
 
-    ./tools/install_ipopt.sh ~/software
+    ./utilities/install_ipopt.sh ~/software
 
-It expects the MA27 source at ``<root>/MA27/ma27-1.0.0`` as above, and creates:
+By default it expects the MA27 source at ``<root>/MA27/ma27-1.0.0``; set
+``MA27_SRC`` to take it from anywhere else. Setting ``IPOPT_BUILD_MUMPS=1``
+instead builds against MUMPS, which needs no manual download --- that is the
+fallback the installer uses on a machine with no conda, apt or Homebrew.
+
+It creates:
 
 ===============================  ==========================================
 ``<root>/ipopt/Ipopt``           clone of the IPOPT repository
@@ -137,29 +176,77 @@ It expects the MA27 source at ``<root>/MA27/ma27-1.0.0`` as above, and creates:
 ``<root>/ipopt/build``           built IPOPT --- ``bin/ipopt`` lives here
 ===============================  ==========================================
 
-The script prints the environment settings to add to your shell profile
-(``~/.zshenv``, ``~/.bashrc``). They are needed: the ``ipopt`` binary finds
-libcoinhsl and libcoinasl at run time through the library path, and omitting
-them produces a binary that exists and will not start.
+(Under ``IPOPT_BUILD_MUMPS=1`` the HSL entries are replaced by
+``ThirdParty-Mumps`` and ``MUMPS_build``.)
 
-::
+Nothing has to go in a shell profile afterwards. Two beliefs to the contrary
+are worth correcting, because both used to be printed by this script:
 
-    export PATH="<root>/ipopt/build/bin:$PATH"
-    export DYLD_LIBRARY_PATH="<root>/ipopt/build/lib:$DYLD_LIBRARY_PATH"
-    export DYLD_LIBRARY_PATH="<root>/ipopt/ASL_build/lib:$DYLD_LIBRARY_PATH"
-    export DYLD_LIBRARY_PATH="<root>/ipopt/HSL_build/lib:$DYLD_LIBRARY_PATH"
-    export IPOPT_INCLUDE_DIR="<root>/ipopt/build/include/coin-or"
-    export IPOPT_LIBRARY_DIR="<root>/ipopt/build/lib"
+**The library path is usually not needed.** libtool records absolute install
+names for libcoinhsl and libcoinasl, so the loader finds them unaided; the
+binary starts with ``DYLD_LIBRARY_PATH`` and ``LD_LIBRARY_PATH`` unset. Rather
+than assert either way, the script now *tests* the binary it just built with
+those variables cleared, and prints the exports only if they turn out to be
+needed --- which happens if the build tree is moved after installation.
 
-On Linux use ``LD_LIBRARY_PATH`` in place of ``DYLD_LIBRARY_PATH``.
+**The ``PATH`` entry is not needed either**, for LCsolver's purposes: the
+installer records the build in ``~/.config/lcsolver/solvers.json`` and
+LCsolver reads that. Add ``<root>/ipopt/build/bin`` to ``PATH`` if you want to
+type ``ipopt`` in a terminal yourself; that is the only reason left.
 
 ``IPOPT_INCLUDE_DIR`` and ``IPOPT_LIBRARY_DIR`` are what ``pip install cyipopt``
-compiles against, so export them *before* installing cyipopt if you want the
-in-process route to use this build rather than a separate conda one.
+compiles against. Export them *before* installing cyipopt if you want the
+in-process route to use this build rather than a separate conda one --- or let
+``lcsolver-install-solvers --relink-cyipopt`` do it, which is the same thing
+with the paths filled in.
 
 
-Checking what you have
-----------------------
+.. _Which one am I actually using?:
+
+Which one am I actually using?
+------------------------------
+
+Once a machine has two IPOPTs --- a conda MUMPS one and a source MA27 one ---
+this stops being obvious, and under plain ``PATH`` rules getting it wrong is
+silent: ``conda activate`` prepends ``$CONDA_PREFIX/bin`` in every new shell, so
+the conda binary wins and the build made specifically to get MA27 is used by
+nothing. No error, just slower and less robust solves.
+
+LCsolver does not follow plain ``PATH`` rules, for exactly that reason. It picks
+in this order:
+
+1. ``LCSOLVER_IPOPT_EXECUTABLE``, if set --- always, even if it points at
+   nothing, because a broken pin is a mistake to report rather than route
+   around.
+2. Among everything else --- every ``ipopt`` on ``PATH``, plus any build
+   ``lcsolver-install-solvers`` made --- **an MA27 build beats one without it**,
+   whatever the order.
+
+So a source build wins over a conda one, and a source build wins even when it is
+on no ``PATH`` at all, because the installer recorded where it put it
+(``~/.config/lcsolver/solvers.json``). Nothing needs to go in a shell profile.
+
+The probe that decides this runs only when more than one candidate exists, and
+is cached for the session.
+
+To see the outcome, including which binary was passed over and why::
+
+    lcsolver-check-solvers
+
+It also reports whether cyipopt --- which links its own IPOPT and is unaffected
+by ``PATH`` entirely --- agrees with the executable.
+
+To override::
+
+    export LCSOLVER_IPOPT_EXECUTABLE="<root>/ipopt/build/bin/ipopt"   # force one
+    export LCSOLVER_IPOPT_AUTOSELECT=0                                # strict PATH order
+
+Both apply on every route that drives the AMPL interface, including the SLCP and
+SIA loops, which run the most solves and care about the linear solver most.
+
+
+Checking by hand
+----------------
 
 ::
 

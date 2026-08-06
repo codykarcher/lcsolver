@@ -102,29 +102,6 @@ in ``examples/hoburg_blackbox.py`` reproduces the same optimum with the drag
 model opaque, which makes the pair a controlled measurement of what exploiting
 GP structure is worth.
 
-The SLCP Paper Apparatus
-------------------------
-
-The test problems used to develop and validate Sequential Log-Convex
-Programming (:doc:`slcp`) live in ``utilities/``, not ``examples/`` -- they
-are solver-development apparatus rather than modeling examples.
-``utilities/slcp_cases.py`` states the paper's problems (``simple``,
-``floudas``, ``ko``, ``hoburg`` and its black-box variants) in low-level
-``Problem`` form with published reference optima;
-``utilities/slcp_formulations.py`` restates the GP-compatible ones as
-user-style Formulations; ``utilities/run_slcp.py`` drives them all against
-every algorithm, and ``utilities/benchmark_solvers.py`` compares backends on
-identical models (the numbers in :doc:`solvers`)::
-
-    python utilities/run_slcp.py
-    python utilities/run_slcp.py hoburg --trend
-
-Note the apparatus keeps the paper's dimensionless transcriptions exactly --
-its ``ko`` case lands on 892.68 N against its own reference, where the
-units-carrying ``examples/kirschen_ozturk.py`` (whose Reynolds relation must
-carry :math:`\rho` to be dimensionally consistent) lands on 870.80 N. Both
-numbers are right; they answer slightly different statements.
-
 Higher-fidelity black-box variants -- XFOIL evaluated in-process, NeuralFoil
 in PyTorch, airfoil design variables co-optimized with the aircraft -- live in
 the `lcuav <https://github.com/codykarcher/lcuav>`_ repository, which builds

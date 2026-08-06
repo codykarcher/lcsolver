@@ -386,3 +386,49 @@ def test_structures_are_never_auto_wired():
     rep = optimization_check(st)         # stale clone: must stay structural
     assert rep.degenerate == []
     assert rep.post_solve_text() == ''
+
+
+# --- a convex quadratic is a QP, definite or not ----------------------------
+# The Hessian test used to be positive DEFINITE, which rejected the commonest
+# QP in engineering: any model where a variable does not appear in the
+# objective has a singular Hessian, so a control problem penalizing only its
+# inputs was solved as a general NLP -- losing the convexity guarantee and the
+# exact duals, and saying so nowhere.
+
+def _psd_qp():
+    """Convex, and singular: `y` is nowhere in the objective."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x')
+    y = f.Variable(name='y', guess=1.0, units='-', description='y')
+    f.Objective(x ** 2)
+    f.ConstraintList([x + y >= 2.0, y <= 5.0, y >= 0.0, x >= -5.0, x <= 5.0])
+    return f
+
+
+def test_a_semidefinite_objective_is_a_quadratic_program():
+    st = _detected(_psd_qp())
+    assert st['Quadratic_Program'][0] is not False
+    assert st['Linear_Program'][0] is False
+
+
+def test_an_affine_objective_is_still_a_linear_program():
+    """The guard on the loosened test: an all-zero Hessian is not a QP."""
+    st = _detected(_lp())
+    assert st['Linear_Program'][0] is not False
+    assert st['Quadratic_Program'][0] is False
+
+
+def test_a_concave_objective_is_neither():
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x')
+    f.Objective(-(x ** 2))
+    f.ConstraintList([x >= 0.5, x <= 5.0])
+    st = _detected(f)
+    assert st['Quadratic_Program'][0] is False
+    assert st['Linear_Program'][0] is False
+
+
+def test_a_semidefinite_qp_solves_as_one():
+    from lcsolver.solvers.solver import solve
+    res = solve(_psd_qp(), sensitivities=False)
+    assert res['problem_structure'] == 'quadratic_program'

@@ -24,6 +24,8 @@ excluded from a plain ``pytest`` run by the marker configuration.
 import importlib
 import sys
 import warnings
+import contextlib
+import io
 from pathlib import Path
 
 import numpy as np
@@ -36,9 +38,28 @@ from lcsolver.solvers import solver as solver_module  # noqa: E402
 from lcsolver.presolve.structureDetector import structure_detector  # noqa: E402
 from lcsolver.presolve.unitCorrector import unit_corrector  # noqa: E402
 
-pytestmark = pytest.mark.slow
+def _ipopt_available():
+    try:
+        from lcsolver.environment import ipopt_available
+        return bool(ipopt_available())
+    except Exception:
+        return False
 
-_EXAMPLES = Path(__file__).resolve().parents[1] / 'examples' / 'convexengineering'
+
+# Four of the five paths compared here are IPOPT paths. This file catches each
+# path's failure and compares the answers afterwards, so a missing install
+# arrives as a diff between backends rather than as an exception the suite
+# could recognize -- it has to be skipped up front. Skipping the whole module
+# is right: with only cvxopt there is nothing left to cross-check *against*,
+# which is the entire point of the file.
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        not _ipopt_available(),
+        reason='cross-path comparison needs IPOPT: 4 of its 5 paths are IPOPT'),
+]
+
+_EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +164,11 @@ def test_every_path_finds_the_same_optimum(name, make):
             results[path] = f'FAILED: {type(exc).__name__}: {exc}'
 
     ok = {p: v for p, v in results.items() if isinstance(v, float)}
-    assert ok, f'every path failed on {name}: {results}'
+    # Every path, not merely one of them. `assert ok` passed as soon as a
+    # single backend worked, which is the opposite of what this file is for:
+    # four of the five could stop solving these models entirely and the test
+    # that exists to compare them would still be green.
+    assert set(ok) == set(PATHS), f'paths failed on {name}: {results}'
 
     for path, value in ok.items():
         assert value == pytest.approx(expected, rel=1e-4), (
@@ -190,69 +215,93 @@ def test_split_bounds_do_not_change_the_answer(name, make):
 # ---------------------------------------------------------------------------
 # the real models
 # ---------------------------------------------------------------------------
-def _example(name):
+# These used to be `examples/convexengineering/<name>/model.py`, eleven models
+# imported through a `build()` factory. That directory is gone, and because a
+# missing model was skipped rather than failed, all twenty-three of the tests
+# over it had been quietly skipping -- the suite reported green while its only
+# real-model coverage ran nothing at all.
+#
+# The real models now live in examples/ as scripts, so they are read from
+# there, and the directory listing is the list: an example that lands is
+# covered without anyone remembering to add it.
+def _example_names():
+    return sorted(q.stem for q in _EXAMPLES.glob('*.py')
+                  if not q.name.startswith('_'))
+
+
+def _build_example(name):
+    """Execute an example in a private namespace and hand back its Formulation.
+
+    The examples are scripts -- they declare a model and solve it at module
+    level -- so this runs one and takes the `f` it leaves behind. Executed
+    rather than imported because a presolve comparison needs to build the
+    model twice, and an imported module is built once and cached.
+    """
+    path = _EXAMPLES / f'{name}.py'
     if str(_EXAMPLES) not in sys.path:
         sys.path.insert(0, str(_EXAMPLES))
-    try:
-        return getattr(importlib.import_module(f'{name}.model'), 'build')
-    except Exception:                                  # noqa: BLE001
-        pytest.skip(f'example {name} unavailable')
-
-
-#: Every model in examples/convexengineering. These are the asset: nine real
-#: formulations carrying shapes no hand-written test contains. A model that is
-#: not importable is skipped rather than failing the suite, so the list can
-#: stay ahead of what happens to build on a given machine.
-EXAMPLES = ['simpleac', 'wing', 'fuselage', 'empennage', 'motor', 'propeller',
-            'windturbine', 'turbofan', 'gassolar', 'solar', 'jho']
-
-
-@pytest.mark.parametrize('name', EXAMPLES)
-def test_example_models_are_unchanged_by_presolve(name):
-    """Real models, which carry the shapes a written-from-scratch test lacks."""
-    build = _example(name)
-
+    namespace = {'__name__': f'_example_{name}', '__file__': str(path)}
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from lcsolver.solvers.sequential.bridge import solve_sia
-        try:
-            base = solve_sia(structure_detector(unit_corrector(build())))
-            plain = solve_sia(structure_detector(unit_corrector(build())),
-                              presolve=False)
-        except Exception as exc:                       # noqa: BLE001
-            pytest.skip(f'{name} does not solve on this build: '
-                        f'{type(exc).__name__}: {exc}')
-
-    if not (base.converged or plain.converged):
-        pytest.skip(f'{name} converges on neither path; nothing to compare')
-    assert base.objective == pytest.approx(plain.objective, rel=1e-4), (
-        f'{name}: presolve changed the objective '
-        f'({plain.objective} -> {base.objective})')
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(path.read_text(), str(path), 'exec'), namespace)
+    f = namespace.get('f')
+    assert f is not None, f'{name} declares no Formulation named f'
+    return f
 
 
-@pytest.mark.parametrize('name', EXAMPLES)
-def test_example_models_survive_every_transform(name):
+def _sia_can_read(f):
+    """Whether SIA is the right route for this model.
+
+    SIA iterates on GP sub-problems, so a model detected as an LP or a QP goes
+    to its own backend instead and is not this test's business. A black box
+    has no algebraic structure to fold at all.
+    """
+    if f.get_runtimeConstraints():
+        return False, 'carries a black box; no algebraic structure to fold'
+    st = structure_detector(unit_corrector(f))
+    if not (st['Geometric_Program'][0] or st['Signomial_Program'][0]):
+        return False, 'is not a GP or SP, so SIA is not its route'
+    return True, ''
+
+
+#: Which examples the presolve comparison actually applies to. Computed once so
+#: that `test_the_presolve_comparison_is_not_vacuous` can assert on it: skipping
+#: is how the previous version of this file came to test nothing at all, so the
+#: count of models that really run is itself checked.
+def _sia_examples():
+    names = []
+    for name in _example_names():
+        ok, _why = _sia_can_read(_build_example(name))
+        if ok:
+            names.append(name)
+    return names
+
+
+@pytest.mark.parametrize('name', _example_names())
+def test_examples_are_unchanged_by_presolve(name):
     """Each presolve pass must leave each real model's problem unchanged.
 
     `assert_equivalent` checks the property directly -- same objective, same
     worst violation, at a solved point -- rather than a remembered number, so
     it applies to any model without knowing anything about it.
     """
-    from lcsolver.presolve.reductions import (assert_equivalent, fold_singleton_rows,
-                              presolve)
+    from lcsolver.presolve.reductions import (assert_equivalent,
+                                              fold_singleton_rows, presolve)
+    from lcsolver.solvers.sequential.bridge import solve_sia
 
-    build = _example(name)
+    f = _build_example(name)
+    ok, why = _sia_can_read(f)
+    if not ok:
+        pytest.skip(f'{name} {why}')
+
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from lcsolver.solvers.sequential.bridge import solve_sia
-        try:
-            res = solve_sia(structure_detector(unit_corrector(build())))
-        except Exception as exc:                       # noqa: BLE001
-            pytest.skip(f'{name} does not solve on this build: '
-                        f'{type(exc).__name__}: {exc}')
+        res = solve_sia(structure_detector(unit_corrector(f)))
         x = np.asarray(res.x, dtype=float)
         before = fold_singleton_rows(
-            structure_detector(unit_corrector(build()), bounds_as_rows=False))
+            structure_detector(unit_corrector(_build_example(name)),
+                               bounds_as_rows=False))
         after, log = presolve(before, fold=False)
 
     # `assert_equivalent` maps x through the log itself. Slicing it by length
@@ -262,45 +311,25 @@ def test_example_models_survive_every_transform(name):
     assert_equivalent(before, after, x, log=log, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.veryslow
-def test_spaircraft_end_to_end():
-    """The flagship model, and the only one carrying every shape at once.
+def test_there_are_real_models_to_test():
+    """The list is a directory listing, so an empty one must fail loudly.
 
-    Every defect found while building the presolve pipeline was found by
-    running this and nothing else: an equality sharing variables, a chain of
-    eliminations, variables reaching their bounds, a model that is both linear
-    and signomial. It takes about half a minute, which is why it carries its
-    own marker.
-
-    It also caught the iteration cap: SPaircraft converges in 149 iterations
-    and the default was 100, so a converging run was being stopped three fifths
-    of the way through and reported as a failure.
-
-    The objective moved from 95559.91 to 95120.43 -- 0.46% LOWER, i.e. a
-    better optimum -- when Phase I stopped writing signomial equalities as
-    ``residual == t``. That form forces every equality to the single shared
-    violation scalar, so on a model with SPaircraft's ten-odd
-    SignomialEqualities the sub-problem could be infeasible on a perfectly
-    feasible problem; ``|residual| <= t`` fixed it. The new point satisfies
-    the same feasibility and stationarity assertions above -- 1e-6 and 1e-5 --
-    so this is a better local solution on a non-convex problem, not a
-    regression. A better Phase I start landing in a better basin is exactly
-    what that fix should do.
+    This is the lesson of what it replaced: coverage that silently becomes
+    zero looks exactly like coverage that passes.
     """
-    build = _example('spaircraft')
+    assert _example_names(), f'no examples found in {_EXAMPLES}'
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        from lcsolver.solvers.sequential.bridge import solve_sia
-        st = structure_detector(unit_corrector(build()))
-        n_vars = len(st['variables'])
-        res = solve_sia(st)
 
-    assert res.converged, f'did not converge: {res.status}'
-    assert res.max_violation <= 1e-6
-    assert res.stationarity <= 1e-5
-    assert len(res.x) == n_vars, 'presolve must restore the full solution'
-    assert res.objective == pytest.approx(95120.43, rel=1e-3)
+def test_the_presolve_comparison_is_not_vacuous():
+    """Several real models must actually reach the comparison above.
+
+    The test it replaced skipped on any problem and so skipped on all eleven
+    of its models for however long the directory had been gone. A skip guard
+    is only safe if something asserts that it is not skipping everything.
+    """
+    reaching = _sia_examples()
+    assert len(reaching) >= 3, (
+        f'only {reaching} reach the presolve comparison; the rest are skipped')
 
 
 # ---------------------------------------------------------------------------

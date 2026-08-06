@@ -1,0 +1,35 @@
+# A complete LCsolver environment in one command:
+#
+#     conda env create -f environment.yml
+#     conda activate lcsolver
+#     pip install -e .
+#
+# This exists because IPOPT cannot come from pip. There is no IPOPT executable
+# on PyPI, and cyipopt is sdist-only there -- `pip install cyipopt` compiles
+# against an IPOPT that must already be present. conda-forge ships both
+# prebuilt, so this file is the shortest path from nothing to a working solve.
+#
+# The IPOPT here is a MUMPS build, because MUMPS is the only linear solver that
+# may be redistributed. It works. For geometric and signomial programs, MA27 is
+# markedly more robust (docs/ipopt.rst); once this environment is up, upgrade
+# with:
+#
+#     lcsolver-install-solvers --ma27 <path-to-ma27-sources>
+#
+# which rebuilds IPOPT against MA27 and relinks cyipopt to match.
+name: lcsolver
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.9
+  - pyomo
+  - numpy
+  - scipy
+  - pint
+  - cvxopt
+  # The two that pip cannot supply.
+  - ipopt
+  - cyipopt
+  # Test and docs; drop if you only want to run models.
+  - pytest
+  - pip
