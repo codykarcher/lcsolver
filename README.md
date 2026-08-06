@@ -120,13 +120,19 @@ signomial program. IPOPT's own default is `ma27`. See
 [lcsolver/scripts/install_ipopt.sh](lcsolver/scripts/install_ipopt.sh) (driven
 by `lcsolver-install-solvers --ma27`) to build against HSL MA27.
 
-If you have both a conda IPOPT and a source-built MA27 one, `conda activate`
-puts conda's first on `PATH` in every new shell and the MA27 build is used by
-nothing. Rather than fight `PATH`, pin it — LCsolver honours this everywhere,
-including inside the SLCP and SIA loops:
+If you have both a conda IPOPT and a source-built MA27 one, LCsolver uses the
+MA27 build — it prefers MA27 over a MUMPS build regardless of `PATH` order, and
+finds a build it installed even if that build is on no `PATH` at all. This is
+deliberate: `conda activate` prepends `$CONDA_PREFIX/bin` in every new shell, so
+honouring `PATH` strictly would mean the build you made specifically to get MA27
+is silently used by nothing. `lcsolver-check-solvers` always names the binary it
+picked and why.
+
+To override — force one binary, or restore strict `PATH` order:
 
 ```
 export LCSOLVER_IPOPT_EXECUTABLE=/path/to/ipopt/build/bin/ipopt
+export LCSOLVER_IPOPT_AUTOSELECT=0
 ```
 
 ```python
@@ -140,13 +146,14 @@ The core object in LCsolver is the `Formulation`  object, which inherits from th
 
 Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/codykarcher/lcsolver/tree/main/examples) folder or in the LCsolver [documentation](https://github.com/codykarcher/lcsolver/tree/main/docs)
 
+<!-- BEGIN readme_example -->
+<!-- generated from examples/readme_example.py -- edit that file and run `python utilities/sync_readme.py` -->
 ```python
 # =================
 # Import Statements
 # =================
-import pyomo.environ as pyo
-from pyomo.environ import units
-from lcsolver import Formulation, BlackBoxFunctionModel
+import lcsolver
+from lcsolver import Formulation, BlackBoxFunctionModel, units
 
 # ===================
 # Declare Formulation
@@ -156,68 +163,78 @@ f = Formulation()
 # =================
 # Declare Variables
 # =================
-x = f.Variable(name = 'x', guess = 1.0, units = 'm'  , description = 'The x variable')
-y = f.Variable(name = 'y', guess = 1.0, units = 'm'  , description = 'The y variable')
-z = f.Variable(name = 'z', guess = 1.0, units = 'm^2', description = 'The unit circle output')
+x = f.Variable(name='x', guess=1.0, units='m'  , description='The x variable')
+y = f.Variable(name='y', guess=1.0, units='m'  , description='The y variable')
+z = f.Variable(name='z', guess=1.0, units='m^2', description='Model output')
 
 # =================
 # Declare Constants
 # =================
-c = f.Constant(name = 'c', value = 1.0, units = '', description = 'A constant c', size = 2)
+c = f.Constant(name='c', value=[1.0, 2.0], units='', size=2, description='A constant c')
 
 # =====================
 # Declare the Objective
 # =====================
-f.Objective(
-    c[0]*x + c[1]*y
-)
+f.Objective(c[0] / x + c[1] / y)
+
 
 # ===================
 # Declare a Black Box
 # ===================
 class UnitCircle(BlackBoxFunctionModel):
-    def __init__(self): # The initialization function
-        
+    def __init__(self):  # The initialization function
         # Initialize the black box model
         super().__init__()
 
         # A brief description of the model
         self.description = 'This model evaluates the function: z = x**2 + y**2'
-        
+
         # Declare the black box model inputs
-        self.inputs.append(name = 'x', units = 'ft' , description = 'The x variable')
-        self.inputs.append(name = 'y', units = 'ft' , description = 'The y variable')
+        self.inputs.append(name='x', units='ft', description='The x variable')
+        self.inputs.append(name='y', units='ft', description='The y variable')
 
         # Declare the black box model outputs
-        self.outputs.append(name = 'z', units = 'ft**2',  description = 'Resultant of the unit circle evaluation')
+        self.outputs.append(
+            name='z', units='ft**2', description='Resultant of the unit circle'
+        )
 
         # Declare the maximum available derivative
         self.availableDerivative = 1
 
-        # Post-initialization setup
-        self.post_init_setup()
-
-    def BlackBox(self, x, y): # The actual function that does things
+    def BlackBox(self, x, y):  # The actual function that does things
         # Convert to the declared input units (ft) and strip to plain floats
         x, y = self.sanitizeInputs(x, y, strip_units=True)
 
-        z = x**2 + y**2 # Compute z
-        dzdx = 2*x      # Compute dz/dx
-        dzdy = 2*y      # Compute dz/dy
+        z    = x**2 + y**2  # Compute z
+        dzdx = 2 * x        # Compute dz/dx
+        dzdy = 2 * y        # Compute dz/dy
 
         # Attach the declared units: z in ft**2, the gradient in ft**2/ft
-        return self.packOutputs(z, [dzdx, dzdy])
+        res = self.packOutputs(z, [dzdx, dzdy])
+
+        return res
 
 # =======================
 # Declare the Constraints
 # =======================
-f.ConstraintList(
-    [
-        [ z, '==', [x,y], UnitCircle() ] ,
-        z <= 1*units.m**2
-    ]
-)
+f.ConstraintList([
+    [ z, '==', [x, y], UnitCircle() ], 
+    x + y <= 1.0 * units.m
+    ])
+
+# =============================================
+# Black Box can be run as a function!
+# =============================================
+uc = UnitCircle()
+bbo = uc.BlackBox(0.5 * units.m, 0.5 * units.m)
+
+# =======================
+# Solve Model
+# =======================
+sol = lcsolver.solve(f)
+print(sol.summary())
 ```
+<!-- END readme_example -->
 
 ## Acknowledgement
 
