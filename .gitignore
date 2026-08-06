@@ -12,3 +12,6 @@
 *ESP/*
 docs/_build/
 .pytest_cache/
+dist/
+build/
+coverage.xml
