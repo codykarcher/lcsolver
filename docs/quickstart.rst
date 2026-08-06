@@ -25,5 +25,5 @@ The black-box constraint makes this a signomial program with an opaque row,
 so ``solve`` routes it to SIA and the printed summary opens with a Report
 saying exactly that.
 
-.. literalinclude:: ../examples/readme_example.py
+.. literalinclude:: ../examples/unit_circle_blackbox.py
     :language: python 

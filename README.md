@@ -15,7 +15,7 @@ LCsolver is a package targeted at formulating and solving optimization problems 
 
 ## Dependencies
 
-LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  Ipopt can be installed through the cyipopt package, but ships by default with the MUMPS linear algebra package, which is known to have performance difficulties.  We strongly encourage that users obtain MA27 and build IPOPT on this solver as opposed to the default MUMPS.  LCS is able to build and run without MA27 by default and provides easy options to upgrade later, described below.  
+LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  IPOPT cannot be installed from pip at all: there is no IPOPT executable on PyPI, and the cyipopt package is source-only there, so it *compiles against* an IPOPT that must already exist rather than providing one.  `lcsolver-install-solvers` obtains IPOPT and then builds cyipopt against it.  Every IPOPT you can install prebuilt ships with the MUMPS linear algebra package, which is known to have performance difficulties.  We strongly encourage that users obtain MA27 and build IPOPT on this solver as opposed to the default MUMPS.  LCS is able to build and run without MA27 by default and provides easy options to upgrade later, described below.  
 
 ## Installation
 
@@ -101,13 +101,28 @@ The core object in LCsolver is the `Formulation`  object, which inherits from th
 Below is a simple example to get started, but additional resources can be found in the [examples](https://github.com/codykarcher/lcsolver/tree/main/examples) folder or in the LCsolver [documentation](https://github.com/codykarcher/lcsolver/tree/main/docs)
 
 <!-- BEGIN readme_example -->
-<!-- generated from examples/readme_example.py -- edit that file and run `python utilities/sync_readme.py` -->
+<!-- generated from examples/boyd.py -- edit that file and run `python utilities/sync_readme.py` -->
 ```python
+# ===========
+# Description
+# ===========
+# The box design problem, formulated as a Geometric Program
+# From:  Boyd, Kim, Vandenberghe, and Hassibi
+#        A Tutorial on Geometric Programming
+#        Optimization and Engineering
+#        2007
+#
+# Maximize the volume of a box (stated as minimizing the inverse volume)
+# subject to a wall area limit, a floor area limit, and aspect ratio limits
+# on both the height and the depth. Used as the introductory test problem in
+# the SLCP paper; the optimum is 5.196e-3 1/m^3 (a volume of 192.45 m^3) at
+# w = 5.774 m, h = 2.887 m, d = 11.547 m.
+
 # =================
 # Import Statements
 # =================
 import lcsolver
-from lcsolver import Formulation, BlackBoxFunctionModel, units
+from lcsolver import Formulation, units
 
 # ===================
 # Declare Formulation
@@ -117,73 +132,40 @@ f = Formulation()
 # =================
 # Declare Variables
 # =================
-x = f.Variable(name='x', guess=1.0, units='m'  , description='The x variable')
-y = f.Variable(name='y', guess=1.0, units='m'  , description='The y variable')
-z = f.Variable(name='z', guess=1.0, units='m^2', description='Model output')
+w = f.Variable(name="w", guess = 5.0, units = "m", description="Box width")
+h = f.Variable(name="h", guess = 5.0, units = "m", description="Box height")
+d = f.Variable(name="d", guess = 5.0, units = "m", description="Box depth")
 
 # =================
 # Declare Constants
 # =================
-c = f.Constant(name='c', value=[1.0, 2.0], units='', size=2, description='A constant c')
+Aflr  = f.Constant( name="Aflr" , value=1000.0 , units="m^2" , description="Maximum floor area")
+Awall = f.Constant( name="Awall", value=100.0  , units="m^2" , description="Maximum wall area")
+alpha = f.Constant( name="alpha", value=0.5    , units="-"   , description="Minimum height aspect ratio h/w")
+beta  = f.Constant( name="beta" , value=2.0    , units="-"   , description="Maximum height aspect ratio h/w")
+gamma = f.Constant( name="gamma", value=0.5    , units="-"   , description="Minimum depth aspect ratio d/w")
+delta = f.Constant( name="delta", value=2.0    , units="-"   , description="Maximum depth aspect ratio d/w")
 
 # =====================
 # Declare the Objective
 # =====================
-f.Objective(c[0] / x + c[1] / y)
-
-# ===================
-# Declare a Black Box
-# ===================
-class UnitCircle(BlackBoxFunctionModel):
-    def __init__(self):  # The initialization function
-        # Initialize the black box model
-        super().__init__()
-
-        # A brief description of the model
-        self.description = 'This model evaluates the function: z = x**2 + y**2'
-
-        # Declare the black box model inputs
-        self.inputs.append(name='x', units='ft', description='The x variable')
-        self.inputs.append(name='y', units='ft', description='The y variable')
-
-        # Declare the black box model outputs
-        self.outputs.append(
-            name='z', units='ft**2', description='Resultant of the unit circle'
-        )
-
-        # Declare the maximum available derivative
-        self.availableDerivative = 1
-
-    def BlackBox(self, x, y):  # The actual function that does things
-        # Convert to the declared input units (ft) and strip to plain floats
-        x, y = self.sanitizeInputs(x, y, strip_units=True)
-
-        z    = x**2 + y**2  # Compute z
-        dzdx = 2 * x        # Compute dz/dx
-        dzdy = 2 * y        # Compute dz/dy
-
-        # Attach the declared units: z in ft**2, the gradient in ft**2/ft
-        res = self.packOutputs(z, [dzdx, dzdy])
-
-        return res
+f.Objective(1 / (h * w * d))
 
 # =======================
 # Declare the Constraints
 # =======================
 f.ConstraintList([
-    [ z, '==', [x, y], UnitCircle() ], 
-    x + y <= 1.0 * units.m
+    2 * (h * w + h * d) <= Awall,
+    w * d <= Aflr,
+    alpha <= h / w,
+    h / w <= beta,
+    gamma <= d / w,
+    d / w <= delta,
     ])
 
-# =============================================
-# Black Box can be run as a function!
-# =============================================
-uc = UnitCircle()
-bbo = uc.BlackBox(0.5 * units.m, 0.5 * units.m)
-
-# =======================
+# ===========
 # Solve Model
-# =======================
+# ===========
 sol = lcsolver.solve(f)
 print(sol.summary())
 ```
@@ -203,8 +185,7 @@ The algorithm behind the SLCP route is published separately:
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a bug, ask a question,
-or open a pull request, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the
-conduct expected of participants.
+or open a pull request.
 
 ## Acknowledgement
 

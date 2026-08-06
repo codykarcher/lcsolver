@@ -66,9 +66,7 @@ engineering-design conveniences — units handling, black-box interfaces, struct
 detection, solver routing — are in scope. Contributions that duplicate functionality
 better provided by Pyomo itself generally are not.
 
-## Code of conduct
+## Conduct
 
-Participation in this project is governed by the
-[Code of Conduct](CODE_OF_CONDUCT.md) — the Contributor Covenant v2.1.
-Harassment or abusive behavior is not tolerated. Reports go to
-cody.karcher@csulb.edu.
+Be civil and stay on the technical substance. Harassment or abusive behavior is
+not tolerated; reports go to cody.karcher@csulb.edu.

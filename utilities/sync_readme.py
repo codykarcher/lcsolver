@@ -1,4 +1,4 @@
-"""Inject examples/readme_example.py into README.md.
+"""Inject examples/boyd.py into README.md.
 
 GitHub markdown has no include mechanism, so the README's worked example is
 spliced in between marker comments by this script, and a test
@@ -13,7 +13,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 README = os.path.join(ROOT, 'README.md')
-EXAMPLE = os.path.join(ROOT, 'examples', 'readme_example.py')
+EXAMPLE = os.path.join(ROOT, 'examples', 'boyd.py')
 
 BEGIN = '<!-- BEGIN readme_example -->'
 END = '<!-- END readme_example -->'
@@ -22,7 +22,7 @@ END = '<!-- END readme_example -->'
 def build_block():
     code = open(EXAMPLE).read().rstrip('\n')
     return (f'{BEGIN}\n'
-            '<!-- generated from examples/readme_example.py -- edit that '
+            '<!-- generated from examples/boyd.py -- edit that '
             'file and run `python utilities/sync_readme.py` -->\n'
             f'```python\n{code}\n```\n'
             f'{END}')
@@ -38,7 +38,7 @@ def sync(check_only=False):
         return updated == readme
     if updated != readme:
         open(README, 'w').write(updated)
-        print('README.md updated from examples/readme_example.py')
+        print('README.md updated from examples/boyd.py')
     else:
         print('README.md already in sync')
     return True

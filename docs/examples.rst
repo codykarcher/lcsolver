@@ -11,9 +11,12 @@ one, so they cannot drift from the package.
 
    * - File
      - What it shows
-   * - ``readme_example.py``
+   * - ``unit_circle_blackbox.py``
      - The quickstart model: a black-box function with units that differ
        from the model's, solved through SIA. See :doc:`quickstart`.
+   * - ``boyd.py``
+     - The README's worked example: the box-design geometric program from
+       Boyd et al.'s GP tutorial, with a known optimum.
    * - ``hydrogen_network_lp.py``
      - A delivery network as a **linear** program, and the matrix machinery:
        a ``size=[3, 4]`` variable, ``f.sum`` along either axis,

@@ -429,6 +429,25 @@ def test_ma27_plan_passes_the_sources_through_without_copying(tmp_path):
     assert any('cyipopt' in step.command for step in steps[1:] if step.command)
 
 
+def test_ma27_also_gets_the_asl_library(tmp_path, monkeypatch):
+    """`--ma27` is a complete install, not an add-on.
+
+    The README's quickstart runs it on a machine with nothing, so it has to
+    leave that machine able to evaluate a black box. It reaches its plan
+    without passing through the default planner, which is where the ASL step
+    was originally added -- and so the documented fast path built IPOPT, MA27
+    and cyipopt and still could not solve a grey-box model.
+    """
+    sources = tmp_path / 'ma27-1.0.0'
+    sources.mkdir()
+    (sources / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')
+    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: False)
+
+    steps = install._plan_ma27(str(sources), _Args(ma27_root=str(tmp_path)))
+    assert any('build_pynumero' in ' '.join(s.command)
+               for s in steps if s.command)
+
+
 def test_the_build_script_ships_inside_the_package():
     """It lives in the package rather than utilities/ so that it survives a
     wheel install, which is the only way --ma27 works for anyone else."""

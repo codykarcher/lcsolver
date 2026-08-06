@@ -4,7 +4,7 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""The README's worked example must be examples/readme_example.py, verbatim.
+"""The README's worked example must be examples/boyd.py, verbatim.
 
 GitHub markdown cannot include a file, so the block is spliced in by
 utilities/sync_readme.py between marker comments. This test is what makes
@@ -24,5 +24,5 @@ def test_readme_example_is_in_sync():
     finally:
         sys.path.pop(0)
     assert sync(check_only=True), (
-        'README.md has drifted from examples/readme_example.py; run '
+        'README.md has drifted from examples/boyd.py; run '
         '`python utilities/sync_readme.py` to regenerate the block')

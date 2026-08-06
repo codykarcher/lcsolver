@@ -233,7 +233,7 @@ def _plan_default(report, conda, args):
         working black-box solve.
         """
         if not args.skip_cyipopt and not _pynumero_asl_available():
-            collected.append(_plan_pynumero_asl(conda))
+            collected.append(_plan_pynumero_asl())
         return collected
 
     if not report['cvxopt']['available'] and not args.skip_cvxopt:
@@ -340,7 +340,7 @@ def _pynumero_asl_available():
         return False
 
 
-def _plan_pynumero_asl(conda):
+def _plan_pynumero_asl():
     """Get the PyNumero ASL library, which is not where you would expect.
 
     Two dead ends first, because both look like the answer:
@@ -408,6 +408,14 @@ def _plan_ma27(sources, args):
 
     if not args.skip_cyipopt:
         steps.extend(_plan_relink(build))
+        # --ma27 is a complete install in its own right -- the README's
+        # quickstart runs it on a machine with nothing -- so it needs the ASL
+        # library just as much as the default path does. It reaches this
+        # branch without passing through the planner that would otherwise add
+        # it, which left the documented fast path building IPOPT, MA27 and
+        # cyipopt and still unable to evaluate a black box.
+        if not _pynumero_asl_available():
+            steps.append(_plan_pynumero_asl())
 
     return steps
 
