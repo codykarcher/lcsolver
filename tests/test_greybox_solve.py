@@ -44,9 +44,8 @@ class UnitCircle(BlackBoxFunctionModel):
         self.post_init_setup(len(self.inputs))
 
     def BlackBox(self, x, y):
-        x, y = pyo.value(x), pyo.value(y)
-        z = (x ** 2 + y ** 2) * units.dimensionless
-        return z, [2 * x * units.dimensionless, 2 * y * units.dimensionless]
+        x, y = self.sanitizeInputs(x, y, strip_units=True)
+        return self.packOutputs(x ** 2 + y ** 2, [2 * x, 2 * y])
 
 
 def _build():
@@ -88,6 +87,57 @@ def test_deepcopy_bblist_directly():
     assert [v.name for v in dup.inputs] == ['x', 'y']
     assert [v.name for v in dup.outputs] == ['z']
     assert dup.inputs['x'] is not uc.inputs['x']
+
+
+def test_sanitize_inputs_strip_units():
+    """strip_units converts to declared units FIRST, then strips."""
+
+    class FtBox(BlackBoxFunctionModel):
+        def __init__(self):
+            super().__init__()
+            self.inputs.append(name='x', units='ft', description='x')
+            self.outputs.append(name='z', units='ft**2', description='z')
+            self.availableDerivative = 1
+
+        def BlackBox(self, x):
+            x = self.sanitizeInputs(x, strip_units=True)
+            return self.packOutputs(x ** 2, [2 * x])
+
+    bb = FtBox()
+    x = bb.sanitizeInputs(1.0 * units.m, strip_units=True)
+    assert isinstance(x, float)
+    assert x == pytest.approx(3.280839895, rel=1e-9)  # 1 m in ft
+    # default behavior unchanged: units kept
+    xq = bb.sanitizeInputs(1.0 * units.m)
+    assert pyo.value(units.convert(xq, units.ft)) == pytest.approx(x)
+
+
+def test_pack_outputs_units_and_shapes():
+    class FtBox(BlackBoxFunctionModel):
+        def __init__(self):
+            super().__init__()
+            self.inputs.append(name='x', units='ft', description='x')
+            self.inputs.append(name='y', units='ft', description='y')
+            self.outputs.append(name='z', units='ft**2', description='z')
+            self.availableDerivative = 1
+
+        def BlackBox(self, x, y):
+            x, y = self.sanitizeInputs(x, y, strip_units=True)
+            return self.packOutputs(x ** 2 + y ** 2, [2 * x, 2 * y])
+
+    bb = FtBox()
+    # raw numbers get the declared units; the jacobian gets out/in units
+    z, grad = bb.BlackBox(1.0 * units.m, 0.5 * units.m)
+    assert pyo.value(units.convert(z, units.m ** 2)) == pytest.approx(1.25)
+    assert pyo.value(units.convert(grad[0], units.m)) == pytest.approx(2.0)
+    assert pyo.value(units.convert(grad[1], units.m)) == pytest.approx(1.0)
+    # values-only form, and the count guard
+    zonly = bb.packOutputs(4.0)
+    assert pyo.value(units.convert(zonly, units.ft ** 2)) == pytest.approx(4.0)
+    with pytest.raises(ValueError):
+        bb.packOutputs([1.0, 2.0])
+    with pytest.raises(ValueError):
+        bb.packOutputs(1.0, [1.0])  # jacobian must have one entry per input
 
 
 def test_auto_solve_routes_blackbox_to_sia():

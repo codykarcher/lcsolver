@@ -86,9 +86,7 @@ class ProfileDrag(BlackBoxFunctionModel):
     def BlackBox(self, C_L, Re, tau):
         from scipy.optimize import brentq
 
-        C_L = pyo.value(units.convert(C_L, self.inputs['C_L'].units))
-        Re = pyo.value(units.convert(Re, self.inputs['Re'].units))
-        tau = pyo.value(units.convert(tau, self.inputs['tau'].units))
+        C_L, Re, tau = self.sanitizeInputs(C_L, Re, tau, strip_units=True)
 
         def F(cdp):
             return sum(a * C_L ** b * tau ** c * Re ** d * cdp ** e
@@ -114,11 +112,9 @@ class ProfileDrag(BlackBoxFunctionModel):
             dF_dRe += d * t / Re
             dF_dtau += c * t / tau
 
-        C_Dp = C_Dp * units.dimensionless
-        grad = [(-dF_dCL / dF_dcdp) * units.dimensionless,
-                (-dF_dRe / dF_dcdp) * units.dimensionless,
-                (-dF_dtau / dF_dcdp) * units.dimensionless]
-        return C_Dp, grad
+        return self.packOutputs(C_Dp, [-dF_dCL / dF_dcdp,
+                                       -dF_dRe / dF_dcdp,
+                                       -dF_dtau / dF_dcdp])
 
 
 # =====================

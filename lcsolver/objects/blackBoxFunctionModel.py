@@ -915,7 +915,26 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def sanitizeInputs(self, *args, **kwargs):
+        """Validate and unit-convert the values handed to ``BlackBox``.
+
+        Accepts the inputs positionally (in declaration order) or by name,
+        converts each to its declared input units, and size-checks it. By
+        default the returned values keep their units. Pass
+        ``strip_units=True`` to get plain floats/arrays instead -- these are
+        magnitudes IN THE DECLARED INPUT UNITS (conversion happens first,
+        then the units are stripped), which is what makes stripping safe.
+        A single declared input is returned bare; several come back as a
+        list: ``x, y = self.sanitizeInputs(x, y, strip_units=True)``.
+        """
         nameList = [self.inputs[i].name for i in range(0, len(self.inputs))]
+
+        strip_units = False
+        if 'strip_units' in kwargs:
+            if 'strip_units' in nameList:
+                raise ValueError(
+                    "an input named 'strip_units' collides with the "
+                    "strip_units keyword of sanitizeInputs; rename the input")
+            strip_units = kwargs.pop('strip_units')
 
         if len(args) + len(kwargs.values()) > len(nameList):
             raise ValueError('Too many inputs')
@@ -976,10 +995,73 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             self.sizeCheck(size, ipval_correctUnits)
 
             opts.append(ipval_correctUnits)
+        if strip_units:
+            opts = [self.pyomo_value(o) for o in opts]
         if len(opts) == 1:
             opts = opts[0]
 
         return opts
+
+    # ---------------------------------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------------------------------
+    def packOutputs(self, values, jacobian=None):
+        """Attach declared units to outputs and shape the ``BlackBox`` return.
+
+        The inverse of ``sanitizeInputs(strip_units=True)``: a plain number
+        or array is taken to be a magnitude in the DECLARED OUTPUT UNITS and
+        gets them attached; a value already carrying units is converted to
+        the declared units instead (catching unit mistakes). Jacobian entries
+        get ``output units / input units`` derived automatically -- the
+        error-prone part of the return contract.
+
+        ``values`` is the single output value, or a list with one entry per
+        declared output. ``jacobian`` is the list ``[d(out)/d(in_0), ...]``
+        for a single output, or a list of such lists (one per output). The
+        return is exactly what ``BlackBox`` must produce: ``values`` alone
+        when ``jacobian`` is None, else ``(values, jacobian)``, with the
+        single-output case unwrapped::
+
+            def BlackBox(self, x, y):
+                x, y = self.sanitizeInputs(x, y, strip_units=True)
+                return self.packOutputs(x**2 + y**2, [2*x, 2*y])
+        """
+        n_out = len(self.outputs)
+        n_in = len(self.inputs)
+        multi = isinstance(values, (list, tuple))
+        vals = list(values) if multi else [values]
+        if len(vals) != n_out:
+            raise ValueError(
+                'packOutputs received %d value(s) for %d declared output(s)'
+                % (len(vals), n_out))
+
+        packed_vals = []
+        for k in range(n_out):
+            unts = self.outputs[k].units
+            packed_vals.append(self.convert(self.attachUnits(vals[k], unts),
+                                            unts))
+
+        if jacobian is None:
+            return packed_vals if multi else packed_vals[0]
+
+        jac_rows = ([list(r) for r in jacobian] if multi
+                    else [list(jacobian)])
+        if len(jac_rows) != n_out or any(len(r) != n_in for r in jac_rows):
+            raise ValueError(
+                'packOutputs expected a jacobian of %d row(s) with %d '
+                'entries each (d output / d input)' % (n_out, n_in))
+
+        packed_jac = []
+        for k in range(n_out):
+            row = []
+            for j in range(n_in):
+                dunits = self.outputs[k].units / self.inputs[j].units
+                row.append(self.convert(
+                    self.attachUnits(jac_rows[k][j], dunits), dunits))
+            packed_jac.append(row)
+
+        if multi:
+            return packed_vals, packed_jac
+        return packed_vals[0], packed_jac[0]
 
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------

@@ -1,10 +1,7 @@
 # =================
 # Import Statements
 # =================
-import pyomo.environ as pyo
-from pyomo.environ import units
-from lcsolver import Formulation
-from lcsolver import BlackBoxFunctionModel
+from lcsolver import Formulation, BlackBoxFunctionModel, units
 
 # ===================
 # Declare Formulation
@@ -14,14 +11,14 @@ f = Formulation()
 # =================
 # Declare Variables
 # =================
-x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
-y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
+x = f.Variable(name='x', guess=1.0, units='m'  , description='The x variable')
+y = f.Variable(name='y', guess=1.0, units='m'  , description='The y variable')
 z = f.Variable(name='z', guess=1.0, units='m^2', description='Model output')
 
 # =================
 # Declare Constants
 # =================
-c = f.Constant(name='c', value=1.0, units='', description='A constant c', size=2)
+c = f.Constant(name='c', value=1.0, units='', size=2, description='A constant c')
 
 # =====================
 # Declare the Objective
@@ -53,19 +50,15 @@ class UnitCircle(BlackBoxFunctionModel):
         self.availableDerivative = 1
 
     def BlackBox(self, x, y):  # The actual function that does things
-        # Converts to correct units then casts to float
-        x = pyo.value(units.convert(x, self.inputs['x'].units))
-        y = pyo.value(units.convert(y, self.inputs['y'].units))
+        # Convert to the declared input units (ft) and strip to plain floats
+        x, y = self.sanitizeInputs(x, y, strip_units=True)
 
         z = x**2 + y**2  # Compute z
         dzdx = 2 * x  # Compute dz/dx
         dzdy = 2 * y  # Compute dz/dy
 
-        z *= units.ft**2
-        dzdx *= units.ft  # units.ft**2 / units.ft
-        dzdy *= units.ft  # units.ft**2 / units.ft
-
-        return z, [dzdx, dzdy]  # return z, grad(z), hess(z)...
+        # Attach the declared units: z in ft**2, the gradient in ft**2/ft
+        return self.packOutputs(z, [dzdx, dzdy])
 
 
 # =======================

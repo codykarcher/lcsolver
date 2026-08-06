@@ -168,18 +168,15 @@ class UnitCircle(BlackBoxFunctionModel):
         self.post_init_setup()
 
     def BlackBox(self, x, y): # The actual function that does things
-        x = pyo.value(units.convert(x,self.inputs['x'].units)) # Converts to correct units then casts to float
-        y = pyo.value(units.convert(y,self.inputs['y'].units)) # Converts to correct units then casts to float
+        # Convert to the declared input units (ft) and strip to plain floats
+        x, y = self.sanitizeInputs(x, y, strip_units=True)
 
         z = x**2 + y**2 # Compute z
         dzdx = 2*x      # Compute dz/dx
         dzdy = 2*y      # Compute dz/dy
 
-        z *= units.ft**2
-        dzdx *= units.ft # units.ft**2 / units.ft
-        dzdy *= units.ft # units.ft**2 / units.ft
-        
-        return z, [dzdx, dzdy] # return z, grad(z), hess(z)...
+        # Attach the declared units: z in ft**2, the gradient in ft**2/ft
+        return self.packOutputs(z, [dzdx, dzdy])
 
 # =======================
 # Declare the Constraints
