@@ -1,14 +1,28 @@
-Engineering Design Interface (LCsolver)
-==================================
+LCsolver
+========
 
-The Pyomo Engineering Design Interface (LCsolver) is a lightweight wrapper on the Pyomo language that is targeted at composing engineering design optimization problems.  The language and interface have been designed to mimic many of the features found in `GPkit <https://github.com/convexengineering/gpkit>`_ and `CVXPY <https://github.com/cvxpy/cvxpy>`_ while also providing a simple, clean interface for black-box analysis codes that are common in engineering design applications.
+LCsolver is a standalone Python package for composing and solving engineering
+design optimization problems. It is written on top of the `Pyomo
+<https://pyomo.readthedocs.io>`_ modeling language, and its interface is
+designed to mimic many of the features found in `GPkit
+<https://github.com/convexengineering/gpkit>`_ and `CVXPY
+<https://github.com/cvxpy/cvxpy>`_ while also providing a simple, clean
+interface for the black-box analysis codes that are common in engineering
+design applications.
+
+The package detects the mathematical structure of a model -- linear,
+quadratic, geometric, or signomial program -- and routes it to a solver that
+exploits that structure, checks the model on the way in and the solution on
+the way out, and reports sensitivities with every solve.
+
+(LCsolver began life as a contributed package inside Pyomo, the "Engineering
+Design Interface". It is now developed and distributed independently.)
 
 
 Installation
 ------------
 
-LCsolver is distributed as a standalone package and is installed directly from
-GitHub:
+LCsolver is installed directly from GitHub:
 
 ::
 
@@ -29,9 +43,6 @@ only one that can evaluate a black-box constraint, so it is worth installing
 properly rather than quickly --- in particular, every prebuilt IPOPT ships with
 the MUMPS linear solver, which is not the one you want. See :doc:`ipopt`.
 
-LCsolver began as a contribution to Pyomo itself and is distributed separately so it
-can evolve independently of the Pyomo release cycle.
-
 
 User's Guide
 ------------
@@ -48,15 +59,30 @@ User's Guide
    constraints.rst
    blackboxconstraints.rst
    advancedruntimeconstraints.rst
+   holographic.rst
    solvers.rst
+   checks.rst
    ipopt.rst
+   results.rst
    sensitivities.rst
    slcp.rst
    examples.rst
    additionaltips.rst
 
 
+Technical Notes
+---------------
+
+Three longer engineering notes live alongside the documentation source in the
+repository, for readers who want the machinery rather than the interface:
+``docs/PRESOLVE.md`` (the presolve reductions and their invariants),
+``docs/SIA_CONVERGENCE.md`` (the SIA convergence argument), and
+``docs/SLCP_PERFORMANCE.md`` (measured SLCP behavior across the paper's test
+problems).
+
+
 Developers
 ----------
 
-The pyomo LCsolver interface is developed and maintained by `Cody Karcher <https://github.com/codykarcher>`_ 
+LCsolver is developed and maintained by `Cody Karcher
+<https://github.com/codykarcher>`_.

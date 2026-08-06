@@ -1,96 +1,50 @@
 Examples
 ========
 
+Every file in ``examples/`` is standalone: run it with ``python`` and it
+builds its model, solves, and prints the summary. The test suite imports each
+one, so they cannot drift from the package.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - File
+     - What it shows
+   * - ``readme_example.py``
+     - The quickstart model: a black-box function with units that differ
+       from the model's, solved through SIA. See :doc:`quickstart`.
+   * - ``aircraft_gp.py``
+     - A simple aircraft sizing problem as a geometric program, with full
+       units, Constants, and the sensitivity accessors.
+   * - ``kirschen_ozturk.py``
+     - Aircraft sizing as a **signomial** program: one fuel-volume row is a
+       monomial bounded below by a posynomial, so the router sends it to SIA.
+       States the range in km and the TSFC in 1/hr, exercising the unit
+       corrector. Solves to :math:`W_f = 870.80` N.
+   * - ``hoburg.py``
+     - The Hoburg UAV problem as a pure geometric program: 61 variables over
+       three mission segments, validated against the published values below.
+   * - ``hoburg_blackbox.py``
+     - The same UAV with the profile-drag posynomial hidden inside a black
+       box. The optimum is unchanged -- only the solver's visibility into
+       the structure changes -- and the Post Solve Report earns its keep:
+       the SIA duals fail stationarity (``LC-W302``), and finite
+       differencing confirms the reported sensitivities would be wrong.
+
 A Geometric Program for Aircraft Design
 ---------------------------------------
 
 .. literalinclude:: ../examples/aircraft_gp.py
     :language: python
 
-
-Problems from the SLCP Literature
----------------------------------
-
-``examples/slcp_cases.py`` and ``examples/slcp_formulations.py`` contain the four
-test problems used to develop and validate Sequential Log-Convex Programming
-(:doc:`slcp`). They are useful independently of that solver: between them they
-cover geometric programs, signomial programs, and models with black-box
-constraints, at sizes from two to sixty-one variables.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 12 12 54
-
-   * - Problem
-     - Variables
-     - Constraints
-     - Character
-   * - ``simple``
-     - 2
-     - 1
-     - A geometric program small enough to plot. The worked example below.
-   * - ``floudas``
-     - 8
-     - 6
-     - Heat exchanger. Five of six constraints carry negative coefficients, so
-       they are signomials rather than posynomials.
-   * - ``ko``
-     - 18
-     - 17
-     - Aircraft sizing. Signomial, because available fuel volume is a monomial
-       bounded below by a posynomial.
-   * - ``hoburg``
-     - 61
-     - 58
-     - UAV conceptual design over three mission segments. Fully GP-compatible,
-       with variants that replace the profile-drag model with a black box.
-
-Run them all against every algorithm::
-
-    python examples/run_slcp.py
-    python examples/run_slcp.py hoburg --trend
-
-The Two-Variable Example
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. math::
-
-    \begin{aligned}
-    \underset{x,y}{\text{minimize}} \quad
-      & x^{-0.1} + 15x^{0.01} + y^{-0.1} + 15y^{0.01} \\
-    \text{subject to} \quad
-      & 0.01x^{-1.1} + x^{0.1} + y \le 1
-    \end{aligned}
-
-Written as an LCsolver ``Formulation``:
-
-.. code-block:: python
-
-    from lcsolver import Formulation
-    from pyomo.environ import units
-
-    f = Formulation()
-    f.Variable(name='x', guess=0.3,  units='', description='x')
-    f.Variable(name='y', guess=0.05, units='', description='y')
-
-    f.Objective(f.x ** -0.1 + 15 * f.x ** 0.01
-                + f.y ** -0.1 + 15 * f.y ** 0.01)
-
-    f.ConstraintList([
-        0.01 * f.x ** -1.1 + f.x ** 0.1 + f.y <= 1.0 * units.dimensionless,
-    ])
-
-Every term is a monomial with a positive coefficient, so LCsolver detects a geometric
-program and routes it to a convex backend. The optimum is
-:math:`f^\ast = 31.8115934` at :math:`(x, y) = (0.0593208, 0.0224878)`.
-
 The Hoburg UAV Problem
-~~~~~~~~~~~~~~~~~~~~~~
+----------------------
 
 The largest model in the set: 61 variables and 58 constraints covering an
-outbound leg, a return leg, and a sprint condition that sizes the powerplant.
-It is written out in full in ``examples/slcp_formulations.py``. Its solution has
-been checked against the published values:
+outbound leg, a return leg, and a sprint condition that sizes the powerplant
+(``examples/hoburg.py``). Its solution has been checked against the published
+values:
 
 .. list-table::
    :header-rows: 1
@@ -112,26 +66,35 @@ been checked against the published values:
      - 0.005732
      - 0.005732
 
-Agreement is within 0.006% on every tabulated quantity.
+Agreement is within 0.006% on every tabulated quantity. The black-box variant
+in ``examples/hoburg_blackbox.py`` reproduces the same optimum with the drag
+model opaque, which makes the pair a controlled measurement of what exploiting
+GP structure is worth.
 
-Black-Box Variants
-~~~~~~~~~~~~~~~~~~
+The SLCP Paper Apparatus
+------------------------
 
-The Hoburg profile-drag model can be replaced by an opaque analysis code on any
-subset of the three mission segments::
+The test problems used to develop and validate Sequential Log-Convex
+Programming (:doc:`slcp`) live in ``utilities/``, not ``examples/`` -- they
+are solver-development apparatus rather than modeling examples.
+``utilities/slcp_cases.py`` states the paper's problems (``simple``,
+``floudas``, ``ko``, ``hoburg`` and its black-box variants) in low-level
+``Problem`` form with published reference optima;
+``utilities/slcp_formulations.py`` restates the GP-compatible ones as
+user-style Formulations; ``utilities/run_slcp.py`` drives them all against
+every algorithm, and ``utilities/benchmark_solvers.py`` compares backends on
+identical models (the numbers in :doc:`solvers`)::
 
-    from examples.slcp_cases import hoburg
+    python utilities/run_slcp.py
+    python utilities/run_slcp.py hoburg --trend
 
-    problem, x0, _ = hoburg(n_blackbox=0)   # explicit posynomial fit
-    problem, x0, _ = hoburg(n_blackbox=1)   # sprint segment black-boxed
-    problem, x0, _ = hoburg(n_blackbox=3)   # all three black-boxed
+Note the apparatus keeps the paper's dimensionless transcriptions exactly --
+its ``ko`` case lands on 892.68 N against its own reference, where the
+units-carrying ``examples/kirschen_ozturk.py`` (whose Reynolds relation must
+carry :math:`\rho` to be dimensionally consistent) lands on 870.80 N. Both
+numbers are right; they answer slightly different statements.
 
-The black box solves the same drag fit implicitly, so the optimum is unchanged;
-only the solver's visibility into the structure differs. That makes these
-variants a controlled measurement of what exploiting GP structure is worth.
-
-``examples/slcp_xfoil.py`` goes further and substitutes XFOIL itself, evaluated
-through metafoil's in-memory interface. Unlike the implicit fit, this genuinely
-changes the answer, since XFOIL is a different drag model. It requires
-``metafoil`` and ``scikit-learn``, and is slow -- a single solve runs several
-thousand XFOIL polars.
+Higher-fidelity black-box variants -- XFOIL evaluated in-process, NeuralFoil
+in PyTorch, airfoil design variables co-optimized with the aircraft -- live in
+the `lcuav <https://github.com/codykarcher/lcuav>`_ repository, which builds
+on the Hoburg model.

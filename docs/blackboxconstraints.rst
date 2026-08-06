@@ -181,7 +181,7 @@ See the :doc:`advanced <./advancedruntimeconstraints>` documentation for cases w
 
 
 Including a Black-Box in an LCsolver Formulation
-+++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++++++++++++++
 
 This second construction step is covered in the :doc:`Formulation <./formulation>` documentation, but is repeated here for completion.  Future versions may differentiate this section.
 
@@ -271,6 +271,41 @@ Any of the alternative declarations above are valid to pass into the ``f.Constra
     :end-before: # END: Formulation_Snippet_18
 
 
+
+Input and Output Helpers
+------------------------
+
+The unit bookkeeping inside ``BlackBox`` -- convert every input to the
+declared units, compute, attach output units, work out the derivative units --
+is mechanical, and two helpers do it for you. ``sanitizeInputs`` validates and
+converts the incoming values (pass ``strip_units=True`` to get plain floats,
+converted **first** and stripped after, so the magnitudes are in the declared
+input units); ``packOutputs`` attaches the declared units to raw results and
+derives each jacobian entry's units as ``output units / input units``, then
+shapes the return exactly as the contract requires::
+
+    def BlackBox(self, x, y):
+        x, y = self.sanitizeInputs(x, y, strip_units=True)
+        return self.packOutputs(x**2 + y**2, [2*x, 2*y])
+
+A value handed to ``packOutputs`` that already carries units is *converted* to
+the declared units instead of trusted, which catches unit mistakes. The
+explicit ``pyo.value(units.convert(...))`` pattern shown above remains fully
+supported -- the helpers are the same operations, named.
+
+How Black Boxes Are Solved
+--------------------------
+
+A formulation with black-box constraints routes to **SIA** by default: each
+box is imposed as an opaque row inside the trust-region loop, while every
+algebraic constraint stays exact (:doc:`solvers`). The summary's Report states
+the black-box count explicitly. ``solver='ipopt'`` instead hands the raw
+model, boxes included, to IPOPT through cyipopt -- the AMPL executable cannot
+call back into Python, so cyipopt is required on that route.
+
+One caution on the way out: the duals of a black-box solve are those of the
+final linearization, not of the true problem, so the sensitivities carry an
+``LC-W302`` reliability warning -- see :doc:`sensitivities`.
 
 Examples
 --------

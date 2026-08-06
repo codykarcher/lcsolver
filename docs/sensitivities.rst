@@ -40,7 +40,16 @@ which gives
 Here ``f* = 2*sqrt(a)``, so the sensitivity is exactly ``1/2``: a 1% increase in
 ``a`` raises the optimum by about 0.5%.
 
-To work with the numbers rather than print them::
+To work with the numbers rather than print them, the result of ``solve``
+carries named accessors (:doc:`results`)::
+
+    sol = lcsolver.solve(f)
+    sol.sensitivities()               # {'a': 0.5} -- all of them, by name
+    sol.sensitivities('a')            # just one, as a float
+    sol.dimensioned_sensitivities('a')  # d f*/d a, as a pint quantity
+                                        # in [objective units]/[constant units]
+
+The lower-level entry point returns the full recovery record::
 
     result = f.sensitivities()
     result['sensitivities']      # {'a': 0.5}
@@ -63,10 +72,29 @@ the units than about the design, and they cannot be ranked against one another.
 Elasticities can. A sensitivity of ``+2`` means a 1% increase in that constant
 costs 2% of objective; ``-0.5`` means relaxing it *helps*.
 
-Pass ``normalized=False`` for the raw derivative :math:`d f^*/d c`, in units of
-``[objective]/[constant]``::
+For the raw derivative :math:`d f^*/d c` in units of
+``[objective]/[constant]``, use ``sol.dimensioned_sensitivities()`` (which
+returns pint quantities), or pass ``normalized=False`` to the lower-level
+call::
 
     f.sensitivities(normalized=False)
+
+When to distrust the numbers
+----------------------------
+
+Sensitivities are only as good as the duals they are recovered from, and the
+solve says so explicitly through two message codes (:doc:`results`):
+
+* ``LC-W302`` -- the recovered duals fail the stationarity condition; **every**
+  sensitivity is unreliable. Typical after a non-converged solve, and normal
+  for black-box solves through SIA, where the final linearization's duals are
+  not the true problem's. ``examples/hoburg_blackbox.py`` demonstrates a case
+  where the reported sensitivity has the wrong *sign*.
+* ``LC-W303`` -- the active set is degenerate, so the duals are not unique and
+  the **named** constants' sensitivities depend on which dual vector was
+  recovered. These are listed under ``ambiguous`` and hidden from the printed
+  table (pass ``show_ambiguous=True`` to the summary to see them, marked
+  ``?``).
 
 
 How it is computed, and why it is fast
