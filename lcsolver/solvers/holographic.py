@@ -80,20 +80,28 @@ def holographic_report(model, rtol=1e-6):
                 hi = None if cd.upper is None else float(pyo.value(cd.upper))
             except Exception:
                 continue                      # never fail a solve over a check
+            # The symbolic body, so a report can say WHICH relation binds
+            # rather than only naming a constraint number.
+            try:
+                expr = str(cd.expr)
+            except Exception:
+                expr = ''
+            if len(expr) > 72:
+                expr = expr[:69] + '...'
             if lo is not None and hi is not None and lo == hi:
                 # An equality is always binding. A holographic equality is a
                 # contradiction in terms, so say so rather than list it every
                 # time as though it were news.
                 found.append({'name': getattr(cd, 'name', nm),
                               'operator': '==', 'bound': hi, 'value': body,
-                              'margin': 0.0, 'equality': True})
+                              'margin': 0.0, 'equality': True, 'expr': expr})
                 continue
             for side, bound, margin in _margin(body, lo, hi):
                 if margin <= rtol:
                     found.append({'name': getattr(cd, 'name', nm),
                                   'operator': side, 'bound': bound,
                                   'value': body, 'margin': margin,
-                                  'equality': False})
+                                  'equality': False, 'expr': expr})
     found.sort(key=lambda d: d['margin'])
     return found
 
@@ -114,9 +122,13 @@ def format_holographic(active, total=None, k=8):
         if d.get('equality'):
             L.append(f"    {d['name']}: declared holographic but is an "
                      f"EQUALITY, so it always binds")
+            if d.get('expr'):
+                L.append(f"        {d['expr']}")
             continue
         L.append(f"    {d['name']}: {d['value']:.6g} {d['operator']} "
                  f"{d['bound']:.6g}   (margin {d['margin']:+.2e})")
+        if d.get('expr'):
+            L.append(f"        {d['expr']}")
     if n > k:
         L.append(f'    ... and {n - k} more')
     return '\n'.join(L)

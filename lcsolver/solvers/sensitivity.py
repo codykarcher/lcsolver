@@ -657,9 +657,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     elif residual is not None and residual > KKT_RESIDUAL_WARN:
         warnings.warn(
             f"[LC-W302] the recovered duals satisfy the stationarity condition only to "
-            f"a relative residual of {residual:.2e}. The returned "
-            f"sensitivities are unreliable; this usually means the solve did "
-            f"not converge or the active set is ambiguous.",
+            f"a relative residual of {residual:.2e}. EVERY returned "
+            f"sensitivity (all constants) is unreliable; this usually means "
+            f"the solve did not converge or the active set is ambiguous.",
             RuntimeWarning, stacklevel=2)
 
     constants = _constants(model)
@@ -708,10 +708,12 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         if ambiguous:
             warnings.warn(
                 f"[LC-W303] {len(ambiguous)} of {len(out)} sensitivities are not "
-                f"determined by the problem: the active set is degenerate, so "
-                f"the duals are not unique and these values depend on which "
-                f"dual vector was recovered. They are listed under "
-                f"'ambiguous' and are hidden from the printed table.",
+                f"determined by the problem: "
+                + ", ".join(ambiguous[:8])
+                + (", ..." if len(ambiguous) > 8 else "")
+                + ". The active set is degenerate, so the duals are not "
+                  "unique and these values depend on which dual vector was "
+                  "recovered. They are hidden from the printed table.",
                 RuntimeWarning, stacklevel=2)
 
     return {'sensitivities': out,

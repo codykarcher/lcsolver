@@ -458,12 +458,15 @@ def _attach_sensitivities(m, res, wanted):
             res['holographic_active'] = active
         m._holographic_cache = active
         if active:
+            binds = "; ".join(
+                (f"{d['name']}: {d['expr']}" if d.get('expr') else d['name'])
+                + f" (at {d['value']:.6g}, margin {d['margin']:+.2e})"
+                for d in active[:3])
             warnings.warn(
                 f"[LC-W301] {len(active)} of {n_tot} holographic constraints are ACTIVE "
-                f"at the solution ("
-                + ", ".join(d['name'] for d in active[:3])
-                + (", ..." if len(active) > 3 else "")
-                + "). These were declared as limits that should not bind, so "
+                f"at the solution -- {binds}"
+                + ("; ..." if len(active) > 3 else "")
+                + ". These were declared as limits that should not bind, so "
                   "the optimum is on a boundary of the model's validity rather "
                   "than of the design. Read solution.summary() for the detail.",
                 RuntimeWarning, stacklevel=3)
