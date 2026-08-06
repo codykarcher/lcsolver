@@ -1,6 +1,7 @@
 # =================
 # Import Statements
 # =================
+import lcsolver
 from lcsolver import Formulation, BlackBoxFunctionModel, units
 
 # ===================
@@ -18,12 +19,12 @@ z = f.Variable(name='z', guess=1.0, units='m^2', description='Model output')
 # =================
 # Declare Constants
 # =================
-c = f.Constant(name='c', value=1.0, units='', size=2, description='A constant c')
+c = f.Constant(name='c', value=[1.0, 2.0], units='', size=2, description='A constant c')
 
 # =====================
 # Declare the Objective
 # =====================
-f.Objective(c[0] * x + c[1] * y)
+f.Objective(c[0] / x + c[1] / y)
 
 
 # ===================
@@ -53,21 +54,32 @@ class UnitCircle(BlackBoxFunctionModel):
         # Convert to the declared input units (ft) and strip to plain floats
         x, y = self.sanitizeInputs(x, y, strip_units=True)
 
-        z = x**2 + y**2  # Compute z
-        dzdx = 2 * x  # Compute dz/dx
-        dzdy = 2 * y  # Compute dz/dy
+        z    = x**2 + y**2  # Compute z
+        dzdx = 2 * x        # Compute dz/dx
+        dzdy = 2 * y        # Compute dz/dy
 
         # Attach the declared units: z in ft**2, the gradient in ft**2/ft
-        return self.packOutputs(z, [dzdx, dzdy])
+        res = self.packOutputs(z, [dzdx, dzdy])
 
+        return res
 
 # =======================
 # Declare the Constraints
 # =======================
-f.ConstraintList([[z, '==', [x, y], UnitCircle()], z <= 1 * units.m**2])
+f.ConstraintList([
+    [ z, '==', [x, y], UnitCircle() ], 
+    x + y <= 1.0 * units.m
+    ])
 
 # =============================================
-# Run the black box (improves coverage metrics)
+# Black Box can be run as a function!
 # =============================================
 uc = UnitCircle()
 bbo = uc.BlackBox(0.5 * units.m, 0.5 * units.m)
+
+# =======================
+# Solve Model
+# =======================
+sol = lcsolver.solve(f)
+print(sol.summary())
+

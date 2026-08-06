@@ -144,7 +144,39 @@ class SolveResult(dict):
 
     @property
     def objective(self):
+        """The objective value, with units (pint), like the accessors."""
+        sol = self.__dict__.get('_model')
+        sol = getattr(sol, 'solution', None)
+        if sol is not None and getattr(sol, 'objective', None) is not None:
+            return self._quantity(sol.objective,
+                                  getattr(sol, 'objective_units', None))
         return self.get('primal objective', self.get('objective'))
+
+    @property
+    def messages(self):
+        """Warnings the solve raised, captured instead of printed."""
+        return self.get('messages', [])
+
+    @property
+    def optimality_status(self):
+        """True when the solve reached a certified optimum, else False.
+
+        True for an 'optimal' status, an SIA KKT-certified convergence, or an
+        explicit ``converged`` flag; False for best-iterate returns,
+        non-convergence, and anything ambiguous.
+        """
+        if self.get('converged') is True:
+            return True
+        status = str(self.get('status', '')).lower()
+        return status == 'optimal' or status.startswith('converged')
+
+    @property
+    def report(self):
+        """The Report section text: what was detected/prescribed, what ran."""
+        sol = self.solution
+        if sol is None or not getattr(sol, 'report', None):
+            return None
+        return '\n'.join(line.strip() for line in sol._report_lines())
 
     def summary(self, *args, **kwargs):
         """The solution summary -- same as ``f.solution.summary(...)``."""
@@ -509,7 +541,40 @@ def _apply_start(m, start):
 
 
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
-          sensitivities=True, structures=None, start=None, **kwargs):
+          sensitivities=True, structures=None, start=None, quiet=True,
+          **kwargs):
+    """Solve a Formulation. See ``_solve_impl`` below for the full story.
+
+    ``quiet`` (default True) captures every warning the solve raises --
+    holographic hits, unreliable sensitivities, SIA remedies, backend
+    fallbacks -- into ``result['messages']`` (``sol.messages``) instead of
+    printing them. Errors still raise. Pass ``quiet=False`` to get the
+    warnings emitted normally as well.
+    """
+    if not quiet:
+        return _solve_impl(m, solver=solver, convex_backend=convex_backend,
+                           diagnostics=diagnostics,
+                           sensitivities=sensitivities, structures=structures,
+                           start=start, **kwargs)
+    import warnings as _warnings
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        res = _solve_impl(m, solver=solver, convex_backend=convex_backend,
+                          diagnostics=diagnostics,
+                          sensitivities=sensitivities, structures=structures,
+                          start=start, **kwargs)
+    msgs = [f'{w.category.__name__}: {w.message}' for w in caught]
+    if isinstance(res, dict):
+        res['messages'] = msgs
+    try:
+        m._solve_messages = msgs
+    except Exception:
+        pass
+    return res
+
+
+def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
+                sensitivities=True, structures=None, start=None, **kwargs):
     """Solve an LCsolver Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -764,6 +829,10 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             + "Install the 'ipopt' executable and put it on PATH, or "
               '`pip install cyipopt`. See docs/ipopt.rst.')
     return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
+
+
+# help(solve) should tell the whole story, not just the wrapper's.
+solve.__doc__ = (solve.__doc__ or '') + '\n' + (_solve_impl.__doc__ or '')
 
 
 def _solve_sp(structures, m, sp_method='sia', **kwargs):

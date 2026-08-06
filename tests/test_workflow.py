@@ -56,7 +56,7 @@ def test_presolve_gate_demotes_to_warning():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         try:
-            solve(_unbounded(), diagnostics='warn')
+            solve(_unbounded(), diagnostics='warn', quiet=False)
         except Exception:
             pass  # the SOLVE may fail on the unbounded model; the gate must not
     assert any('pre-solve check' in str(w.message) for w in caught)
@@ -85,6 +85,25 @@ def test_solve_returns_solveresult():
     assert 'Objective' in str(res.solution)
     assert res.summary() == f.solution.summary()
     assert res.objective == pytest.approx(2.0, rel=1e-5)
+
+
+def test_messages_captured_not_printed():
+    """Solve warnings land in sol.messages; the console stays clean."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=2.0, units='m', bounds=[0.5, 10.0])
+    c = f.Constant(name='c', value=1.0, units='m', description='floor')
+    f.Objective(x)
+    f.Constraint(x >= c)
+    f.Constraint(x <= 1.0 * units.m, holographic=True)  # binds at optimum
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        sol = solve(f)
+    assert not caught                       # nothing escaped to the console
+    assert any('holographic' in m for m in sol.messages)
+    # sol.report is the Report text; sol.objective carries units
+    assert 'auto-detected as a geometric program' in sol.report
+    assert sol.objective.to('m').magnitude == pytest.approx(1.0, rel=1e-6)
+    assert sol.optimality_status is True
 
 
 def test_summary_report_section():

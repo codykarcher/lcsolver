@@ -465,7 +465,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
                 try:
-                    solver_module.solve(_gp_known_optimum(), solver='auto')
+                    solver_module.solve(_gp_known_optimum(), solver='auto',
+                                        quiet=False)
                 except Exception:
                     pass                    # IPOPT may be absent; the warning is the point
             messages = [str(w.message) for w in caught]
@@ -758,7 +759,7 @@ class TestIpoptUnavailableFallback:
         monkeypatch.setattr(S, '_ipopt_available', lambda: False)
         f = self._gp()
         with pytest.warns(RuntimeWarning, match='cvxopt instead'):
-            S.solve(f, sensitivities=False)
+            S.solve(f, sensitivities=False, quiet=False)
         # min x + y subject to x*y >= 2 is 2*sqrt(2) -- the fallback must give
         # the right answer, not merely avoid raising.
         assert float(f.solution.objective) == pytest.approx(2 * 2 ** 0.5, rel=1e-6)
@@ -771,7 +772,7 @@ class TestIpoptUnavailableFallback:
         f.Objective(x ** 3 - 2 * x + 5)          # not LP, QP, GP or SP
         f.ConstraintList([x >= 0.1])
         with pytest.raises(RuntimeError, match='needs IPOPT'):
-            S.solve(f, sensitivities=False)
+            S.solve(f, sensitivities=False, quiet=False)
 
     def test_ipopt_is_still_preferred_when_present(self, monkeypatch):
         from lcsolver.solvers import solver as S

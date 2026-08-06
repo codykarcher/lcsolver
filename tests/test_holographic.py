@@ -48,7 +48,7 @@ def test_active_is_detected_and_warned():
     f = _model(5.0)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        solve(f, sensitivities=False)
+        solve(f, sensitivities=False, quiet=False)
     msgs = [str(w.message) for w in caught if 'holographic' in str(w.message)]
     assert msgs, 'an active holographic constraint must warn'
     assert 'ACTIVE' in msgs[0]

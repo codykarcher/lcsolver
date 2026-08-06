@@ -98,9 +98,37 @@ f.ConstraintList([
 # where it is convex, so the answer is a global optimum rather than a local
 # one. It also runs the structural checks and computes the sensitivity of the
 # optimum to every Constant.
-lcsolver.solve(f)
+sol = lcsolver.solve(f)
+
+# Alternative method for solution extraction, more akin to base pyomo
+# lcsolver.solve(f)
+# sol = f.solution()
 
 # The solution prints itself: objective, every variable with its units and
 # description, then the sensitivities. An indexed variable prints one row per
 # element.
-print(f.solution)
+print(sol.summary())
+
+# Extract design variables
+AR_solved = sol.variables('A')
+S_solved  = sol.variables('S')
+
+solved_var_dict = sol.variables()
+
+# Extract constants used in the solve
+e_solved = sol.constants('e')
+tau_solved = sol.constants('tau')
+
+solved_constants = sol.constants()
+
+# Extract sensitivities percent change in objective vs percent change in value
+e_sens   = sol.sensitivities('e')
+tau_sens = sol.sensitivities('tau')
+
+solved_sens_dict = sol.sensitivities()
+
+# Extract dimensioned sensitivities delta objective vs delta value
+e_dsens   = sol.dimensioned_sensitivities('e')
+tau_dsens = sol.dimensioned_sensitivities('tau')
+
+solved_dsens_dict = sol.dimensioned_sensitivities()
