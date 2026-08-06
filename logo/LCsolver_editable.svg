@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 387 130">
+  <style>
+    /* EDIT COLORS HERE */
+    .lc   { fill: #000000; font-family: "Avenir Next", "Avenir", sans-serif; font-weight: 900; }
+    .word { fill: #ede13f; font-family: "Helvetica Neue", Helvetica, sans-serif; font-weight: 200; }
+  </style>
+  <text x="10" y="100" font-size="100"><tspan class="lc">LC</tspan><tspan class="word">solver</tspan></text>
+</svg>
