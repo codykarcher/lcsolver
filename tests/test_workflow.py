@@ -87,6 +87,40 @@ def test_solve_returns_solveresult():
     assert res.objective == pytest.approx(2.0, rel=1e-5)
 
 
+def test_named_accessors_with_units():
+    """variables()/constants()/sensitivities()/dimensioned_sensitivities().
+
+    One convention: no argument -> full flat dict keyed by display name;
+    a string -> the single quantity; a list -> a dict of those names.
+    Values carry units; dimensionless values come back as plain floats.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=2.0, units='m', bounds=[0.1, 10.0])
+    y = f.Variable(name='y', guess=2.0, units='m', bounds=[0.1, 10.0])
+    c = f.Constant(name='c', value=4.0, units='m^2', description='area')
+    f.Objective(x + y)
+    f.ConstraintList([x * y >= c])
+    sol = solve(f)
+
+    allv = sol.variables()
+    assert set(allv) == {'x', 'y'}
+    assert pyo.value(units.convert(sol.variables('x'), units.m)) \
+        == pytest.approx(2.0, rel=1e-6)
+    assert set(sol.variables(['x'])) == {'x'}
+    assert pyo.value(units.convert(sol.constants('c'), units.m ** 2)) \
+        == pytest.approx(4.0)
+    # log-log sensitivity of 2*sqrt(c) is 1/2 ...
+    assert sol.sensitivities('c') == pytest.approx(0.5, rel=1e-6)
+    # ... and the dimensioned d(obj)/dc = 1/sqrt(c) = 0.5 per metre
+    ds = sol.dimensioned_sensitivities('c')
+    assert pyo.value(units.convert(ds, units.m ** -1)) \
+        == pytest.approx(0.5, rel=1e-6)
+    with pytest.raises(KeyError):
+        sol.variables('nope')
+    # the raw dict key is untouched by the accessor of the same name
+    assert isinstance(sol['sensitivities'], dict)
+
+
 def test_quality_checks_attach_on_converged_solve():
     res = solve(_well_posed())
     assert 'quality' in res

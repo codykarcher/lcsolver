@@ -148,11 +148,114 @@ class SolveResult(dict):
 
     def summary(self, *args, **kwargs):
         """The solution summary -- same as ``f.solution.summary(...)``."""
-        sol = self.solution
-        if sol is None or not hasattr(sol, 'summary'):
-            raise AttributeError(
-                'this result carries no rich Solution to summarize')
+        sol = self._rich()
         return sol.summary(*args, **kwargs)
+
+    # -- named access with units -------------------------------------------
+    #
+    # One calling convention for all four accessors:
+    #   sol.variables()                 -> the full flat dict, keyed by the
+    #                                      dotted display name ('wing.AR');
+    #                                      never nested sub-dicts
+    #   sol.variables('wing.AR')        -> the single quantity
+    #   sol.variables(['wing.AR', 'S']) -> {name: quantity} for those names
+    # Values carry their units (value * pyomo unit); a dimensionless quantity
+    # comes back as a plain float. Names are accepted in dotted display form
+    # ('wing.AR') or the flat internal form ('wing_AR').
+
+    def _rich(self):
+        sol = self.solution
+        if sol is None or not hasattr(sol, 'variables'):
+            raise AttributeError(
+                'this result carries no rich Solution to read from')
+        return sol
+
+    @staticmethod
+    def _quantity(value, units):
+        if units is None or str(units) in ('dimensionless', 'None', ''):
+            return value
+        return value * units
+
+    @staticmethod
+    def _pick(sol, mapping, names, one):
+        """Apply the shared calling convention to ``mapping``.
+
+        ``mapping`` is {flat_name: payload}; ``one(flat_name)`` renders a
+        single payload. Lookup accepts flat or dotted names.
+        """
+        def resolve(name):
+            if name in mapping:
+                return name
+            for k in mapping:
+                if sol.display_name(k) == name:
+                    return k
+            raise KeyError(
+                f'{name!r} is not in this solution; known names: '
+                + ', '.join(sorted(sol.display_name(k) for k in mapping)[:8])
+                + (', ...' if len(mapping) > 8 else ''))
+
+        if names is None:
+            return {sol.display_name(k): one(k) for k in mapping}
+        if isinstance(names, str):
+            return one(resolve(names))
+        return {name: one(resolve(name)) for name in names}
+
+    def variables(self, names=None):
+        """Design-variable values with their units. See the class note."""
+        sol = self._rich()
+        return self._pick(sol, sol.variables, names,
+                          lambda k: self._quantity(sol.variables[k].value,
+                                                   sol.variables[k].units))
+
+    def constants(self, names=None):
+        """Constant values with their units. Same convention as variables()."""
+        sol = self._rich()
+        return self._pick(sol, sol.constants, names,
+                          lambda k: self._quantity(sol.constants[k].value,
+                                                   sol.constants[k].units))
+
+    def sensitivities(self, names=None):
+        """Log-log sensitivities: d log(objective) / d log(constant).
+
+        The scaled percent-per-percent numbers of the printed table, as plain
+        floats. Same calling convention as variables(). For the dimensioned
+        d(objective)/d(constant), use dimensioned_sensitivities().
+        """
+        sol = self._rich()
+        sens = sol.sensitivities or {}
+        return self._pick(sol, sens, names, lambda k: sens[k])
+
+    def dimensioned_sensitivities(self, names=None):
+        """Dimensioned sensitivities: d(objective) / d(constant), with units.
+
+        Converts the log-log sensitivity S = dln(f)/dln(c) to
+        df/dc = S * f / c, carried in objective-units per constant-units.
+        Same calling convention as variables().
+        """
+        sol = self._rich()
+        sens = sol.sensitivities or {}
+        if sol.objective is None:
+            raise AttributeError(
+                'this solution carries no objective value, so sensitivities '
+                'cannot be dimensioned')
+
+        def one(k):
+            entry = sol.constants[k]
+            value = sens[k] * sol.objective / entry.value
+            obj_u, c_u = sol.objective_units, entry.units
+            obj_dimless = (obj_u is None
+                           or str(obj_u) in ('dimensionless', 'None', ''))
+            c_dimless = (c_u is None
+                         or str(c_u) in ('dimensionless', 'None', ''))
+            if obj_dimless and c_dimless:
+                return value
+            if c_dimless:
+                return value * obj_u
+            if obj_dimless:
+                return value / c_u
+            return value * obj_u / c_u
+
+        return self._pick(sol, sens, names, one)
 
     def __getattr__(self, name):
         if name.startswith('_'):
