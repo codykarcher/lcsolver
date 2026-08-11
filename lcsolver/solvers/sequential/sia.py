@@ -1208,9 +1208,19 @@ class SubproblemCache:
         elif elastic:
             # Pure feasibility: no true objective at all, so there is no
             # scaling contest between cost and feasibility to lose. The
-            # proximity term breaks the tie between equally feasible points.
+            # proximity term breaks the tie between equally feasible points
+            # -- measured FROM THE PHASE-I ENTRY POINT via the mutable
+            # prox_c offsets (log x_k - log x_seed, re-pointed in update()),
+            # so the tie-break anchors the WHOLE phase to the seed rather
+            # than each step to its own iterate (see the inline builder's
+            # comment for the measured wander this prevents).
             w = getattr(self.options, 'phase1_proximity', 0.0)
-            prox = (w * sum(m.d[j] ** 2 for j in range(n))) if w else 0.0
+            if w:
+                m.prox_c = pyo.Param(range(n), mutable=True, initialize=0.0,
+                                     within=pyo.Reals)
+                prox = w * sum((m.d[j] + m.prox_c[j]) ** 2 for j in range(n))
+            else:
+                prox = 0.0
             m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I) + prox,
                                   sense=pyo.minimize)
         else:
@@ -1328,6 +1338,17 @@ class SubproblemCache:
                 phase.obj_b[k].value = float(math.log(c) + a @ log_xk)
         if phase.slacked:
             m.tau.value = float(tau)
+        # seed-referenced Phase-I proximity: re-point the offsets so the
+        # tie-break measures distance from the phase's ENTRY point
+        prox_c = getattr(m, 'prox_c', None)
+        if prox_c is not None:
+            anchor = getattr(self.options, '_phase1_anchor_logx', None)
+            if anchor is not None:
+                c_off = log_xk - np.asarray(anchor, dtype=float)
+            else:
+                c_off = np.zeros(self.n)
+            for j in range(self.n):
+                prox_c[j].value = float(c_off[j])
 
         for i, con in enumerate(self.problem.constraints):
             body = con.body
@@ -1503,8 +1524,26 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
         # Pure feasibility, L1: the optimum is sparse, so the rows that keep a
         # slack are the ones that actually cannot be satisfied. Plus the
         # proximity term -- see SIAOptions.phase1_proximity.
+        #
+        # Proximity is measured FROM THE PHASE-I ENTRY POINT (the seed),
+        # not from the current iterate: per-iterate proximity lets the walk
+        # accumulate -- each step is individually small, and once the slacks
+        # hit zero the remaining iterations polish wherever the walk ended.
+        # Measured on a paired-equality wind model: Phase I dragged a
+        # near-optimal GP seed 4.8 log units to a violation-minimal point at
+        # COE 121 $/MWh, and Phase II could only crawl back at ~0.03% per
+        # step through the condensed rows.  Seed-referenced proximity is
+        # also what the option's own docstring promises ("the SMALLEST
+        # repair of the seed").
         _w = getattr(options, 'phase1_proximity', 0.0)
-        _prox = (_w * sum(m.d[j] ** 2 for j in range(n))) if _w else 0.0
+        _anchor = getattr(options, '_phase1_anchor_logx', None)
+        if _w and _anchor is not None:
+            _c = np.log(x_k) - np.asarray(_anchor, dtype=float)
+            _prox = _w * sum((m.d[j] + float(_c[j])) ** 2 for j in range(n))
+        elif _w:
+            _prox = _w * sum(m.d[j] ** 2 for j in range(n))
+        else:
+            _prox = 0.0
         m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I) + _prox,
                               sense=pyo.minimize)
         rhs = lambda i: m.s[i]
@@ -1807,7 +1846,8 @@ def _con_loggrad(con, x, n):
     return _posy_loggrad(b, x, n)
 
 
-def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False):
+def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False,
+                       skip_rows=None, freeze_cols=None):
     """Least-norm Gauss-Newton onto the equality manifold -- the NORMAL step.
 
     This works on the TRUE residuals, never on the conservative condensation,
@@ -1825,9 +1865,12 @@ def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False):
     composite step it is precisely right.
     """
     n = problem.n
-    eq = [i for i, c in enumerate(problem.constraints) if c.operator == '==']
+    eq = [i for i, c in enumerate(problem.constraints) if c.operator == '=='
+          and (skip_rows is None or i not in skip_rows)]
     if not eq:
         return np.array(x, dtype=float), 0.0
+    frz = (np.asarray(sorted(freeze_cols), dtype=int)
+           if freeze_cols else None)
     lo = np.array([b[0] if b and b[0] else 1e-30
                    for b in (problem.bounds or [(None, None)] * n)])
     hi = np.array([b[1] if b and b[1] else 1e30
@@ -1838,6 +1881,9 @@ def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False):
         r = np.zeros(len(eq)); J = np.zeros((len(eq), n))
         for k, i in enumerate(eq):
             r[k], J[k] = _con_loggrad(problem.constraints[i], z, n)
+        if frz is not None:
+            J[:, frz] = 0.0        # held columns (e.g. grey-box outputs the
+            #                        closure pass has already set exactly)
         return r, J
 
     for it in range(iters):
@@ -1865,6 +1911,48 @@ def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False):
     return x, float(np.max(np.abs(_res(x)[0])))
 
 
+def restore_composite_bb(problem, x, iters=12, tol=1e-9, passes=3):
+    """Equality restore for BLACK-BOX problems: grey-box rows by exact
+    closure, structured pins by Gauss-Newton, alternated.
+
+    Every grey-box equality is ``bb(inputs) / x[out] == 1`` with a
+    DEDICATED output column (GreyboxSignomial.out_index), so it restores
+    exactly by ``x[out] *= body(x)`` -- one box evaluation, no Newton.
+    The structured Newton then runs with the grey-box rows SKIPPED and
+    their output columns FROZEN, so the tie rows (out == state alias)
+    close by moving the state side, not by re-opening the box row.
+    Alternating converges because a pass's structured step moves the box
+    INPUTS only second-order; residuals shrink geometrically (measured on
+    the airfoil model: 3 passes reach the structured tolerance).
+
+    This exists because Phase 2's composite restore was gated
+    ``not has_blackbox`` (naive Newton over opaque rows would re-evaluate
+    every box per line-search point).  With the restore silently skipped,
+    tangential drift accumulated in the grey-box equalities and SIA
+    settled at points whose box rows were violated 2-100x --- reported as
+    success, caught only by the model-side referee.
+    """
+    x = np.array(x, dtype=float).copy()
+    gb = [(i, c.body.out_index) for i, c in enumerate(problem.constraints)
+          if c.operator == '==' and getattr(c.body, 'out_index', None)
+          is not None]
+    if not gb:
+        return restore_equalities(problem, x, iters=iters, tol=tol)
+    skip = frozenset(i for i, _ in gb)
+    frz = frozenset(j for _, j in gb)
+    h_gb = math.inf
+    for _ in range(max(1, int(passes))):
+        for i, j in gb:                       # exact closure, one eval each
+            x[j] *= float(problem.constraints[i].body(x))
+        x, h_st = restore_equalities(problem, x, iters=iters, tol=tol,
+                                     skip_rows=skip, freeze_cols=frz)
+        h_gb = max(abs(math.log(float(problem.constraints[i].body(x))))
+                   for i, _ in gb)
+        if h_gb <= tol:
+            break
+    return x, max(h_gb, h_st)
+
+
 def _phase1_l1(problem, x, options, has_blackbox, cache=None):
     """Elastic Phase I: a slack per constraint, minimising their SUM.
 
@@ -1883,6 +1971,9 @@ def _phase1_l1(problem, x, options, has_blackbox, cache=None):
     the per-constraint infeasibility at the final point; anything above
     tolerance names a row that has to be relaxed for the model to close.
     """
+    # anchor the proximity tie-break to the entry point (see the elastic
+    # objective builders)
+    options._phase1_anchor_logx = np.log(np.maximum(x, 1e-300))
     it = 0
     radius = options.trust_radius
     slacks = np.zeros(len(problem.constraints))
@@ -1900,6 +1991,7 @@ def _phase1_l1(problem, x, options, has_blackbox, cache=None):
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 continue
             return x, it, False, slacks, mults
+        d = np.clip(d, -60.0, 60.0)   # overflow guard; see the main-loop clamp
         x_new = x * np.exp(d)
         new_viol = _violation(problem, x_new)
         if options.verbose:
@@ -2093,9 +2185,10 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
         return _phase1_l1(problem, x, options, has_blackbox, cache=cache)
 
     def _restore(z):
-        return restore_equalities(problem, z,
-                                  iters=options.phase1_restore_iterations,
-                                  tol=min(tol, 1e-10))
+        fn = restore_composite_bb if has_blackbox else restore_equalities
+        return fn(problem, z,
+                  iters=options.phase1_restore_iterations,
+                  tol=min(tol, 1e-10))
 
     if _violation(problem, x) <= tol:
         # Already feasible: do not touch it. Restoring first would still land
@@ -2106,6 +2199,8 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
         return x, 0, True, slacks, mults
 
     x, heq = _restore(x)                      # start on the manifold
+    # anchor the proximity tie-break to THIS point for the whole phase
+    options._phase1_anchor_logx = np.log(np.maximum(x, 1e-300))
     for it in range(1, options.phase1_max_iterations + 1):
         viol = _violation(problem, x)
         if viol <= tol:
@@ -2135,7 +2230,7 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
         # inequalities too. Accepting only when the WHOLE step improves makes
         # the trust radius responsible for that drift, which is what a trust
         # radius is for.
-        x_try, heq_try = _restore(x * np.exp(d))
+        x_try, heq_try = _restore(x * np.exp(np.clip(d, -60.0, 60.0)))  # overflow guard
         new_viol = _violation(problem, x_try)
         if options.verbose:
             nz = int(np.sum(slacks > tol))
@@ -2267,6 +2362,7 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
                              options.trust_radius * options.trust_expand)
                 continue
             return x, it, viol <= 0.0, last_mults
+        d = np.clip(d, -60.0, 60.0)   # overflow guard; see the main-loop clamp
         x_new = x * np.exp(d)
         new_viol = _violation(problem, x_new)
 
@@ -2399,6 +2495,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     # hold FROM A FEASIBLE POINT. Rather than blend cost and feasibility into
     # one penalized objective and hope, get feasible first on its own terms,
     # then optimize with the guarantees switched on and no penalty at all.
+    _recovering = False
+    _recover_budget = 0
+    _recover_best = np.inf
     if options.phase1 and _violation(problem, x) > options.feasibility_tolerance:
         _method = getattr(options, 'phase1_method', 'composite')
         if _method == 'composite':
@@ -2473,12 +2572,39 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # reason for existing. Slacks absorb what remains and tau drives
             # them out. If the problem really is infeasible it fails too, and
             # the elastic report above still says which rows are responsible.
-            if options.phase1_penalty_fallback:
+            # The fallback is for TOLERANCE SHORTFALLS, not for genuine
+            # infeasibility: the measured case it exists for stopped at
+            # max log g = 2.4e-6 against a 1e-6 tolerance (a factor of two,
+            # on a problem that solves fine), and abandoning there was
+            # wrong.  A miss beyond three decades of the tolerance is not
+            # that case -- no feasible point means there is nothing to
+            # iterate toward, so the run terminates and the caller gets
+            # the elastic Phase-I report naming the rows that cannot
+            # close.
+            # ...with one widening: a LOCAL Phase-I minimum with the
+            # residual concentrated on a handful of rows (worst log g
+            # under 1.0) is routinely recoverable by the penalty path,
+            # whose objective pressure walks basins Phase I's
+            # feasibility-only steps cannot (measured: a 0.098 tip-cap
+            # residual traded against an operating-point capability row,
+            # both satisfied at the optimum the penalty path then finds).
+            # The recovery attempt is honest because feasibility is
+            # ENFORCED at exit: a run that ends infeasible reports
+            # infeasible, never a design.
+            _near = _violation(problem, x) <= 1.0
+            if options.phase1_penalty_fallback and _near:
                 if options.verbose:
-                    print("  phase 1 fell short; continuing with the penalty "
-                          "path from the best point it reached")
-                res.phase1_mode = 'penalty-fallback'
+                    print("  phase 1 fell short; running the penalty path "
+                          "as a FEASIBILITY FINDER (bounded budget, must "
+                          "deliver a feasible point or the run terminates)")
+                res.phase1_mode = 'penalty-recovery'
                 use_slacks = True
+                _recovering = True
+                _recover_budget = int(getattr(
+                    options, 'feasibility_recovery_iterations', 60))
+                # 60, not 30: measured on the wind missions SP, the finder
+                # crossed viol 0.15 -> 4.6e-6 in exactly 30 iterations and
+                # was terminated three iterations short of tolerance
             else:
                 return res
         else:
@@ -2714,6 +2840,34 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             print(f"  itr {k + 1:3d}  f={problem.objective_value(x):.8f}  "
                   f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
                   f"viol={viol:.3e}  comp={comp:.3e}  tau={tau:.1e}")
+        # --- feasibility-recovery contract ------------------------------
+        # When Phase 1 fell short, the penalty path runs ONLY to find the
+        # initial feasible point.  The moment it does, the slacks come off
+        # and the solve proceeds as the normal Phase II from a certified-
+        # feasible start; if the budget expires first, the run TERMINATES
+        # as infeasible -- optimizing from a point that never becomes
+        # feasible answers nothing.
+        if _recovering:
+            if viol <= options.feasibility_tolerance:
+                _recovering = False
+                use_slacks = False
+                res.phase1_feasible = True
+                res.phase1_mode = 'penalty-recovered'
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  feasibility recovered "
+                          f"(viol {viol:.2e}); slacks off, Phase II resumes")
+            else:
+                _recover_budget -= 1
+                if _recover_budget <= 0:
+                    res.status = (
+                        'feasibility recovery failed: Phase 1 fell short '
+                        'and the bounded penalty stage did not reach a '
+                        f'feasible point (viol {viol:.3e} vs tolerance '
+                        f'{options.feasibility_tolerance:g})')
+                    res.converged = False
+                    res.x, res.objective = x, problem.objective_value(x)
+                    res.iterations = k + 1
+                    return res
         # --- restoration trigger: infeasible and not fixing it ---------------
         # Hooking restoration only to trust-region collapse/bracket was wrong.
         # Measured on 3t+3c: the filter (correctly) accepted an excursion to
@@ -2733,7 +2887,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             _infeas_best = min(_infeas_best, viol)
         else:
             _infeas_best, _infeas_stall = np.inf, 0
-        if _infeas_stall >= int(getattr(options, 'restoration_patience', 0) or 0) > 0:
+        # The trigger is SUSPENDED while the feasibility-recovery stage
+        # owns the iterate: recovery exists precisely because Phase I got
+        # stuck, so bouncing back into Phase I on an infeasibility timer
+        # re-enters the failed stage mid-repair (observed: recovery had
+        # walked viol 0.77 -> 0.067 when the timer threw it back).  The
+        # recovery stage polices itself with its own bounded budget.
+        if (not _recovering and
+                _infeas_stall >= int(getattr(options, 'restoration_patience', 0) or 0) > 0):
             x_r, _restorations, _ok = _restore(
                 problem, x, options, has_blackbox, cache, _restorations, k,
                 f'infeasible for {_infeas_stall} iterations without progress', targets=_restore_targets)
@@ -2759,6 +2920,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
         _subfail = 0                 # the sub-problem solved; the run is healthy
         f_old = problem.objective_value(x)
+        # Clamp the log-space step componentwise before exponentiating: a
+        # penalty-phase sub-problem with a near-flat direction can return
+        # |d_j| in the hundreds, and x * exp(d) then overflows to inf ---
+        # after which every later phase build sees log(inf)/log(0) and
+        # dies with "params.p0 = nan" (observed on the wind-turbine
+        # missions SP and the tidal SP).  e^60 per iteration is far beyond
+        # any legitimate move in these models; the clamp turns a fatal
+        # overflow into an ordinary short step the loop can iterate on.
+        d = np.clip(d, -60.0, 60.0)
         x_new = x * np.exp(d)
 
         # Extend the step while it stays feasible for the TRUE problem.
@@ -2801,6 +2971,37 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     break
                 x_new, f_best = trial, f_trial
                 alpha *= options.step_expansion
+
+        # COMPOSITE-STEP ACCEPTANCE for tangent equalities: pull the trial
+        # point back onto the equality manifold BEFORE any acceptance test
+        # sees it.  A tangential step leaves the true manifold at second
+        # order, so judging the raw point charges the step for drift the
+        # Gauss-Newton restore removes for free -- the filter then rejects
+        # every objective-improving step from a feasible iterate and the
+        # radius collapses (measured: |d| 1.0 -> 1e-3 geometric, objective
+        # frozen at the Phase-I point).  This is the same accept-the-pair-
+        # together principle _phase1_composite documents; the post-
+        # acceptance restore below becomes a cheap no-op on this path.
+        if n_eq_p2 and getattr(options, 'phase2_restore', False):
+            import os as _os
+            _dbg = _os.environ.get('SIA_DBG')
+            _v_raw = _violation(problem, x_new) if _dbg else None
+            _restore_fn = (restore_composite_bb if has_blackbox
+                           else restore_equalities)
+            x_nr, _h_nr = _restore_fn(
+                problem, x_new, iters=options.phase1_restore_iterations,
+                tol=min(options.feasibility_tolerance, 1e-10))
+            if (np.all(np.isfinite(x_nr)) and np.all(x_nr > 0)
+                    and _violation(problem, x_nr) <= _violation(problem, x_new)):
+                x_new = x_nr
+            if _dbg:
+                _net = float(np.linalg.norm(np.log(x_new) - np.log(x)))
+                _obj0 = problem.objective_value(x)
+                _obj1 = problem.objective_value(x_new)
+                print(f'   DBG |d|={float(np.linalg.norm(d)):.3e} '
+                      f'raw_viol={_v_raw:.2e} restored_viol='
+                      f'{_violation(problem, x_new):.2e} net|dlogx|={_net:.3e} '
+                      f'obj {_obj0:.6e}->{_obj1:.6e}', flush=True)
 
         if curvature is not None:
             _curv_step = np.log(x_new) - np.log(x)
@@ -2938,6 +3139,26 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             va_seen = float(_violation(problem, x_new))
             if v0 is None:
                 v0 = float(_violation(problem, x))
+        # In FEASIBILITY-RECOVERY mode, a RATCHET on the best violation
+        # achieved: early excursions are allowed (the successful warm
+        # recovery climbed 0.15 -> 0.77 before descending to 1e-6, and a
+        # hard monotone guard broke it), but once the finder has
+        # meaningfully descended it may not give back more than a factor
+        # over its best (observed on a cold start: viol reached 1.0e-3,
+        # then objective-favoring steps blew it back to 6.3e-2 and the
+        # budget burned oscillating).
+        if _recovering and va_seen is None:
+            va_seen = float(_violation(problem, x_new))
+            if v0 is None:
+                v0 = float(_violation(problem, x))
+        if _recovering and v0 is not None:
+            _recover_best = min(_recover_best, v0)
+        if (_recovering and va_seen is not None
+                and _recover_best < 1.0e-2
+                and va_seen > max(5.0 * _recover_best,
+                                  10.0 * options.feasibility_tolerance)):
+            ratio = -1.0
+            _rejected_by_guard = True
         if _filter is not None and va_seen is not None:
             # Dominance, not an exchange rate. A trial is refused only if a
             # point already seen was better in BOTH objective and violation.
@@ -3080,9 +3301,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         _zz_prev = x.copy()
         x = x_new
         _reject_radius = np.inf              # progress: the bracket is stale
-        if (getattr(options, 'phase2_restore', False) and n_eq_p2
-                and not has_blackbox):
-            x_r, _heq = restore_equalities(
+        if getattr(options, 'phase2_restore', False) and n_eq_p2:
+            _restore_fn = (restore_composite_bb if has_blackbox
+                           else restore_equalities)
+            x_r, _heq = _restore_fn(
                 problem, x, iters=options.phase1_restore_iterations,
                 tol=min(options.feasibility_tolerance, 1e-10))
             # Only if it actually helps. Restoration is least-norm, so it
@@ -3147,8 +3369,41 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         #    stalls at whatever the capped multipliers leave behind. This is
         #    the classic exact-penalty condition -- the penalty parameter has
         #    to dominate the multipliers, not merely close the slacks.
-        slack = float(np.max(s)) if len(s) else 0.0
-        lam_max = float(np.max(np.abs(mults))) if len(mults) else 0.0
+        # BOTH escalation triggers EXCLUDE equality rows, and both for the
+        # same reason: their signals are artifacts of the L1 slacking, not
+        # evidence about the penalty parameter.
+        #
+        # * An active L1-slacked equality's DUAL sits exactly at +-tau by
+        #   construction (|s| costs tau per unit in both directions), so
+        #   the multiplier test fires on every iteration.
+        # * An equality row's SLACK measures the proposed step's
+        #   second-order drift off the manifold, which is positive at any
+        #   useful step length -- and the Gauss-Newton restore closes it
+        #   for free after the step, so it is not an infeasibility tau
+        #   needs to price.
+        #
+        # Measured with both included: tau 1 -> 9.8e6 by iteration 11 on a
+        # designpoint model with paired equality pins; the instant tau
+        # saturated, every subsequent step was filter-rejected (|d|
+        # decaying 1.0 -> 1e-3 geometrically) and the solve froze at the
+        # Phase-I point, 45.45 -> 52.8 $/MWh.  The exact-penalty condition
+        # (tau must dominate the true multipliers) is an INEQUALITY
+        # argument; for slacked equalities it is vacuous.
+        k_ = min(len(problem.constraints),
+                 len(s) if len(s) else 0,
+                 len(mults) if len(mults) else 0)
+        _ineq_mask = [i for i in range(k_)
+                      if problem.constraints[i].operator != '==']
+        slack = 0.0
+        if len(s):
+            s_ = np.asarray(s, dtype=float)
+            vals = [s_[i] for i in _ineq_mask] + list(s_[k_:])
+            slack = float(np.max(vals)) if vals else 0.0
+        lam_max = 0.0
+        if len(mults):
+            m_ = np.abs(np.asarray(mults, dtype=float))
+            vals = [m_[i] for i in _ineq_mask] + list(m_[k_:])
+            lam_max = float(np.max(vals)) if vals else 0.0
         need = (slack > options.feasibility_tolerance
                 or lam_max >= options.tau_binding * tau)
         if need and tau < options.tau_max:
@@ -3156,6 +3411,13 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                       tau * options.tau_factor,
                       max(tau * options.tau_factor,
                           options.tau_factor * lam_max))
+        elif (not need and tau > options.tau0
+              and _violation(problem, x) <= options.feasibility_tolerance):
+            # Relief: a feasible iterate with closed inequality slacks and
+            # multipliers well under tau is evidence tau overshot (it
+            # ratchets during the infeasible transient and otherwise never
+            # comes back down, leaving the objective term drowned).
+            tau = max(options.tau0, tau / options.tau_factor)
 
     else:
         res.status = (f"did not converge within {options.max_iterations} "

@@ -220,6 +220,27 @@ class CachedSignomial(Signomial):
         return x * g / v
 
 
+class GreyboxSignomial(CachedSignomial):
+    """A grey-box equality body, ``bb(inputs) / x[out_index] == 1``.
+
+    The tag ``out_index`` records the DEDICATED OUTPUT COLUMN the row is
+    solved for, which gives the equality-restore machinery a closed form:
+    the row is restored EXACTLY by ``x[out_index] *= body(x)`` -- one box
+    evaluation, no Newton -- because the output variable appears nowhere
+    inside the box.  sia's composite restore uses this to keep grey-box
+    equalities on the manifold at the same points it restores the
+    structured pins (they used to be skipped entirely on black-box
+    problems, which let tangential drift accumulate in exactly the rows
+    the trust machinery was told to trust; see restore_composite_bb).
+    """
+
+    __slots__ = ('out_index',)
+
+    def __init__(self, fn, n, out_index, maxsize=None):
+        super().__init__(fn, n, maxsize=maxsize)
+        self.out_index = int(out_index)
+
+
 class PosynomialRatio:
     """``p(x) / q(x)`` with p and q both POSYNOMIALS — the signomial-program form.
 

@@ -534,7 +534,7 @@ def presolve_report(structures, names=None) -> PresolveReport:
     return rep
 
 
-def fold_singleton_rows(structures):
+def fold_singleton_rows(structures, only=None):
     """Move single-variable rows into the bounds, and drop them.
 
     A row like ``x <= 3`` states a bound and nothing else, so a solver that
@@ -542,6 +542,15 @@ def fold_singleton_rows(structures):
     singleton-row reduction, and it is worth a lot here: SPaircraft writes
     about 2500 of its constraints this way, on top of the 2346 that come from
     variable declarations.
+
+    ``only``, when given, restricts the fold to those constraint indices;
+    other singleton rows stay as rows. The distinction is operational, not
+    mathematical: a declared-bound row is a loose box that is safe as a hard
+    sub-problem bound, while a singleton MODEL row (a span gate, say) is an
+    active constraint the sequential solvers' elastic relaxation must be able
+    to put slack on -- a hard bound cannot be relaxed, and folding ~2,500 of
+    them turned the spcomparisons b737 case from a 38-iteration converge into
+    a 200-iteration stall.
 
     Requires ``structures['bounds']`` -- run ``structure_detector`` with
     ``bounds_as_rows=False`` first, since otherwise there is nowhere to put
@@ -588,6 +597,8 @@ def fold_singleton_rows(structures):
 
     folded = set()
     for i in sorted(k for k in set(numer) | set(denom) if k != 0):
+        if only is not None and i not in only:
+            continue
         if denom.get(i) or len(numer.get(i, [])) != 1:
             continue
         row = numer[i][0]
@@ -2569,7 +2580,7 @@ def _with_empty_bounds(structures):
 
 
 def presolve(structures, fold=True, eliminate=True, propagate=False,
-             reduce=True, verbose=False):
+             reduce=True, verbose=False, fold_only=None):
     """Run the presolve passes in an order that is safe to compose.
 
     The order is not a preference, it is a constraint, and two interactions
@@ -2586,6 +2597,12 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
     SPaircraft it buys no time once elimination has run and it blocks other
     reductions if run early.
 
+    ``fold_only``, when given, is forwarded to :func:`fold_singleton_rows`:
+    only those constraint indices may fold into bounds. The sequential
+    solvers pass the declared-bound row block here, because folding an
+    active singleton MODEL row into a hard bound removes it from the elastic
+    relaxation (see the note on :func:`fold_singleton_rows`).
+
     Returns ``(structures, log)``. ``log.restore(x)`` rebuilds the full-length
     solution and ``print(log)`` says what happened.
     """
@@ -2593,7 +2610,7 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
     try:
         if fold:
             before = (structures.get("info") or {}).get("N_cons_total")
-            structures = fold_singleton_rows(structures)
+            structures = fold_singleton_rows(structures, only=fold_only)
             after = structures["info"]["N_cons_total"]
             log.record("bounds", rows_folded=(before - after) if before else 0)
         if reduce:

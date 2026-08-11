@@ -120,6 +120,69 @@ def test_backends_that_ignore_bounds_refuse_them():
     require_bounds_as_rows(_detect(_active_bound_model(), True), 'solve_GP')
 
 
+def test_bound_rows_fold_even_without_presolve():
+    """``presolve=False`` must not mean "carry bounds as rows".
+
+    The sequential solvers take bounds natively, and hauling declared bounds
+    through as constraint rows is pure cost (on the spcomparisons b737 case:
+    2,596 bound rows, 1,338 s vs 188 s for the identical 38-iteration solve).
+    ``presolve=False`` opts out of the column reductions -- which can change
+    the SIA trajectory -- not out of the exact singleton fold. Both failure
+    directions are checked: if the fold silently dropped a bound, the active
+    bound would stop holding and the objective would fall below 1/3; if the
+    fold silently stopped happening, the bound rows would reappear as rows.
+    """
+    from lcsolver.solvers.sequential.bridge import _fold_bound_rows
+
+    st = _detect(_active_bound_model(), bounds_as_rows=True)
+    folded = _fold_bound_rows(st)
+    assert folded['bounds'] is not None
+    assert (0.1, 3.0) in [tuple(b) for b in folded['bounds']]
+    assert folded['info']['N_cons_folded'] == 4   # x*y >= 1 alone survives
+
+    r = solve_sia(_detect(_active_bound_model(), bounds_as_rows=True),
+                  x0=np.array([1.0, 1.0]), presolve=False)
+    assert r.objective == pytest.approx(1.0 / 3.0, rel=1e-6)
+
+
+def test_fold_is_a_noop_on_already_split_structures():
+    """Bounds already split out: nothing to fold, structure passes through."""
+    from lcsolver.solvers.sequential.bridge import _fold_bound_rows
+
+    split = _detect(_active_bound_model(), bounds_as_rows=False)
+    assert _fold_bound_rows(split) is split
+
+
+def test_singleton_model_rows_are_not_folded():
+    """A single-variable MODEL constraint must stay a row.
+
+    The distinction is operational: the elastic relaxation can put slack on
+    a row but not on a hard bound, and an active gate (here ``x <= 2``, which
+    holds the optimum) is exactly the constraint that needs slack
+    mid-trajectory. Folding all singletons stalled the spcomparisons b737
+    case at the 200-iteration cap; only declared-bound rows may fold.
+    """
+    from lcsolver.solvers.sequential.bridge import _fold_bound_rows
+
+    f = Formulation()
+    x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
+    f.Objective(1.0 / x)
+    f.Constraint(x <= 2.0)                     # a gate, not a declared bound
+    st = _detect(f, bounds_as_rows=True)
+    assert st['info']['N_cons_bounds'] == 2    # 0.1 and 10.0
+
+    folded = _fold_bound_rows(st)
+    # The two declared-bound rows fold; the gate survives as the only row.
+    assert folded['info']['N_cons_folded'] == 2
+    assert folded['info']['N_cons_total'] == 1
+    assert (0.1, 10.0) in [tuple(b) for b in folded['bounds']]
+
+    # And the gate still holds the optimum: 1/x wants x large, the gate says 2.
+    r = solve_sia(_detect(f, bounds_as_rows=True), x0=np.array([1.0]),
+                  presolve=False)
+    assert r.objective == pytest.approx(0.5, rel=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # structural checks
 # ---------------------------------------------------------------------------

@@ -35,7 +35,8 @@ than silently dropped.
 import numpy as np
 
 from lcsolver.presolve.detected import as_detected
-from lcsolver.solvers.sequential.slcp import (CondensedEquality, Constraint, Options,
+from lcsolver.solvers.sequential.slcp import (CondensedEquality, Constraint,
+                                    GreyboxSignomial, Options,
                                     Posynomial,
                                     PosynomialRatio, Problem, Signomial,
                                     solve as _slcp_solve)
@@ -125,13 +126,43 @@ def _greybox_rows(blocks, structures, n):
             return fn
 
         for k, iout in enumerate(out_idx):
-            rows.append(Constraint(Signomial(make_fn(bb, in_idx, k, iout), n),
-                                   '=='))
+            rows.append(Constraint(
+                GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
+                '=='))
     return rows
 
 
-def build_problem(structures, sp_form=True, split_equalities=False):
+def build_problem(structures, sp_form=True, split_equalities=False,
+                  pair_equalities=True):
     """Translate a detected structure into an SLCP :class:`Problem`.
+
+    ``pair_equalities`` (default True) repairs TWO-SIDED PINS written as
+    separate rows -- ``p <= q`` and ``q <= p`` appended independently,
+    which is how EDI models express signomial equalities (survival/gamma
+    series, exact-G, BEM operating-point pins) -- merging each
+    mutual-reverse pair into ONE ``==`` row.  An equality must reach the
+    solver AS an equality: without the merge SIA counts ``n_eq == 0``,
+    the composite Phase I (Gauss-Newton restore onto the manifold +
+    tangential steps) never engages, and the elastic L1 it degrades to
+    slacks both pair sides independently and stalls on the interior-less
+    pinned manifold (observed: 30+ identical phase1-L1 iterations per
+    restoration cycle, the dominant cost of an 11-minute wind-turbine
+    solve).
+
+    Matching runs in a CANONICAL FRAME: any single-monomial side is
+    folded into the other side first (the detector normalizes the two
+    directions of a pin differently), signatures are rounded to 11
+    significant figures, and reciprocal single-monomial rows (mono ==
+    mono pins fold to C x^A <= 1 and (1/C) x^-A <= 1) are matched by a
+    dedicated rule.  On the wind missions SP this pairs 389 of 397
+    two-sided rows; the survivors are the model's GENUINE one-sided
+    signomial rows (AEP, bin balances, the 3P edge).  A pair that fails
+    to match merely stays split -- the previous behavior.
+
+    The downstream requirements this relies on (all in sia.py): tau
+    escalation ignores equality-row slacks/duals, Phase-I proximity is
+    seed-anchored, and accepted steps are restored onto the manifold
+    before the acceptance tests.
 
     ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
 
@@ -185,8 +216,132 @@ def build_problem(structures, sp_form=True, split_equalities=False):
         """The monomial 1, for writing ``1/p <= 1``."""
         return Posynomial([(1.0, [0.0] * n)], n)
 
+    # ---- two-sided pin recognition (see docstring) ----------------------
+    merged_eq, skip_idx = set(), set()
+    if pair_equalities:
+        import math as _math
+
+        def _round_c(c):
+            return float('%.11e' % c)
+
+        def _round_e(e):
+            return round(e, 11)
+
+        def _canon(num, den):
+            """Canonical (num, den) term-tuples for matching.
+
+            The detector normalizes the two directions of a pin
+            DIFFERENTLY: `p <= m` (m a monomial) often arrives with m
+            folded into p's coefficients/exponents, while its reverse
+            `m <= p` keeps the ratio form.  Matching therefore folds any
+            SINGLE-MONOMIAL side into the other side first, so both
+            directions land in the same canonical frame; signatures are
+            rounded so the two fold arithmetics agree."""
+            def fold(terms, mono, into_num):
+                cM = float(mono.coeff)
+                eM = dict(mono.exponents)
+                out = []
+                for t in terms:
+                    ex = dict((j, float(e)) for j, e in t.exponents.items())
+                    for j, e in eM.items():
+                        if e:
+                            ex[j] = ex.get(j, 0.0) - float(e)
+                            if ex[j] == 0.0:
+                                del ex[j]
+                    out.append((float(t.coeff) / cM, ex))
+                return out
+            if len(den) == 1:
+                folded = fold(num, den[0], True)
+                return folded, []
+            if len(num) == 1 and len(den) > 1:
+                folded = fold(den, num[0], False)
+                return [], folded
+            return ([(float(t.coeff),
+                      dict((j, float(e)) for j, e in t.exponents.items()))
+                     for t in num],
+                    [(float(t.coeff),
+                      dict((j, float(e)) for j, e in t.exponents.items()))
+                     for t in den])
+
+        def _sig_folded(folded):
+            out = tuple(sorted(
+                (_round_c(c),
+                 tuple(sorted((j, _round_e(e))
+                              for j, e in ex.items() if e != 0.0)))
+                for c, ex in folded))
+            return out if out else ((1.0, ()),)     # empty side = the unit
+
+        def _mono_fold(num, den):
+            """A row that is one monomial vs one (or no) monomial folds to
+            C * x^A <= 1.  Returns (A_sparse, C) or None."""
+            if len(num) != 1 or len(den) > 1:
+                return None
+            cN, tN = float(num[0].coeff), num[0].exponents
+            A = dict((j, float(e)) for j, e in tN.items() if e != 0.0)
+            C = cN
+            if den:
+                cD, tD = float(den[0].coeff), den[0].exponents
+                if cD == 0.0:
+                    return None
+                C = C / cD
+                for j, e in tD.items():
+                    if e != 0.0:
+                        A[j] = A.get(j, 0.0) - float(e)
+                        if A[j] == 0.0:
+                            del A[j]
+            if not A:
+                return None                          # constant row
+            return (tuple(sorted(A.items())), C)
+
+        seen = {}
+        seen_mono = {}
+        for idx in st.constraint_indices:
+            if st.operator(idx) != '<=':
+                continue
+            all_t = st.terms(idx)
+            num = [t for t in all_t if not t.denominator]
+            den = [t for t in all_t if t.denominator]
+
+            # (a) general posynomial pairs: p <= q here, q <= p elsewhere,
+            # matched in the canonical single-mono-folded frame
+            cn, cd = _canon(num, den)
+            key = (_sig_folded(cn), _sig_folded(cd))
+            if key[0] != key[1]:                     # self-reverse: degenerate
+                rkey = (key[1], key[0])
+                j0 = seen.get(rkey)
+                if (j0 is not None and j0 not in merged_eq
+                        and j0 not in skip_idx):
+                    merged_eq.add(j0)
+                    skip_idx.add(idx)
+                    seen[rkey] = None                # consume the partner
+                    continue
+                seen.setdefault(key, idx)
+
+            # (b) MONOMIAL pins: the detector folds `m1 <= m2` and its
+            # reverse into single rows C x^A <= 1 and C' x^-A <= 1 with
+            # C C' = 1 -- reciprocal forms the (num, den) swap above can
+            # never see.  These are the sin/Re/flow-angle pins of the wind
+            # models: 151 of 287 pin rows on the missions SP fell through
+            # the posynomial matcher for exactly this reason.
+            fold = _mono_fold(num, den)
+            if fold is not None:
+                A, C = fold
+                negA = tuple(sorted((j, -e) for j, e in A))
+                hit = seen_mono.get(negA)
+                if (hit is not None and hit[1] != 0.0
+                        and _math.isclose(C * hit[1], 1.0, rel_tol=1e-9)
+                        and hit[0] not in skip_idx
+                        and hit[0] not in merged_eq):
+                    merged_eq.add(hit[0])
+                    skip_idx.add(idx)
+                    seen_mono[negA] = (hit[0], 0.0)  # consume
+                else:
+                    seen_mono.setdefault(A, (idx, C))
+
     for idx in st.constraint_indices:
-        op = st.operator(idx)
+        if idx in skip_idx:
+            continue
+        op = '==' if idx in merged_eq else st.operator(idx)
         all_terms = st.terms(idx)
         num = [t for t in all_terms if not t.denominator]
         den = [t for t in all_terms if t.denominator]
@@ -263,7 +418,25 @@ def build_problem(structures, sp_form=True, split_equalities=False):
                    bounds=bounds)
 
 
-def presolve_structures(structures, verbose=False):
+def _bound_row_block(structures):
+    """Constraint indices of the detector's declared-bound rows.
+
+    The detector emits them during its variable walk, after the model's own
+    constraints were declared, so they are always the trailing
+    ``N_cons_bounds`` block of the numbering. Empty when bounds already came
+    split out -- then no declared bound rides as a row, and every remaining
+    singleton is a MODEL row that must stay one.
+    """
+    if structures.get('bounds') is not None:
+        return frozenset()
+    info = structures.get('info') or {}
+    n_bound = int(info.get('N_cons_bounds') or 0)
+    n_total = int(info.get('N_cons_total') or 0)
+    return frozenset(range(n_total - n_bound + 1, n_total + 1))
+
+
+def presolve_structures(structures, verbose=False, fold_only=None,
+                        eliminate=True):
     """Shrink a detected structure before handing it to a solver.
 
     Folds rows that are really bounds into the bounds, then drops columns
@@ -292,13 +465,31 @@ def presolve_structures(structures, verbose=False):
         width = max((len(r) - 2 for r in st[key][1]), default=0)
         st['bounds'] = [(None, None)] * max(width,
                                             len(st.get('variables') or []))
-    return _presolve_pipeline(st, verbose=verbose)
+    return _presolve_pipeline(st, verbose=verbose, fold_only=fold_only,
+                              eliminate=eliminate)
 
 
 def _apply_presolve(structures, x0):
-    """``(reduced_structures, reduced_x0, log, n_original)``."""
+    """``(reduced_structures, reduced_x0, log, n_original)``.
+
+    Two of the pipeline's passes are tuned down here, both on measured
+    evidence from the spcomparisons b737 case (1,298 vars, 4,160 rows):
+
+    * The fold is restricted to the declared-bound rows: a singleton MODEL
+      row folded into a hard bound leaves the elastic relaxation nothing to
+      put slack on, and folding them all stalled the case at the iteration
+      cap (see :func:`_fold_bound_rows`).
+    * Monomial-equality elimination is OFF. Substituting away 706 variables
+      shrank the problem (592 vars, 3,454 rows) yet took the same solve from
+      39 iterations / 136 s to 62 iterations / 2,504 s -- the early
+      iterations stay cheap and the trajectory then enters an expensive
+      restoration phase the unsubstituted problem never visits. Smaller is
+      not faster for the sequential solvers; the pass remains available and
+      default-on in :func:`lcsolver.presolve.reductions.presolve`.
+    """
     n_original = len(structures.get('variables') or [])
-    reduced, log = presolve_structures(structures)
+    reduced, log = presolve_structures(
+        structures, fold_only=_bound_row_block(structures), eliminate=False)
     if x0 is not None:
         # Drop what each pass removed, in the space that pass ran in. The log
         # unwinds them in reverse afterwards, so no index remapping is needed
@@ -320,6 +511,53 @@ def _restore(result, log, n_original):
         result.x = log.restore(result.x)
     return result
 
+def _fold_bound_rows(structures):
+    """Declared-bound rows -> native bounds, and nothing else.
+
+    ``structure_detector`` defaults to ``bounds_as_rows=True`` because the
+    cvxopt backends can only read bounds from rows -- but this solver family
+    takes bounds natively, and carrying them as rows is pure cost: on the
+    spcomparisons b737 case (1,298 vars, 4,160 real rows, 2,596 bound rows)
+    the identical 38-iteration solve runs 1,338 s with bound rows and 188 s
+    without, same optimum to the tenth of a pound.
+
+    Only the DECLARED-bound rows fold -- singleton model rows (span gates and
+    the like) stay as rows, because the elastic relaxation must be able to
+    put slack on an active constraint mid-trajectory and a hard bound cannot
+    take slack. Folding everything singleton (which the full presolve does)
+    turned that same b737 case into a 200-iteration stall; folding only the
+    declared bounds reproduces ``bounds_as_rows=False`` exactly, which
+    converges in the same 38-39 iterations as the unfolded problem with the
+    bit-equal optimum.
+
+    The declared-bound rows are identified positionally: the detector emits
+    them during its variable walk, AFTER the model's own constraints were
+    declared, so they are always the trailing ``N_cons_bounds`` block of the
+    constraint numbering (the constant-row drop upstream preserves order).
+
+    No-op when bounds are already split out, none were declared, or a
+    grey-box block is present (folding renumbers rows, which a grey-box row
+    may reference).
+    """
+    if structures.get('bounds') is not None or greybox_blocks(structures):
+        return structures
+    info = structures.get('info') or {}
+    n_bound = int(info.get('N_cons_bounds') or 0)
+    n_total = int(info.get('N_cons_total') or 0)
+    if not n_bound:
+        return structures
+    from lcsolver.presolve.reductions import fold_singleton_rows
+
+    st = dict(structures)
+    key = ('Signomial_Program' if st['Signomial_Program'][0]
+           else 'Geometric_Program')
+    width = max((len(r) - 2 for r in st[key][1]), default=0)
+    st['bounds'] = [(None, None)] * max(width,
+                                        len(st.get('variables') or []))
+    return fold_singleton_rows(
+        st, only=set(range(n_total - n_bound + 1, n_total + 1)))
+
+
 def solve_slcp(structures, x0=None, method='slcp', options=None,
                sp_form=True, presolve=True):
     """Solve a detected GP/SP with SLCP.
@@ -332,6 +570,9 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
     :func:`presolve_structures` and puts the removed variables back into
     ``result.x`` afterwards, so the result is indexed by the original variable
     ordering either way. ``result.removed`` records what was taken out.
+    Either way, bound rows are folded into native variable bounds first
+    (see :func:`_fold_bound_rows`); ``presolve=False`` disables the column
+    reductions, not the fold.
     """
     import pyomo.environ as pyo
 
@@ -344,6 +585,8 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
         presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
+    else:
+        structures = _fold_bound_rows(structures)
 
     problem = build_problem(structures, sp_form=sp_form)
     x0 = np.asarray(x0, dtype=float)
@@ -357,7 +600,7 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
 
 
 def solve_sia(structures, x0=None, options=None, sp_form=True,
-              presolve=True, split_equalities=False):
+              presolve=True, split_equalities=False, pair_equalities=True):
     """Solve a detected GP/SP by sequential inner approximation.
 
     Same adapter as :func:`solve_slcp`, pointed at
@@ -365,6 +608,10 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     and should stay that way -- the conservative condensation is the whole
     basis of the method, and turning it off downgrades every signomial
     constraint to a linearization that then has to be globalized.
+
+    Bound rows are folded into native variable bounds whether or not
+    ``presolve`` is on (see :func:`_fold_bound_rows`); ``presolve=False``
+    disables the column reductions, not the fold.
     """
     import pyomo.environ as pyo
 
@@ -379,9 +626,12 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
         presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
+    else:
+        structures = _fold_bound_rows(structures)
 
     problem = build_problem(structures, sp_form=sp_form,
-                            split_equalities=split_equalities)
+                            split_equalities=split_equalities,
+                            pair_equalities=pair_equalities)
     x0 = np.asarray(x0, dtype=float)
     if len(x0) < problem.n:
         x0 = np.concatenate([x0, np.ones(problem.n - len(x0))])
