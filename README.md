@@ -13,6 +13,10 @@ LCsolver is a package targeted at formulating and solving optimization problems 
 2. A set of methods that detect the structure of the optimization problem and classifies it for sorting to the appropriate optimization algorithm
 3. Two novel algorithms for solving particularly complex optimization problems (SLCP and SIA)
 
+## For JOSS Reviewers
+
+We ask that you please consider the information provided in the [development_evidence](https://github.com/codykarcher/lcsolver/development_evidence) folder when evaluating the criteria regarding "Iterative Development Over Time"
+
 ## Dependencies
 
 LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  IPOPT cannot be installed from pip at all: there is no IPOPT executable on PyPI, and the cyipopt package is source-only there, so it *compiles against* an IPOPT that must already exist rather than providing one.  `lcsolver-install-solvers` obtains IPOPT and then builds cyipopt against it.  Every IPOPT you can install prebuilt ships with the MUMPS linear algebra package, which is known to have performance difficulties.  We strongly encourage that users obtain MA27 and build IPOPT on this solver as opposed to the default MUMPS.  LCS is able to build and run without MA27 by default and provides easy options to upgrade later, described below.  
