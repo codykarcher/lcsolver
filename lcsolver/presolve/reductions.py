@@ -176,6 +176,8 @@ class PresolveReport:
     rigidity: dict = field(default_factory=dict)
     #: `unopposed_report` output: variables nothing resists.
     unopposed: list = field(default_factory=list)
+    #: `annihilated_report` output: constraint sides a constant has zeroed.
+    annihilated: list = field(default_factory=list)
 
     @property
     def clean(self):
@@ -196,6 +198,32 @@ class PresolveReport:
         # report, not the half that happens to live in these fields.
         L = ([self.structure, ""] if self.structure else [])
         L += [f"presolve: {self.n_variables} variables, {self.n_rows} rows"]
+
+        # First: it explains failures further down, including this report
+        # being empty because nothing could be classified.
+        if self.annihilated:
+            from lcsolver.core import codes
+            L.append(f"  [{codes.ANNIHILATED_TERM}] "
+                     f"{len(self.annihilated)} constraint side(s) are "
+                     "IDENTICALLY ZERO at the current constant values. A "
+                     "posynomial cannot be zero, so each of these rows has "
+                     "stopped being one:")
+            for hit in self.annihilated[:8]:
+                who = ', '.join(f"{n} = {v:g}" for n, v in hit['constants'])
+                because = f" -- annihilated by {who}" if who else ""
+                L.append(f"    {hit['constraint']}: "
+                         f"{hit.get('expression', hit['side'] + ' side')}"
+                         f"{because}")
+            if len(self.annihilated) > 8:
+                L.append(f"    ... and {len(self.annihilated) - 8} more")
+            L.append("    Consequences, all silent: the model may classify "
+                     "as neither GP nor SP (which disables the rest of this "
+                     "report); a variable the side was bounding is left "
+                     "unbounded below in log space and the solve returns an "
+                     "arbitrary value for it; or the backend aborts "
+                     "somewhere unrecognisable. If the zero is intended, "
+                     "give the row a small additive floor so its right side "
+                     "stays positive, or omit the term entirely.")
 
         if self.singleton_rows:
             pct = 100.0 * len(self.singleton_rows) / max(self.n_rows, 1)
@@ -2205,6 +2233,79 @@ def structure_report(structures, top=5, simplify=True) -> str:
     return '\n'.join(L)
 
 
+def annihilated_report(model, names=None):
+    """Constraint sides that are identically zero at the current constants.
+
+    A posynomial has strictly positive coefficients, so zero is not a value
+    it can take. When a constant sits at a value that annihilates a term --
+    a relief factor written ``(nu**2 - 1)`` with ``nu`` exactly 1, a count
+    or a fraction set to 0 -- the row it was in stops being a posynomial,
+    and the consequences are all silent:
+
+    * the model is reclassified as neither a GP nor an SP, so every other
+      check in this module refuses to run on it;
+    * a variable the annihilated side was bounding is left unbounded below
+      in log space, and the solve returns an arbitrary value for it rather
+      than failing;
+    * or the backend aborts somewhere unrecognisable -- IPOPT's restoration
+      phase, typically -- with nothing pointing back here.
+
+    This runs on the Pyomo model directly rather than on a detected
+    structure, because failing to detect a structure is one of the symptoms.
+
+    Each finding names the constraint, the side, and the constants
+    responsible -- found by perturbing each constant in turn and seeing
+    whether the side comes back to life, so what is reported is the constant
+    a designer should look at rather than every constant in the row.
+    """
+    import pyomo.environ as pyo
+    from pyomo.core.expr.visitor import identify_mutable_parameters
+
+    findings = []
+    try:
+        constraints = model.get_explicitConstraints()
+    except Exception:
+        return findings
+
+    for con in constraints:
+        for c in (con.values() if hasattr(con, 'values') else [con]):
+            expr = getattr(c, 'expr', None)
+            args = getattr(expr, 'args', None)
+            if not args or len(args) < 2:
+                continue
+            for pos, side in ((0, args[0]), (len(args) - 1, args[-1])):
+                try:
+                    value = pyo.value(side)
+                except Exception:
+                    continue
+                if value != 0.0:
+                    continue
+                # which constants annihilated it: nudge each and re-evaluate
+                culprits = []
+                try:
+                    params = list(identify_mutable_parameters(side))
+                except Exception:
+                    params = []
+                for prm in params:
+                    try:
+                        was = pyo.value(prm)
+                        prm.set_value(was * 1.5 + 1.0)
+                        revived = pyo.value(side) != 0.0
+                        prm.set_value(was)
+                    except Exception:
+                        continue
+                    if revived:
+                        culprits.append((str(prm), was))
+                text = str(side)
+                findings.append({
+                    'constraint': str(getattr(c, 'name', c)),
+                    'side': 'left' if pos == 0 else 'right',
+                    'expression': text if len(text) <= 90 else text[:87] + '...',
+                    'constants': culprits,
+                    })
+    return findings
+
+
 def _checks_setup(structures):
     """Shared front door for the check entry points.
 
@@ -2273,12 +2374,34 @@ def presolve_check(structures, names=None, structure_top=5):
     are not free.
     """
     st, model, units_report = _checks_setup(structures)
+
+    # Run first, and on the model rather than the detected structure: an
+    # annihilated side is one of the reasons detection fails, so this has to
+    # survive the gate below rather than sit behind it.
+    probe = model if model is not None else (
+        None if isinstance(structures, dict) else structures)
+    annihilated = annihilated_report(probe) if probe is not None else []
+
     if st is None:
         rep = PresolveReport()
         rep.structure = units_report
+        rep.annihilated = annihilated
         return rep
 
-    rep = presolve_report(st, names=names)
+    try:
+        rep = presolve_report(st, names=names)
+    except ValueError:
+        # No detected GP/SP rows to walk. If a side was annihilated, that is
+        # very likely why -- return the finding that explains it rather than
+        # the bare "presolve needs a detected GP or SP structure", which
+        # names no cause. With nothing to explain it, the original stands.
+        if not annihilated:
+            raise
+        rep = PresolveReport()
+        rep.structure = units_report or ''
+        rep.annihilated = annihilated
+        return rep
+    rep.annihilated = annihilated
     guesses = getattr(model, 'defaulted_guesses', None)
     if guesses:
         rep.defaulted_guesses = list(guesses)

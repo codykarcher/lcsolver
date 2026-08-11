@@ -1506,3 +1506,65 @@ def test_a_disconnected_variable_keeps_the_guess_it_was_given():
         ['disconnected']
     assert res.x[names.index('orphan')] == pytest.approx(5.0, rel=1e-9)
     assert res.x[names.index('x')] == pytest.approx(2.0, rel=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# LC-W103: a constant that annihilates a constraint side
+# ---------------------------------------------------------------------------
+
+def _annihilated_model(nu_value):
+    """m >= (nu^2 - 1) x -- the right side vanishes at nu = 1.
+
+    The shape is real: it is a rotor blade's root bending moment, relieved by
+    the rotating flap frequency, which a teetering hub drives to exactly zero.
+    """
+    from lcsolver import units
+    f = Formulation()
+    f.Variable('x', 1.0, '-', 'x')
+    f.Variable('m', 1.0, '-', 'an intermediate the zeroed side bounds')
+    nu = f.Constant('nu', nu_value, '-', 'rotating flap frequency per rev')
+    f.Objective(f.x)
+    f.ConstraintList([f.m >= (nu**2 - 1.0) * f.x,
+                      f.x >= 1.0 * units.dimensionless])
+    return f
+
+
+def test_annihilated_side_is_found_and_the_constant_named():
+    from lcsolver.presolve.reductions import annihilated_report
+    f = _annihilated_model(1.0)
+    hits = annihilated_report(f)
+    assert len(hits) == 1
+    assert [n for n, _ in hits[0]['constants']] == ['nu']
+    assert hits[0]['constants'][0][1] == 1.0
+
+
+def test_a_healthy_model_reports_nothing():
+    from lcsolver.presolve.reductions import annihilated_report
+    assert annihilated_report(_annihilated_model(1.019)) == []
+
+
+def test_the_constant_is_left_at_its_value_after_probing():
+    """The culprit search perturbs constants; it must put them back."""
+    import pyomo.environ as pyo
+    from lcsolver.presolve.reductions import annihilated_report
+    f = _annihilated_model(1.0)
+    annihilated_report(f)
+    assert pyo.value(f.nu) == 1.0
+
+
+def test_the_finding_reaches_the_presolve_report_with_its_code():
+    from lcsolver.core import codes
+    f = _annihilated_model(1.0)
+    rep = f.optimization_check()
+    assert rep.annihilated
+    text = str(rep)
+    assert codes.ANNIHILATED_TERM in text
+    assert 'nu' in text
+
+
+def test_it_survives_the_unclassified_gate():
+    """The zeroed row is WHY nothing classifies, so the report that explains
+    it must not be the one the gate suppresses."""
+    f = _annihilated_model(1.0)
+    rep = f.optimization_check()          # would raise ValueError before
+    assert rep.annihilated
