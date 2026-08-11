@@ -2448,11 +2448,17 @@ def presolve_check(structures, names=None, structure_top=5):
     return rep
 
 
-def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9):
+def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9,
+                    skip_degeneracy_check=False):
     """The post-solve half: the checks that only mean something at a solution.
 
     Degenerate variables (the optimum does not determine them), cancelling
     signomial terms, and variables resting on the solver's positivity floor.
+
+    ``skip_degeneracy_check`` drops the first of those.  It is the expensive
+    one -- it perturbs every variable and re-solves feasibility around it --
+    and on a model whose structure is already trusted it is the check most
+    worth turning off in a sweep.  The other two are cheap and always run.
     Hand this a SOLVED Formulation and the point is read off the model;
     passing ``x`` and ``problem`` explicitly also works and takes precedence.
     An unsolved model raises: running these against an initial guess would
@@ -2487,10 +2493,19 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9):
             names = None
 
     if x is not None and problem is not None:
-        try:
-            rep.degenerate = degeneracy_report(problem, x, names=names)
-        except Exception:
+        if skip_degeneracy_check:
             rep.degenerate = []
+        else:
+            try:
+                # Read the variable-to-constraint sparsity off the model once;
+                # the scan is quadratic without it.  None means it could not be
+                # matched to the problem rows, and the dense scan runs instead.
+                dep = constraint_dependencies(model, st.variables, problem.n,
+                                              problem.constraints, x=x)
+                rep.degenerate = degeneracy_report(problem, x, names=names,
+                                                   depends_on=dep)
+            except Exception:
+                rep.degenerate = []
         try:
             rep.cancelling = cancellation_report(st, x, names=names)
         except Exception:
@@ -2630,8 +2645,68 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
     return structures, log
 
 
+def constraint_dependencies(model, variables, n, constraints, x=None,
+                            probes=16):
+    """Which constraints each variable appears in: ``[j] -> [constraint index]``.
+
+    Read off the Pyomo expressions once, so the degeneracy scan can re-evaluate
+    only the rows a perturbation can possibly move.
+
+    THE MAPPING IS NOT POSITIONAL over every row.  ``build_problem`` folds
+    single-variable rows into variable BOUNDS, so ``constraints`` holds only the
+    rows with two or more distinct variables, in model order.  That is the
+    correspondence used here, and it is then CHECKED rather than assumed: a
+    handful of variables are perturbed and scanned densely, and if any
+    constraint moves that the map did not predict, this returns None and the
+    caller falls back to the dense scan.  A wrong map would silently under-report
+    degeneracy, which is worse than being slow.
+    """
+    if model is None:
+        return None
+    try:
+        import math
+
+        import pyomo.environ as pyo
+        from pyomo.core.expr.visitor import identify_variables
+
+        rows, row_vars = [], []
+        for row in model.component_data_objects(pyo.Constraint, active=True):
+            vs = {id(v): v for v in identify_variables(row.body)}
+            if len(vs) >= 2:            # the rest became bounds
+                rows.append(row)
+                row_vars.append(vs)
+        if len(rows) != len(constraints):
+            return None
+
+        index = {id(v): j for j, v in enumerate(list(variables)[:n])}
+        dep = [[] for _ in range(n)]
+        for i, vs in enumerate(row_vars):
+            for vid in vs:
+                j = index.get(vid)
+                if j is not None:
+                    dep[j].append(i)
+
+        if x is not None and probes:
+            import numpy as np
+
+            x = np.asarray(x, dtype=float)
+            lg = lambda b: math.log(max(b, 1e-300))
+            base = [lg(c.body(x)) for c in constraints]
+            step = max(1, n // int(probes))
+            for j in range(0, n, step):
+                xp = x.copy()
+                xp[j] *= math.exp(0.05)
+                expected = set(dep[j])
+                for i, c in enumerate(constraints):
+                    if abs(lg(c.body(xp)) - base[i]) > 1e-12 and i not in expected:
+                        return None      # the map missed a row: do not trust it
+        return dep
+    except Exception:
+        return None
+
+
 def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
-                      viol_tol=1e-9, names=None):
+                      viol_tol=1e-9, names=None, depends_on=None):
     """Variables the solution does not determine, tested directly.
 
     A variable is degenerate when it can be moved in **both** directions
@@ -2643,6 +2718,15 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
 
     ``problem`` is an :class:`~lcsolver.solvers.sequential.slcp.Problem`; ``x`` the
     solution. Returns a list of ``(name, value)``.
+
+    ``depends_on`` is the sparsity from :func:`constraint_dependencies`, and it
+    is a pure speed-up: perturbing ``x[j]`` can only move constraints that
+    CONTAIN ``x[j]``, and every other row keeps its value at ``x``, whose worst
+    is ``v0`` and therefore already inside the threshold.  So the local scan
+    answers the same question as the global one -- it just stops asking rows
+    that cannot have changed.  Without it the scan is n x m body evaluations,
+    which is quadratic in model size and, on a few-thousand-row model, is the
+    single most expensive thing in a solve.
     """
     import math
 
@@ -2650,14 +2734,22 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
 
     x = np.asarray(x, dtype=float)
     names = list(names or [])
+    cons = problem.constraints
 
-    def viol(xx):
-        worst = -math.inf
-        for c in problem.constraints:
-            worst = max(worst, math.log(max(c.body(xx), 1e-300)))
-        return worst
+    def logbody(c, xx):
+        return math.log(max(c.body(xx), 1e-300))
 
-    f0, v0 = problem.objective_value(x), viol(x)
+    v0 = -math.inf
+    for c in cons:
+        v0 = max(v0, logbody(c, x))
+    f0 = problem.objective_value(x)
+    thresh = max(v0, 0.0) + viol_tol
+
+    def worsens(xx, j):
+        if depends_on is not None:
+            return any(logbody(cons[i], xx) > thresh for i in depends_on[j])
+        return any(logbody(c, xx) > thresh for c in cons)
+
     out = []
     for j in range(problem.n):
         free = True
@@ -2666,7 +2758,7 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
             xp[j] *= math.exp(s)
             if (abs(problem.objective_value(xp) - f0)
                     > obj_tol * max(1.0, abs(f0))
-                    or viol(xp) > max(v0, 0.0) + viol_tol):
+                    or worsens(xp, j)):
                 free = False
                 break
         if free:

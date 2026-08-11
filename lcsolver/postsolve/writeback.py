@@ -65,6 +65,15 @@ def write_solution(structures, res, model=None):
         each variable is resolved onto it by ``ComponentUID`` (see
         ``_resolve_on``), which handles indexed variables correctly.
 
+        THE CLONE IS WRITTEN TOO. It is already in hand and already the right
+        list, so bringing it to the solution costs one extra ``set_value`` per
+        variable -- against re-deriving it, which is a second unit-correct and
+        a second walk of the model. That matters because the post-solve checks
+        need exactly this: the DETECTED form, at the SOLVED point. Left holding
+        the initial guess, the clone is useless to them and they re-detect from
+        scratch, which on a few-thousand-row model is about half the wall clock
+        of the whole solve.
+
     Returns
     -------
     dict
@@ -91,6 +100,12 @@ def write_solution(structures, res, model=None):
             f"solution vector has {len(x)} entries but the model has "
             f"{len(variables)} variables; cannot write back unambiguously")
 
+    def _set(target, val):
+        try:
+            target.set_value(val, skip_validation=True)
+        except TypeError:            # older Pyomo without skip_validation
+            target.set_value(val)
+
     written = {}
     unresolved = []
     for i, v in enumerate(variables):
@@ -104,16 +119,20 @@ def write_solution(structures, res, model=None):
                 unresolved.append(_name_of(v))
                 continue
             target = found
-        try:
-            target.set_value(val, skip_validation=True)
-        except TypeError:            # older Pyomo without skip_validation
-            target.set_value(val)
+            _set(v, val)             # and leave the clone at the solution too
+        _set(target, val)
         written[_name_of(target)] = val
 
     if unresolved:
         raise KeyError(
             "could not resolve these variables on the target model: "
             + ", ".join(unresolved))
+    # Mark the detected form as carrying a solution, so the post-solve checks
+    # will accept it instead of re-detecting.
+    if model is not None:
+        clone = structures.get('model') if hasattr(structures, 'get') else None
+        if clone is not None:
+            clone._edi_solved = True
     return written
 
 

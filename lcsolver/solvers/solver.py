@@ -415,6 +415,9 @@ def _mark_solved(m):
         pass
 
 
+
+
+
 def _check_structures_match(structures, m):
     """Refuse structures detected from a DIFFERENT formulation.
 
@@ -448,7 +451,8 @@ def _check_structures_match(structures, m):
             "deck: structures=structure_detector(unit_corrector(f)).")
 
 
-def _attach_sensitivities(m, res, wanted):
+def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
+                          structures=None):
     """Post-solve reporting: holographic checks, then sensitivities.
 
     Compute sensitivities onto the model, so `f.solution` carries them.
@@ -538,7 +542,20 @@ def _attach_sensitivities(m, res, wanted):
                      or 'converged' in status) if isinstance(res, dict) else False
         if converged:
             from lcsolver.presolve.reductions import postsolve_check
-            post = postsolve_check(m)
+            # Feed the checks the structures ALREADY DETECTED for the solve.
+            # Handed the model instead, postsolve_check re-detects from
+            # scratch -- a second unit-correct and a second walk, which on a
+            # few-thousand-row model is about half the wall clock of the whole
+            # solve and produces the same answer the solve already has.
+            # write_solution has already brought the detected clone to the
+            # solution, so the checks can read it directly.  Handed the model
+            # instead they would re-detect -- the same walk, twice per solve.
+            reuse = (structures is not None
+                     and getattr(structures.get('model', None),
+                                 '_edi_solved', False))
+            post = postsolve_check(
+                structures if reuse else m,
+                skip_degeneracy_check=skip_degeneracy_check)
             res['quality'] = {'degenerate': post.degenerate,
                               'cancelling': post.cancelling,
                               'at_floor': post.at_floor}
@@ -600,7 +617,7 @@ def _apply_start(m, start):
 
 def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
           sensitivities=True, structures=None, start=None, quiet=True,
-          **kwargs):
+          skip_degeneracy_check=False, **kwargs):
     """Solve a Formulation. See ``_solve_impl`` below for the full story.
 
     ``quiet`` (default True) captures every warning the solve raises --
@@ -613,6 +630,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         return _solve_impl(m, solver=solver, convex_backend=convex_backend,
                            diagnostics=diagnostics,
                            sensitivities=sensitivities, structures=structures,
+                           skip_degeneracy_check=skip_degeneracy_check,
                            start=start, **kwargs)
     import warnings as _warnings
     with _warnings.catch_warnings(record=True) as caught:
@@ -620,6 +638,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         res = _solve_impl(m, solver=solver, convex_backend=convex_backend,
                           diagnostics=diagnostics,
                           sensitivities=sensitivities, structures=structures,
+                          skip_degeneracy_check=skip_degeneracy_check,
                           start=start, **kwargs)
     # Code-tagged messages ([LC-Wxxx] ...) stand alone; anything untagged
     # (third-party warnings) keeps its category as context.
@@ -635,7 +654,8 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
 
 def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
-                sensitivities=True, structures=None, start=None, **kwargs):
+                sensitivities=True, structures=None, start=None,
+                skip_degeneracy_check=False, **kwargs):
     """Solve an LCsolver Formulation, choosing a backend automatically.
 
     ``solver='auto'`` routes a detected LP, QP, GP or SP to the convex backend
@@ -735,6 +755,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # then dies with `ipopt_solve() got an unexpected keyword argument
     # 'sp_method'`. A misspelled option is a mistake in the call, not a
     # backend failure, and must not be retried.
+    _skipdeg = skip_degeneracy_check
     _sp_method = kwargs.get('sp_method', 'sia')
     if _sp_method not in ('sia', 'pccp'):
         raise ValueError(
@@ -796,6 +817,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     from lcsolver.presolve.reductions import unbuilt_blocks_check
     unbuilt_blocks_check(m)
 
+    # Detection is settled by here (supplied, detected, or failed).  The
+    # post-solve checks read this rather than re-deriving it.
+    _st = structures
+
     if want_checks and structures is not None:
         try:
             _run_diagnostics(structures, diagnostics)
@@ -807,11 +832,11 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             pass                         # a broken check must not block a solve
 
     if solver == 'cvxopt':
-        return _attach_sensitivities(m, cvxopt_solve(m, **kwargs), sensitivities)
+        return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
     if solver == 'ipopt-convex':
-        return _attach_sensitivities(m, _convex_ipopt(m, **kwargs), sensitivities)
+        return _attach_sensitivities(m, _convex_ipopt(m, **kwargs), sensitivities, _skipdeg, _st)
     if solver == 'ipopt':
-        return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
+        return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
@@ -841,15 +866,15 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 and (structures['Geometric_Program'][0]
                      or structures['Signomial_Program'][0])):
             return _attach_sensitivities(
-                m, _solve_sp(structures, m, **kwargs), sensitivities)
+                m, _solve_sp(structures, m, **kwargs), sensitivities, _skipdeg, _st)
         if not _ipopt_available():
             raise SolverUnavailable(
                 'this model has black-box constraints and its algebraic part '
                 'is not a detected GP/SP, so it needs the raw IPOPT route -- '
                 'and no usable IPOPT installation was found. Run '
                 '`lcsolver-install-solvers`; see docs/ipopt.rst.')
-        return _attach_sensitivities(m, ipopt_solve(m, **kwargs),
-                                     sensitivities)
+        return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)),
+                                     sensitivities, _skipdeg, _st)
 
     cvxopt_failure = None
     if structured:
@@ -873,10 +898,18 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             if backend == 'ipopt':
                 return _attach_sensitivities(
                     m, _convex_ipopt(m, structures=structures, **kwargs),
-                    sensitivities)
-            return _attach_sensitivities(m, cvxopt_solve(m, **kwargs),
-                                         sensitivities)
+                    sensitivities, _skipdeg, _st)
+            return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)),
+                                         sensitivities, _skipdeg, _st)
         except Exception as e:
+            from lcsolver.presolve.reductions import InfeasibleProblem
+            if isinstance(e, InfeasibleProblem):
+                # A proof (or strong diagnosis) of infeasibility is an
+                # ANSWER, not a reason to try a different backend -- raw
+                # IPOPT on the same rows would either fail its own
+                # restoration phase or return numbers for a design that
+                # does not exist.  Same policy as the presolve gate above.
+                raise
             # Fall through, but say why: a silent fallback turns a bug in the
             # structured path into a confusing failure further down.
             if backend == 'cvxopt':
@@ -888,8 +921,8 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 f"falling back to {where}.",
                 RuntimeWarning, stacklevel=2)
             if not _ipopt_available() and backend == 'ipopt':
-                return _attach_sensitivities(m, cvxopt_solve(m, **kwargs),
-                                             sensitivities)
+                return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)),
+                                             sensitivities, _skipdeg, _st)
 
     if not _ipopt_available():
         # Nothing left to try. cvxopt cannot take a general NLP, so this is a
@@ -907,11 +940,21 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
                'it. ' if not structured else '')
             + 'Run `lcsolver-install-solvers`. See docs/ipopt.rst.')
-    return _attach_sensitivities(m, ipopt_solve(m, **kwargs), sensitivities)
+    return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
 
 
 # help(solve) should tell the whole story, not just the wrapper's.
 solve.__doc__ = (solve.__doc__ or '') + '\n' + (_solve_impl.__doc__ or '')
+
+
+def _strip_routing_kwargs(kwargs):
+    """Routing/options kwargs consumed by the structured path; the raw
+    backends reject them (the observed failure mode: every structured-path
+    exception was MASKED by `ipopt_solve() got an unexpected keyword
+    argument 'sp_method'` from the fallback, hiding the real error)."""
+    drop = ('sp_method', 'options', 'sp_form', 'presolve',
+            'split_equalities', 'pair_equalities')
+    return {k: v for k, v in kwargs.items() if k not in drop}
 
 
 def _solve_sp(structures, m, sp_method='sia', **kwargs):
@@ -960,7 +1003,22 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',
-                                               'presolve', 'split_equalities')})
+                                               'presolve', 'split_equalities',
+                                               'pair_equalities')})
+    _final_viol = float(getattr(result, 'max_violation', 0.0) or 0.0)
+    if (getattr(result, 'phase1_feasible', None) is False
+            and not result.converged
+            and _final_viol > 10.0 * 1e-6):
+        # No feasible point was found and the run did not recover: this is
+        # an ANSWER, not a partial result -- iterating an infeasible model
+        # optimizes nothing.  Surface the elastic Phase-I diagnosis (which
+        # rows cannot close) instead of returning the best infeasible
+        # iterate as if it were a design.
+        from lcsolver.presolve.reductions import InfeasibleProblem
+        report = getattr(result, 'infeasibility_report', None) or result.status
+        raise InfeasibleProblem(
+            'SIA Phase I could not find a feasible point and the solve did '
+            'not recover.\n' + str(report))
     res = {
         'x': list(result.x),
         'primal objective': result.objective,
@@ -1042,7 +1100,7 @@ def _convex_ipopt(m, structures=None, **kwargs):
     if structures['Signomial_Program'][0]:
         return _solve_sp(structures, m, **kwargs)
     # Nothing structured left to exploit.
-    return ipopt_solve(m, **kwargs)
+    return ipopt_solve(m, **_strip_routing_kwargs(kwargs))
 
 
 
