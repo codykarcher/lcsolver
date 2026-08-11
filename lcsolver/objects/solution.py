@@ -24,7 +24,35 @@ column width computed from its contents so the colons line up.
 """
 from __future__ import annotations
 
+import re
+
 __all__ = ["Solution"]
+
+_DIGITS = re.compile(r'(\d+)')
+
+
+def _alphabetical(name):
+    """Sort key for a displayed name: how a reader would alphabetize it.
+
+    Two things a plain string sort gets wrong in a table someone is scanning
+    for a name they already know.
+
+    CASE. ASCII orders every capital ahead of every lowercase, so ``Re_station``
+    files before ``area_disk`` rather than between ``radius`` and ``rho``. An
+    engineering model capitalizes on the convention of the quantity -- Re, CT,
+    M -- not to signal precedence, so case is folded away.
+
+    DIGITS. A vector prints one row per element, and lexicographically
+    ``[10]`` sits between ``[1]`` and ``[2]``: a twenty-segment chain reads
+    0, 10, 11, ... 19, 1, 2. Runs of digits are compared as numbers so the
+    elements come out in the order they are indexed.
+
+    Each part is tagged with its kind so a numeric run is never compared
+    against a text one, and the untouched name is appended by the caller to
+    break ties -- otherwise ``Re`` and ``re`` would order arbitrarily.
+    """
+    return tuple((1, int(p)) if p.isdigit() else (0, p.lower())
+                 for p in _DIGITS.split(name))
 
 
 def _fmt(value, ndecimal):
@@ -155,8 +183,13 @@ class Solution:
 
         A model's own quantities are the ones its author is looking for, and
         they get buried when a hundred namespaced ones sort in among them.
+
+        Within each of the two, `_alphabetical` orders the way a reader would:
+        case folded and vector indices numeric. The raw name rides along last
+        so that names differing only in case still have a settled order.
         """
         return sorted(names, key=lambda n: (self.display_name(n) != n,
+                                            _alphabetical(self.display_name(n)),
                                             self.display_name(n)))
 
     def _table(self, entries, ndecimal):
@@ -274,16 +307,25 @@ class Solution:
             if not items:
                 L += [f'   all below {sensitivity_tol:g}', '']
             else:
-                # `top` means the n largest in the model, so select on
-                # magnitude alone first. Sorting for display first and
-                # truncating after would quietly return the n largest
-                # *ungrouped* ones, which is a different question.
-                items.sort(key=lambda kv: -abs(kv[1]))
+                # RANKED GLOBALLY BY MAGNITUDE, and deliberately not split
+                # ungrouped-first the way the tables above are. There the
+                # reader is looking up a name they already know, and a model's
+                # own quantities get buried among a hundred namespaced ones.
+                # Here the ranking IS the content: the question a sensitivity
+                # table answers is "what is this design most sensitive to",
+                # and filing every sub-model's constants below every top-level
+                # one answers a different question -- it puts a 0.001 in the
+                # assembly above a 1.5 in a block, so the largest number in
+                # the model lands twenty rows down.
+                #
+                # Ties break alphabetically so that constants of genuinely
+                # equal sensitivity -- a pair that always appears as a product
+                # -- keep a settled order across runs instead of falling back
+                # on dict insertion.
+                items.sort(key=lambda kv: (-abs(kv[1]),
+                                           _alphabetical(self.display_name(kv[0])),
+                                           self.display_name(kv[0])))
                 shown = items if top is None else items[:top]
-                # Ungrouped first as elsewhere, then by magnitude within each
-                # half, so the table reads the way the ones above it do.
-                shown.sort(key=lambda kv: (self.display_name(kv[0]) != kv[0],
-                                           -abs(kv[1])))
                 wn = max(len(self.display_name(n)) for n, _ in shown)
                 for n, v in shown:
                     bar = ('+' if v > 0 else '-') * min(int(abs(v) * 20) + 1, 24)
