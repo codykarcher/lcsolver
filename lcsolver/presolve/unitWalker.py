@@ -181,16 +181,27 @@ def handle_sumExpression_node(visitor,node, *args):
     return unitsPack(expr=handled_sum, units=arg_checker[0])
 
 def handle_pow_node(visitor, node, arg1, arg2):
-    if  ( (isinstance(arg2.expr, int) or isinstance(arg2.expr, float)) and (arg2.units == units.pint_registry('').units) ): #checks to make sure the power is only a number (yay)
+    dimensionless = units.pint_registry('').units
+    if  ( (isinstance(arg2.expr, int) or isinstance(arg2.expr, float)) and (arg2.units == dimensionless) ): #checks to make sure the power is only a number (yay)
         return unitsPack(expr=arg1.expr**arg2.expr, units=arg1.units**arg2.expr)
-    else: 
-        try: #try is used in this case because may not have attribute units and thus will error
-            if arg2.expr.units == units.pint_registry('').units: # checks to make sure power is dimensionless (yay)
-                return unitsPack(expr=arg1.expr**arg2.expr, units=arg1.units**arg2.expr)
-            else: 
-                raise ValueError('Function handle_pow_node cannot handle units %s in the exponent'%(arg2)) # units in power is a nono
-        except: 
-            return unitsPack(expr=arg1.expr**arg2.expr, units=arg1.units**arg2.expr)
+
+    if arg2.units != dimensionless: # units in power is a nono
+        raise ValueError('Function handle_pow_node cannot handle units %s in the exponent'%(arg2))
+
+    # A SYMBOLIC exponent: a Constant (mutable Param), or an expression over
+    # Constants. This is legal, and it is the only way to get a sensitivity to
+    # an exponent -- but only over a dimensionless base. Were the base
+    # dimensional, the units of the result would depend on a number a deck can
+    # change, so the model would not have fixed units at all; that is refused
+    # here rather than left to surface as a pint error deeper down.
+    if arg1.units == dimensionless:
+        return unitsPack(expr=arg1.expr**arg2.expr, units=dimensionless)
+
+    raise ValueError(
+        'Function handle_pow_node cannot raise a quantity with units %s to a '
+        'non-constant exponent: the units of the result would depend on the '
+        "exponent's value. Make the base dimensionless (divide by a reference "
+        'quantity) if the exponent has to stay a Constant.' % (arg1.units,))
 
 def handle_product_node(visitor, node, arg1, arg2): #units * units will probably not create any strange cases
     return unitsPack(expr=arg1.expr * arg2.expr, units=units.pint_registry(str(arg1.units) + '*' +str(arg2.units)).units)

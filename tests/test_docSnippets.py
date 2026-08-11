@@ -1616,6 +1616,28 @@ class TestEDISnippets(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(grad[0]), -2.5)
         self.assertEqual(len(s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])), 11)
 
+    def test_edi_snippet_submodels_04(self):
+        "Tests scalar_sum and retype_to_float"
+        # BEGIN: SubModels_Snippet_04
+        from lcsolver import Formulation, units
+
+        f = Formulation()
+        a = f.Variable(name='a', guess=1.0, units='kg', description='a')
+        b = f.Variable(name='b', guess=1.0, units='kg', description='b')
+        v = f.Variable(name='v', guess=1.0, units='kg', size=3,
+                       description='a vector')
+        exponent = f.Constant(name='exponent', value=2.5, units='-',
+                              description='a fit exponent')
+
+        total = f.scalar_sum([a, b])        # a scalar rollup, checked as one
+        power = a ** f.retype_to_float(exponent)   # an exponent is a NUMBER
+        # END: SubModels_Snippet_04
+
+        self.assertEqual(f.retype_to_float(exponent), 2.5)
+        self.assertEqual(str(pyo.units.get_units(total)), 'kg')
+        with self.assertRaises(TypeError):
+            f.scalar_sum([a, v])            # a vector is refused, not summed
+
 
 if __name__ == '__main__':
     unittest.main()

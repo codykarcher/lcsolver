@@ -15,6 +15,8 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
+import math
+
 import pyomo.common.unittest as unittest
 import pyomo.environ as pyo
 from pyomo.common.dependencies import attempt_import
@@ -1176,6 +1178,64 @@ class TestLoadConstants(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             f.load_constants({'v': [1.0]})
         self.assertIn('2 entries', str(ctx.exception))
+
+
+class TestConstantAsExponent(unittest.TestCase):
+    """A Constant may be an exponent: the structure survives, and the dual
+    prices the exponent itself."""
+
+    def _model(self, exponent=0.49):
+        import lcsolver
+        f = Formulation()
+        x = f.Variable('x', 2.0, '-', 'x')
+        y = f.Variable('y', 2.0, '-', 'y')
+        e = f.Constant('e', exponent, '-', 'exponent')
+        f.Objective(x)
+        f.ConstraintList([x * y**e >= 1.0 * lcsolver.units.dimensionless,
+                          y <= 4.0 * lcsolver.units.dimensionless])
+        return f
+
+    def test_the_structure_is_still_a_geometric_program(self):
+        import lcsolver
+        from lcsolver.presolve.structureDetector import structure_detector
+        f = self._model()
+        s = structure_detector(f)
+        self.assertTrue(s['Geometric_Program'][0])
+
+    def test_it_solves_to_the_analytic_answer(self):
+        import lcsolver
+        f = self._model(0.49)
+        lcsolver.solve(f)
+        self.assertAlmostEqual(pyo.value(f.x), 4.0**-0.49, places=5)
+
+    def test_the_exponent_gets_a_sensitivity(self):
+        """d log x* / d log e for x* = 4^-e is -e ln 4."""
+        import lcsolver
+        f = self._model(0.49)
+        lcsolver.solve(f)
+        sens = dict(f.solution.sensitivities)
+        self.assertAlmostEqual(sens['e'], -0.49 * math.log(4.0), places=4)
+
+    def test_a_deck_may_change_it_and_resolve(self):
+        import lcsolver
+        f = self._model(0.49)
+        lcsolver.solve(f)
+        f.load_constants({'e': 0.7})
+        lcsolver.solve(f)
+        self.assertAlmostEqual(pyo.value(f.x), 4.0**-0.7, places=5)
+
+    def test_a_dimensional_base_is_refused(self):
+        """The units of the result would depend on the exponent's value."""
+        import lcsolver
+        f = Formulation()
+        a = f.Variable('a', 2.0, 'm', 'a')
+        b = f.Variable('b', 2.0, 'm', 'b')
+        p = f.Constant('p', 2.0, '-', 'p')
+        f.Objective(b)
+        f.ConstraintList([b >= a**p])
+        with self.assertRaises(Exception) as ctx:
+            lcsolver.solve(f)
+        self.assertIn('non-constant exponent', str(ctx.exception))
 
 
 if __name__ == '__main__':

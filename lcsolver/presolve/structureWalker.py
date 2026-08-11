@@ -396,7 +396,12 @@ def handle_num_node(visitor, node):
     # print('handling node handle_num_node(visitor, node):')
     elementDict = StructureDictionary()
     elementDict['constant']['status'] = 'yes'
-    elementDict['constant']['value'] = float(node)
+    # pyo.value resolves a mutable Param (or an expression over Params) to its
+    # number; a plain float passes through. Bare float() raises on a Pyomo
+    # object, which is how a Constant used as an EXPONENT -- legal, and the
+    # only way to get a sensitivity to an exponent -- used to reach the
+    # walker's generic error handler.
+    elementDict['constant']['value'] = float(pyo.value(node))
     elementDict.propagate()
     return elementDict
 

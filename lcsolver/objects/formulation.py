@@ -321,6 +321,12 @@ class Group:
     def prod(self, vector, axis=None):
         return self._formulation.prod(vector, axis=axis)
 
+    def scalar_sum(self, parts):
+        return self._formulation.scalar_sum(parts)
+
+    def retype_to_float(self, x):
+        return self._formulation.retype_to_float(x)
+
     def broadcast_rows(self, vector, n):
         return self._formulation.broadcast_rows(vector, n)
 
@@ -1074,6 +1080,45 @@ class Formulation(ConcreteModel):
     def prod(self, vector, axis=None):
         """Product of a vector or matrix, optionally along one axis."""
         return _unwrap_0d(_np.prod(as_array(vector), axis=axis))
+
+    def scalar_sum(self, parts):
+        """Add SCALAR quantities, refusing anything vector-valued.
+
+        A rollup -- a weight statement, a power budget -- is a scalar sum by
+        construction.  Both Python's ``sum`` and :meth:`sum` accept a vector
+        among the parts and quietly return an ARRAY, which downstream becomes
+        one constraint per element instead of one row: a different model that
+        still solves.  This says the intent instead, and the seed is the first
+        part rather than a dimensionless zero, so units are checked on every
+        addition rather than against a bare 0.
+        """
+        parts = list(parts)
+        for part in parts:
+            if hasattr(part, 'shape') and getattr(part, 'shape', ()) != ():
+                raise TypeError(
+                    f"scalar_sum() adds scalars, and got a vector quantity "
+                    f"({part}). A rollup over a vector must say which axis it "
+                    f"means -- use f.sum(x, axis=...) for that -- because "
+                    f"summing it here would silently build one row per "
+                    f"element.")
+        if not parts:
+            return 0
+        out = parts[0]
+        for part in parts[1:]:
+            out = out + part
+        return out
+
+    def retype_to_float(self, x):
+        """The float behind a number or a declared Constant.
+
+        For the handful of places that need a VALUE at build time rather than
+        a symbol in a row: a station guess grid, a branch on whether a term
+        exists at all, and every GP EXPONENT -- an exponent is a number, never
+        a parameter, so anything used as one has to come through here.
+        """
+        if isinstance(x, (int, float)):
+            return float(x)
+        return float(pyo.value(x))
 
     def broadcast_rows(self, vector, n):
         """``vector`` repeated as each of ``n`` rows -> ``(n, len(vector))``.
