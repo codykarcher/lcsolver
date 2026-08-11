@@ -39,6 +39,11 @@ Building a model
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: lcsolver.objects.submodel
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 
 Black-box constraints
 ---------------------

@@ -789,6 +789,13 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         except Exception as e:
             detection_failed = e
 
+    # Before anything else: a block that never received its inputs posted no
+    # rows at all, and the solve below would answer the reduced problem without
+    # complaint.  Unconditional -- it costs one attribute walk, and the failure
+    # it catches is a confident wrong number.
+    from lcsolver.presolve.reductions import unbuilt_blocks_check
+    unbuilt_blocks_check(m)
+
     if want_checks and structures is not None:
         try:
             _run_diagnostics(structures, diagnostics)

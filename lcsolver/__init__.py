@@ -37,7 +37,8 @@ that a broken install fails loudly instead of producing an empty namespace.
 import pyomo.environ  # noqa: F401
 
 from lcsolver.solvers.solver import solve, PresolveError, SolveResult
-from lcsolver.presolve.reductions import presolve_check, postsolve_check
+from lcsolver.presolve.reductions import (presolve_check, postsolve_check,
+                                          unbuilt_blocks, unbuilt_blocks_check)
 
 # Which solvers this install actually has. Exposed here as well as on the
 # command line (`lcsolver-check-solvers`) because "why is this model slow" and
@@ -45,6 +46,8 @@ from lcsolver.presolve.reductions import presolve_check, postsolve_check
 from lcsolver.environment import check_solvers
 
 from lcsolver.objects.formulation import Formulation
+
+from lcsolver.objects.submodel import SubModel
 
 from lcsolver.objects.blackBoxFunctionModel import (
     BlackBoxFunctionModel,
@@ -85,6 +88,7 @@ from pyomo.environ import units
 
 __all__ = [
     "Formulation",
+    "SubModel",
     "units",
     "optimization_check",
     "structure_report",
@@ -114,6 +118,8 @@ __all__ = [
     "PresolveError",
     "presolve_check",
     "postsolve_check",
+    "unbuilt_blocks",
+    "unbuilt_blocks_check",
     "check_solvers",
 ]
 

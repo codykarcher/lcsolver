@@ -1638,6 +1638,118 @@ class TestEDISnippets(unittest.TestCase):
         with self.assertRaises(TypeError):
             f.scalar_sum([a, v])            # a vector is refused, not summed
 
+    def test_edi_snippet_submodels_01(self):
+        "Tests the submodel declaration snippet"
+        # BEGIN: SubModels_Snippet_01
+        from lcsolver import Formulation, SubModel, units
+
+        class TankModel(SubModel):
+            input_variables = ('weight_gross',)
+            input_constants = ('density_fuel',)
+
+            def build(self):
+                f = self.formulation
+                n_tanks = self.settings['n_tanks']
+                volume = self.Variable('volume', 1.0, 'm**3',
+                                       'volume of each tank', size=n_tanks)
+                weight = self.Variable('weight', 100.0, 'N', 'fuel carried')
+                self.ConstraintList([
+                    weight <= self.density_fuel * f.sum(volume),
+                    weight <= 0.4 * self.weight_gross,
+                    ])
+
+        f = Formulation()
+        W = f.Variable(name='W', guess=5000.0, units='N',
+                       description='gross weight')
+        rho = f.Constant(name='rho_fuel', value=8000.0, units='N/m**3',
+                         description='fuel weight density')
+
+        f.tank_model = TankModel(n_tanks=2)
+        f.tank_model.weight_gross = W
+        f.tank_model.density_fuel = rho
+        # END: SubModels_Snippet_01
+
+        # The attribute the block was attached as is its name, its group,
+        # and the prefix on every component it declares.
+        self.assertEqual(f.tank_model.name, 'tank_model')
+        self.assertIs(f.tank_model.formulation, f)
+        self.assertIs(f.tank_model.volume, f.tank_model_volume)
+        self.assertTrue(f.tank_model.is_built())
+        self.assertEqual(len(f.tank_model.rows), 2)
+
+    def test_edi_snippet_submodels_02(self):
+        "Tests the get_status snippet"
+        from lcsolver import Formulation, SubModel, units
+
+        class TankModel(SubModel):
+            input_variables = ('weight_gross',)
+            input_constants = ('density_fuel',)
+
+            def build(self):
+                f = self.formulation
+                self.Variable('volume', 1.0, 'm**3', 'volume of each tank',
+                              size=self.settings['n_tanks'])
+
+        f = Formulation()
+        W = f.Variable(name='W', guess=5000.0, units='N',
+                       description='gross weight')
+
+        # BEGIN: SubModels_Snippet_02
+        f.tank_model = TankModel(n_tanks=2)
+        f.tank_model.weight_gross = W
+
+        f.tank_model.get_status()
+        # END: SubModels_Snippet_02
+
+        text = f.tank_model.status_text()
+        self.assertIn('NOT BUILT', text)
+        self.assertIn('Input variables (1 of 1 connected)', text)
+        self.assertIn('density_fuel', text)
+        self.assertIn('NOT CONNECTED', text)
+
+    def test_edi_snippet_submodels_03(self):
+        "Tests the provides snippet"
+        # BEGIN: SubModels_Snippet_03
+        from lcsolver import Formulation, SubModel, units
+
+        class GroupWeightsModel(SubModel):
+            input_variables = ('weight_gross',)
+
+            provides = {
+                'component_weights':
+                    'The sum of the group weights this block owns. The '
+                    'assembly writes the empty-weight row itself, so that '
+                    'row stays in one place across every configuration.',
+                }
+
+            def build(self):
+                f = self.formulation
+                body = self.Variable('body', 500.0, 'N', 'body group')
+                gear = self.Variable('gear', 100.0, 'N', 'landing gear group')
+                self.ConstraintList([
+                    body >= 0.1 * self.weight_gross,
+                    gear >= 0.02 * self.weight_gross,
+                    ])
+                self.component_weights = f.scalar_sum([body, gear])
+
+        f = Formulation()
+        W = f.Variable(name='W', guess=5000.0, units='N',
+                       description='gross weight')
+        W_e = f.Variable(name='W_e', guess=2000.0, units='N',
+                         description='empty weight')
+
+        f.group_weights_model = GroupWeightsModel()
+        f.group_weights_model.weight_gross = W
+
+        f.ConstraintList([W_e >= f.group_weights_model.component_weights])
+        # END: SubModels_Snippet_03
+
+        text = f.group_weights_model.status_text()
+        self.assertIn('Also provides', text)
+        self.assertIn('component_weights', text)
+        self.assertIn('<expression>', text)
+        self.assertEqual(len(f.get_constraints()), 3)
+
 
 if __name__ == '__main__':
     unittest.main()

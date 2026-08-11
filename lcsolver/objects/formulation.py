@@ -451,6 +451,25 @@ class Formulation(ConcreteModel):
     #: variable and the real solution would be unreachable.
     RESERVED_NAMES = ('solution', 'sensitivities', 'group')
 
+    def __setattr__(self, key, value):
+        """Set the attribute, and let a :class:`SubModel` learn its own name.
+
+        Attaching a block is how it gets both a formulation and a name::
+
+            f.ferry_model = FerryModel(n_segments=20)
+
+        so the attribute IS the name -- the group its components live in, the
+        prefix on every deck key, the row label in the sensitivity table. There
+        is no second place to spell it and so no way for the two to drift.
+        Anything else assigned to a formulation is set exactly as before.
+        """
+        ConcreteModel.__setattr__(self, key, value)
+        if key.startswith('_'):
+            return
+        attach = getattr(value, '_attach', None)
+        if callable(attach):
+            attach(self, key)
+
     @property
     def solution(self):
         """The current values, as a :class:`~lcsolver.objects.solution.Solution`.

@@ -2533,3 +2533,87 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
             out.append((names[j] if j < len(names) else f"<var {j}>",
                         float(x[j])))
     return out
+
+
+def unbuilt_blocks(model):
+    """Blocks attached to `model` that never finished receiving their inputs.
+
+    A model library may build its blocks in two phases -- construct with the
+    settings, then assign the inputs one per line -- so that a thirty-input
+    block is readable.  The rows are posted when the last input arrives.  A
+    block still waiting therefore posts NOTHING: no variables, no constraints,
+    no error.  The formulation stays solvable, and answers a different and
+    easier question than the one written down.
+
+    :class:`~lcsolver.objects.submodel.SubModel` is what this normally finds.
+    The shape is also accepted on its own -- an attribute reporting ``_built``
+    false, with ``_pending`` naming what it waits for -- so a model library
+    that grew its own block class rather than inheriting one is still checked.
+
+    Returns a list of ``(name, [missing input names])``.
+    """
+    from lcsolver.objects.submodel import SubModel
+
+    out = []
+    for attr in dir(model):
+        if attr.startswith('_'):
+            continue
+        try:
+            obj = getattr(model, attr)
+        except Exception:
+            continue
+        if isinstance(obj, SubModel):
+            if obj.is_built():
+                continue
+            out.append((obj.name or attr, obj.pending_inputs()))
+        elif getattr(obj, '_built', None) is False:
+            pending = getattr(obj, '_pending', None)
+            out.append((getattr(obj, 'name', attr),
+                        sorted(pending) if pending else []))
+    return out
+
+
+def unbuilt_blocks_check(model):
+    """Raise if any attached block never built.  Called before every solve.
+
+    This is an ERROR and not a finding: a half-assembled model is not a
+    weaker version of the problem, it is a different problem, and it will
+    return a confident number for it.
+    """
+    from lcsolver.core import codes
+    # PresolveError lives with the solver, and importing it at module scope
+    # would close the loop (solver imports this module).  Local import.
+    from lcsolver.solvers.solver import PresolveError
+
+    found = unbuilt_blocks(model)
+    if not found:
+        return
+    n_inputs = sum(len(p) for _, p in found)
+    lines = [f'{len(found)} model block(s) never received all their inputs, so '
+             f'they posted no variables and no constraints. Every block and '
+             f'every missing input is listed -- {n_inputs} in total -- so the '
+             f'whole assembly can be fixed in one pass rather than one error '
+             f'at a time:', '']
+    for name, pending in found:
+        if pending:
+            lines.append(f"  {name} is still waiting for {len(pending)} input(s):")
+            # wrapped, all of them: a truncated list means another solve to
+            # find out what else was missing
+            row = '   '
+            for item in pending:
+                if len(row) + len(item) + 2 > 74:
+                    lines.append(row.rstrip(','))
+                    row = '   '
+                row += f' {item},'
+            lines.append(row.rstrip(','))
+        else:
+            lines.append(f"  {name} never built")
+    lines += ['',
+              '  Nothing about this is caught downstream. The rows those blocks',
+              '  would have posted are simply absent, so the solve succeeds and',
+              '  reports an optimum for a problem missing whole missions.',
+              '  Assign the inputs listed above, then solve again.',
+              '',
+              '  f.<block>.get_status() prints every input a block needs and',
+              '  what each one is currently connected to.']
+    raise PresolveError(codes.tag(codes.UNBUILT_BLOCK, '\n'.join(lines)))

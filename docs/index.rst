@@ -90,6 +90,7 @@ User's Guide
    blackboxconstraints.rst
    advancedruntimeconstraints.rst
    holographic.rst
+   submodels.rst
    solvers.rst
    checks.rst
    ipopt.rst

@@ -24,6 +24,8 @@ pipeline stage: 0xx/1xx pre-solve, 2xx solve-time, 3xx post-solve.
 ILL_POSED = 'LC-E001'            #: pre-solve gate: the stated problem is
                                  #: ill-posed (empty/unbounded variables)
 UNIT_MISMATCH = 'LC-E002'        #: units do not balance (UnitMismatch)
+UNBUILT_BLOCK = 'LC-E003'        #: a model block never received all its
+                                 #: inputs, so it posted no constraints
 INFEASIBLE = 'LC-E101'           #: the problem was proven infeasible
 
 # --- pre-solve warnings ----------------------------------------------------

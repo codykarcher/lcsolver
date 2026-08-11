@@ -47,6 +47,23 @@ but the gate can, so they do not trip it.
 ``'warn'`` demotes to a ``RuntimeWarning`` (code ``LC-W101``); ``'print'``
 prints the full report; ``'off'`` skips the checks.
 
+Unbuilt submodels
+-----------------
+
+A :doc:`submodel <submodels>` builds when its last input is assigned, so one
+whose inputs never all arrive posts no variables and no constraints. That is
+not a solver error -- the formulation stays solvable and answers an easier
+question than the one written down -- so ``solve`` refuses to run while one is
+attached, raising a ``PresolveError`` with code ``LC-E003`` that lists every
+unbuilt block and every missing input at once.
+
+This check runs unconditionally, ahead of ``diagnostics``, because a
+half-assembled model is not a weaker version of the problem: it is a different
+problem, and it will return a confident number for it.
+:func:`~lcsolver.presolve.reductions.unbuilt_blocks` asks the same question
+without solving, and ``f.<block>.get_status()`` shows what any one block is
+still waiting for.
+
 Pre- and post-solve checks, split
 ---------------------------------
 
