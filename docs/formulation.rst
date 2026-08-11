@@ -217,6 +217,9 @@ Returns a list variables that have been defined in the formulation in declaratio
 ``f.get_constants()``  |br|
 Returns a list of constants that have been defined in the formulation in declaration order.  Will only return constants/parameters defined via LCsolver.
 
+``f.load_constants(constants)``  |br|
+Sets declared constants from an input deck after the build: ``f.load_constants({'weight_payload': 600.0})``, then re-solve.  A Constant is a mutable parameter, so a model is built once with its defaults declared inline and a deck is applied to the built model, rather than threading a configuration dictionary through the constructor and rebuilding.  Names are as declared, group prefixes included; an unknown name raises ``KeyError`` with near-misses suggested, and a sized constant takes a sequence of that length.  Returns the formulation.
+
 ``f.get_objectives()``  |br|
 Returns a list of objectives that have been defined in the formulation in declaration order.  Will only return objectives defined via LCsolver.
 

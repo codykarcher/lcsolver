@@ -1127,5 +1127,56 @@ class TestArrayInitialization(unittest.TestCase):
         self.assertIn('size=2', str(ctx.exception))
 
 
+class TestLoadConstants(unittest.TestCase):
+    """An input deck applied to a built formulation."""
+
+    def _model(self):
+        f = Formulation()
+        f.Variable('x', 1.0, 'm', 'x')
+        f.Constant('k', 2.0, 'm', 'k')
+        f.Constant('v', [1.0, 2.0], '-', 'v', size=2)
+        g = f.group('wing')
+        g.Constant('area', 3.0, 'm^2', 'wing area')
+        return f
+
+    def test_a_scalar_constant_is_set(self):
+        f = self._model()
+        f.load_constants({'k': 5.0})
+        self.assertEqual(pyo.value(f.k), 5.0)
+
+    def test_a_grouped_constant_is_set_by_its_prefixed_name(self):
+        f = self._model()
+        f.load_constants({'wing_area': 9.0})
+        self.assertEqual(pyo.value(f.wing_area), 9.0)
+
+    def test_a_sized_constant_takes_a_sequence(self):
+        f = self._model()
+        f.load_constants({'v': [7.0, 8.0]})
+        self.assertEqual([pyo.value(f.v[i]) for i in (0, 1)], [7.0, 8.0])
+
+    def test_the_formulation_is_returned_for_chaining(self):
+        f = self._model()
+        self.assertIs(f.load_constants({'k': 4.0}), f)
+
+    def test_an_unknown_name_is_refused_with_a_suggestion(self):
+        f = self._model()
+        with self.assertRaises(KeyError) as ctx:
+            f.load_constants({'kk': 1.0})
+        self.assertIn('not a constant', str(ctx.exception))
+        self.assertIn('nearest declared: k', str(ctx.exception))
+
+    def test_a_variable_name_is_not_a_constant(self):
+        """The deck sets constants; a variable is the model's to choose."""
+        f = self._model()
+        with self.assertRaises(KeyError):
+            f.load_constants({'x': 1.0})
+
+    def test_a_wrong_length_sequence_is_refused(self):
+        f = self._model()
+        with self.assertRaises(ValueError) as ctx:
+            f.load_constants({'v': [1.0]})
+        self.assertIn('2 entries', str(ctx.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

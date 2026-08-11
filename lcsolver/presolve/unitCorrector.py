@@ -157,6 +157,29 @@ def unit_corrector(pyomo_component):
         raise ValueError( "Invalid type %s passed into the convexity detector"%(str(type(pyomo_component))))
     
     corrected_model = pyomo_component.clone()
+    # Stamp the clone with the identity of what it was cloned FROM.  Detected
+    # structures carry this clone, and a caller may hand those structures back
+    # to solve() to skip re-detecting.  Handed structures belonging to a
+    # DIFFERENT formulation, the backends would solve that other model's clone
+    # and write its numbers onto this one -- the same shape, so no error, just
+    # the wrong answer.  solve() compares this token and refuses.
+    token = getattr(pyomo_component, '_edi_identity', None)
+    if token is None:
+        import uuid
+        token = uuid.uuid4().hex
+        try:
+            pyomo_component._edi_identity = token
+        except Exception:
+            pass
+    try:
+        corrected_model._edi_source_identity = token
+        # ... and WHICH REVISION of it.  The clone freezes the constants as they
+        # were; a later load_constants makes it stale, and solving a stale clone
+        # answers the previous deck.
+        corrected_model._edi_source_revision = getattr(
+            pyomo_component, '_edi_revision', 0)
+    except Exception:
+        pass
     # corrected_model.pprint()
     # get all the variables ### WTF AM I DOING#######################################################
     #variableList = [ vr for vr in  corrected_model.component_objects(pyo.Var, descend_into=True, active=True) ]

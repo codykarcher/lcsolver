@@ -1168,6 +1168,64 @@ class Formulation(ConcreteModel):
             if nm in self._constant_keys
         ]
 
+    def load_constants(self, constants):
+        """Set declared constants from an input deck, after the build.
+
+        ``constants`` is a mapping of constant name to value::
+
+            f = build_my_model()
+            f.load_constants({'weight_payload': 600.0, 'v_cruise': 62.0})
+            result = lcsolver.solve(f)
+
+        This is the counterpart to declaring a number as a `Constant` rather
+        than writing it into a constraint. A Constant is a mutable Pyomo
+        ``Param``, so a model is built once with its defaults declared inline
+        and a deck is applied to the built model, instead of threading a
+        configuration dictionary through the constructor and rebuilding for
+        every case. Re-solving after a load is the ordinary cycle: nothing is
+        reconstructed, so a sweep is a loop over loads and solves.
+
+        Names are the ones `Constant` was called with, group prefixes
+        included -- ``'wing_area'`` for a constant declared on
+        ``f.group('wing')``. A name that is not a declared constant raises
+        ``KeyError`` rather than being ignored, with near-misses suggested,
+        because a deck key that silently does nothing is a model that
+        silently sizes the wrong thing. A `Constant` declared with ``size``
+        takes a sequence of that length.
+
+        Returns the formulation, so a load can be chained onto a build.
+        """
+        import difflib
+
+        known = {c.name: c for c in self.get_constants()}
+        for name, value in constants.items():
+            if name not in known:
+                near = difflib.get_close_matches(name, known.keys(), n=3)
+                hint = f"; nearest declared: {', '.join(near)}" if near else ""
+                raise KeyError(
+                    f"'{name}' is not a constant of this formulation{hint}"
+                )
+            comp = known[name]
+            if comp.is_indexed():
+                values = list(value)
+                keys = sorted(comp.keys())
+                if len(values) != len(keys):
+                    raise ValueError(
+                        f"'{name}' has {len(keys)} entries; the deck supplied "
+                        f"{len(values)}"
+                    )
+                for k, v in zip(keys, values):
+                    comp[k].set_value(float(v))
+            else:
+                comp.set_value(float(value))
+        # Constants changed, so any structures detected earlier hold a clone
+        # with the OLD values.  Solving with those would answer the previous
+        # deck's question and report it as this one's, with no error, so the
+        # revision is bumped and solve() refuses stale structures.
+        self._edi_revision = getattr(self, '_edi_revision', 0) + 1
+
+        return self
+
     def get_objectives(self):
         """The objectives declared through `Objective`, in declaration order.
 

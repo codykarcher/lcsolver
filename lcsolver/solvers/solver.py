@@ -415,6 +415,39 @@ def _mark_solved(m):
         pass
 
 
+def _check_structures_match(structures, m):
+    """Refuse structures detected from a DIFFERENT formulation.
+
+    Passing pre-detected structures is a supported way to skip a second walk of
+    the model.  Passing the WRONG ones is not detectable downstream: the
+    backends read variables off the structures' clone, so a model of the same
+    shape solves happily and writes another model's answer onto this one, with
+    no error anywhere.  Observed cost of not checking: a deck sweep silently
+    returning the first deck's weight for every case.
+    """
+    clone = structures.get('model') if hasattr(structures, 'get') else None
+    stamped = getattr(clone, '_edi_source_identity', None)
+    mine = getattr(m, '_edi_identity', None)
+    # `mine is None` is a mismatch, not a free pass: detecting structures FROM
+    # a model stamps it, so an unstamped model cannot be where these came from.
+    if stamped is not None and stamped != mine:
+        raise ValueError(
+            "structures= were detected from a different formulation than the "
+            "one being solved. The backends read their variables off those "
+            "structures, so this would return the other model's answer with no "
+            "error. Re-detect against this model: "
+            "structures=structure_detector(unit_corrector(f)).")
+    stamped_rev = getattr(clone, '_edi_source_revision', None)
+    mine_rev = getattr(m, '_edi_revision', 0)
+    if stamped_rev is not None and stamped_rev != mine_rev:
+        raise ValueError(
+            f"structures= were detected before load_constants was called "
+            f"(structures at revision {stamped_rev}, model at {mine_rev}). "
+            "Their clone still holds the old constant values, so this would "
+            "answer the previous deck's question. Re-detect after loading the "
+            "deck: structures=structure_detector(unit_corrector(f)).")
+
+
 def _attach_sensitivities(m, res, wanted):
     """Post-solve reporting: holographic checks, then sensitivities.
 
@@ -731,6 +764,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 "different question. Re-run structure_detector(corrected) with "
                 "its default bounds_as_rows=True; optimization_check() reads that form "
                 "too.")
+        _check_structures_match(structures, m)
         _raise_if_infeasible(structures)
     elif want_checks or solver == 'auto':
         try:
