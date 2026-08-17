@@ -65,6 +65,7 @@ class TestEDISnippets(unittest.TestCase):
         from lcsolver import Formulation
 
         f = Formulation()
+        # END: Formulation_Snippet_01
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -80,7 +81,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 0, 0, 0, 0),
         )
-        # END: Formulation_Snippet_01
 
     def test_edi_snippet_formuation_02(self):
         # BEGIN: Formulation_Snippet_02
@@ -88,6 +88,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='')
+        # END: Formulation_Snippet_02
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -103,7 +104,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Formulation_Snippet_02
 
     def test_edi_snippet_formuation_03(self):
         # BEGIN: Formulation_Snippet_03
@@ -111,6 +111,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         c = f.Constant(name='c', value=1.0, units='')
+        # END: Formulation_Snippet_03
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -126,7 +127,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Formulation_Snippet_03
 
     def test_edi_snippet_formuation_04(self):
         # BEGIN: Formulation_Snippet_04
@@ -137,6 +137,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='')
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y)
+        # END: Formulation_Snippet_04
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -152,7 +153,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Formulation_Snippet_04
 
     def test_edi_snippet_formuation_05(self):
         # BEGIN: Formulation_Snippet_05
@@ -164,6 +164,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='')
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y, sense=maximize)
+        # END: Formulation_Snippet_05
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -179,7 +180,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Formulation_Snippet_05
 
     def test_edi_snippet_formuation_06(self):
         # BEGIN: Formulation_Snippet_06
@@ -193,6 +193,7 @@ class TestEDISnippets(unittest.TestCase):
         f.Constraint(x**2 + y**2 <= 1.0)
         f.Constraint(x >= 0)
         f.Constraint(y <= 0)
+        # END: Formulation_Snippet_06
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -208,7 +209,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 3, 0),
         )
-        # END: Formulation_Snippet_06
 
     def test_edi_snippet_formuation_07(self):
         # BEGIN: Formulation_Snippet_07
@@ -220,6 +220,7 @@ class TestEDISnippets(unittest.TestCase):
         c = f.Constant(name='c', value=1.0, units='')
         f.Objective(c * x + y)
         f.ConstraintList([x**2 + y**2 <= 1.0, x >= 0, y <= 0])
+        # END: Formulation_Snippet_07
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -235,7 +236,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 3, 0),
         )
-        # END: Formulation_Snippet_07
 
     def test_edi_snippet_formuation_08(self):
         # BEGIN: Formulation_Snippet_08
@@ -250,6 +250,7 @@ class TestEDISnippets(unittest.TestCase):
         constraintList = [x**2 + y**2 <= 1.0, x >= 0, y <= 0]
 
         f.ConstraintList(constraintList)
+        # END: Formulation_Snippet_08
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -265,7 +266,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 3, 0),
         )
-        # END: Formulation_Snippet_08
 
     def test_edi_snippet_formuation_09(self):
         # BEGIN: Formulation_Snippet_09
@@ -331,6 +331,7 @@ class TestEDISnippets(unittest.TestCase):
 
         # BEGIN: Formulation_Snippet_13
         f.RuntimeConstraint(*([z], ['=='], [x, y], UnitCircle()))
+        # END: Formulation_Snippet_13
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -346,7 +347,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (3, 0, 1, 1, 5),
         )
-        # END: Formulation_Snippet_13
 
     def test_edi_snippet_formuation_14(self):
         # BEGIN: Formulation_Snippet_14
@@ -413,6 +413,7 @@ class TestEDISnippets(unittest.TestCase):
 
         # BEGIN: Formulation_Snippet_18
         f.ConstraintList([z <= 1 * units.m**2, ([z], ['=='], [x, y], UnitCircle())])
+        # END: Formulation_Snippet_18
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -428,7 +429,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (3, 0, 1, 5, 5),
         )
-        # END: Formulation_Snippet_18
 
     def test_edi_snippet_variables_01(self):
         # BEGIN: Variables_Snippet_01
@@ -436,6 +436,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='m', description='The x variable')
+        # END: Variables_Snippet_01
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -451,7 +452,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_01
 
     def test_edi_snippet_variables_02(self):
         # BEGIN: Variables_Snippet_02
@@ -459,6 +459,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable('x', 1.0, 'm')
+        # END: Variables_Snippet_02
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -474,7 +475,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_02
 
     def test_edi_snippet_variables_03(self):
         # BEGIN: Variables_Snippet_03
@@ -488,6 +488,7 @@ class TestEDISnippets(unittest.TestCase):
             description='The x variable',
             bounds=[-10, 10],
         )
+        # END: Variables_Snippet_03
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -503,7 +504,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_03
 
     def test_edi_snippet_variables_04(self):
         # BEGIN: Variables_Snippet_04
@@ -518,6 +518,7 @@ class TestEDISnippets(unittest.TestCase):
             description='The x variable',
             domain=Integers,
         )
+        # END: Variables_Snippet_04
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -533,7 +534,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_04
 
     def test_edi_snippet_variables_05(self):
         # BEGIN: Variables_Snippet_05
@@ -542,6 +542,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units=units.m, description='The x variable')
+        # END: Variables_Snippet_05
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -557,7 +558,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_05
 
     def test_edi_snippet_variables_06(self):
         # BEGIN: Variables_Snippet_06
@@ -568,6 +568,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Variable(
             name='x', guess=1.0, units='m', description='The x variable', size=5
         )
+        # END: Variables_Snippet_06
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -583,7 +584,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_06
 
     def test_edi_snippet_variables_07(self):
         # BEGIN: Variables_Snippet_07
@@ -594,6 +594,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Variable(
             name='x', guess=1.0, units='m', description='The x variable', size=[10, 2]
         )
+        # END: Variables_Snippet_07
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -609,7 +610,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_07
 
     def test_edi_snippet_variables_08(self):
         # BEGIN: Variables_Snippet_08
@@ -620,6 +620,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Variable(
             name='x', guess=1.0, units='kg*m/s**2', description='The x variable'
         )
+        # END: Variables_Snippet_08
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -635,7 +636,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (1, 0, 0, 0, 0),
         )
-        # END: Variables_Snippet_08
 
     def test_edi_snippet_constants_01(self):
         # BEGIN: Constants_Snippet_01
@@ -643,6 +643,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units='m', description='A constant c')
+        # END: Constants_Snippet_01
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -658,7 +659,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_01
 
     def test_edi_snippet_constants_02(self):
         # BEGIN: Constants_Snippet_02
@@ -666,6 +666,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant('c', 1.0, 'm')
+        # END: Constants_Snippet_02
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -681,7 +682,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_02
 
     def test_edi_snippet_constants_03(self):
         # BEGIN: Constants_Snippet_03
@@ -690,6 +690,7 @@ class TestEDISnippets(unittest.TestCase):
 
         f = Formulation()
         x = f.Constant(name='c', value=1.0, units=units.m, description='A constant c')
+        # END: Constants_Snippet_03
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -705,7 +706,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_03
 
     def test_edi_snippet_constants_04(self):
         # BEGIN: Constants_Snippet_04
@@ -716,6 +716,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Constant(
             name='c', value=1.0, units='m', description='A constant c', size=5
         )
+        # END: Constants_Snippet_04
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -731,7 +732,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_04
 
     def test_edi_snippet_constants_05(self):
         # BEGIN: Constants_Snippet_05
@@ -742,6 +742,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Constant(
             name='c', value=1.0, units='m', description='A constant c', size=[10, 2]
         )
+        # END: Constants_Snippet_05
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -757,7 +758,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_05
 
     def test_edi_snippet_constants_06(self):
         # BEGIN: Constants_Snippet_06
@@ -768,6 +768,7 @@ class TestEDISnippets(unittest.TestCase):
         x = f.Constant(
             name='c', value=1.0, units='kg*m/s**2', description='A constant c'
         )
+        # END: Constants_Snippet_06
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -783,7 +784,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (0, 1, 0, 0, 0),
         )
-        # END: Constants_Snippet_06
 
     def test_edi_snippet_objectives_01(self):
         # BEGIN: Objectives_Snippet_01
@@ -794,6 +794,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x + y)  # Default is minimize
+        # END: Objectives_Snippet_01
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -809,7 +810,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_01
 
     def test_edi_snippet_objectives_02(self):
         # BEGIN: Objectives_Snippet_02
@@ -820,6 +820,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4)  # Default is minimize
+        # END: Objectives_Snippet_02
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -835,7 +836,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_02
 
     def test_edi_snippet_objectives_03(self):
         # BEGIN: Objectives_Snippet_03
@@ -847,6 +847,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4, sense=minimize)
+        # END: Objectives_Snippet_03
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -862,7 +863,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_03
 
     def test_edi_snippet_objectives_04(self):
         # BEGIN: Objectives_Snippet_04
@@ -874,6 +874,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(c * x**4 + y**4, sense=1)  # 1 corresponds to minimize
+        # END: Objectives_Snippet_04
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -889,7 +890,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_04
 
     def test_edi_snippet_objectives_05(self):
         # BEGIN: Objectives_Snippet_05
@@ -901,6 +901,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(-c * x**4 - y**4, sense=maximize)
+        # END: Objectives_Snippet_05
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -916,7 +917,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_05
 
     def test_edi_snippet_objectives_06(self):
         # BEGIN: Objectives_Snippet_06
@@ -928,6 +928,7 @@ class TestEDISnippets(unittest.TestCase):
         y = f.Variable(name='y', guess=1.0, units='m', description='The y variable')
         c = f.Constant(name='c', value=1.0, units='', description='A constant c')
         f.Objective(-c * x**4 - y**4, sense=-1)  # -1 corresponds to maximize
+        # END: Objectives_Snippet_06
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -943,7 +944,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_06
 
     def test_edi_snippet_objectives_07(self):
         # BEGIN: Objectives_Snippet_07
@@ -973,6 +973,7 @@ class TestEDISnippets(unittest.TestCase):
             + y[1, 0] ** 4
             + y[1, 1] ** 4
         )  # Default is minimize
+        # END: Objectives_Snippet_07
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -988,7 +989,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 0, 0),
         )
-        # END: Objectives_Snippet_07
 
     def test_edi_snippet_constraints_01(self):
         # BEGIN: Constraints_Snippet_01
@@ -1003,6 +1003,7 @@ class TestEDISnippets(unittest.TestCase):
         f.ConstraintList(
             [x**2 + y**2 <= 1.0 * units.m**2, x <= 0.75 * units.m, x >= y]
         )
+        # END: Constraints_Snippet_01
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -1018,7 +1019,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 3, 0),
         )
-        # END: Constraints_Snippet_01
 
     def test_edi_snippet_constraints_02(self):
         # BEGIN: Constraints_Snippet_02
@@ -1033,6 +1033,7 @@ class TestEDISnippets(unittest.TestCase):
         f.Constraint(x**2 + y**2 <= 1.0 * units.m**2)
         f.Constraint(x <= 0.75 * units.m)
         f.Constraint(x >= y)
+        # END: Constraints_Snippet_02
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -1048,7 +1049,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 3, 0),
         )
-        # END: Constraints_Snippet_02
 
     def test_edi_snippet_constraints_03(self):
         # BEGIN: Constraints_Snippet_03
@@ -1089,6 +1089,7 @@ class TestEDISnippets(unittest.TestCase):
                 x[0] >= y[0, 0],
             ]
         )
+        # END: Constraints_Snippet_03
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -1104,7 +1105,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (2, 1, 1, 6, 0),
         )
-        # END: Constraints_Snippet_03
 
     def test_edi_snippet_runtimeconstraints_01(self):
         # BEGIN: RuntimeConstraints_Snippet_01
@@ -1153,6 +1153,7 @@ class TestEDISnippets(unittest.TestCase):
                 #     returnVal[1]    = jacobian
                 #     returnVal[1][0] = derivative_scalarOutput_wrt_0th_input
                 return y, [dydx]
+        # END: RuntimeConstraints_Snippet_01
 
         # Constructing it is the check that the declaration still parses, and
         # the names are the ones the documentation shows.
@@ -1160,7 +1161,6 @@ class TestEDISnippets(unittest.TestCase):
         self.assertEqual([i.name for i in box.inputs], ['x'])
         self.assertEqual([o.name for o in box.outputs], ['y'])
 
-        # END: RuntimeConstraints_Snippet_01
 
     def test_edi_snippet_runtimeconstraints_02(self):
         import pyomo.environ as pyo
@@ -1425,6 +1425,7 @@ class TestEDISnippets(unittest.TestCase):
                 return z, [dzdx, dzdy]  # return z, grad(z), hess(z)...
 
         f.ConstraintList([(z, '==', [x, y], UnitCircle()), z <= 1 * units.m**2])
+        # END: RuntimeConstraints_Snippet_10
 
         # The snippet must build the model the documentation says
         # it does. Executing without raising is not that: every
@@ -1440,7 +1441,6 @@ class TestEDISnippets(unittest.TestCase):
             ),
             (3, 0, 1, 1, 1),
         )
-        # END: RuntimeConstraints_Snippet_10
 
     def test_edi_snippet_advancedRTC_01(self):
         # BEGIN: AdvancedRTC_Snippet_01
@@ -1518,6 +1518,7 @@ class TestEDISnippets(unittest.TestCase):
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], True, optn=False)
         bbo = s.BlackBox([[x] for x in np.linspace(-2, 2, 11)], optn1=True, optn2=False)
+        # END: AdvancedRTC_Snippet_01
 
         # y = max(-6x - 6, x**4 - 3x**2). At x = 0.5 the quartic branch wins:
         # 0.0625 - 0.75 = -0.6875, with slope 4x**3 - 6x = -2.5. Every call
@@ -1527,7 +1528,6 @@ class TestEDISnippets(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(value), -0.6875)
         self.assertAlmostEqual(pyo.value(grad[0]), -2.5)
         self.assertEqual(len(s.BlackBox([[x] for x in np.linspace(-2, 2, 11)])), 11)
-        # END: AdvancedRTC_Snippet_01
 
     def test_edi_snippet_advancedRTC_02(self):
         import numpy as np
