@@ -22,29 +22,6 @@ The source, the issue tracker, and the examples live on GitHub:
 `github.com/codykarcher/lcsolver <https://github.com/codykarcher/lcsolver>`_.
 
 
-Statement of Need
------------------
-
-Design optimization in aerospace, energy, and mechanical engineering is
-characterized by models that mix closed-form physics with legacy analysis
-codes, and by quantities that carry units whose mismatch is a common and
-expensive source of error. Disciplined convex modeling packages such as CVXPY
-and geometric-programming packages such as GPkit give excellent ergonomics and
-strong guarantees, but only within their problem class, and neither
-accommodates an arbitrary external solver in the constraint set. General
-algebraic modeling languages such as Pyomo impose no such restriction, but
-leave the engineer to manage units by hand and to write the interface to any
-external analysis code from scratch.
-
-LCsolver targets that gap: an engineer writes a single unit-annotated model in
-which some constraints are algebraic and others are evaluated by external
-codes, and LCsolver checks unit consistency, detects the mathematical
-structure of the algebraic portion, and routes the problem to a solver
-appropriate to that structure. The same model can be solved as a geometric
-program when it happens to be one, and as a general nonlinear program when it
-is not, without being rewritten.
-
-
 Installation
 ------------
 
