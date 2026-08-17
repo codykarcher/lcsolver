@@ -49,19 +49,27 @@ class UnitCircle(BlackBoxFunctionModel):
 
 
 def _build():
-    """min x + y  s.t.  z = bb(x, y),  z >= 1.
+    """min 1/x + 1/y  s.t.  z = bb(x, y),  z <= 1.
 
-    Optimum x = y = 1/sqrt(2), objective sqrt(2): the circle constraint is
-    active and only the black box knows its shape.
+    Unique optimum x = y = 1/sqrt(2), objective 2 sqrt(2): the circle
+    constraint is active and only the black box knows its shape.
+
+    (History: this used to be min x + y with z >= 1, expecting sqrt(2) ---
+    but the symmetric point only satisfies FIRST-ORDER KKT there; it is a
+    local max of x + y along the arc, and the true minimum sits at the
+    x-bound corner (objective ~1.0099).  The old SIA stopped at the
+    saddle and the test enshrined it; the 2026-08 backtracking regime
+    correctly escapes to the better corner, so the model is re-posed to
+    make the symmetric point the genuine, interior, unique optimum.)
     """
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='', bounds=[0.01, 10.0])
     y = f.Variable(name='y', guess=1.0, units='', bounds=[0.01, 10.0])
     z = f.Variable(name='z', guess=2.0, units='', bounds=[0.01, 100.0])
-    f.Objective(x + y)
+    f.Objective(1.0 / x + 1.0 / y)
     f.ConstraintList([
         [z, '==', [x, y], UnitCircle()],
-        z >= 1.0 * units.dimensionless,
+        z <= 1.0 * units.dimensionless,
     ])
     return f
 
@@ -147,6 +155,7 @@ def test_auto_solve_routes_blackbox_to_sia():
     f = _build()
     res = solve(f, sensitivities=False)
     assert 'SIA' in res['solver']
-    assert res['primal objective'] == pytest.approx(2.0 ** 0.5, rel=1e-6)
+    assert res['primal objective'] == pytest.approx(2.0 * 2.0 ** 0.5,
+                                                    rel=1e-6)
     assert pyo.value(f.x) == pytest.approx(2.0 ** -0.5, rel=1e-5)
     assert pyo.value(f.z) == pytest.approx(1.0, rel=1e-6)
