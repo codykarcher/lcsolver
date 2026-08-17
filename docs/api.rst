@@ -108,6 +108,9 @@ public, so they are listed individually rather than by pulling in the module.
 .. autofunction:: lcsolver.presolve.reductions.structure_report
 .. autofunction:: lcsolver.presolve.reductions.rigidity_report
 .. autofunction:: lcsolver.presolve.reductions.rigidity_text
+.. autofunction:: lcsolver.presolve.reductions.annihilated_report
+.. autofunction:: lcsolver.presolve.reductions.unbuilt_blocks
+.. autofunction:: lcsolver.presolve.reductions.unbuilt_blocks_check
 
 
 The solution, and the checks run after the solve

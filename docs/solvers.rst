@@ -12,10 +12,10 @@ The default requires no decision::
 
     sol = lcsolver.solve(f)
 
-``solve`` first runs the model checks -- units, then the pre-solve gate
-(:doc:`checks`); an ill-posed problem stops there with a
-:class:`~lcsolver.solvers.solver.PresolveError` rather than a strange answer.
-It then classifies the structure and dispatches:
+``solve`` first runs the model checks -- units, then the unbuilt-block gate and
+the pre-solve gate (:doc:`checks`); a half-assembled model or an ill-posed one
+stops there with a :class:`~lcsolver.solvers.solver.PresolveError` rather than
+a strange answer. It then classifies the structure and dispatches:
 
 * a detected **LP, QP or GP** goes to the convex backend -- **IPOPT by
   default**, solving in log space (below); ``cvxopt`` is the automatic
@@ -121,6 +121,44 @@ applying one to a pure geometric program means paying for a sequence of convex
 subproblems where one would do. They earn their cost only when the model is
 *not* fully GP-compatible -- a signomial row, a black box.
 
+What the sequential path does to the model first
+------------------------------------------------
+
+The sequential solvers take variable bounds natively, so declared bounds
+carried as constraint rows are pure cost: one more log-sum-exp to build and
+differentiate every iteration, for a statement the solver already has. They are
+folded into native bounds on the way in, whether or not ``presolve`` is on --
+``presolve=False`` opts out of the *column* reductions, which can change the
+trajectory, not out of the exact singleton fold. On a 4,160-row aircraft model
+that is 2,596 rows removed and 1,338 s down to 188 s for the identical
+38-iteration solve.
+
+Only **declared-bound** rows fold. A single-variable model row -- a span gate,
+say -- stays a row, because the elastic relaxation can put slack on a row but
+not on a hard bound, and an active gate is exactly the constraint that needs
+slack mid-trajectory; folding all of them stalled the same model at the
+iteration cap.
+
+Monomial-equality elimination is **off** on this path, though it remains
+default-on in :func:`~lcsolver.presolve.reductions.presolve` for other callers.
+Substituting away 706 variables shrank the same model to 592 variables and
+3,454 rows and took the solve from 39 iterations / 136 s to 62 iterations /
+2,504 s: the early iterations stay cheap and the trajectory then enters an
+expensive restoration phase the unsubstituted problem never visits. Smaller is
+not faster for the sequential solvers. See :doc:`PRESOLVE`.
+
+When infeasibility is the answer
+--------------------------------
+
+A structured backend that *proves* infeasibility is not a backend failure, and
+LCsolver no longer falls through to the raw NLP route on one. Raw IPOPT on the
+same rows either fails its own restoration phase or returns numbers for a
+design that does not exist, and both outcomes read like solver trouble rather
+than like the model being wrong. The same holds inside SIA: a run whose Phase I
+never found a feasible point, and which did not recover, raises with the
+elastic report naming the rows that cannot close, rather than returning its
+best infeasible iterate as though it were a design.
+
 Writing the Solution Back
 -------------------------
 
@@ -132,9 +170,10 @@ variables hold their optimal values::
 
 ``solve`` returns a :class:`~lcsolver.solvers.solver.SolveResult` carrying the
 same information as an object -- the summary, named accessors with units, the
-captured messages -- see :doc:`results`. Write-back can be disabled with
-``write_back=False`` on the backend entry points if only the raw result is
-wanted.
+captured messages -- see :doc:`results`. If only the raw result is wanted,
+write-back can be disabled on the backend entry points themselves:
+``cvxopt_solve(m, write_back=False)``, and ``ipopt_solve(m,
+load_solutions=False)`` on the raw NLP route.
 
 A note on ``cvxopt``: it can return a non-converged point with
 ``status='unknown'`` and raise nothing. LCsolver flags that (``LC-W205``)

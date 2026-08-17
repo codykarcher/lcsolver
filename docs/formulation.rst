@@ -111,6 +111,21 @@ The constraint list can also be declared a priori and passed in to the ``f.Const
 We recommend that most users should be using the ``f.ConstraintList()`` function, with the ``f.Constraint()`` function being reserved for under-the-hood usage.
 
 
+Attaching Sub-Models
+--------------------
+
+See the :doc:`Sub-Models <./submodels>` Documentation
+
+A reusable piece of a model -- its variables, its constants, and the constraints that tie them together -- can be packaged as a ``SubModel`` and attached to the formulation by assignment:
+
+::
+
+    f.tank_model = TankModel(n_tanks=2)
+    f.tank_model.weight_gross = W
+
+The attribute the block is attached as *is* its name: the group its components live in, the prefix on every flat component, the key an input deck uses, and the label in the sensitivity table.  A block that declares inputs builds when the last of them is assigned, and ``solve`` refuses to run while one is still waiting (see :doc:`checks`).
+
+
 Declaring Runtime (Black-Box) Constraints
 -----------------------------------------
 
@@ -234,3 +249,9 @@ Returns a list of *runtime* (ie. black-box) constraints that have been defined i
 
 ``f.check_units()``  |br|
 Checks the units of each objective and constraint for consistency.  Will only check objectives and constraints defined via LCsolver.
+
+``f.scalar_sum(parts)``  |br|
+Adds scalar quantities and refuses anything vector-valued, so a rollup that accidentally includes a vector raises instead of quietly becoming one constraint per element.  See :doc:`Sub-Models <./submodels>`.
+
+``f.retype_to_float(x)``  |br|
+The float behind a number or a declared ``Constant``, for the places that need a value at build time rather than a symbol in a row.  See :doc:`Sub-Models <./submodels>`.

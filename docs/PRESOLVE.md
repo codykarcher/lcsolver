@@ -96,6 +96,17 @@ structures outright rather than silently solving an unbounded relaxation — a
 relaxed problem still returns an answer, and that answer can look entirely
 reasonable.
 
+**Not every singleton row may fold.** `fold_singleton_rows(structures,
+only=...)` restricts the fold to a given set of constraint indices, and the
+sequential solvers pass the detector's declared-bound block. The distinction is
+operational rather than mathematical: a declared bound is a loose box and is
+safe as a hard sub-problem bound, while a singleton *model* row — a span gate,
+say — is an active constraint that the elastic relaxation has to be able to put
+slack on. A hard bound cannot be relaxed, and folding ~2,500 of them turned a
+b737 case from a 38-iteration converge into a 200-iteration stall. The fold
+itself still runs on that path whether or not `presolve` is on, because it is
+exact; `presolve=False` opts out of the column reductions only.
+
 ## Removing columns
 
 `reduce_columns` is the one reduction that removes *variables*, and it removes
@@ -367,6 +378,16 @@ may name a variable eliminated in a later round. Getting this backwards leaves
 the reduced problem exactly right — objective correct to 12 figures — while
 returning recovered values off by 4.3e+03 relative. A single elimination cannot
 expose it; it takes a chain.
+
+**Smaller is not faster for the sequential solvers, so this pass is off on that
+path.** On the b737 case (1,298 variables, 4,160 rows) substituting away 706
+variables did shrink the problem to 592 variables and 3,454 rows, and took the
+same solve from 39 iterations / 136 s to 62 iterations / **2,504 s**. The early
+iterations stay cheap and the trajectory then enters an expensive restoration
+phase the unsubstituted problem never visits. `_apply_presolve` in the
+sequential bridge therefore passes `eliminate=False`; the pass remains
+available and default-on in `presolve()` for every other caller, where the
+measurements above still hold.
 
 ## Running it: `presolve()` and the log
 

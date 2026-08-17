@@ -79,6 +79,14 @@ call::
 
     f.sensitivities(normalized=False)
 
+The printed table is ranked by magnitude across the **whole** model, unlike the
+value tables in the summary, which file a model's own quantities ahead of
+namespaced ones so a name can be looked up. Here the ranking is the content --
+the question the table answers is what the design is most sensitive to -- and
+filing every sub-model's constants below every top-level one would put a 0.001
+in the assembly above a 1.5 in a block. Ties break alphabetically, so constants
+of genuinely equal sensitivity keep a settled order across runs.
+
 When to distrust the numbers
 ----------------------------
 
@@ -201,6 +209,10 @@ Two things to keep in mind:
   sequence.
 * An indexed ``Constant`` reports one sensitivity per element, named as
   ``c[0]``, ``c[1]``, and so on, matching how GPkit reports vectors.
+* A ``Constant`` used as an **exponent** is priced like any other constant, and
+  this is the only way to get a sensitivity to a fit exponent -- writing the
+  number inline puts it beyond the model's reach. The base has to be
+  dimensionless; see :doc:`constants`.
 
 API
 ---

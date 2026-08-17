@@ -42,6 +42,58 @@ The fields: name and within, and bounds are directly passed to the pyomo ``Param
 Non-scalar constants are constructed using pyomo ``Sets``.  Sets are constructed to be integer sets that fill the entire interval from lower bound to upper bound, ie a vector constant of length 5 would create a pyomo ``Set`` with valid indices [0,1,2,3,4] with no skips.  In this way, non-scalar constatants are slightly less flexible than general non-scalar pyomo ``Param``.
 
 
+Setting constants after the build
+---------------------------------
+
+Every Constant is a **mutable** ``Param``, so a model is built once with its
+defaults declared inline and an input deck is applied to the built model
+afterwards::
+
+    f = build_my_model()
+    f.load_constants({'weight_payload': 600.0, 'v_cruise': 62.0})
+    result = lcsolver.solve(f)
+
+Nothing is reconstructed, so a sweep is a loop over loads and solves rather
+than a configuration dictionary threaded through the constructor and a rebuild
+per case. ``load_constants`` returns the formulation, so it chains onto a
+build.
+
+Names are the ones ``Constant`` was called with, group prefixes included --
+``'wing_area'`` for a constant declared on ``f.group('wing')``. A name that is
+not a declared constant raises ``KeyError`` with near-misses suggested, rather
+than being ignored, because a deck key that silently does nothing is a model
+that silently sizes the wrong thing. A Constant declared with ``size`` takes a
+sequence of that length.
+
+One consequence worth knowing if you pass ``structures=`` to ``solve`` to skip
+re-detecting: a detected structure carries a *clone* of the model, frozen at
+the constant values it was detected with. Loading a deck bumps the model's
+revision and ``solve`` then refuses those structures rather than answering the
+previous deck's question with the current deck's label. Re-detect after
+loading.
+
+
+A Constant as an exponent
+-------------------------
+
+A Constant may be used as an **exponent**, not only as a coefficient::
+
+    e = f.Constant(name='e', value=0.49, units='-', description='fit exponent')
+    f.ConstraintList([x * y**e >= 1.0 * units.dimensionless])
+
+The model is still a geometric program, and the dual prices the exponent like
+any other constant -- which is the point, since an exponent that came from a
+curve fit is exactly the kind of assumption worth ranking (:doc:`sensitivities`).
+A deck may then sweep it with ``load_constants`` without rebuilding.
+
+The base must be **dimensionless**. Were it dimensional, the units of the
+result would depend on a number the deck can change, so the model would not
+have fixed units at all; that is refused with a message saying so rather than
+left to surface as a units error deeper down. Divide by a reference quantity to
+make the base dimensionless, or pass ``f.retype_to_float(e)`` if the exponent
+really is a fixed number (:doc:`submodels`).
+
+
 Examples
 --------
 

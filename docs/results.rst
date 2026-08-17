@@ -55,7 +55,7 @@ Pass ``quiet=False`` to ``solve`` to have the warnings emitted normally as
 well. Errors always raise regardless.
 
 ``E`` codes are errors, ``W`` codes are warnings; the hundreds digit groups by
-pipeline stage (1xx pre-solve, 2xx solve-time, 3xx post-solve):
+pipeline stage (0xx and 1xx pre-solve, 2xx solve-time, 3xx post-solve):
 
 .. list-table::
    :header-rows: 1
@@ -67,12 +67,18 @@ pipeline stage (1xx pre-solve, 2xx solve-time, 3xx post-solve):
      - Pre-solve gate: the stated problem is ill-posed (see :doc:`checks`)
    * - ``LC-E002``
      - Units do not balance
+   * - ``LC-E003``
+     - A model block never received all its inputs, so it posted no
+       constraints (see :doc:`checks`)
    * - ``LC-E101``
      - The problem was proven infeasible
    * - ``LC-W101``
      - Pre-solve findings, demoted to a warning (``diagnostics='warn'``)
    * - ``LC-W102``
      - Structure detection failed; solved as a raw NLP
+   * - ``LC-W103``
+     - A constraint side is identically zero at the current constant values;
+       a posynomial cannot represent it (see :doc:`checks`)
    * - ``LC-W201``
      - The structured backend failed; fell back
    * - ``LC-W202``

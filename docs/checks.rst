@@ -47,6 +47,37 @@ but the gate can, so they do not trip it.
 ``'warn'`` demotes to a ``RuntimeWarning`` (code ``LC-W101``); ``'print'``
 prints the full report; ``'off'`` skips the checks.
 
+Constants that annihilate a row
+-------------------------------
+
+A posynomial has strictly positive coefficients, so zero is not a value it can
+take. When a constant sits at a value that zeroes a term -- a relief factor
+written ``(nu**2 - 1)`` with ``nu`` exactly 1, a count or a fraction set to 0 --
+the row it was in stops being a posynomial, and every consequence is silent:
+the model classifies as neither GP nor SP, or a variable that side was bounding
+is left unbounded below in log space and the solve returns an arbitrary value
+for it, or the backend aborts somewhere unrecognisable in IPOPT's restoration
+phase with nothing pointing back here.
+
+The pre-solve report names the row, the side, and the constant responsible
+(code ``LC-W103``), found by perturbing each constant in turn and seeing
+whether the side comes back to life, so what you read is the one number to look
+at rather than every constant in the row::
+
+    [LC-W103] 1 constraint side(s) are IDENTICALLY ZERO at the current
+    constant values. A posynomial cannot be zero, so each of these rows has
+    stopped being one:
+      constraint_1: (nu**2 - 1.0)*dimensionless*x -- annihilated by nu = 1
+
+This one runs on the model rather than on a detected structure, and survives
+the gate that suppresses the rest of the report, because a zeroed row is one of
+the reasons detection fails in the first place -- the finding that explains an
+empty report must not be the one the empty report hides. If the zero is
+intended, give the row a small additive floor so its right side stays positive,
+or omit the term entirely.
+:func:`~lcsolver.presolve.reductions.annihilated_report` asks the same question
+directly.
+
 Unbuilt submodels
 -----------------
 
@@ -89,6 +120,19 @@ solution:
 
 ``optimization_check(f)`` remains as the combined call: the structural half
 always, plus the post-solve half when the model has been solved.
+
+The degeneracy check is the expensive one -- it perturbs every variable and
+re-tests feasibility around it. It only re-evaluates the rows a perturbation
+can actually move, read off the model once as a sparsity map and then verified
+against a dense scan of a few variables (a map that missed a row would
+under-report degeneracy silently, so a mismatch falls back to the dense scan
+rather than being trusted). On a model whose structure is already trusted it is
+still the check most worth turning off in a sweep::
+
+    lcsolver.solve(f, skip_degeneracy_check=True)
+    postsolve_check(f, skip_degeneracy_check=True)
+
+The other two are cheap and always run.
 
 Automatic post-solve quality checks
 -----------------------------------

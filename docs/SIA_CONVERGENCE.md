@@ -3,6 +3,19 @@
 Measured on SPaircraft (1121 variables, 1267 constraints after presolve: 1096
 exact, 171 conservative, 0 linearized).
 
+> **These traces predate four later changes to the sequential path**, and the
+> analysis below should be read as a record of what was measured then rather
+> than as a description of today's solver. Since: monomial-equality elimination
+> is off on this path and the fold is restricted to declared-bound rows, so the
+> reduced dimensions quoted here are not what SIA now sees ([PRESOLVE](PRESOLVE.md));
+> two-sided pins are recognised in a canonical monomial-folded frame, which
+> pairs rows the matcher below missed; Phase-I proximity is measured from the
+> phase's entry point rather than from each iterate; and a Phase I that never
+> reaches feasibility now terminates with its elastic report instead of handing
+> back a best infeasible iterate. The question this note opens — why neither
+> variant converges on SPaircraft — has not been re-measured against those
+> changes.
+
 ## It is not a bug — they condense differently
 
 For a signomial equality, PCCP condenses the **numerator as well as the

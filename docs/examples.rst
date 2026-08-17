@@ -15,8 +15,11 @@ one, so they cannot drift from the package.
      - The quickstart model: a black-box function with units that differ
        from the model's, solved through SIA. See :doc:`quickstart`.
    * - ``boyd.py``
-     - The README's worked example: the box-design geometric program from
-       Boyd et al.'s GP tutorial, with a known optimum.
+     - The README's worked example, and the introductory test problem of the
+       SLCP paper: the box design from Boyd et al.'s GP tutorial, maximizing
+       volume under wall/floor area and aspect-ratio limits. Solves to
+       5.196e-3 1/m\ :sup:`3` at w = 5.774 m, h = 2.887 m, d = 11.547 m,
+       matching the paper.
    * - ``hydrogen_network_lp.py``
      - A delivery network as a **linear** program, and the matrix machinery:
        a ``size=[3, 4]`` variable, ``f.sum`` along either axis,
@@ -40,11 +43,6 @@ one, so they cannot drift from the package.
    * - ``aircraft_gp.py``
      - A simple aircraft sizing problem as a geometric program, with full
        units, Constants, and the sensitivity accessors.
-   * - ``boyd.py``
-     - The box design problem from Boyd's GP tutorial, and the introductory
-       test problem of the SLCP paper: maximize volume under wall/floor area
-       and aspect-ratio limits. Solves to 5.196e-3 1/m\ :sup:`3` at
-       w = 5.774 m, h = 2.887 m, d = 11.547 m, matching the paper.
    * - ``floudas.py``
      - The Floudas heat exchanger design, SLCP paper Equation 17: eight
        variables, six constraints, five of them genuine **signomials**

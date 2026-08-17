@@ -277,8 +277,14 @@ Two helpers a block will want
 
     For the places that need a **value** at build time rather than a symbol in
     a row: a station guess grid, a branch on whether a term exists at all, and
-    every GP exponent -- an exponent is a number, never a parameter, so
-    anything used as one has to come through here.
+    an exponent on a **dimensional** base.
+
+    An exponent may otherwise stay symbolic -- a ``Constant`` raised over a
+    dimensionless base is legal, keeps the GP structure, and is the only way to
+    get a sensitivity to a fit exponent (:doc:`constants`). Pass it through
+    here when you want the number instead: over a dimensional base a symbolic
+    exponent is refused, because the units of the result would then depend on a
+    value the deck can change.
 
 .. literalinclude:: ../tests/test_docSnippets.py
     :language: python
