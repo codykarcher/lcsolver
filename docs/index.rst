@@ -18,6 +18,9 @@ the way out, and reports sensitivities with every solve.
 (LCsolver began life as a contributed package inside Pyomo, the "Engineering
 Design Interface". It is now developed and distributed independently.)
 
+The source, the issue tracker, and the examples live on GitHub:
+`github.com/codykarcher/lcsolver <https://github.com/codykarcher/lcsolver>`_.
+
 
 Statement of Need
 -----------------
