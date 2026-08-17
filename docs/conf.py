@@ -19,9 +19,9 @@ except Exception:
 version = release
 
 extensions = [
-    # The three technical notes (PRESOLVE.md, SIA_CONVERGENCE.md,
-    # SLCP_PERFORMANCE.md) are Markdown. Without this they are not read at
-    # all -- 50 kB of documentation that existed only as files in the repo.
+    # The technical note (PRESOLVE.md) is Markdown. Without this it is not
+    # read at all -- 25 kB of documentation that existed only as a file in
+    # the repo.
     "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",

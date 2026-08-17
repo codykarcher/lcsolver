@@ -112,17 +112,14 @@ Reference
 Technical Notes
 ---------------
 
-Three longer engineering notes, for readers who want the machinery rather than
-the interface: the presolve reductions and their invariants, the SIA
-convergence argument, and measured SLCP behavior across the paper's test
-problems.
+A longer engineering note, for readers who want the machinery rather than the
+interface: the presolve reductions, what each one buys, and the invariants that
+make them safe to compose.
 
 .. toctree::
    :maxdepth: 2
 
    PRESOLVE.md
-   SIA_CONVERGENCE.md
-   SLCP_PERFORMANCE.md
 
 
 Developers
