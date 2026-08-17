@@ -46,14 +46,17 @@ html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 
-# The repository, for the "View on GitHub" link that _templates/layout.html
-# puts under the sidebar search box. Deliberately NOT the theme's
-# display_github integration: that offers the source of the page you happen to
-# be reading, which is a different and much narrower thing than the project's
-# front door. The breadcrumb keeps the theme's own "View page source".
+# Read by both templates in _templates/: layout.html links the repository
+# itself from the sidebar, and breadcrumbs.html sends "View page source" to
+# that page's file on GitHub. conf_py_path is relative to the repository root
+# and needs its leading and trailing slashes; github_version is the branch the
+# links resolve against.
 html_context = {
+    "display_github": True,
     "github_user": "codykarcher",
     "github_repo": "lcsolver",
+    "github_version": "main",
+    "conf_py_path": "/docs/",
 }
 
 autodoc_default_options = {

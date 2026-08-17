@@ -1,0 +1,24 @@
+{#-
+    Point "View page source" at the file on GitHub rather than at the copy
+    Sphinx drops in _sources/. Same intent, but it lands somewhere a reader can
+    do something with: history, blame, and the rest of the repository.
+
+    The theme's own display_github branch does this URL already, but labels it
+    "Edit on GitHub", which is a different offer. This keeps the wording and
+    changes only the target.
+
+    Guarded on has_source/sourcename, which is what the theme's own
+    "View page source" branch uses, and NOT on hasdoc(pagename): hasdoc is true
+    for the generated genindex, search and py-modindex pages, which have no
+    source file, so guarding on it links them to docs/genindex and friends --
+    paths that do not exist in the repository.
+-#}
+{%- extends "!breadcrumbs.html" %}
+
+{%- block breadcrumbs_aside %}
+  <li class="wy-breadcrumbs-aside">
+    {%- if has_source and sourcename %}
+      <a href="https://github.com/{{ github_user }}/{{ github_repo }}/blob/{{ github_version }}{{ conf_py_path }}{{ pagename }}{{ page_source_suffix }}">{{ _('View page source') }}</a>
+    {%- endif %}
+  </li>
+{%- endblock %}
