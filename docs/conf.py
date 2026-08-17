@@ -43,7 +43,18 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 master_doc = "index"
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = []
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+
+# The repository, for the "View on GitHub" link that _templates/layout.html
+# puts under the sidebar search box. Deliberately NOT the theme's
+# display_github integration: that offers the source of the page you happen to
+# be reading, which is a different and much narrower thing than the project's
+# front door. The breadcrumb keeps the theme's own "View page source".
+html_context = {
+    "github_user": "codykarcher",
+    "github_repo": "lcsolver",
+}
 
 autodoc_default_options = {
     "members": True,

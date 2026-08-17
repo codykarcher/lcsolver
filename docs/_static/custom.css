@@ -1,0 +1,18 @@
+/* The repository link added under the sidebar search box by
+   _templates/layout.html.  The search area has the theme's dark header
+   background, so the link takes the light foreground the rest of that block
+   uses rather than the body link color, which would be unreadable on it. */
+.wy-side-nav-search .repository-link {
+    margin-top: 0.7em;
+}
+
+.wy-side-nav-search .repository-link a {
+    color: #fcfcfc;
+    font-size: 0.85em;
+    opacity: 0.85;
+}
+
+.wy-side-nav-search .repository-link a:hover {
+    opacity: 1;
+    text-decoration: underline;
+}

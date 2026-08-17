@@ -1,0 +1,14 @@
+{#-
+    A link to the repository itself, under the sidebar search box, so it is
+    reachable from every page including the generated ones (genindex, search)
+    that have no source file for the per-page link in breadcrumbs.html.
+-#}
+{%- extends "!layout.html" %}
+
+{%- block sidebartitle %}
+  {{ super() }}
+  <div class="repository-link">
+    <a href="https://github.com/{{ github_user }}/{{ github_repo }}"
+       class="fa fa-github"> {{ _('View on GitHub') }}</a>
+  </div>
+{%- endblock %}
