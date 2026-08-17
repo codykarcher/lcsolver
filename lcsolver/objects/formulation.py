@@ -1078,11 +1078,23 @@ class Formulation(ConcreteModel):
         black_box._NunwrappedInputs = len(inputs_unwrapped)
         black_box.post_init_setup()
 
-        # TODO:  Need to unwrap operators
-
         self.__dict__[conName].set_external_model(
             black_box, inputs=inputs_unwrapped, outputs=outputs_unwrapped
-        )  # ,operators=operators_unwrapped)
+        )
+        # Operators, one per UNWRAPPED output (broadcast a single entry).
+        # Recorded on the block for the sequential bridge, which emits
+        # '>=' / '<=' runtime constraints as ONE-SIDED rows --- the form
+        # the Hoburg/helicopter free-section results use: when the model
+        # itself presses the output onto the box (minimized drag, capped
+        # ood, stall-margined clmax), an inequality binds at the optimum
+        # WITHOUT creating a black-box equality manifold for the solver
+        # to fall off.  The cyipopt route still imposes equalities and
+        # ignores this record (its TODO stands).
+        ops = (operators_raw * len(outputs_unwrapped)
+               if len(operators_raw) == 1 else list(operators_raw))
+        if len(ops) != len(outputs_unwrapped):
+            ops = ['=='] * len(outputs_unwrapped)
+        self.__dict__[conName]._lc_operators = ops
 
     # -- vector operations ---------------------------------------------
     # Explicit functions rather than more operator overloading: a reduction or

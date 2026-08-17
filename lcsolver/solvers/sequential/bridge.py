@@ -88,6 +88,36 @@ def _greybox_rows(blocks, structures, n):
     """
     col = {id(v): j for j, v in enumerate(structures.get('variables') or [])}
     rows = []
+
+    # ---- batch prefetch: give the boxes ONE look at each new iterate ----
+    # A black box that can evaluate many queries in one shot (e.g.
+    # lcwindturbine's airfoil_bb, whose torch surrogate batches trivially)
+    # exposes a `batch_prefetch(items)` attribute on its CLASS; items is
+    # [(box, x[in_idx]), ...] for every registered box sharing that hook.
+    # The hook warms the box's own cache, so the per-row evaluations below
+    # become cache hits.  Boxes without the attribute are untouched, and a
+    # failing hook is ignored -- the scalar path computes as before, so
+    # this is a pure optimization with no correctness surface.
+    pairs = []                                  # (bb, in_idx), ALL blocks
+    _pf_state = {'x': None}
+
+    def _prefetch(x):
+        xb = x.tobytes()
+        if _pf_state['x'] == xb:
+            return
+        _pf_state['x'] = xb                     # set FIRST: no re-entry
+        hooks = {}
+        for bb_, idx_ in pairs:
+            hook = getattr(type(bb_), 'batch_prefetch', None)
+            if not callable(hook):
+                continue
+            hooks.setdefault(id(hook), (hook, []))[1].append((bb_, x[idx_]))
+        for hook, items in hooks.values():
+            try:
+                hook(items)
+            except Exception:
+                pass
+
     for block in blocks:
         bb = getattr(block, '_ex_model', None)
         if bb is None:
@@ -106,10 +136,14 @@ def _greybox_rows(blocks, structures, n):
                 'the structure detector did not record; cannot map it into '
                 'the problem columns.')
         in_idx = np.asarray(in_idx, dtype=int)
+        pairs.append((bb, in_idx))
 
-        def make_fn(bb, in_idx, k, iout):
+        def make_fn(bb, in_idx, k, iout, flip=False):
+            """flip=False: bb/out (rows 'out >= bb' and '==').
+            flip=True:  out/bb (rows 'out <= bb')."""
             def fn(x):
                 x = np.asarray(x, dtype=float)
+                _prefetch(x)
                 bb.set_input_values(x[in_idx])
                 vals = np.atleast_1d(np.asarray(bb.evaluate_outputs(),
                                                 dtype=float))
@@ -117,18 +151,41 @@ def _greybox_rows(blocks, structures, n):
                 jac = np.asarray(jac.todense() if hasattr(jac, 'todense')
                                  else jac, dtype=float)
                 jac = jac.reshape(len(vals), len(in_idx))
-                val = vals[k] / x[iout]
                 g = np.zeros(n)
-                for pos, iin in enumerate(in_idx):
-                    g[iin] += jac[k, pos] / x[iout]
-                g[iout] += -vals[k] / x[iout] ** 2
+                if flip:
+                    val = x[iout] / vals[k]
+                    for pos, iin in enumerate(in_idx):
+                        g[iin] += -x[iout] * jac[k, pos] / vals[k] ** 2
+                    g[iout] += 1.0 / vals[k]
+                else:
+                    val = vals[k] / x[iout]
+                    for pos, iin in enumerate(in_idx):
+                        g[iin] += jac[k, pos] / x[iout]
+                    g[iout] += -vals[k] / x[iout] ** 2
                 return val, g
             return fn
 
+        # Directional rows per the declared operator (Formulation records
+        # them as _lc_operators; absent = all '==', the historical form).
+        # 'out >= bb' -> bb/out <= 1;  'out <= bb' -> out/bb <= 1; both
+        # one-sided, so no black-box equality manifold exists for those
+        # rows --- the model's own pressure binds them at the optimum.
+        ops = getattr(block, '_lc_operators', None)
+        if not ops or len(ops) != len(out_idx):
+            ops = ['=='] * len(out_idx)
         for k, iout in enumerate(out_idx):
-            rows.append(Constraint(
-                GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
-                '=='))
+            if ops[k] == '>=':
+                rows.append(Constraint(
+                    GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
+                    '<='))
+            elif ops[k] == '<=':
+                rows.append(Constraint(
+                    GreyboxSignomial(make_fn(bb, in_idx, k, iout, flip=True),
+                                     n, iout), '<='))
+            else:
+                rows.append(Constraint(
+                    GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
+                    '=='))
     return rows
 
 

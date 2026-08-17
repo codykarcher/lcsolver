@@ -2670,17 +2670,68 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _infeas_best = np.inf       # best violation seen since going infeasible
     _infeas_stall = 0           # iterations infeasible without improving it
     _subfail = 0                # consecutive unsolvable/unreachable sub-problems
+    # SQP-style safeguards: remember the best FEASIBLE iterate ever seen.
+    # First recourse on sustained infeasibility is restoration (Phase I
+    # re-entry); if THAT fails, fall back to this incumbent and continue
+    # in strict feasible-step mode (acceptance rejects any step whose true
+    # violation exceeds tolerance -- guard factor 1, not 10).  And the run
+    # never RETURNS an infeasible excursion while a feasible incumbent
+    # exists (exit discipline below).
+    _x_incumbent = None
+    _f_incumbent = np.inf
+    # Incumbent/exit feasibility judgment on BLACK-BOX problems uses the
+    # composite restore's ACHIEVABLE residual, not the raw tolerance:
+    # every Phase-2 iterate carries ~1e-6 of restore residual, so judging
+    # incumbents at 1e-8 records only the Phase-1 starting point and the
+    # exit discipline then discards ALL progress in its favor (measured:
+    # 400-iteration run returned the iteration-0 point byte-identically).
+    _inc_tol = (max(options.feasibility_tolerance,
+                    float(getattr(options, 'bb_feas_tol', 1e-5) or 0.0))
+                if has_blackbox else options.feasibility_tolerance)
+    # strict_feasible=True starts the run in feasible-step mode: small
+    # honest steps from iteration 1 instead of large excursions that the
+    # safeguards must claw back (the excursion-heavy default wins when
+    # the linearization is trustworthy; strict wins when true-constraint
+    # nonlinearity, e.g. clmax(shape), punishes every long step).
+    _strict_feas = bool(getattr(options, 'strict_feasible', False))
     # (_has_tangent_eq hoisted above the filter init; see there.)
     for k in range(options.max_iterations):
         _tgt = float(getattr(options, 'blackbox_step_target', 0.0) or 0.0)
         _radius_eff = radius
         _wi = int(getattr(options, 'blackbox_warm_iters', 0) or 0)
-        if has_blackbox and k < _wi and _tgt > 0.0 and _bb_g1 > 0.0:
-            _radius_eff = min(radius, _tgt / _bb_g1)
+        _bb_growth = float(getattr(options, 'blackbox_release_growth', 0.0)
+                           or 0.0)
+        if has_blackbox and _tgt > 0.0 and _bb_g1 > 0.0:
+            if k < _wi:
+                _radius_eff = min(radius, _tgt / _bb_g1)
+            elif _bb_growth > 1.0:
+                # GRADUATED RELEASE: past warm-up the bb step cap tapers
+                # open geometrically instead of vanishing.  A hard release
+                # let the linearization propose family-scale shape moves
+                # the curvature models had never sampled (warm-up steps
+                # were 92-96% turbine-side): 3.5 log units of shape motion
+                # in 4 iterations, all retracted by restoration, then a
+                # radius-collapse limit cycle (measured).  Growing the cap
+                # ~30%/iteration keeps each bolder step SURVIVABLE, so the
+                # curvature models learn the shape directions from steps
+                # that actually stand.
+                grown = min(_tgt * _bb_growth ** (k - _wi),
+                            float(getattr(options, 'blackbox_release_max',
+                                          0.45) or 0.45))
+                _radius_eff = min(radius, grown / _bb_g1)
         _ti = getattr(options, 'trust_iterations', None)
         _released = (_ti is not None and k >= int(_ti) and not _trust_forced)
         if _released:
+            # the box comes off; the graduated bb cap (if configured and
+            # still tighter than anything else) remains the only leash
+            # until it grows past relevance
             _radius_eff = None
+            if (has_blackbox and _tgt > 0.0 and _bb_g1 > 0.0
+                    and _bb_growth > 1.0):
+                _radius_eff = min(_tgt * _bb_growth ** (k - _wi),
+                                  float(getattr(options,
+                                        'blackbox_release_max', 0.45)
+                                        or 0.45)) / _bb_g1
         try:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
@@ -2744,6 +2795,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         if _filter is not None:
                             _filter.entries.clear()
                             _zz_prev = None          # new basin: stale geometry
+                        continue
+                    if _x_incumbent is not None and not _strict_feas:
+                        x = _x_incumbent.copy()
+                        _strict_feas = True
+                        radius = max(options.trust_min,
+                                     0.1 * options.trust_radius)
+                        _reject_radius = np.inf
+                        if _filter is not None:
+                            _filter.entries.clear()
+                            _zz_prev = None
+                        if options.verbose:
+                            print(f"  itr {k + 1:3d}  bracketed + "
+                                  "restoration failed; falling back to the "
+                                  "feasible incumbent, strict mode ON")
                         continue
                     res.status = (
                         f"trust region bracketed at iteration {k + 1}: the "
@@ -2887,6 +2952,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             _infeas_best = min(_infeas_best, viol)
         else:
             _infeas_best, _infeas_stall = np.inf, 0
+        if viol <= _inc_tol:
+            _f_here = problem.objective_value(x)
+            if _f_here < _f_incumbent:
+                _x_incumbent, _f_incumbent = x.copy(), float(_f_here)
         # The trigger is SUSPENDED while the feasibility-recovery stage
         # owns the iterate: recovery exists precisely because Phase I got
         # stuck, so bouncing back into Phase I on an infeasibility timer
@@ -2906,6 +2975,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 if _filter is not None:
                     _filter.entries.clear()
                     _zz_prev = None          # new basin: stale geometry
+                continue
+            if _x_incumbent is not None and not _strict_feas:
+                # restoration failed: SQP fallback -- return to the last
+                # feasible incumbent and continue in STRICT feasible-step
+                # mode (the acceptance guards below drop to factor 1)
+                x = _x_incumbent.copy()
+                _strict_feas = True
+                radius = max(options.trust_min, 0.1 * options.trust_radius)
+                _reject_radius = np.inf
+                if _filter is not None:
+                    _filter.entries.clear()
+                    _zz_prev = None
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  restoration failed; falling "
+                          "back to the feasible incumbent, strict "
+                          "feasible-step mode ON")
                 continue
 
         if (viol <= options.feasibility_tolerance
@@ -2991,9 +3076,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             x_nr, _h_nr = _restore_fn(
                 problem, x_new, iters=options.phase1_restore_iterations,
                 tol=min(options.feasibility_tolerance, 1e-10))
-            if (np.all(np.isfinite(x_nr)) and np.all(x_nr > 0)
-                    and _violation(problem, x_nr) <= _violation(problem, x_new)):
-                x_new = x_nr
+            if np.all(np.isfinite(x_nr)) and np.all(x_nr > 0):
+                if has_blackbox:
+                    # Grey-box rows: the restore is TRUTH, not a candidate.
+                    # An un-restored iterate can carry bb-row fiction that
+                    # HIDES real inequality violations (measured: cl rows
+                    # satisfied against a clmax alias 2x the section's
+                    # actual peak), and the old only-if-violation-improves
+                    # guard then rejected the repair and kept the fiction.
+                    # Keep the truthful point unconditionally; the
+                    # acceptance test below judges IT, and a bad step is
+                    # rejected as a step, not falsified by its aliases.
+                    x_new = x_nr
+                elif _violation(problem, x_nr) <= _violation(problem, x_new):
+                    x_new = x_nr
             if _dbg:
                 _net = float(np.linalg.norm(np.log(x_new) - np.log(x)))
                 _obj0 = problem.objective_value(x)
@@ -3108,9 +3204,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     # of what happened to the objective.
                     v_old = _violation(problem, x)
                     v_new = _violation(problem, x_new)
+                    _g = 1.0 if _strict_feas else _FEAS_GUARD
                     if (v_new > options.feasibility_tolerance
-                            and v_new > _FEAS_GUARD * max(v_old,
-                                                          options.feasibility_tolerance)):
+                            and v_new > _g * max(v_old,
+                                                 options.feasibility_tolerance)):
                         ratio = -1.0
 
         # --- feasibility guard, applied to EVERY level of the cascade ---
@@ -3176,6 +3273,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         else:
             _fg = getattr(options, 'feasibility_guard', _FEAS_GUARD)
             _fga = float(getattr(options, 'feasibility_guard_abs', 0.0) or 0.0)
+            if _strict_feas:
+                # feasible-step mode (post-restoration-failure): no true-
+                # violation growth is tolerated beyond the tolerance itself
+                _fg, _fga = 1.0, 0.0
             if (va_seen is not None and v0 is not None
                     and va_seen > options.feasibility_tolerance
                     and va_seen > _fga
@@ -3186,9 +3287,60 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     ratio = -1.0
                     _rejected_by_guard = True
 
+        if _strict_feas and ratio != -1.0:
+            # STRICT feasible-step mode measures the TRUE violation at the
+            # (restored) trial point on EVERY iteration -- the cascade's
+            # upper levels judge model accuracy and may never evaluate it
+            # (measured: |d| = 6.07 accepted at iteration 1, violation
+            # 1e-8 -> 9.2, with every conditional guard silently skipped).
+            # The comparison FLOOR is the composite restore's achievable
+            # residual, not the raw feasibility tolerance: on grey-box
+            # problems the alternating restore bottoms out near 1e-6, and
+            # judging trials against 1e-8 rejected EVERY step (measured:
+            # 165/165 rejects at viol 8.4e-7 -> 3.4e-6, radius ground to
+            # 2e-3, zero progress).  Growth beyond 3x the current residual
+            # or the floor -- whichever is larger -- is a real excursion.
+            _floor_s = max(options.feasibility_tolerance,
+                           float(getattr(options, 'strict_feas_floor', 0.0)
+                                 or 0.0))
+            _v_old_s = _violation(problem, x)
+            _v_new_s = _violation(problem, x_new)
+            if _v_new_s > max(3.0 * _v_old_s, _floor_s):
+                ratio = -1.0
+                _rejected_by_guard = True
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  STRICT reject: true violation "
+                          f"{_v_old_s:.2e} -> {_v_new_s:.2e}")
         if ratio is None:
             ratio = 1.0     # nothing measured this step; accept it
         if ratio < options.ratio_accept:
+            # A rejected iteration is still a GENERATION for the
+            # infeasibility clock: the iterate stays where it is, so if it
+            # is infeasible it has now been infeasible one iteration
+            # longer.  This used to be counted only on the accepted path
+            # below, so a rejection streak starved restoration entirely
+            # (measured: 165 consecutive rejections at viol 8.4e-7,
+            # patience 5, restorations fired: 0).
+            if (not _recovering
+                    and _violation(problem, x) > options.feasibility_tolerance):
+                _infeas_stall += 1
+                if _infeas_stall >= int(getattr(options,
+                                                'restoration_patience', 0)
+                                        or 0) > 0:
+                    x_r, _restorations, _ok = _restore(
+                        problem, x, options, has_blackbox, cache,
+                        _restorations, k,
+                        f'infeasible for {_infeas_stall} iterations '
+                        '(rejection streak)', targets=_restore_targets)
+                    _infeas_best, _infeas_stall = np.inf, 0
+                    if _ok:
+                        x = x_r
+                        radius = options.trust_radius
+                        _reject_radius = np.inf
+                        if _filter is not None:
+                            _filter.entries.clear()
+                            _zz_prev = None
+                        continue
             if _released:
                 # Rejected with the box OFF. Shrinking a radius that is not
                 # being applied would re-solve an identical sub-problem and
@@ -3229,6 +3381,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         _filter.entries.clear()   # the old trade-offs are
                         _zz_prev = None          # new basin: stale geometry
                     continue                      # about a basin we have left
+                if _x_incumbent is not None and not _strict_feas:
+                    x = _x_incumbent.copy()
+                    _strict_feas = True
+                    radius = max(options.trust_min,
+                                 0.1 * options.trust_radius)
+                    _reject_radius = np.inf
+                    if _filter is not None:
+                        _filter.entries.clear()
+                        _zz_prev = None
+                    if options.verbose:
+                        print(f"  itr {k + 1:3d}  collapsed + restoration "
+                              "failed; falling back to the feasible "
+                              "incumbent, strict mode ON")
+                    continue
                 res.status = ("trust region collapsed at iteration "
                               f"{k + 1}; the linearized constraints are "
                               "not modelling the problem")
@@ -3307,11 +3473,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             x_r, _heq = _restore_fn(
                 problem, x, iters=options.phase1_restore_iterations,
                 tol=min(options.feasibility_tolerance, 1e-10))
-            # Only if it actually helps. Restoration is least-norm, so it
-            # barely moves the inequalities; if it somehow makes the worst
-            # violation worse, the step was not the problem and the plain
-            # iterate is the safer one to keep.
-            if _violation(problem, x_r) <= _violation(problem, x):
+            # Structured-only: keep the restore only if it helps (least-
+            # norm barely moves inequalities, so a worsening means the
+            # step was the problem).  Grey-box: the restore is TRUTH ---
+            # rejecting it keeps aliases that misreport the actual rows
+            # (see the pre-acceptance site) --- keep it unconditionally.
+            if np.all(np.isfinite(x_r)) and np.all(x_r > 0) and (
+                    has_blackbox
+                    or _violation(problem, x_r) <= _violation(problem, x)):
                 x = x_r
         res.history.append(x.copy())
         res.objectives.append(problem.objective_value(x))
@@ -3427,6 +3596,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
     if res.x is None:
         res.x, res.objective = x, problem.objective_value(x)
+    # EXIT DISCIPLINE (SQP): if the run is ending on an infeasible
+    # excursion but a feasible incumbent was visited, return the
+    # incumbent.  The old behavior returned the LAST iterate whatever its
+    # violation, so a run whose budget expired mid-excursion handed back
+    # a point its own constraints reject (measured: airfoil stall row
+    # violated at return while feasible iterates had been visited).
+    # UNCONDITIONAL: a converged CLAIM at an infeasible point is the
+    # known false-certificate mode (degenerate multipliers) and is
+    # exactly the claim not to honor -- the true violation is the test.
+    if (_x_incumbent is not None
+            and _violation(problem, res.x) > _inc_tol):
+        res.x, res.objective = _x_incumbent, float(_f_incumbent)
+        res.converged = False
+        res.status = ((res.status or '')
+                      + '  [infeasible final iterate discarded: returned '
+                        'the best feasible incumbent]')
     stat, viol, comp = _kkt(problem, res.x, mults, options.x_min)
     if (options.kkt_min_norm and not res.converged
             and viol <= options.feasibility_tolerance
