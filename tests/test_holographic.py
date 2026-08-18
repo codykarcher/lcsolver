@@ -184,3 +184,34 @@ def test_the_total_is_zero_when_none_were_declared():
     f.Objective(x)
     f.ConstraintList([x >= 1.0 * pyo.units.m])
     assert holographic_total(f) == 0
+
+
+# --- and a block has to be able to say it too --------------------------------
+# Group carried all four constraint methods, but SubModel mirrored only
+# ConstraintList, so a packaged block had no way to declare a validity envelope
+# -- exactly the models that need one most, since a block is where a fit lives.
+
+def test_submodels_forward_the_declaration():
+    from lcsolver import SubModel
+
+    class Guarded(SubModel):
+        input_variables = ('x',)
+
+        def build(self):
+            m = self.bind_inputs()
+            cap = self.Constant('cap', 9.0, 'm', 'edge of the fit')
+            self.ConstraintList([m.x >= 1.0 * pyo.units.m])
+            self.HolographicConstraintList([m.x <= cap])
+            self.HolographicConstraint(m.x <= 20.0 * pyo.units.m)
+
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='x')
+    f.Objective(x)
+    f.guarded = Guarded()
+    f.guarded.x = x
+
+    assert f.guarded.is_built()
+    assert len(f._holographic) == 2             # both forms, neither ordinary
+    assert len(f.guarded.rows) == 3             # and the block counts all three
+    solve(f, sensitivities=False)
+    assert holographic_report(f) == []          # x drives to 1, well inside

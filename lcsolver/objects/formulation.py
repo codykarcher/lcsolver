@@ -220,6 +220,42 @@ class EDIParam(VectorComponent, IndexedParam):
     """An indexed Constant that also reads as a vector."""
 
 
+def _is_black_box(entry):
+    """Is this `ConstraintList` entry a black box rather than a list of rows?
+
+    A black box is ``[outputs, operators, inputs, box]``, so it is told apart
+    by what it IS -- four parts whose last one is the box -- and not merely by
+    being a list. Anything else that arrives as a list is a list of rows, and
+    gets flattened. Without this a helper returning several rows could not be
+    dropped into a list whole: four rows would be read as a runtime
+    constraint, and any other count would raise.
+    """
+    from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+    return (isinstance(entry, (tuple, list)) and len(entry) == 4
+            and isinstance(entry[3], BlackBoxFunctionModel))
+
+
+def _flatten_rows(items):
+    """Every `ConstraintList` entry, with nesting and arrays flattened away.
+
+    Black boxes and dicts are leaves; numpy arrays -- what an elementwise
+    comparison between two vectors produces -- ravel to one entry per element,
+    so ``f.ConstraintList(M >= f.broadcast_rows(cap, n))`` declares a
+    constraint per element instead of handing a matrix row to `Constraint`.
+    """
+    if isinstance(items, _np.ndarray):
+        items = items.ravel().tolist()
+    for item in items:
+        if isinstance(item, _np.ndarray):
+            yield from item.ravel().tolist()
+        elif isinstance(item, dict) or _is_black_box(item):
+            yield item
+        elif isinstance(item, (tuple, list)):
+            yield from _flatten_rows(item)
+        else:
+            yield item
+
+
 class Group:
     """A named region of a formulation.
 
@@ -1192,25 +1228,29 @@ class Formulation(ConcreteModel):
         expression, since there is no expression -- that is why entries are
         dispatched on type instead of simply being added.
 
+        A PLAIN LIST OF ROWS IS ALSO AN ENTRY, flattened in place. A helper
+        that returns several rows -- a `ConstraintGenerator`, a point maker --
+        can be dropped in whole::
+
+            f.ConstraintList([
+                cl * solidity == 6. * CT,
+                f.polar.generate_rows(cl, tau, Re, cd),      # however many rows it is
+            ])
+
+        A black box is told apart from a list of rows by what it IS rather
+        than by being a list: four parts whose last is a
+        `BlackBoxFunctionModel`. Nothing else about a list is load-bearing, so
+        a generator returning one row and a generator returning five read the
+        same at the call site.
+
         ``holographic=True`` marks every algebraic entry as holographic; see
         `HolographicConstraintList`. Nothing is returned.
         """
-        # An elementwise comparison produces an array of constraints, of
-        # whatever shape the operands had. Flatten it, so that
-        # `f.ConstraintList(M >= f.broadcast_rows(cap, n))` reads the way it
-        # should rather than handing a matrix row to Constraint.
-        if isinstance(conList, _np.ndarray):
-            conList = list(conList.ravel())
-        else:
-            conList = [c for item in conList
-                       for c in (item.ravel().tolist()
-                                 if isinstance(item, _np.ndarray) else [item])]
-        for i in range(0, len(conList)):
-            con = conList[i]
-            if isinstance(con, (tuple, list)):
-                self.RuntimeConstraint(*con)
-            elif isinstance(con, dict):
+        for con in _flatten_rows(conList):
+            if isinstance(con, dict):
                 self.RuntimeConstraint(**con)
+            elif isinstance(con, (tuple, list)):
+                self.RuntimeConstraint(*con)
             else:
                 self.Constraint(con, holographic=holographic)
 

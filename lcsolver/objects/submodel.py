@@ -28,7 +28,56 @@
 # its caller reach quantities by name instead of by dict key; and the model
 # keeps its declaration lists, so a block can be asked what it owns.
 
+import types
+
 __all__ = ['SubModel']
+
+
+class _Inputs:
+    """Read-only view of a block's declared inputs, handed out by
+    :meth:`SubModel.bind_inputs`.
+
+    Read-only because it is a VIEW, not state: writing through it would change
+    nothing the formulation can see, so the write is refused rather than
+    silently lost.  A missing name reports what the block actually declares,
+    since a mistyped input is otherwise a bare AttributeError at build time.
+    """
+
+    __slots__ = ('_d',)
+
+    def __init__(self, mapping):
+        object.__setattr__(self, '_d', mapping)
+
+    def __getattr__(self, name):
+        try:
+            return self._d[name]
+        except KeyError:
+            raise AttributeError(
+                f'{name!r} is not a declared input of this block; it declares '
+                f'{sorted(self._d)}') from None
+
+    def __setattr__(self, name, value):
+        raise AttributeError(
+            'inputs are read-only: assign to the block attribute instead')
+
+    def __dir__(self):
+        return sorted(self._d)
+
+    def __repr__(self):
+        return f'<inputs: {", ".join(sorted(self._d))}>'
+
+
+def _referenced_names(code):
+    """Every attribute/global name a code object mentions, nested ones too.
+
+    ``m.area_disk`` and ``self.area_disk`` both put ``area_disk`` in
+    ``co_names``, so this sees an input as used either way.
+    """
+    out = set(code.co_names)
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):    # comprehensions, closures
+            out |= _referenced_names(const)
+    return out
 
 
 def _wrap(text, width):
@@ -50,7 +99,9 @@ class SubModel:
     """One packaged piece of a sizing problem: variables, constants, rows.
 
     Subclasses declare in :meth:`build` through ``self.Variable`` /
-    ``self.Constant`` and post through ``self.ConstraintList``.
+    ``self.Constant`` and post through ``self.ConstraintList``, or through
+    ``self.HolographicConstraintList`` for rows that must hold but must not
+    bind.
 
     THE FORMULATION IS NOT PASSED IN.  A block is attached to a formulation by
     assignment, and that assignment is what hands it both the formulation and
@@ -116,6 +167,38 @@ class SubModel:
     #: otherwise, since it is in no component list and no sensitivity table.
     provides = {}
 
+    #: Names a subclass declares but deliberately never references in build()
+    #: -- an input reached through getattr() with a computed name, say.  Listing
+    #: one here exempts it from the staleness check below.
+    _allow_unused_inputs = ()
+
+    def __init_subclass__(cls, **kwargs):
+        """Refuse a declaration no ``build()`` consumes.
+
+        The two directions of drift are not symmetric.  Reading an input that
+        was never declared fails loudly on its own -- ``self.foo`` raises the
+        first time the block builds.  DECLARING one nothing reads is the silent
+        half: the block goes on waiting for an input it does not need and the
+        assembly goes on wiring it, and nothing ever complains.  That half is
+        caught here, when the class is defined.
+
+        The walk is over the MRO, not just this class: a subclass may inherit
+        its tuples from a parent whose ``build()`` is what uses them.
+        """
+        super().__init_subclass__(**kwargs)
+        used = set()
+        for klass in cls.__mro__:
+            fn = vars(klass).get('build')
+            if fn is not None:
+                used |= _referenced_names(fn.__code__)
+        stale = sorted(set(cls.required_inputs())
+                       - used - set(cls._allow_unused_inputs))
+        if stale:
+            raise TypeError(
+                f'{cls.__name__} declares inputs no build() uses: {stale}.  '
+                f'Drop them from input_variables/input_constants, use them, '
+                f'or list them in _allow_unused_inputs.')
+
     @classmethod
     def required_inputs(cls):
         """Every input name this block waits for, variables then constants."""
@@ -126,6 +209,33 @@ class SubModel:
                 seen.add(name)
                 out.append(name)
         return out
+
+    def bind_inputs(self):
+        """This block's declared inputs, as one read-only namespace.
+
+        Bound as ``m`` by convention, at the top of :meth:`build`::
+
+            m = self.bind_inputs()
+            ...
+            CT * m.rho * m.area_disk * m.v_tip**2 >= m.k_download * m.weight_gross
+
+        The tuples become the ONLY place an input is named.  Unpacking each one
+        into a local rebuilt those tuples as a second, hand-maintained list that
+        could quietly fall out of step; reaching them through the namespace
+        cannot, and the prefix marks at a glance which symbols in a row arrived
+        from the assembly and which the block owns.
+
+        A SNAPSHOT, taken when build() runs.  That is not a constraint in
+        practice: the block builds once, when its last input is assigned, and
+        the handles it captures are mutated in place rather than rebound.
+
+        Aliasing one back out (``solidity = m.solidity``) to keep a dense row
+        readable is fine -- it is checked against the tuples, since dropping the
+        name makes ``m.solidity`` raise.  Do it for the few that earn it; alias
+        all of them and the second list is back.
+        """
+        return _Inputs({name: getattr(self, name)
+                        for name in self.required_inputs()})
 
     def __init__(self, formulation=None, name=None, prefix=None, **kwargs):
         # ``Block('name')`` and ``Block(f, 'name')`` both still work: a block
@@ -270,11 +380,30 @@ class SubModel:
         setattr(self, name, c)
         return c
 
-    def ConstraintList(self, rows):
+    def Constraint(self, expr, holographic=False):
+        """Post one row.  `ConstraintList` is the usual form; this is the
+        one-at-a-time one underneath, and returns the component's name."""
+        if expr is None:
+            return None
+        self.rows.append(expr)
+        return self.group.Constraint(expr, holographic=holographic)
+
+    def ConstraintList(self, rows, holographic=False):
         rows = [r for r in rows if r is not None]
         self.rows.extend(rows)
-        self.group.ConstraintList(rows)
+        self.group.ConstraintList(rows, holographic=holographic)
         return rows
+
+    def HolographicConstraint(self, expr):
+        """A row that must hold but must not *bind* -- a fit's validity
+        envelope, a modelling limit, a box that keeps the problem well posed.
+        Every solve checks it and reports any that came out active.  See
+        `Formulation.HolographicConstraint` for why it is worth declaring."""
+        return self.Constraint(expr, holographic=True)
+
+    def HolographicConstraintList(self, rows):
+        """`ConstraintList`, with every entry declared holographic."""
+        return self.ConstraintList(rows, holographic=True)
 
     # ---- what this block needs, what it owns, what it hands back ----
     def get_status(self):

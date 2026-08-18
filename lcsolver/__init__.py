@@ -49,6 +49,8 @@ from lcsolver.objects.formulation import Formulation
 
 from lcsolver.objects.submodel import SubModel
 
+from lcsolver.objects.constraintgenerator import ConstraintGenerator
+
 from lcsolver.objects.blackBoxFunctionModel import (
     BlackBoxFunctionModel,
     BlackBoxFunctionModel_Variable,
@@ -89,6 +91,7 @@ from pyomo.environ import units
 __all__ = [
     "Formulation",
     "SubModel",
+    "ConstraintGenerator",
     "units",
     "optimization_check",
     "structure_report",
