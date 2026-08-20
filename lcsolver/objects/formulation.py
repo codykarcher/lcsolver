@@ -25,8 +25,8 @@ from pyomo.environ import ConcreteModel
 from pyomo.environ import Var, Param, Objective, Constraint, Set
 from pyomo.environ import maximize, minimize
 from pyomo.environ import units as pyomo_units
-from pyomo.core.base.var import IndexedVar
-from pyomo.core.base.param import IndexedParam
+from pyomo.core.base.var import IndexedVar, ScalarVar
+from pyomo.core.base.param import IndexedParam, ScalarParam
 
 from lcsolver.objects.vector import (
     VectorComponent,
@@ -218,6 +218,44 @@ class EDIVar(VectorComponent, IndexedVar):
 
 class EDIParam(VectorComponent, IndexedParam):
     """An indexed Constant that also reads as a vector."""
+
+
+class _ScalarVectorOps:
+    """Comparisons for a SCALAR component against a vector operand.
+
+    Python hands the LEFT operand the comparison first, and Pyomo raises on
+    an indexed operand rather than returning NotImplemented -- so a scalar on
+    the left of a vector row (``P_installed >= P`` with ``P`` a sized
+    Variable) would never reach the vector's own broadcasting.  These
+    overrides route a vector operand back through the array machinery, one
+    row per element, and leave every other comparison to Pyomo.
+    """
+
+    def __ge__(self, other):
+        if isinstance(other, (VectorComponent, _np.ndarray)):
+            return as_array(other) <= self
+        return super().__ge__(other)
+
+    def __le__(self, other):
+        if isinstance(other, (VectorComponent, _np.ndarray)):
+            return as_array(other) >= self
+        return super().__le__(other)
+
+    def __eq__(self, other):
+        if isinstance(other, (VectorComponent, _np.ndarray)):
+            return as_array(other) == self
+        return super().__eq__(other)
+
+    # __eq__ is overridden, so the inherited identity hash must be restated
+    __hash__ = object.__hash__
+
+
+class LCScalarVar(_ScalarVectorOps, ScalarVar):
+    """A scalar Variable whose comparisons broadcast against a vector."""
+
+
+class LCScalarParam(_ScalarVectorOps, ScalarParam):
+    """A scalar Constant whose comparisons broadcast against a vector."""
 
 
 def _is_black_box(entry):
@@ -762,7 +800,7 @@ class Formulation(ConcreteModel):
                     if size == 0:
                         self.add_component(
                             name,
-                            pyo.Var(
+                            LCScalarVar(
                                 name=name,
                                 initialize=guess,
                                 domain=domain,
@@ -794,7 +832,7 @@ class Formulation(ConcreteModel):
         else:
             self.add_component(
                 name,
-                pyo.Var(
+                LCScalarVar(
                     name=name,
                     initialize=guess,
                     domain=domain,
@@ -878,7 +916,7 @@ class Formulation(ConcreteModel):
                     if size == 1 or size == 0:
                         self.add_component(
                             name,
-                            pyo.Param(
+                            LCScalarParam(
                                 name=name,
                                 initialize=value,
                                 within=within,
@@ -910,7 +948,7 @@ class Formulation(ConcreteModel):
         else:
             self.add_component(
                 name,
-                pyo.Param(
+                LCScalarParam(
                     name=name,
                     initialize=value,
                     within=within,
