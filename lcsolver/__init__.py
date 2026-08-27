@@ -37,6 +37,9 @@ that a broken install fails loudly instead of producing an empty namespace.
 import pyomo.environ  # noqa: F401
 
 from lcsolver.solvers.solver import solve, PresolveError, SolveResult
+# The SIA warning messages tell users to pass options=SIAOptions(); the class
+# has to be importable from the package root for that advice to be followable.
+from lcsolver.solvers.sequential.sia import SIAOptions
 from lcsolver.presolve.reductions import (presolve_check, postsolve_check,
                                           unbuilt_blocks, unbuilt_blocks_check)
 
@@ -124,6 +127,7 @@ __all__ = [
     # missing from __all__, so `from lcsolver import *` -- which the README's
     # own examples imply -- produced a namespace with no way to solve anything.
     "solve",
+    "SIAOptions",
     "SolveResult",
     "PresolveError",
     "presolve_check",

@@ -444,6 +444,114 @@ class TestEDIBlackBox(unittest.TestCase):
         self.assertAlmostEqual(jac[0, 1], 6.0)
         self.assertAlmostEqual(jac[0, 2], 8.0)
 
+    def test_edi_blackbox_same_point_cache(self):
+        "A re-set to the identical point must not re-run BlackBox; any change must"
+        import numpy as np
+        from lcsolver import Formulation
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        calls = [0]
+
+        class Square(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'y = x**2, counting evaluations'
+                self.inputs.append(name='x', units='', description='input')
+                self.outputs.append(name='y', units='', description='output')
+                self.availableDerivative = 1
+
+            def BlackBox(self, x):
+                calls[0] += 1
+                x = self.sanitizeInputs(x, strip_units=True)
+                return self.packOutputs(x**2, [2.0 * x])
+
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='', description='x variable')
+        y = f.Variable(name='y', guess=1.0, units='', description='y variable')
+        f.Objective(y)
+        f.ConstraintList([[y, '==', [x], Square()]])
+
+        em = f.__dict__['constraint_1'].get_external_model()
+
+        em.set_input_values(np.array([2.0]))
+        opt = em.evaluate_outputs()
+        em.evaluate_jacobian_outputs()
+        self.assertAlmostEqual(opt[0], 4.0)
+        self.assertEqual(calls[0], 1)
+
+        # Bit-identical re-set: cache survives, no new evaluation
+        em.set_input_values(np.array([2.0]))
+        opt = em.evaluate_outputs()
+        em.evaluate_jacobian_outputs()
+        self.assertAlmostEqual(opt[0], 4.0)
+        self.assertEqual(calls[0], 1)
+
+        # Any numerical change, however small, is a new point
+        em.set_input_values(np.array([2.0 + 1e-14]))
+        opt = em.evaluate_outputs()
+        self.assertEqual(calls[0], 2)
+
+        em.set_input_values(np.array([3.0]))
+        opt = em.evaluate_outputs()
+        self.assertAlmostEqual(opt[0], 9.0)
+        self.assertEqual(calls[0], 3)
+
+        # Returning to an earlier point after moving away re-evaluates:
+        # only the immediately preceding point is cached
+        em.set_input_values(np.array([2.0]))
+        opt = em.evaluate_outputs()
+        self.assertAlmostEqual(opt[0], 4.0)
+        self.assertEqual(calls[0], 4)
+
+    def test_edi_blackbox_deepcopy_with_analysis_handle(self):
+        "A box holding an un-deepcopyable analysis handle must survive clone()"
+        import copy
+        import ctypes
+        import numpy as np
+        from lcsolver import Formulation, unit_corrector
+        from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
+
+        # The real case is a pyCAPS Problem stored on the box; a ctypes
+        # pointer fails deepcopy the same way ("ctypes objects containing
+        # pointers cannot be pickled") without needing CAPS installed.
+        handle = ctypes.pointer(ctypes.c_double(42.0))
+        with self.assertRaises(ValueError):
+            copy.deepcopy(handle)
+
+        class Square(BlackBoxFunctionModel):
+            def __init__(self):
+                super().__init__()
+                self.description = 'y = x**2 with an external handle'
+                self.inputs.append(name='x', units='', description='input')
+                self.outputs.append(name='y', units='', description='output')
+                self.availableDerivative = 1
+                self.analysis = handle
+
+            def BlackBox(self, x):
+                x = self.sanitizeInputs(x, strip_units=True)
+                return self.packOutputs(x**2, [2.0 * x])
+
+        f = Formulation()
+        x = f.Variable(name='x', guess=1.0, units='', description='x variable')
+        y = f.Variable(name='y', guess=1.0, units='', description='y variable')
+        f.Objective(y)
+        f.ConstraintList([[y, '==', [x], Square()]])
+
+        # The direct copy: handle shared by reference, the rest independent
+        box = f.__dict__['constraint_1'].get_external_model()
+        dup = copy.deepcopy(box)
+        self.assertIs(dup.analysis, box.analysis)
+        self.assertIsNot(dup.inputs, box.inputs)
+        self.assertEqual(dup.inputs[0].name, 'x')
+
+        # The path that used to die: unit_corrector's clone of the model
+        corrected = unit_corrector(f)
+        gb = corrected.__dict__['constraint_1'].get_external_model()
+        self.assertIsNotNone(gb)
+        self.assertIs(gb.analysis, handle)
+        gb.set_input_values(np.array([3.0]))
+        self.assertAlmostEqual(gb.evaluate_outputs()[0], 9.0)
+
     def test_edi_blackbox_cache_not_poisoned_by_failure(self):
         "Tests that a failed fillCache does not leave a partial cache behind"
         import numpy as np
