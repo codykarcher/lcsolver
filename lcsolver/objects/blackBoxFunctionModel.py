@@ -426,6 +426,26 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self._NunwrappedOutputs = None
         self._NunwrappedInputs = None
 
+    def __deepcopy__(self, memo):
+        # A black box routinely holds a handle to the analysis it drives -- a
+        # pyCAPS Problem, a CFD session, a ctypes/SWIG wrapper -- and such
+        # handles refuse deepcopy ("ctypes objects containing pointers cannot
+        # be pickled"). Under the generic protocol that single attribute
+        # aborted the whole model clone() in unit_corrector, killing every
+        # solve of a formulation whose box stored its analysis object. Copy
+        # attribute-by-attribute instead, and share by reference anything that
+        # refuses: the clone must drive the SAME external analysis -- a
+        # stateful resource cannot be meaningfully duplicated anyway.
+        cls = self.__class__
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        for key, val in self.__dict__.items():
+            try:
+                new.__dict__[key] = copy.deepcopy(val, memo)
+            except Exception:
+                new.__dict__[key] = val
+        return new
+
     def setOptimizationVariables(
         self, inputVariables_optimization, outputVariables_optimization
     ):
@@ -486,7 +506,18 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         here is what ties the box to the iterate: the outputs and the jacobian
         are asked for in separate calls, so they must be recomputed once and
         only once per point, and never carried across one.
+
+        A re-set to the bit-identical point keeps the cache. The SIA machinery
+        (sub-problem, restore, line search) routinely hands back the same
+        iterate it just evaluated; on the capsPhase AVL demo 260 of 510
+        BlackBox calls were exact repeats, each costing three AVL runs. Only
+        exact equality qualifies -- any numerical difference, however small, is
+        a new point and must be re-evaluated.
         """
+        if self._cache is not None and np.array_equal(
+                np.asarray(input_values), np.asarray(self._input_values)):
+            self._input_values = input_values
+            return
         self._input_values = input_values
         self._cache = None
 
