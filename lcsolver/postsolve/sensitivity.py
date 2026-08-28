@@ -323,6 +323,57 @@ def _duals_from_suffix(model):
     return duals if len(duals) else None
 
 
+def _greybox_blocks(model):
+    """Every active ExternalGreyBoxBlock on the model; empty without pynumero."""
+    try:
+        from pyomo.contrib.pynumero.interfaces.external_grey_box import (
+            ExternalGreyBoxBlock)
+    except Exception:
+        return []
+    return list(model.component_data_objects(ExternalGreyBoxBlock,
+                                             descend_into=True, active=True))
+
+
+def _greybox_gradients(model, variables):
+    """``[(block, [grad_1, ..., grad_m])]`` for each grey box on the model.
+
+    One gradient per box output, over ``variables``: ``+1`` on the output
+    variable and ``-d(out)/d(in)`` on each input, so that the row reads as the
+    equality ``out - box(in) == 0`` in the same sign convention as the body -
+    bound columns of an ordinary constraint. The box's inputs and outputs are
+    matched to ``variables`` by name, which is what survives the unit-corrected
+    clone the KKT recovery runs on.
+
+    The jacobian is read from the box's cache when the current point is the
+    one it last evaluated (the normal case straight after a solve), so this
+    usually costs no call to the analysis code. A box that cannot be evaluated
+    is skipped rather than allowed to lose the whole sensitivity pass.
+    """
+    index = {v.name: i for i, v in enumerate(variables)}
+    out = []
+    for blk in _greybox_blocks(model):
+        try:
+            bb = blk.get_external_model()
+            ins, outs = list(bb.input_names()), list(bb.output_names())
+            if any(n not in index for n in ins + outs):
+                continue
+            bb.set_input_values(np.array([pyo.value(variables[index[n]])
+                                          for n in ins], dtype=float))
+            J = bb.evaluate_jacobian_outputs()
+            J = J.toarray() if hasattr(J, 'toarray') else np.asarray(J)
+        except Exception:
+            continue
+        grads = []
+        for r, o in enumerate(outs):
+            g = np.zeros(len(variables))
+            g[index[o]] = 1.0
+            for c, n in enumerate(ins):
+                g[index[n]] -= float(J[r, c])
+            grads.append(g)
+        out.append((blk, grads))
+    return out
+
+
 #: A KKT stationarity system, kept so that the ambiguity test can reuse it.
 KKTSystem = collections.namedtuple("KKTSystem", "A_s rhs_s col_scale owners")
 
@@ -344,6 +395,24 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
         bound, _ = _bound_of(con)
         columns.append(_grad(con.body, variables) - _grad(bound, variables))
         owners.append(con)
+
+    # A RuntimeConstraint is an ExternalGreyBoxBlock, not a pyo.Constraint, so
+    # the loop above never sees it -- and without its column the objective
+    # gradient along the box's inputs and outputs has nothing to balance
+    # against. The stationarity system is then inconsistent by construction:
+    # every black-box model reported LC-W302 (8.7e-2 on a wing sized through
+    # masstran, 2.6e-5 with the column present) and, worse, the duals of the
+    # ordinary constraints came out wrong, so the sensitivities were bad
+    # numbers with a warning nobody read. Each output of the box is the
+    # equality ``out - box(in) == 0``, whose gradient is +1 on the output
+    # variable and -J on the inputs.
+    # No Constant enters a box, so its multiplier is not needed afterwards
+    # and is discarded like a bound multiplier; the column only has to be
+    # present so the OTHER duals are recovered correctly.
+    for _blk, grads in _greybox_gradients(model, variables):
+        for g in grads:
+            columns.append(g)
+            owners.append(None)
 
     # Active variable bounds participate in stationarity too.
     for i, v in enumerate(variables):
