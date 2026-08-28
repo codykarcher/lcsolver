@@ -1687,8 +1687,14 @@ class TestEDISnippets(unittest.TestCase):
 
             def build(self):
                 f = self.formulation
-                self.Variable('volume', 1.0, 'm**3', 'volume of each tank',
-                              size=self.settings['n_tanks'])
+                volume = self.Variable('volume', 1.0, 'm**3',
+                                       'volume of each tank',
+                                       size=self.settings['n_tanks'])
+                weight = self.Variable('weight', 100.0, 'N', 'fuel carried')
+                self.ConstraintList([
+                    weight <= self.density_fuel * f.sum(volume),
+                    weight <= 0.4 * self.weight_gross,
+                    ])
 
         f = Formulation()
         W = f.Variable(name='W', guess=5000.0, units='N',

@@ -52,6 +52,13 @@ from lcsolver.objects.formulation import Formulation
 
 from lcsolver.objects.submodel import SubModel
 
+from lcsolver.objects.constraintgenerator import ConstraintGenerator
+
+# The vector-shape vocabulary: generators that take caller-declared arrays
+# use these to normalize and to refuse ambiguous shapes with the library's
+# own error rather than a bare ValueError.
+from lcsolver.objects.vector import ShapeMismatch, as_array
+
 from lcsolver.objects.blackBoxFunctionModel import (
     BlackBoxFunctionModel,
     BlackBoxFunctionModel_Variable,
@@ -92,6 +99,9 @@ from pyomo.environ import units
 __all__ = [
     "Formulation",
     "SubModel",
+    "ConstraintGenerator",
+    "ShapeMismatch",
+    "as_array",
     "units",
     "optimization_check",
     "structure_report",

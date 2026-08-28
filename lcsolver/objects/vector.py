@@ -188,11 +188,15 @@ def broadcast_rows(vector, n):
 
         M  is (n, m)      cap is (m,)
         M <= f.broadcast_rows(cap, n)     # every row obeys the same caps
+
+    A scalar is accepted as a length-1 vector: it is unambiguous as "the same
+    value everywhere", so lifting it is not the vector-shape guessing the
+    strictness below exists to prevent.
     """
-    arr = as_array(vector)
+    arr = np.atleast_1d(as_array(vector)).view(VectorArray)
     if arr.ndim != 1:
         raise ShapeMismatch(
-            f"broadcast_rows expects a 1-D quantity, got shape {arr.shape}")
+            f"broadcast_rows expects a scalar or 1-D quantity, got shape {arr.shape}")
     out = np.empty((int(n), arr.shape[0]), dtype=object)
     for i in range(int(n)):
         out[i, :] = arr
@@ -206,11 +210,15 @@ def broadcast_cols(vector, n):
 
         M  is (n, m)      cap is (n,)
         M <= f.broadcast_cols(cap, m)     # every column obeys the same caps
+
+    A scalar is accepted as a length-1 vector: it is unambiguous as "the same
+    value everywhere", so lifting it is not the vector-shape guessing the
+    strictness below exists to prevent.
     """
-    arr = as_array(vector)
+    arr = np.atleast_1d(as_array(vector)).view(VectorArray)
     if arr.ndim != 1:
         raise ShapeMismatch(
-            f"broadcast_cols expects a 1-D quantity, got shape {arr.shape}")
+            f"broadcast_cols expects a scalar or 1-D quantity, got shape {arr.shape}")
     out = np.empty((arr.shape[0], int(n)), dtype=object)
     for j in range(int(n)):
         out[:, j] = arr

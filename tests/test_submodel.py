@@ -256,6 +256,9 @@ def test_required_inputs_spans_both_lists_in_order():
 def test_a_bare_inputs_list_still_works():
     class Old(SubModel):
         inputs = ('a',)
+        # this fixture exercises the GATING, not a real model, so its build()
+        # deliberately ignores the input the staleness check wants used
+        _allow_unused_inputs = ('a',)
 
         def build(self):
             self.Variable('x', 1.0, 'kg', 'x')
@@ -292,6 +295,9 @@ def test_a_partial_call_names_every_missing_input():
     class Big(SubModel):
         input_variables = ('a', 'b', 'c')
         input_constants = ('d', 'e')
+        # the point of this fixture is the constructor's error message; it
+        # never gets far enough to build, so nothing uses the inputs
+        _allow_unused_inputs = ('a', 'b', 'c', 'd', 'e')
 
         def build(self):
             pass

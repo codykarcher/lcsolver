@@ -21,8 +21,20 @@ Declaring
     ])
 
 A holographic constraint is imposed *exactly* as an ordinary constraint --
-only LCsolver's bookkeeping differs. Groups forward the declaration, so a
-sub-model declared under ``f.group('wing')`` participates normally.
+only LCsolver's bookkeeping differs.
+
+Groups and submodels forward the declaration, so a block participates on the
+same terms as the assembly around it::
+
+    class OeiModel(SubModel):
+        def build(self):
+            ...
+            self.HolographicConstraintList([
+                v_hover**2 / v_flyaway**2 <= guard,     # the fit's edge
+            ])
+
+which is usually where it belongs: a block is where a fit lives, so a block is
+where its validity envelope should be written.
 
 The check
 ---------

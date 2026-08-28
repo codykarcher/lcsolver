@@ -503,14 +503,20 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
 
     def exitNode(self, node, data):
         try:
-            # print('++++++++++++')
-            # print(node)
-            # print(type(node))
-
-            opt = self._operator_handles[node.__class__](self, node, *data)
-            # print('done')
-
-            return opt
+            handles = self._operator_handles
+            handler = handles.get(node.__class__)
+            if handler is None:
+                # A subclass of a known component (LCScalarVar, LCScalarParam,
+                # a user's Var subclass) dispatches to its nearest base class's
+                # handler, cached so the walk stays one dict lookup per node.
+                for klass in node.__class__.__mro__:
+                    handler = handles.get(klass)
+                    if handler is not None:
+                        handles[node.__class__] = handler
+                        break
+                else:
+                    raise KeyError(node.__class__)
+            return handler(self, node, *data)
         except:
             raise RuntimeError(
                 'Structure walker encountered an error when processing type %s, contact the LCsolver developers'
