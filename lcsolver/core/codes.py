@@ -36,6 +36,9 @@ DETECTION_FAILED = 'LC-W102'     #: structure detection failed; solving as a
 ANNIHILATED_TERM = 'LC-W103'     #: a constraint side is identically zero at
                                  #: the current constant values -- a posynomial
                                  #: cannot represent it
+OUTPUT_ONLY = 'LC-W104'          #: variables computed by a constraint nothing
+                                 #: else uses; irrelevant to the optimum, so
+                                 #: not gated as ill-posed
 
 # --- solve-time warnings ---------------------------------------------------
 BACKEND_FAILED = 'LC-W201'       #: the structured backend failed; fell back
@@ -68,6 +71,8 @@ CODES = {
     DETECTION_FAILED: 'structure detection failed; solved as a raw NLP',
     ANNIHILATED_TERM: 'a constraint side is identically zero; a constant has '
                       'annihilated it',
+    OUTPUT_ONLY: 'output-only variables: computed but unused, irrelevant to '
+                 'the optimum',
     BACKEND_FAILED: 'the structured backend failed; fell back',
     NO_IPOPT_FALLBACK: 'no usable IPOPT; solved with cvxopt',
     SIA_NOT_CONVERGED: 'SIA returned a best iterate, not a certified optimum',

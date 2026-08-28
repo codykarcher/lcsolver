@@ -39,17 +39,17 @@ def _require_cvxopt():
             "(convex_backend='ipopt', the default) does not need cvxopt.")
 
 
-def cvxopt_solve(m, write_back=True):
+def cvxopt_solve(m, write_back=True, structures=None):
     _require_cvxopt()
     cvxopt.solvers.options['show_progress'] = False
     cvxopt.solvers.options['maxiters'] = 100
     cvxopt.solvers.options['feastol'] = 1e-6
     cvxopt.printing.options['width'] = -1
 
-    # print('walking units')
-    m_corrected_units = unit_corrector(m)
-    # print('walking structure')
-    structures = structure_detector(m_corrected_units)
+    # `structures` lets solve() hand down the (centrally presolved) detected
+    # form it already holds; a direct caller detects here as before.
+    if structures is None:
+        structures = structure_detector(unit_corrector(m))
     _raise_if_infeasible(structures)
     # print('Detected problem structure')
     
@@ -322,7 +322,7 @@ class SolveResult(dict):
             raise AttributeError(name)
 
 
-def _run_diagnostics(structures, level):
+def _run_diagnostics(structures, level, peel_outputs=False):
     """Structural checks on the way into a solve.
 
     ``'error'`` (the default): findings that make the stated problem
@@ -349,21 +349,48 @@ def _run_diagnostics(structures, level):
     if level == 'print':
         print(rep)
         return rep
+    from lcsolver.core import codes
+
+    # An unbounded direction gates the solve as an error -- EXCEPT when the
+    # variable is output-only: computed by one constraint that nothing else
+    # uses (rep.output_columns; grey-box-fed variables are already excluded
+    # there). Such a variable cannot affect the optimum, so refusing the
+    # model over it helps nobody. It is demoted to a note instead, and the
+    # central peel in _solve_impl removes the variable and its defining
+    # constraint from the solve, recovering the value afterwards. The
+    # demotion happens ONLY when that peel will actually run
+    # (``peel_outputs``): with presolve bypassed, nothing downstream handles
+    # the dangling variable and it stays the error it always was.
+    peelable = set(rep.output_columns or []) if peel_outputs else set()
+    unbounded_above = [n for n in rep.unbounded_above if n not in peelable]
+    unbounded_below = [n for n in rep.unbounded_below if n not in peelable]
+    demoted = [n for n in rep.unbounded_above + rep.unbounded_below
+               if n in peelable]
+    if demoted:
+        warnings.warn(codes.tag(codes.OUTPUT_ONLY,
+            f"pre-solve note: {len(demoted)} variable(s) are computed by a "
+            f"constraint nothing else uses ({', '.join(demoted[:3])}) -- "
+            "not relevant to the optimum, so not gated as an error; the "
+            "variable and its defining constraint are peeled from the "
+            "solve, and the value is recovered from that constraint "
+            "afterwards. Remove them (or put the variable to use) to "
+            "silence this note."), RuntimeWarning, stacklevel=3)
+
     problems = []
     if rep.empty_columns:
         problems.append(
             f"{len(rep.empty_columns)} variables appear in no constraint "
             f"({', '.join(rep.empty_columns[:3])}) -- remove them or "
             "constrain them")
-    if rep.unbounded_above:
+    if unbounded_above:
         problems.append(
-            f"{len(rep.unbounded_above)} variables are not upper bounded "
-            f"({', '.join(rep.unbounded_above[:3])}) -- add bounds=[lo, hi] "
+            f"{len(unbounded_above)} variables are not upper bounded "
+            f"({', '.join(unbounded_above[:3])}) -- add bounds=[lo, hi] "
             "to the Variable or a constraint that limits them")
-    if rep.unbounded_below:
+    if unbounded_below:
         problems.append(
-            f"{len(rep.unbounded_below)} variables are not lower bounded "
-            f"({', '.join(rep.unbounded_below[:3])}) -- add bounds=[lo, hi] "
+            f"{len(unbounded_below)} variables are not lower bounded "
+            f"({', '.join(unbounded_below[:3])}) -- add bounds=[lo, hi] "
             "to the Variable or a constraint that limits them")
     if problems:
         msg = ("pre-solve check: " + "; ".join(problems)
@@ -371,7 +398,6 @@ def _run_diagnostics(structures, level):
                  "full report"
                + (", or pass diagnostics='warn' to solve() to demote this "
                   "error to a warning." if level == 'error' else "."))
-        from lcsolver.core import codes
         if level == 'error':
             raise PresolveError(codes.tag(codes.ILL_POSED, msg))
         warnings.warn(codes.tag(codes.PRESOLVE_FINDINGS, msg),
@@ -821,9 +847,32 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # post-solve checks read this rather than re-deriving it.
     _st = structures
 
+    # Central presolve: the output-only peel runs HERE, once, ahead of the
+    # routing, so every structured backend -- SIA, GP-IPOPT, cvxopt --
+    # consumes the same reduced structures. A variable computed by a
+    # constraint nothing else uses cannot affect the optimum; carried into
+    # the solve it is a genuinely free column the solver parks anywhere.
+    # ``_finish`` restores it into the result, its value recovered from the
+    # defining constraint at the solution. Grey-box-referenced columns are
+    # never peeled. ``presolve=False`` bypasses the peel -- and then the
+    # gate above treats a dangling variable as the error it would otherwise
+    # be, since nothing downstream will handle it.
+    _presolve = bool(kwargs.pop('presolve', True))
+    _peeled = None
+    _full_structures = structures
+    _protect = None
+    _can_peel = (structures is not None and detection_failed is None
+                 and solver != 'ipopt'
+                 and (structures['Geometric_Program'][0]
+                      or structures['Signomial_Program'][0]))
+    if _presolve and _can_peel:
+        from lcsolver.solvers.sequential.bridge import _greybox_protected
+        _protect = _greybox_protected(structures)
+    _will_peel = _presolve and _can_peel and _protect is not None
+
     if want_checks and structures is not None:
         try:
-            _run_diagnostics(structures, diagnostics)
+            _run_diagnostics(structures, diagnostics, peel_outputs=_will_peel)
         except (InfeasibleProblem, PresolveError):
             # The gate is the point: an ill-posed problem stops here, before
             # any solver spends time on it.
@@ -831,10 +880,46 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         except Exception:
             pass                         # a broken check must not block a solve
 
+    if _will_peel:
+        from lcsolver.presolve.reductions import peel_output_columns
+        try:
+            reduced, removed = peel_output_columns(structures,
+                                                   protect=_protect)
+        except Exception:
+            removed = None               # a broken peel must not block a solve
+        if removed:
+            structures, _peeled = reduced, removed
+
+    def _finish(res):
+        """Restore centrally peeled variables into a backend result.
+
+        The peeled values go back into ``res['x']`` (recovered from each
+        variable's defining constraint at the solved point) and the write-back
+        is re-run against the FULL structures, so the model, the clone, and
+        ``res['solution']`` all carry every variable the caller declared.
+        """
+        if not _peeled or not isinstance(res, dict) or res.get('x') is None:
+            return res
+        import numpy as np
+
+        from lcsolver.postsolve.writeback import write_solution
+        from lcsolver.presolve.reductions import restore_columns
+        # ravel: cvxopt returns x as a COLUMN matrix, and restore_columns
+        # iterates the vector -- rows of a (n,1) array are length-1
+        # sequences, not floats.
+        res['x'] = list(restore_columns(
+            _peeled, np.asarray(res['x'], dtype=float).ravel(),
+            n_original=len(_full_structures['variables'])))
+        try:
+            res['solution'] = write_solution(_full_structures, res, model=m)
+        except Exception:
+            pass                  # the reduced write-back already succeeded
+        return res
+
     if solver == 'cvxopt':
-        return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
+        return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))), sensitivities, _skipdeg, _st)
     if solver == 'ipopt-convex':
-        return _attach_sensitivities(m, _convex_ipopt(m, **kwargs), sensitivities, _skipdeg, _st)
+        return _attach_sensitivities(m, _finish(_convex_ipopt(m, structures=structures, presolve=_presolve, **kwargs)), sensitivities, _skipdeg, _st)
     if solver == 'ipopt':
         return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
     if solver != 'auto':
@@ -866,7 +951,9 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 and (structures['Geometric_Program'][0]
                      or structures['Signomial_Program'][0])):
             return _attach_sensitivities(
-                m, _solve_sp(structures, m, **kwargs), sensitivities, _skipdeg, _st)
+                m, _finish(_solve_sp(structures, m, presolve=_presolve,
+                                     **kwargs)),
+                sensitivities, _skipdeg, _st)
         if not _ipopt_available():
             raise SolverUnavailable(
                 'this model has black-box constraints and its algebraic part '
@@ -897,9 +984,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         try:
             if backend == 'ipopt':
                 return _attach_sensitivities(
-                    m, _convex_ipopt(m, structures=structures, **kwargs),
+                    m, _finish(_convex_ipopt(m, structures=structures,
+                                             presolve=_presolve, **kwargs)),
                     sensitivities, _skipdeg, _st)
-            return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)),
+            return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))),
                                          sensitivities, _skipdeg, _st)
         except Exception as e:
             from lcsolver.presolve.reductions import InfeasibleProblem
@@ -921,7 +1009,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 f"falling back to {where}.",
                 RuntimeWarning, stacklevel=2)
             if not _ipopt_available() and backend == 'ipopt':
-                return _attach_sensitivities(m, cvxopt_solve(m, **_strip_routing_kwargs(kwargs)),
+                return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))),
                                              sensitivities, _skipdeg, _st)
 
     if not _ipopt_available():
@@ -1076,12 +1164,16 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     return res
 
 
-def _convex_ipopt(m, structures=None, **kwargs):
+def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
     """Solve a structured formulation with IPOPT rather than cvxopt.
 
     A geometric program is solved in log space, where it is convex, so the
     global-optimality guarantee is preserved. Linear and quadratic programs are
     already convex in their natural variables and go to IPOPT unchanged.
+
+    ``presolve`` is routed only to the signomial path -- the convex backends
+    have no reduction pipeline of their own; the central peel in
+    ``_solve_impl`` has already run on the structures they receive.
     """
     from lcsolver.solvers.ipopt.GP import solve_gp_ipopt, solve_lp_qp_ipopt
     from lcsolver.solvers.ipopt import ipopt_solve
@@ -1098,7 +1190,7 @@ def _convex_ipopt(m, structures=None, **kwargs):
                        else 'quadratic_program'),
             **kwargs)
     if structures['Signomial_Program'][0]:
-        return _solve_sp(structures, m, **kwargs)
+        return _solve_sp(structures, m, presolve=presolve, **kwargs)
     # Nothing structured left to exploit.
     return ipopt_solve(m, **_strip_routing_kwargs(kwargs))
 
