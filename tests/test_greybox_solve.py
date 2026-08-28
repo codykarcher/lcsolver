@@ -159,3 +159,77 @@ def test_auto_solve_routes_blackbox_to_sia():
                                                     rel=1e-6)
     assert pyo.value(f.x) == pytest.approx(2.0 ** -0.5, rel=1e-5)
     assert pyo.value(f.z) == pytest.approx(1.0, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Variables bounded only THROUGH the box: the pre-solve gate and the KKT
+# sensitivity recovery both have to account for the grey-box rows the
+# algebraic scans cannot see.
+# ---------------------------------------------------------------------------
+def _bounded_through_the_box():
+    """min w  s.t.  w >= c0 + z,  x >= xmin,  y >= ymin,  z == bb(x, y).
+
+    Optimum x = xmin = 2, y = ymin = 1, z = xmin**2 + ymin**2 = 5, w = 6.
+    Analytic log-log sensitivities: c0 -> c0/w = 1/6,
+    xmin -> 2*xmin**2/w = 4/3, ymin -> 2*ymin**2/w = 1/3.
+
+    To the algebraic rows alone, x and y are unbounded above (and look
+    output-only: one monotone row each, free to escape upward) and z is
+    unbounded below. All three are pinned by the box.
+    """
+    f = Formulation()
+    x = f.Variable(name='x', guess=3.0, units='', description='x')
+    y = f.Variable(name='y', guess=2.0, units='', description='y')
+    z = f.Variable(name='z', guess=10.0, units='', description='bb output')
+    w = f.Variable(name='w', guess=12.0, units='', description='objective')
+    c0 = f.Constant(name='c0', value=1.0, units='', description='offset')
+    xmin = f.Constant(name='xmin', value=2.0, units='', description='x floor')
+    ymin = f.Constant(name='ymin', value=1.0, units='', description='y floor')
+    f.Objective(w)
+    f.ConstraintList([
+        w >= c0 + z,
+        x >= xmin,
+        y >= ymin,
+        [z, '==', [x, y], UnitCircle()],
+    ])
+    return f
+
+
+def test_box_computed_variables_do_not_trip_the_gate():
+    """The structural findings must exclude every box-referenced variable."""
+    from lcsolver.presolve.reductions import presolve_check
+
+    rep = presolve_check(_bounded_through_the_box())
+    for name in ('x', 'y', 'z'):
+        assert name not in rep.unbounded_above
+        assert name not in rep.unbounded_below
+        assert name not in rep.empty_columns
+        assert name not in rep.output_columns
+
+
+def test_clean_box_model_solves_without_findings():
+    """Default diagnostics: no LC-E001 gate error, and no LC-W104 note --
+    x and y look output-only to the rows but are not peelable."""
+    import lcsolver
+
+    sol = lcsolver.solve(_bounded_through_the_box())
+    assert str(sol.status) == 'optimal'
+    assert sol.variables('w') == pytest.approx(6.0, rel=1e-4)
+    assert sol.variables('z') == pytest.approx(5.0, rel=1e-4)
+    assert not any('LC-W104' in m or 'LC-E001' in m for m in sol.messages)
+
+
+def test_greybox_duals_certify_and_sensitivities_are_exact():
+    """The KKT stationarity system must carry the grey-box columns: without
+    them every black-box model warned LC-W302 and the duals of the ordinary
+    constraints -- hence every sensitivity -- came out wrong."""
+    import lcsolver
+    from lcsolver import sensitivities
+
+    f = _bounded_through_the_box()
+    sol = lcsolver.solve(f)
+    assert not any('LC-W302' in m for m in sol.messages)
+    s = sensitivities(f)['sensitivities']
+    assert s['c0'] == pytest.approx(1.0 / 6.0, rel=1e-2)
+    assert s['xmin'] == pytest.approx(4.0 / 3.0, rel=1e-2)
+    assert s['ymin'] == pytest.approx(1.0 / 3.0, rel=1e-2)
