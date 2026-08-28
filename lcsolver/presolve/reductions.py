@@ -69,6 +69,7 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "InfeasibleProblem",
            "cancellation_report", "fold_singleton_rows",
            "reduce_columns", "restore_columns", "Removed",
+           "peel_output_columns",
            "propagate_bounds", "eliminate_monomial_equalities",
            "presolve", "PresolveLog",
            "evaluate", "equivalence_error", "assert_equivalent",
@@ -713,7 +714,7 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
     return math.exp(0.5 * (a + b))
 
 
-def _output_only(st, con_idx, bounds, in_objective, n):
+def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
     """Variables that are computed but never fed back, peeled in rounds.
 
     A variable is **output-only** when it appears in exactly one constraint,
@@ -731,6 +732,12 @@ def _output_only(st, con_idx, bounds, in_objective, n):
     Peeling is iterative because removing one output variable can expose
     another behind it -- a reporting quantity computed from another reporting
     quantity. Returns ``[(j, constraint_index), ...]`` in peel order.
+
+    ``protect`` columns are never peeled. This scan reads only the algebraic
+    rows, so a variable a grey-box block feeds can look output-only here --
+    the demo shape is ``W >= Wfixed + Wwing`` with ``Wwing`` pinned by a
+    black box the rows cannot see. Escaping downward is not available to it,
+    and peeling would delete a live constraint.
     """
     alive = set(con_idx)
     taken, order = {}, []
@@ -743,7 +750,8 @@ def _output_only(st, con_idx, bounds, in_objective, n):
 
         progress = False
         for j in range(n):
-            if j in taken or j in in_objective or len(rows.get(j, ())) != 1:
+            if (j in taken or j in protect or j in in_objective
+                    or len(rows.get(j, ())) != 1):
                 continue
             i = next(iter(rows[j]))
             op = st.operator(i)
@@ -1162,7 +1170,8 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     return out, removed[::-1]
 
 
-def reduce_columns(structures, guess=None, eliminate_outputs=True):
+def reduce_columns(structures, guess=None, eliminate_outputs=True,
+                   protect=None):
     """Remove variables the model does not connect to anything.
 
     Two reductions, both exact -- the optimal objective is unchanged and the
@@ -1194,6 +1203,14 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
     Returns ``(reduced_structures, removed)``, where ``removed`` is a list of
     ``(original_index, name, value, reason)`` ordered by index. Feed it to
     :func:`restore_columns` to put the values back into a solution vector.
+
+    ``protect`` names column indices that must survive no matter what the
+    algebraic rows say about them. Grey-box (black-box) constraints live
+    outside the rows this function reads, so a variable only a grey box
+    touches looks disconnected -- or output-only -- while being entirely
+    live; removing it would also break the identity-keyed column map the
+    grey-box rows are built from. Crossed bounds on a protected column still
+    raise: infeasibility is a fact about the model either way.
     """
     if structures.get("bounds") is None:
         raise ValueError(
@@ -1237,8 +1254,9 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
             idx if idx >= 0 else -idx - 1].append((float(r[1]), expo))
     con_idx = sorted(k for k in set(numer) | set(denom) if k != 0)
 
+    protect = frozenset(protect or ())
     outputs = (_output_only(as_detected(structures), con_idx, bounds,
-                            in_objective, n)
+                            in_objective, n, protect=protect)
                if eliminate_outputs else [])
     out_vars = {j for j, _i in outputs}
     out_cons = {i for _j, i in outputs}
@@ -1252,12 +1270,12 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True):
                 raise InfeasibleProblem(
                     f"{nm_at(names, j)} is required to be both >= {lo:g} and "
                     f"<= {hi:g}; the model has no feasible point")
-            if hi <= lo * (1.0 + 1e-9):
+            if hi <= lo * (1.0 + 1e-9) and j not in protect:
                 removed.append(Removed(j, nm_at(names, j), float(lo), "fixed"))
                 continue
 
-        if j in out_vars:
-            continue                    # handled below, in peel order
+        if j in protect or j in out_vars:
+            continue                    # out_vars handled below, in peel order
 
         if j in in_constraint or j in in_objective:
             continue
@@ -2425,6 +2443,11 @@ def presolve_check(structures, names=None, structure_top=5):
                                if n not in covered]
         rep.unbounded_below = [n for n in rep.unbounded_below
                                if n not in covered]
+        # A grey-box-fed variable can look output-only to the algebraic scan
+        # (one row, monotone, free to escape) while its black box pins it --
+        # its row is a live constraint, not a definition. Not peelable.
+        rep.output_columns = [n for n in rep.output_columns
+                              if n not in covered]
 
     if names is None:
         try:
@@ -2595,7 +2618,7 @@ def _with_empty_bounds(structures):
 
 
 def presolve(structures, fold=True, eliminate=True, propagate=False,
-             reduce=True, verbose=False, fold_only=None):
+             reduce=True, verbose=False, fold_only=None, protect=None):
     """Run the presolve passes in an order that is safe to compose.
 
     The order is not a preference, it is a constraint, and two interactions
@@ -2618,6 +2641,11 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
     active singleton MODEL row into a hard bound removes it from the elastic
     relaxation (see the note on :func:`fold_singleton_rows`).
 
+    ``protect`` is forwarded to :func:`reduce_columns`: those column indices
+    are never removed. The sequential solvers pass the grey-box-referenced
+    columns here, which is what lets presolve run at all on a black-box
+    model.
+
     Returns ``(structures, log)``. ``log.restore(x)`` rebuilds the full-length
     solution and ``print(log)`` says what happened.
     """
@@ -2629,7 +2657,7 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
             after = structures["info"]["N_cons_total"]
             log.record("bounds", rows_folded=(before - after) if before else 0)
         if reduce:
-            structures, removed = reduce_columns(structures)
+            structures, removed = reduce_columns(structures, protect=protect)
             log.record("columns", removed=removed)
         if eliminate:
             structures, removed = eliminate_monomial_equalities(structures)
@@ -2643,6 +2671,36 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
     if verbose:
         print(log)
     return structures, log
+
+
+def peel_output_columns(structures, protect=None):
+    """The exact column reductions alone, keeping the bounds-as-rows form.
+
+    ``solve()`` runs this ONCE, centrally, on every structured route (GP and
+    SP, any backend) -- unlike :func:`presolve`, which the sequential bridge
+    applies with backend-specific tuning. Rows that are really bounds stay
+    rows, because the convex backends read bounds out of the rows; the bounds
+    array is synthesized empty for the scan and stripped again afterwards.
+    With every bound empty the fixed removal cannot trigger, so what runs is
+    the output-only peel plus the removal of columns no row touches at all.
+
+    Returns ``(structures, removed)``; with nothing to peel the input is
+    returned unchanged. ``removed`` feeds :func:`restore_columns`.
+    """
+    if structures.get('bounds') is not None:
+        raise ValueError(
+            'peel_output_columns expects the bounds-as-rows form the solve '
+            'routes carry; split-bounds structures take the full presolve')
+    key = ('Signomial_Program' if structures['Signomial_Program'][0]
+           else 'Geometric_Program')
+    width = max((len(r) - 2 for r in structures[key][1]), default=0)
+    st = dict(structures)
+    st['bounds'] = [(None, None)] * max(width, len(st.get('variables') or []))
+    reduced, removed = reduce_columns(st, protect=protect)
+    if not removed:
+        return structures, []
+    reduced['bounds'] = None
+    return reduced, removed
 
 
 def constraint_dependencies(model, variables, n, constraints, x=None,

@@ -492,8 +492,38 @@ def _bound_row_block(structures):
     return frozenset(range(n_total - n_bound + 1, n_total + 1))
 
 
+def _greybox_protected(structures):
+    """Column indices any grey-box block references, or None if unmappable.
+
+    The grey-box rows are built by keying the CURRENT ``structures
+    ['variables']`` list on variable identity (see :func:`_greybox_rows`), so
+    column removal is safe exactly when the removed columns are ones no block
+    references and ``variables`` is kept in sync -- which
+    :func:`~lcsolver.presolve.reductions.reduce_columns` does. A block that
+    cannot be mapped (no external model, or a variable the detector did not
+    record) returns None: the caller must then skip presolve entirely, since
+    there is no way to know which columns are safe.
+    """
+    blocks = greybox_blocks(structures)
+    if not blocks:
+        return frozenset()
+    col = {id(v): j for j, v in enumerate(structures.get('variables') or [])}
+    protected = set()
+    for block in blocks:
+        bb = getattr(block, '_ex_model', None)
+        if bb is None:
+            return None
+        try:
+            for v in _unwrap_vars(list(bb.inputVariables_optimization)
+                                  + list(bb.outputVariables_optimization)):
+                protected.add(col[id(v)])
+        except (KeyError, TypeError):
+            return None
+    return frozenset(protected)
+
+
 def presolve_structures(structures, verbose=False, fold_only=None,
-                        eliminate=True):
+                        eliminate=True, fold=True, protect=None):
     """Shrink a detected structure before handing it to a solver.
 
     Folds rows that are really bounds into the bounds, then drops columns
@@ -522,12 +552,20 @@ def presolve_structures(structures, verbose=False, fold_only=None,
         width = max((len(r) - 2 for r in st[key][1]), default=0)
         st['bounds'] = [(None, None)] * max(width,
                                             len(st.get('variables') or []))
-    return _presolve_pipeline(st, verbose=verbose, fold_only=fold_only,
-                              eliminate=eliminate)
+    return _presolve_pipeline(st, verbose=verbose, fold=fold,
+                              fold_only=fold_only, eliminate=eliminate,
+                              protect=protect)
 
 
 def _apply_presolve(structures, x0):
     """``(reduced_structures, reduced_x0, log, n_original)``.
+
+    On a grey-box model, presolve narrows to the column peel with the
+    grey-box-referenced columns protected (see :func:`_greybox_protected`):
+    the peel is what removes an output-only variable and its defining
+    constraint -- a dangling ``CD >= drag buildup`` after the objective
+    stopped using ``CD`` -- instead of letting IPOPT park the free variable
+    at an arbitrary value.
 
     Two of the pipeline's passes are tuned down here, both on measured
     evidence from the spcomparisons b737 case (1,298 vars, 4,160 rows):
@@ -545,8 +583,21 @@ def _apply_presolve(structures, x0):
       default-on in :func:`lcsolver.presolve.reductions.presolve`.
     """
     n_original = len(structures.get('variables') or [])
-    reduced, log = presolve_structures(
-        structures, fold_only=_bound_row_block(structures), eliminate=False)
+    protect = _greybox_protected(structures)
+    if protect is None:
+        # A grey-box block could not be mapped to columns, so no removal is
+        # provably safe. The fold is barred too (see _fold_bound_rows).
+        return structures, x0, None, n_original
+    if protect:
+        # Grey-box present: only the column peel runs, with every
+        # grey-box-referenced column protected. No fold -- folding renumbers
+        # rows, and a grey-box row may reference one.
+        reduced, log = presolve_structures(structures, fold=False,
+                                           eliminate=False, protect=protect)
+    else:
+        reduced, log = presolve_structures(
+            structures, fold_only=_bound_row_block(structures),
+            eliminate=False)
     if x0 is not None:
         # Drop what each pass removed, in the space that pass ran in. The log
         # unwinds them in reverse afterwards, so no index remapping is needed
@@ -636,10 +687,6 @@ def solve_slcp(structures, x0=None, method='slcp', options=None,
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
     log, n_original = None, len(structures.get('variables') or [])
-    if presolve and greybox_blocks(structures):
-        # Presolve reasons only about the algebraic rows, so it can fold or
-        # drop a column a grey-box row still references. Skip it.
-        presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
     else:
@@ -677,10 +724,6 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
     if x0 is None:
         x0 = [float(pyo.value(v)) for v in structures['variables']]
     log, n_original = None, len(structures.get('variables') or [])
-    if presolve and greybox_blocks(structures):
-        # Presolve reasons only about the algebraic rows, so it can fold or
-        # drop a column a grey-box row still references. Skip it.
-        presolve = False
     if presolve:
         structures, x0, log, n_original = _apply_presolve(structures, x0)
     else:
