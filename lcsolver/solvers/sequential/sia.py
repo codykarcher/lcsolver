@@ -2952,7 +2952,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             _infeas_best = min(_infeas_best, viol)
         else:
             _infeas_best, _infeas_stall = np.inf, 0
-        if viol <= _inc_tol:
+        # Incumbent memory is a GREY-BOX safeguard (see the block comment at
+        # the loop head): on a pure SP it must stay dormant.  Recording it
+        # unconditionally sent black-box-free problems into the strict
+        # fallback below whenever a restoration hiccuped, where the unset
+        # strict floor then rejected every ~1e-6-scale step to the
+        # iteration cap (measured: the lcjetliner b737 anchor, feasible to
+        # 8e-7, parked 184 iterations at stationarity 6e-2 -- a model that
+        # converges in 39 iterations with the safeguard dormant).
+        if has_blackbox and viol <= _inc_tol:
             _f_here = problem.objective_value(x)
             if _f_here < _f_incumbent:
                 _x_incumbent, _f_incumbent = x.copy(), float(_f_here)

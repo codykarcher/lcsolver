@@ -135,23 +135,42 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
 
     # Now that bounds are set, need to add them to the pyomo object
     # only do if lower bound is present
+    # Rows this detector created on an earlier pass are recorded on the
+    # component, so RE-detection (Monte Carlo loops, sweeps, continuation)
+    # replaces them from the current declarations instead of colliding.
+    _owned = getattr(pyomo_component, '_lc_detector_bound_keys', None)
+    if _owned is None:
+        _owned = set()
+        pyomo_component._lc_detector_bound_keys = _owned
+
     if var_lower_bound is not None:
         # Need to come up with a key for the pyomo object
         # Will be x_lowerBound.  However, if x_lowerBound exists, we will do something different
         proposedKey = vr.name + '_lowerBound'
         # Check if the proposed key is in the pyomo object already
         if proposedKey in list(pyomo_component.__dict__.keys()):
-            # if it is, we will create a key x_lowerBound_randomSeed_######
-            for i in range(0,10):
-                # Generate 10 random tries for ###### and see if it is in the pyomo dict
-                proposedKey = vr.name + '_lowerBound_randomSeed_' + str(int(math.floor(random.random()*1e6)))
-                # if it isn't in the pyomo dict, we use the key and break the loop
-                if proposedKey not in list(pyomo_component.__dict__.keys()):
-                    break
-            # This should never happen, but if you can't find a unique key then we notify the user
-            raise ValueError('Could not found a unique identifier for the lower bound on variable '+vr.name)
+            if proposedKey in _owned:
+                # our own row from a previous detection: replace it
+                pyomo_component.del_component(getattr(pyomo_component, proposedKey))
+            else:
+                # a user constraint holds the name: create a key
+                # x_lowerBound_randomSeed_######
+                _found = False
+                for i in range(0,10):
+                    # Generate 10 random tries for ###### and see if it is in the pyomo dict
+                    proposedKey = vr.name + '_lowerBound_randomSeed_' + str(int(math.floor(random.random()*1e6)))
+                    # if it isn't in the pyomo dict, we use the key and break the loop
+                    if proposedKey not in list(pyomo_component.__dict__.keys()):
+                        _found = True
+                        break
+                # This should never happen, but if you can't find a unique key then we notify the user
+                # (and the raise fires ONLY on failure now -- it used to fire
+                # unconditionally after the loop, break or no break)
+                if not _found:
+                    raise ValueError('Could not found a unique identifier for the lower bound on variable '+vr.name)
         # Now that we have a key, add the new constraint to the pyomo object
         setattr(pyomo_component, proposedKey, pyo.Constraint(expr = vr >= var_lower_bound))
+        _owned.add(proposedKey)
         # Increment the number of bounding constraints
         N_bound_cons += 1
 
@@ -161,14 +180,22 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
         proposedKey = vr.name + '_upperBound'
         # check to see if this key already exists
         if proposedKey in list(pyomo_component.__dict__.keys()):
-            # if it does, then we generate a random key
-            for i in range(0,10):
-                proposedKey = vr.name + '_upperBound_randomSeed_' + str(int(math.floor(random.random()*1e6)))
-                if proposedKey not in list(pyomo_component.__dict__.keys()):
-                    break
-            raise ValueError('Could not found a unique identifier for the upper bound on variable '+vr.name)
+            if proposedKey in _owned:
+                # our own row from a previous detection: replace it
+                pyomo_component.del_component(getattr(pyomo_component, proposedKey))
+            else:
+                # if it does, then we generate a random key
+                _found = False
+                for i in range(0,10):
+                    proposedKey = vr.name + '_upperBound_randomSeed_' + str(int(math.floor(random.random()*1e6)))
+                    if proposedKey not in list(pyomo_component.__dict__.keys()):
+                        _found = True
+                        break
+                if not _found:
+                    raise ValueError('Could not found a unique identifier for the upper bound on variable '+vr.name)
         # and add the new constraint
         setattr(pyomo_component, proposedKey, pyo.Constraint(expr = vr <= var_upper_bound))
+        _owned.add(proposedKey)
         # increment the number of bounding constraints
         N_bound_cons += 1
 

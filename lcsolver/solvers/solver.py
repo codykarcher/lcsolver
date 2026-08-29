@@ -603,7 +603,21 @@ def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
     try:
         from lcsolver.postsolve.sensitivity import sensitivities as _sens
         out = _sens(m)
-    except Exception:
+    except Exception as exc:
+        # Never fatal -- but never SILENT either. An empty table at a
+        # certified optimum with no explanation cost a day of diagnosis
+        # (the unit-corrector recursion on an already-corrected model);
+        # record what happened where the reader will look.
+        res['sensitivity_detail'] = {
+            'method': 'failed',
+            'error': f'{type(exc).__name__}: {exc}',
+        }
+        warnings.warn(
+            "[LC-W302] sensitivities could not be computed at this "
+            f"solution ({type(exc).__name__}: {exc}). The solve itself is "
+            "unaffected; res['sensitivity_detail']['error'] carries the "
+            "cause.",
+            RuntimeWarning, stacklevel=3)
         return res
     res['sensitivities'] = out['sensitivities']
     res['sensitivity_detail'] = out

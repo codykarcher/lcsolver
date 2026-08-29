@@ -155,7 +155,18 @@ def _join_failures(failures):
 def unit_corrector(pyomo_component):
     if not isinstance(pyomo_component, BlockData):
         raise ValueError( "Invalid type %s passed into the convexity detector"%(str(type(pyomo_component))))
-    
+
+    # IDEMPOTENCY: correcting twice is semantically the identity, and the
+    # second walk previously CRASHED outright -- detector-added bound rows
+    # carry bracketed names ('FS_M[0]_lowerBound') whose rendered .name
+    # differs from their attribute key, so the delete-and-replace below
+    # could not find them.  sensitivities() re-corrects internally, which
+    # made every post-solve sensitivity read on an already-corrected model
+    # fail (silently, until the attach path learned to report).  Return a
+    # fresh clone to preserve the fresh-copy contract every caller holds.
+    if getattr(pyomo_component, '_lc_unit_corrected', False):
+        return pyomo_component.clone()
+
     corrected_model = pyomo_component.clone()
     # Stamp the clone with the identity of what it was cloned FROM.  Detected
     # structures carry this clone, and a caller may hand those structures back
@@ -245,12 +256,14 @@ def unit_corrector(pyomo_component):
 ######################## Delete Old and Add Corrected Constraint ########################
 
                 # need to put rv into new pyomo model
-                # print(dir(corrected_model.ConstraintList))
-                corrected_model.__delattr__(con.name)  # remove existing constraint
-                corrected_model.__setattr__(con.name, pyo.Constraint(expr=rv))  # define a new one
-                # print(rv)
-                #corrected_model.del_component(con.name)
-                #corrected_model.add_component(con.name, pyo.Constraint(expr=rv))
+                # Replace via the component HANDLE and its storage key:
+                # .name renders quoted for names with special characters
+                # (e.g. detector bound rows named FS_M[0]_lowerBound), and
+                # __delattr__ on the rendered form cannot find the
+                # attribute.
+                _key = con.local_name
+                corrected_model.del_component(con)  # remove existing constraint
+                corrected_model.add_component(_key, pyo.Constraint(expr=rv))  # define a new one
                 
                 
 ###################################################################################
@@ -264,6 +277,7 @@ def unit_corrector(pyomo_component):
     if failures:
         raise UnitMismatch(_join_failures(failures))
 
+    corrected_model._lc_unit_corrected = True  # idempotency marker, see top
     return corrected_model
 
 
