@@ -1040,7 +1040,7 @@ def _strip_routing_kwargs(kwargs):
     backends reject them (the observed failure mode: every structured-path
     exception was MASKED by `ipopt_solve() got an unexpected keyword
     argument 'sp_method'` from the fallback, hiding the real error)."""
-    drop = ('sp_method', 'options', 'sp_form', 'presolve',
+    drop = ('sp_method', 'options', 'sia_options', 'sp_form', 'presolve',
             'split_equalities', 'pair_equalities')
     return {k: v for k, v in kwargs.items() if k not in drop}
 
@@ -1181,6 +1181,30 @@ def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
     if structures is None:
         structures = structure_detector(unit_corrector(m))
     _raise_if_infeasible(structures)
+
+    # ``options`` is overloaded by history: an IPOPT options dict on the
+    # convex paths, an SIAOptions object on the signomial path.  Route it by
+    # TYPE so a caller pinning SIA parameters does not crash a solve that
+    # resolves to a pure GP into the raw-IPOPT fallback (and an IPOPT dict
+    # does not reach SIA).  ``sia_options`` is the unambiguous spelling: it
+    # is forwarded as the SIA ``options`` only on the signomial path and
+    # dropped everywhere else.
+    from lcsolver.solvers.sequential.sia import SIAOptions
+    _sia_opts = kwargs.pop('sia_options', None)
+    # mirror the dispatch order below: a GP is also a detected SP, but it is
+    # SOLVED as a GP, so the SIA meaning applies only when SP is the route
+    _is_sp = bool(structures['Signomial_Program'][0]
+                  and not structures['Geometric_Program'][0]
+                  and not structures['Linear_Program'][0]
+                  and not structures['Quadratic_Program'][0])
+    if _is_sp:
+        if _sia_opts is not None:
+            kwargs['options'] = _sia_opts
+        elif isinstance(kwargs.get('options'), dict):
+            kwargs.pop('options')          # an IPOPT dict means nothing to SIA
+    elif isinstance(kwargs.get('options'), SIAOptions):
+        kwargs.pop('options')              # SIA parameters mean nothing here
+
     if structures['Geometric_Program'][0]:
         return solve_gp_ipopt(structures, model=m, **kwargs)
     if structures['Linear_Program'][0] or structures['Quadratic_Program'][0]:
