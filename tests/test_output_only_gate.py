@@ -213,3 +213,31 @@ def test_protected_columns_survive_reduce():
     # ... and without protection it goes, as before.
     small, removed = reduce_columns(st)
     assert 'y' not in [str(v) for v in small['variables']]
+
+
+def test_middle_position_peel_does_not_shift_writeback():
+    """FALSIFICATION of the restore path: a peeled column that is NOT last.
+
+    The GP-IPOPT backend solves in the full frame and parks the peeled
+    column at garbage; restore_columns must recognize the full-length
+    vector and overwrite in place.  Before the length-aware branch it
+    slotted the full vector through the reduced-frame logic, shifting
+    every value after the peeled index by one -- the written-back point
+    then VIOLATED constraints of the original model (found as scrambled
+    masses on the lcspacecraft FireSat model, wet < dry).
+    """
+    f = Formulation()
+    a = f.Variable('a', 1.0, '', 'design var')
+    p = f.Variable('p', 1.0, '', 'output-only, deliberately mid-list')
+    b = f.Variable('b', 1.0, '', 'design var 2')
+    c = f.Variable('c', 1.0, '', 'design var 3')
+    f.Constraint(a >= 2.0)
+    f.Constraint(p >= 10 * a)
+    f.Constraint(b >= 3 * a)
+    f.Constraint(c >= a + b)
+    f.Objective(b + c)
+    sol = lcsolver.solve(f)
+    assert sol.variables('a') == pytest.approx(2.0, rel=1e-4)
+    assert sol.variables('p') == pytest.approx(20.0, rel=1e-3)
+    assert sol.variables('b') == pytest.approx(6.0, rel=1e-4)
+    assert sol.variables('c') == pytest.approx(8.0, rel=1e-4)

@@ -408,6 +408,20 @@ class Detected(dict):
         out = Detected(self)
         key = self.key
         out[key] = [self[key][0], rows, list(operators)]
+        # A GP is also an SP, and the detector stores the SAME rows under
+        # both log families.  Rebuilding only the preferred family used to
+        # leave the other one STALE -- full-width rows against a narrowed
+        # ``variables`` list -- and any peeled model that then routed
+        # through the stale family solved with scrambled guesses and wrote
+        # back a shuffled solution (found as IPOPT divergence on a
+        # 593-variable UAV GP and as physically impossible masses on a
+        # spacecraft GP).  Every other flagged log family that carried the
+        # same rows moves in step; one that genuinely differed is left
+        # alone.
+        for k in LOG_ORDER:
+            if (k != key and self.get(k) and self[k][0]
+                    and self[k][1] == self[key][1]):
+                out[k] = [self[k][0], rows, list(operators)]
         for k, v in overrides.items():
             out[k] = v
         return out

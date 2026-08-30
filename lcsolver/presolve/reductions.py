@@ -668,7 +668,14 @@ def _eval_terms(terms, x, j=None, tj=None):
             lx = tj if (j is not None and i == j) else (
                 math.log(x[i]) if i < len(x) and x[i] > 0 else -math.inf)
             acc += e * lx
-        total += math.exp(acc) if acc > -700 else 0.0
+        # Saturate BOTH directions: the bisection in _solve_for probes
+        # brackets near log(1e300), where a squared variable puts acc ~ 1400
+        # and a bare math.exp raises OverflowError.  Only the sign of the
+        # ratio matters out there, so +inf is the right answer, not an error.
+        if acc > 700:
+            total += math.inf
+        elif acc > -700:
+            total += math.exp(acc)
     return total
 
 
@@ -1366,13 +1373,26 @@ def restore_columns(removed, x_reduced, n_original=None):
     outputs = [r for r in removed if getattr(r, 'recover', None) is not None]
     placed = set(constants) | {r.index for r in outputs}
 
-    out = np.ones(n_original, dtype=float)
-    it = iter(x_reduced)
-    for j in range(n_original):
-        if j in placed:
-            out[j] = constants.get(j, 1.0)
-        else:
-            out[j] = next(it)
+    if len(x_reduced) == n_original:
+        # The backend solved in the FULL frame (GP-IPOPT builds from the
+        # model, not the reduced structures) and simply parked each peeled
+        # column wherever the interior point left it.  Positions are already
+        # right; only the removed entries need overwriting below.  Slotting
+        # a full vector through the reduced-frame branch instead would shift
+        # every value after the first peeled index by one -- the bug that
+        # scrambled write-back on any model whose peeled variable was not
+        # declared last.
+        out = x_reduced.copy()
+        for j, v in constants.items():
+            out[j] = v
+    else:
+        out = np.ones(n_original, dtype=float)
+        it = iter(x_reduced)
+        for j in range(n_original):
+            if j in placed:
+                out[j] = constants.get(j, 1.0)
+            else:
+                out[j] = next(it)
 
     for r in outputs:
         spec = r.recover
