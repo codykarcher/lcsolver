@@ -259,12 +259,22 @@ class SIAOptions:
         self.step_expansion_max = 1e4  # step extension described in solve_sia.
                                        # Set to 1.0 to take the sub-problem's
                                        # step exactly as returned.
-        # ON by default (2026-08): the condensed-numerator iteration is not
-        # feasibility preserving, but with Phase I restoration steps
-        # (phase1_restore_iterations) repairing any excursion it is faster on
-        # every anchor model and reaches the same certified points. Set False
-        # for the conservative, feasibility-preserving mode.
-        self.condense_numerator = True
+        # OFF by default (2026-08-30, reversing the 2026-08 flip).  This flag
+        # now governs only plain INEQUALITY ratios -- equalities have owned
+        # their both-sides condensation in CondensedEquality since the
+        # pair-equalities work, and that is where the speed win lived.  On an
+        # inequality the condensed numerator surrenders the conservative
+        # (feasible-iterate) property with NO repair path: restoration closes
+        # equality manifolds, not inequality excursions.  Measured on the
+        # launch-vehicle coupled-losses SP: with True the booster-nozzle
+        # rows drive a limit cycle (eps flipping 10.8 <-> its 60 cap, 208
+        # zigzag detections in 1200 iterations, parked ~3.5e-2 infeasible,
+        # objective UNDER the true optimum); with False the same model
+        # converges in 10 iterations to the certified optimum (eps 31.86,
+        # GLOM 73.650 t, violation 1e-12) that PCCP and a pinned-eps sweep
+        # independently confirm.  Set True only to reproduce the tangent
+        # large-step mode for comparison.
+        self.condense_numerator = False
         # Seed for the black-box curvature model, in units of |d log g / d log x|.
         # B is built by BFGS from SUCCESSIVE gradients, so it is ZERO on the first
         # iteration and the linearized rows are then not conservative at all --
@@ -2652,6 +2662,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _zz_prev = None             # last ACCEPTED iterate, for zigzag detection
     _zz_cool = 0                # expansion hold-off after a zigzag detection
     _zz_hits = 0                # detections, reported on the result
+    _zz_ceiling = np.inf        # radius cap ratcheted down by REPEAT hits
     _fg_trips = 0               # times the feasibility guard condition HELD
                                 # (counted whether or not it was applied)
     # TANGENT EQUALITIES get the same treatment as the linearized class:
@@ -2736,7 +2747,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             d, s, mults, model_obj = _subproblem(
                 problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
                 use_slacks=use_slacks, cache=cache,
-                force_trust=_has_tangent_eq)
+                force_trust=_has_tangent_eq or _trust_forced)
             # NOTE: the filter does NOT supersede the trust region -- it
             # cannot size steps, only accept them. Measured without the
             # cap: tangent-equality subproblems have near-zero curvature
@@ -3424,9 +3435,17 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # cycle this exists for). Two sizeable accepted steps that cancel
         # mean the linearization is flipping between wells the filter
         # cannot arbitrate; only a smaller radius localizes it.
+        # The detector arms on EVERY model class, not only pins/black boxes:
+        # a plain-signomial model can flip between wells just the same (the
+        # launch-vehicle coupled-losses SP cycled its booster nozzle between
+        # eps 10.8 and the 60 cap forever -- both steps ACCEPTED, objective
+        # alternating 72.35/72.82 around a true optimum of 73.65 at eps 32,
+        # both cycle points ~3.5e-2 infeasible).  Without tangent equalities
+        # force_trust is off, so detection alone is not enough: the hit also
+        # arms _trust_forced below, or the shrunk radius would never reach
+        # the sub-problem and the cycle would replay at full amplitude.
         _zz_hit = False
         if (getattr(options, 'zigzag_damp', True)
-                and (_has_tangent_eq or has_blackbox)
                 and _zz_prev is not None):
             # L2 over the WHOLE vector, not the max component: a single
             # lever flipping while the other 1600 variables advance is
@@ -3450,6 +3469,22 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _zz_cool = int(getattr(options, 'zigzag_cooldown', 4))
                 radius = max(options.trust_min,
                              min(radius, _s) * options.trust_shrink)
+                # Make the shrink COUNT on models where the box is not
+                # otherwise applied (no tangent equalities, no bb cap):
+                # from here on the sub-problem gets the radius.
+                _trust_forced = True
+                # A REPEAT hit means the cooldown expired and expansion
+                # re-inflated the radius past the well separation, so the
+                # same cycle replayed (measured on the launch-vehicle SP:
+                # 208 detections in 1200 iterations, damp -> re-expand ->
+                # flip, forever).  Ratchet the CEILING expansion may ever
+                # regrow to; once it sits below the well separation the
+                # flip is unreachable and the iterate must settle in one
+                # well, where ordinary descent takes over.
+                if _zz_hits > 1:
+                    _zz_ceiling = min(_zz_ceiling,
+                                      max(8.0 * options.trust_min,
+                                          _s * options.trust_shrink))
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  ZIGZAG net={_net:.2e} vs "
                           f"step={_s:.2e}; radius -> {radius:.3e}")
@@ -3458,7 +3493,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if _zz_hit or _zz_cool > 0:
             pass                    # hold the radius; no expansion
         elif ratio > options.ratio_expand:
-            radius = min(options.trust_max, radius * options.trust_expand)
+            radius = min(min(options.trust_max, _zz_ceiling),
+                         radius * options.trust_expand)
         elif _curv_trained:
             # Trained, but the step was only adequate. Grow GENTLY rather than
             # by the full factor: doubling from a radius that works lands
@@ -3469,7 +3505,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # the objective creeping 0.04 kg per cycle). The square root of the
             # expansion factor walks up to the usable radius instead of
             # vaulting past it.
-            radius = min(options.trust_max,
+            radius = min(min(options.trust_max, _zz_ceiling),
                          radius * math.sqrt(options.trust_expand))
 
         _zz_prev = x.copy()
