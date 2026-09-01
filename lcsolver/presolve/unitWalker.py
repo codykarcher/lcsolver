@@ -123,6 +123,32 @@ from lcsolver.presolve.walkerSupportFunctions import (
     # processMonomial,
 )
 
+def _units_match(u1, u2, tol=1e-9):
+    """Whether two pint units (already in base units) are the same dimension.
+
+    NOT ``u1 == u2``.  Pint compares the exponent floats exactly, and a
+    fractional exponent poisons them: with a Constant in [N/W^0.803] times a
+    power [W^0.803], the walker builds ``kg^0.197*m^-0.606*s^0.409`` times
+    ``kg^0.803*m^1.606*s^-2.409`` and the seconds exponent comes out
+    ``-1.9999999999999998`` -- not ``-2.0``, so ``==`` said the product was
+    not newtons.  Worse, pint's *formatter* rounds for display, so the
+    resulting report printed ``[N] =/= [N]``.  Exponents are order-ten
+    numbers, so an absolute tolerance is enough.
+    """
+    if u1 == u2:
+        return True
+    e1 = dict(getattr(u1, '_units', {}))
+    e2 = dict(getattr(u2, '_units', {}))
+    return all(abs(e1.get(k, 0.0) - e2.get(k, 0.0)) <= tol
+               for k in set(e1) | set(e2))
+
+
+def _is_dimensionless(u, tol=1e-9):
+    """Dimensionless within the same tolerance -- a residual ``kg^1e-16``
+    left by fractional-exponent arithmetic is still dimensionless."""
+    return all(abs(e) <= tol for e in dict(getattr(u, '_units', {})).values())
+
+
 def handle_var_node(visitor,node):
     var_units = units.get_units(node)
     # K = as_quantity(1.0*var_units).to_base_units().magnitude #correction factor
@@ -174,7 +200,7 @@ def handle_sumExpression_node(visitor,node, *args):
     arg_checker = []
     for arg in args:
         arg_checker.append(arg.units)
-    if all(ag == arg_checker[0] for ag in arg_checker):
+    if all(_units_match(ag, arg_checker[0]) for ag in arg_checker):
         handled_sum = sum(ag.expr for ag in args)
     else: 
         raise ValueError('Function cannot handle mismatching units in SumNode: %s'%('+'.join(str(arg) for arg in args)))
@@ -182,10 +208,10 @@ def handle_sumExpression_node(visitor,node, *args):
 
 def handle_pow_node(visitor, node, arg1, arg2):
     dimensionless = units.pint_registry('').units
-    if  ( (isinstance(arg2.expr, int) or isinstance(arg2.expr, float)) and (arg2.units == dimensionless) ): #checks to make sure the power is only a number (yay)
+    if  ( (isinstance(arg2.expr, int) or isinstance(arg2.expr, float)) and _is_dimensionless(arg2.units) ): #checks to make sure the power is only a number (yay)
         return unitsPack(expr=arg1.expr**arg2.expr, units=arg1.units**arg2.expr)
 
-    if arg2.units != dimensionless: # units in power is a nono
+    if not _is_dimensionless(arg2.units): # units in power is a nono
         raise ValueError('Function handle_pow_node cannot handle units %s in the exponent'%(arg2))
 
     # A SYMBOLIC exponent: a Constant (mutable Param), or an expression over
@@ -194,7 +220,7 @@ def handle_pow_node(visitor, node, arg1, arg2):
     # dimensional, the units of the result would depend on a number a deck can
     # change, so the model would not have fixed units at all; that is refused
     # here rather than left to surface as a pint error deeper down.
-    if arg1.units == dimensionless:
+    if _is_dimensionless(arg1.units):
         return unitsPack(expr=arg1.expr**arg2.expr, units=dimensionless)
 
     raise ValueError(
@@ -277,7 +303,7 @@ def handle_unary_node(visitor, node, arg1):
         return unitsPack(expr=node.create_node_with_local_data((arg1.expr,)),
                          units=arg1.units)
 
-    if not arg1.units.dimensionless:
+    if not _is_dimensionless(arg1.units):
         raise ValueError(
             '%s() requires a dimensionless argument, but its argument has '
             'units of [%s]. Divide it by a reference quantity in those units '
@@ -306,7 +332,7 @@ def handle_functionID_node(visitor, node, *args): #?
     return handle_external_function_node(visitor, node, *args)
 
 def handle_equality_node(visitor, node, arg1, arg2):
-    if arg1.units != arg2.units:
+    if not _units_match(arg1.units, arg2.units):
         raise ValueError('Function cannot handle mismatching units in EqualityNode: %s == %s'%(str(arg1),str(arg2)))
 
     LHS = arg1.expr
@@ -329,7 +355,7 @@ def handle_equality_node(visitor, node, arg1, arg2):
     return expr1
 
 def handle_inequality_node(visitor, node, arg1, arg2):
-    if arg1.units != arg2.units:
+    if not _units_match(arg1.units, arg2.units):
         raise ValueError('Function cannot handle mismatching units in InequalityNode: %s >= %s'%(str(arg1),str(arg2)))
 
     LHS = arg1.expr
@@ -354,7 +380,8 @@ def handle_inequality_node(visitor, node, arg1, arg2):
     return expr1
 
 def handle_ranged_inequality_node(visitor, node, arg1, arg2, arg3):
-    if (arg1.units != arg2.units) or (arg1.units != arg3.units):
+    if not (_units_match(arg1.units, arg2.units)
+            and _units_match(arg1.units, arg3.units)):
         raise ValueError('Function cannot handle mismatching units in RangedInequalityNode: %s <= %s <= %s'%(str(arg1),str(arg2),str(arg3)))
 
     LHS = arg1.expr
