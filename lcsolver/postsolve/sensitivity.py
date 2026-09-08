@@ -217,7 +217,22 @@ def _residual_scale(con, variables):
 
 
 def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
-    """True if the constraint is binding at the current point."""
+    """True if the constraint is binding at the current point.
+
+    The comparison is against the constraint's own natural magnitude and
+    nothing else. An earlier version tested ``rtol * max(1.0, scale)``, whose
+    floor silently turned this relative test into an ABSOLUTE one for every
+    constraint smaller than unit scale -- and a dimensionless quantity below 1
+    is ordinary outside aerospace. On the oxygenator GP the index of hemolysis
+    sits at 2e-5 against a slack lower bound of 1e-12: the residual is 2e-5,
+    the floored threshold is 1e-4, so a bound seven orders of magnitude away
+    was declared active. That put one more column in the stationarity system
+    than there are variables, which made the active set genuinely rank
+    deficient, which made the duals genuinely non-unique -- so LC-W303 fired
+    correctly and hid five sensitivities that were, by then, really undetermined
+    (DP_max came back +0.019 against a true -0.301, the wrong sign). Removing
+    the floor restores agreement with finite differences to ~1e-5.
+    """
     bound, is_eq = _bound_of(con)
     if is_eq:
         return True
@@ -228,9 +243,17 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
     except Exception:
         return False
     if scale is None:
-        scale = (_residual_scale(con, variables) if variables is not None
-                 else max(1.0, abs(bd)))
-    return abs(b - bd) <= rtol * max(1.0, scale)
+        if variables is not None:
+            scale = _residual_scale(con, variables)
+        else:
+            # No variables to measure terms against, so the bound is the only
+            # scale available. It is routinely 0 here (LCsolver moves everything
+            # to one side), and only then is there nothing better than 1.0 --
+            # floor on that case alone, never on a bound that is merely small.
+            scale = abs(bd) if bd else 1.0
+    # Both branches above are strictly positive; guard anyway rather than
+    # shrink the tolerance to nothing on a caller-supplied scale.
+    return abs(b - bd) <= rtol * (scale if scale > 0 else 1.0)
 
 
 def _param_gradient(expr, index):

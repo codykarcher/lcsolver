@@ -415,5 +415,104 @@ class TestDualAmbiguity(unittest.TestCase):
         self.assertEqual(res['ambiguous'], [])
 
 
+class TestActiveSetIsScaleInvariant(unittest.TestCase):
+    """A slack bound on a small-magnitude variable must read as slack.
+
+    The active-set test compares a residual against the constraint's own
+    natural magnitude. It used to compare against ``rtol * max(1.0, scale)``,
+    whose floor turned that relative test into an absolute one for anything
+    below unit scale -- invisible in aerospace, where variables are forces and
+    speeds, and immediate outside it. A dimensionless damage index of order
+    1e-5 sitting on a slack 1e-12 lower bound was declared active, which added
+    a column to the stationarity system, which made the active set rank
+    deficient, which made the duals non-unique. The failure then surfaced as
+    LC-W303 correctly hiding sensitivities that had genuinely become
+    undetermined -- so the visible symptom was two steps from the cause.
+    """
+
+    @staticmethod
+    def _one_constraint(expr_of):
+        """A Formulation carrying a single constraint, and that constraint.
+
+        ``Formulation.Constraint`` returns the constraint's NAME, not the
+        component, so reach for the component itself.
+        """
+        f = Formulation()
+        y = f.Variable('y', 1.0e-5, '', 'a dimensionless index of order 1e-5')
+        f.Objective(y)
+        f.Constraint(expr_of(y))
+        return f, y, list(f.get_constraints())[0]
+
+    def test_a_slack_bound_far_below_unit_scale_is_not_active(self):
+        """The unit that fails directly, with no solve in the way."""
+        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+
+        f, y, con = self._one_constraint(lambda v: v >= 1.0e-12)
+        y.set_value(2.0e-5)
+
+        self.assertFalse(
+            _is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
+            'y is 2e-5 and the bound is 1e-12 -- seven orders of magnitude '
+            'of slack must not read as binding')
+
+    def test_the_no_variables_fallback_is_also_scale_invariant(self):
+        """The same trap sits in the branch that has no variables to measure."""
+        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+
+        f, y, con = self._one_constraint(lambda v: v >= 1.0e-12)
+        y.set_value(2.0e-5)
+
+        self.assertFalse(
+            _is_active(con, rtol=ACTIVE_RTOL),
+            'the bound is the only scale available, and 2e-5 is nowhere near '
+            '1e-12 by any measure')
+
+    def test_a_genuinely_tight_small_scale_bound_is_still_active(self):
+        """The fix must not go the other way and lose real active bounds."""
+        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+
+        f, y, con = self._one_constraint(lambda v: v >= 1.0e-5)
+        y.set_value(1.0e-5 * (1 + 1e-9))     # converged onto its bound
+
+        self.assertTrue(
+            _is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
+            'a bound the solver has converged onto is active regardless of '
+            'the magnitude it is expressed in')
+
+    @unittest.skipUnless(edi_available, "lcsolver not available")
+    @unittest.skipUnless(_ipopt_available(), "ipopt not available")
+    def test_a_small_scale_slack_bound_does_not_poison_the_duals(self):
+        """End to end: the spurious column used to cost every sensitivity.
+
+        Without the slack bound this problem has one active constraint for one
+        free dimension and ``d log x / d log a == 1`` exactly. Adding a bound
+        that is seven orders of magnitude slack must not change that.
+        """
+        from lcsolver.solvers.ipopt import ipopt_solve
+
+        f = Formulation()
+        x = f.Variable('x', 1.0, '', 'x')
+        y = f.Variable('y', 1.0e-5, '', 'a small dimensionless companion')
+        a = f.Constant('a', 2.0, '', 'a')
+        f.Objective(x)
+        f.ConstraintList([
+            x >= a,
+            y == 1.0e-5 * x,
+            y >= 1.0e-12,               # slack by seven orders of magnitude
+            y <= 1.0e-2,
+        ])
+        ipopt_solve(f)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            res = sensitivities(f)
+
+        self.assertEqual(
+            res['ambiguous'], [],
+            'the slack bound is not part of the active set, so nothing here '
+            'is degenerate and every sensitivity is determined')
+        self.assertAlmostEqual(res['sensitivities']['a'], 1.0, places=6)
+
+
 if __name__ == '__main__':
     unittest.main()

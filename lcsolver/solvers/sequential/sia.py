@@ -119,6 +119,24 @@ class SIAOptions:
         self.feasibility_tolerance = 1e-6     # max_i log g_i(x)
         self.stationarity_tolerance = 1e-6    # ||grad log L||_inf in log space
         self.complementarity_tolerance = 1e-6  # max_i |lambda_i log g_i(x)|
+        # --- Relative-change termination, OFF by default -------------------
+        # The KKT test above is the right stopping rule for an algebraic
+        # model, where the gradients are exact. A black box that converges an
+        # analysis to its own tolerance -- MSES, a CFD code -- hands back
+        # gradients with noise of order 1e-3 or worse, and a stationarity
+        # residual of 1e-6 is then unreachable: the run sits at the answer,
+        # re-evaluating the box with the seventh digit of a variable
+        # changing, until max_iterations expires and it reports failure.
+        #
+        # These say instead: stop when an ACCEPTED step changed nothing that
+        # matters.  ``objective_reltol`` is |f_k/f_{k-1} - 1| and
+        # ``variable_reltol`` is max_j |x_k,j/x_{k-1,j} - 1|, both between
+        # consecutive accepted iterates.  Every one that is set must be met,
+        # on an iterate that is feasible to feasibility_tolerance, and the
+        # run is then reported CONVERGED with a status saying which test
+        # fired, since there is no KKT certificate behind it.
+        self.objective_reltol = None
+        self.variable_reltol = None
         # --- Phase I: find a feasible point before optimizing --------------
         self.phase1 = True             # False falls back to penalty CCP
         # 'l1' (default) or 'minmax'.
@@ -2434,6 +2452,52 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
     return x, it, _violation(problem, x) <= 0.0, last_mults
 
 
+def _relative_change_converged(problem, res, options, k):
+    """The relative-change stopping rule; see ``objective_reltol``.
+
+    Called once per ACCEPTED iterate, which it compares with the accepted
+    iterate before it, so a rejected step never triggers this and a run that
+    is still moving never stops on it. The previous point is kept here rather
+    than read off ``res.history``, which also records the seed and the Phase
+    I exit and so does not line up with ``res.objectives``. Fills in the
+    result and returns True when it fires.
+    """
+    o_tol, v_tol = options.objective_reltol, options.variable_reltol
+    if o_tol is None and v_tol is None:
+        return False
+    x, f = res.history[-1], res.objectives[-1]
+    prev = getattr(res, '_relative_change_prev', None)
+    res._relative_change_prev = (x.copy(), f)
+    if prev is None:
+        return False
+    x_prev, f_prev = prev
+    fired = []
+    if o_tol is not None:
+        df = abs(f / f_prev - 1.0) if f_prev != 0 else abs(f - f_prev)
+        if df > o_tol:
+            return False
+        fired.append(f"objective {df:.2e} <= {o_tol:g}")
+    if v_tol is not None:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dx = np.max(np.abs(np.asarray(x) / np.asarray(x_prev) - 1.0))
+        if not np.isfinite(dx) or dx > v_tol:
+            return False
+        fired.append(f"variables {dx:.2e} <= {v_tol:g}")
+    # A point that moved nothing but is not a design is not an answer.
+    if _violation(problem, x) > options.feasibility_tolerance:
+        return False
+    res.converged = True
+    res.status = ("converged: relative change between accepted iterates "
+                  "within tolerance (" + ", ".join(fired)
+                  + "); no KKT certificate")
+    res.x, res.objective = x, problem.objective_value(x)
+    res.iterations = k + 1
+    if options.verbose:
+        print(f"  itr {k + 1:3d}  STOP on relative change: "
+              + ", ".join(fired))
+    return True
+
+
 def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     """Solve a signomial program by sequential inner approximation."""
     # Checked here, before anything else, because every sub-problem is an
@@ -3528,6 +3592,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 x = x_r
         res.history.append(x.copy())
         res.objectives.append(problem.objective_value(x))
+
+        if _relative_change_converged(problem, res, options, k):
+            break
 
         # Update the curvature models from the step just taken. Both sources
         # are free: the change in the log-gradient is a secant condition on the

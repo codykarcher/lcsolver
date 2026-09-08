@@ -223,3 +223,20 @@ def test_cache_is_exact_not_interpolating():
     s(np.array([1.0, 1.0]))
     s(np.array([1.0 + 1e-15, 1.0]))
     assert calls["n"] == 2
+
+
+def test_relative_change_stops_early_and_reports_it():
+    """objective_reltol / variable_reltol end the run on an accepted step
+    that changed nothing that matters, for a box whose gradients could
+    never satisfy the KKT test. Off by default, so the KKT run is untouched."""
+    for build in (_problem_structured, _problem_blackbox):
+        kkt = solve_sia(build(), X0, SIAOptions(max_iterations=80))
+        rel = solve_sia(build(), X0, SIAOptions(max_iterations=80,
+                                                objective_reltol=1e-3,
+                                                variable_reltol=1e-2))
+        assert rel.converged
+        assert 'relative change' in rel.status
+        assert 'no KKT certificate' in rel.status
+        assert rel.iterations < kkt.iterations
+        assert abs(rel.objective / kkt.objective - 1.0) < 1e-3
+        assert rel.max_violation <= 1e-6

@@ -26,9 +26,30 @@ from __future__ import annotations
 
 import re
 
+import numpy as np
+
 __all__ = ["Solution"]
 
 _DIGITS = re.compile(r'(\d+)')
+_ELEMENT = re.compile(r'^(.*)\[([0-9, ]+)\]$')
+
+
+def _split_element(name):
+    """``'V[2]'`` -> ``('V', (2,))``, ``'x[0,1]'`` -> ``('x', (0, 1))``.
+
+    None when the name carries no index. This is the reverse of how Pyomo
+    names the element of an indexed component, and is what lets ``sol['V[2]']``
+    keep working after the vector is stacked into one array-valued entry.
+    """
+    m = _ELEMENT.match(name)
+    if not m:
+        return None
+    return m.group(1), tuple(int(p) for p in m.group(2).split(','))
+
+
+def _element_name(name, index):
+    """The name Pyomo gives an element: ``V[2]``, ``x[0,1]``."""
+    return name + '[' + ','.join(str(i) for i in index) + ']'
 
 
 def _alphabetical(name):
@@ -76,7 +97,14 @@ def _units(u):
 
 
 class Entry:
-    """One named quantity: its value, units and description."""
+    """One named quantity: its value, units and description.
+
+    A vector or array variable is ONE entry, its value a numpy array in the
+    declared shape, rather than one entry per element. That is how it was
+    declared and how a caller wants it back -- to save, to slice, to hand to
+    the next model as a guess -- and printing it per element is the table's
+    job, not the data's.
+    """
 
     __slots__ = ('name', 'value', 'units', 'description')
 
@@ -86,8 +114,62 @@ class Entry:
         self.units = units
         self.description = description or ''
 
+    @property
+    def is_array(self):
+        return isinstance(self.value, np.ndarray)
+
+    @property
+    def shape(self):
+        return self.value.shape if self.is_array else ()
+
+    def element(self, index):
+        """The scalar :class:`Entry` for one element of an array entry."""
+        if not self.is_array:
+            raise KeyError(f'{self.name!r} is a scalar; it has no element '
+                           f'{index}')
+        return Entry(_element_name(self.name, index),
+                     self.value[tuple(index)].item(), self.units,
+                     self.description)
+
     def __repr__(self):
         return f'<{self.name} = {self.value!r} {_units(self.units)}>'
+
+
+class EntryMap(dict):
+    """``{name: Entry}`` that also answers for the elements of an array.
+
+    Iterating gives the stacked names -- ``V``, not ``V[0]``, ``V[1]``,
+    ``V[2]`` -- so a loop over the solution sees each quantity once, in the
+    shape it was declared. But a sensitivity is computed per element and keyed
+    by the element's Pyomo name, and a reader who knows a name from the printed
+    table may well ask for ``sol['V[2]']``; both resolve here to a scalar
+    :class:`Entry` cut from the array.
+    """
+
+    def __missing__(self, name):
+        split = _split_element(name)
+        if split is None or not dict.__contains__(self, split[0]):
+            raise KeyError(name)
+        base = dict.__getitem__(self, split[0])
+        try:
+            return base.element(split[1])
+        except (IndexError, KeyError) as exc:
+            raise KeyError(name) from exc
+
+    def __contains__(self, name):
+        if dict.__contains__(self, name):
+            return True
+        try:
+            self[name]
+        except KeyError:
+            return False
+        return True
+
+    def get(self, name, default=None):
+        try:
+            return self[name]
+        except KeyError:
+            return default
 
 
 class Solution:
@@ -105,8 +187,8 @@ class Solution:
                  messages=None):
         self.objective = objective
         self.objective_units = objective_units
-        self.variables = dict(variables or {})
-        self.constants = dict(constants or {})
+        self.variables = EntryMap(variables or {})
+        self.constants = EntryMap(constants or {})
         self.sensitivities = dict(sensitivities) if sensitivities else None
         #: Constants whose sensitivity the problem does not determine, because
         #: the active set is degenerate. Hidden from the table by default: the
@@ -192,9 +274,27 @@ class Solution:
                                             _alphabetical(self.display_name(n)),
                                             self.display_name(n)))
 
+    @staticmethod
+    def _rows(entries):
+        """``{row_name: Entry}`` with every array broken out per element.
+
+        The table prints ``V[0]``, ``V[1]``, ``V[2]`` -- a row that is a whole
+        vector cannot be read -- but the entries themselves stay stacked.
+        """
+        out = {}
+        for n, e in entries.items():
+            if e.is_array:
+                for ix in np.ndindex(*e.shape):
+                    el = e.element(ix)
+                    out[el.name] = el
+            else:
+                out[n] = e
+        return out
+
     def _table(self, entries, ndecimal):
         if not entries:
             return []
+        entries = self._rows(entries)
         names = self._order(entries)
         shown = [self.display_name(n) for n in names]
         vals = [_fmt(entries[n].value, ndecimal) for n in names]
@@ -395,38 +495,42 @@ class Solution:
             holographic_total as _holographic_total,
         )
 
-        def expand(components):
-            """One entry per element, so a vector prints as its members.
+        def scalar(v):
+            try:
+                return pyo.value(v)
+            except Exception:
+                return None
 
-            `get_variables` hands back components, and an indexed one is not a
-            number: asking Pyomo to evaluate it raises, and Pyomo logs a page
-            of ERROR lines on the way out. An indexed quantity is also the one
-            a reader most wants broken out -- `V[0]`, `V[1]`, `V[2]` rather
-            than a single row that cannot be printed at all.
+        def stacked(v):
+            """An indexed component as one array in its declared shape.
+
+            The shape is the one the declaration recorded (``size=[3, 4]``);
+            a component that carries none is read as a flat vector of its
+            keys in order. An element that cannot be evaluated is NaN, so the
+            array keeps its shape and the rest of the elements stay usable.
             """
-            for v in components:
-                if v.is_indexed():
-                    for ix in v:
-                        yield v[ix]
-                else:
-                    yield v
+            shape = getattr(v, '_edi_shape', None)
+            keys = list(v.keys())
+            if shape is None:
+                shape = (len(keys),)
+            out = np.full(tuple(shape), np.nan, dtype=float)
+            for k in keys:
+                ix = k if isinstance(k, tuple) else (k,)
+                val = scalar(v[k])
+                if val is not None:
+                    try:
+                        out[ix] = float(val)
+                    except (TypeError, ValueError):
+                        pass
+            return out
 
         def entries(components):
             out = {}
-            for v in expand(components):
-                try:
-                    value = pyo.value(v)
-                except Exception:
-                    value = None
-                # The description is declared on the component, so an
-                # element of a vector has to ask its parent for it.
-                doc = getattr(v, 'doc', '') or ''
-                if not doc:
-                    parent = v.parent_component()
-                    doc = (getattr(parent, 'doc', '') or '') if parent is not v else ''
+            for v in components:
+                value = stacked(v) if v.is_indexed() else scalar(v)
                 out[v.name] = Entry(v.name, value,
                                     getattr(v, 'get_units', lambda: None)(),
-                                    doc)
+                                    getattr(v, 'doc', '') or '')
             return out
 
         variables = entries(model.get_variables())

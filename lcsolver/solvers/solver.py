@@ -9,6 +9,7 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
+import numpy as np
 from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
 # from lcsolver.presolve.structureDetector import structure_detector
@@ -212,9 +213,11 @@ class SolveResult(dict):
     #   sol.variables(['wing.AR', 'S']) -> {name: quantity} for those names
     # Values come back as PINT quantities (pyomo's own registry:
     # pyomo.environ.units.pint_registry), so a dict of them prints readably
-    # and `.to('ft')` / `.magnitude` work directly; a dimensionless quantity
-    # comes back as a plain float. Names are accepted in dotted display form
-    # ('wing.AR') or the flat internal form ('wing_AR').
+    # and `.to('ft')` / `.magnitude` work directly; a dimensionless scalar
+    # comes back as a plain float. A vector or array variable is ONE entry,
+    # a quantity whose magnitude is a numpy array in the declared shape, and
+    # is a pint quantity even when dimensionless. Names are accepted in
+    # dotted display form ('wing.AR') or the flat internal form ('wing_AR').
 
     def _rich(self):
         sol = self.solution
@@ -225,9 +228,16 @@ class SolveResult(dict):
 
     @staticmethod
     def _quantity(value, units):
-        if units is None or str(units) in ('dimensionless', 'None', ''):
-            return value
         from pyomo.environ import units as _pu
+        if units is None or str(units) in ('dimensionless', 'None', ''):
+            # A dimensionless SCALAR is a plain float, as documented above. A
+            # dimensionless ARRAY is still a pint quantity: a caller saving
+            # every variable reads `.magnitude` and `.units` off each one and
+            # tests `isinstance(v, float)` to skip the scalars, and a bare
+            # ndarray fails both branches.
+            if isinstance(value, np.ndarray):
+                return value * _pu.pint_registry.dimensionless
+            return value
         return value * _pu.pint_registry(str(units))
 
     @staticmethod
