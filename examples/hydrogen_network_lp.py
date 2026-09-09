@@ -126,9 +126,9 @@ print(sol.summary())
 # =====================
 # Read the Answer Back
 # =====================
-# Indexed quantities are reached by their printed name.
+# An indexed variable comes back as one stacked, dimensioned array.
 shipped = sol.variables()
-print("plant 1 -> station 2:", shipped["X[1,2]"])
+print("plant 1 -> station 2:", shipped["X"][1, 2])
 
 # The duals are exact here, so the sensitivities are the shadow prices of a
 # linear program: `cap[1]` at -0.35 says a 1% increase in plant 1's capacity
