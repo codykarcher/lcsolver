@@ -76,6 +76,13 @@ def test_pccp_and_sia_agree():
     optimum -- so this fails if either method changes the problem rather than
     if either changes its arithmetic.
     """
+    # The SIA route needs IPOPT. Without one, solve() downgrades the default
+    # to cvxopt (LC-W202) whose SP route is PCCP -- so there is no second
+    # method to agree with, and no SolverUnavailable for conftest to convert.
+    from lcsolver.solvers.solver import _ipopt_available
+    if not _ipopt_available():
+        pytest.skip('no IPOPT on this machine, so the default SP route '
+                    'downgrades to PCCP and there is nothing to compare')
     default = solve(_sp())
     pccp = solve(_sp(), sp_method='pccp')
 
