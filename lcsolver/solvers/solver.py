@@ -978,6 +978,28 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 m, _finish(_solve_sp(structures, m, presolve=_presolve,
                                      **kwargs)),
                 sensitivities, _skipdeg, _st)
+        if structures is not None and detection_failed is None:
+            # Detection RAN and said not-GP/SP, so the model is about to take
+            # the raw route -- probably to its author's surprise, since a
+            # grey-box model is usually written as a GP/SP with opaque rows
+            # precisely to get SIA. Say why the structured route was refused
+            # (the detector's blame list has the offending row) and, when the
+            # call carried SIAOptions, that those are about to be discarded:
+            # `_strip_routing_kwargs` drops 'options' on this route, and with
+            # it every step-size protection the caller asked for.
+            from lcsolver.solvers.sequential.sia import SIAOptions
+            blockers = (structures.get('blockers') or {}).get(
+                'Signomial_Program') or []
+            why = '; '.join(
+                f'{nm} {reason}' for nm, reason, _ in blockers[:3])
+            msg = ("[LC-W207] this model has black-box constraints but its "
+                   "algebraic part was not detected as a GP or SP, so it is "
+                   "being solved on the raw IPOPT route rather than SIA"
+                   + (f': {why}' if why else '.'))
+            if isinstance(kwargs.get('options'), SIAOptions):
+                msg += (' The SIAOptions passed via options= are IGNORED on '
+                        'this route.')
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
         if not _ipopt_available():
             raise SolverUnavailable(
                 'this model has black-box constraints and its algebraic part '
