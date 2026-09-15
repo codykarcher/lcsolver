@@ -413,8 +413,25 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self.inputs = BBList()
         self.outputs = BBList()
 
+        #: Formulation CONSTANTS this box consumes, declared like inputs::
+        #:
+        #:     self.constants.append('rho', units='kg/m^3', description='...')
+        #:
+        #: and wired positionally through ``f.RuntimeConstraint(...,
+        #: constants=[f.rho])``. The box receives their values as trailing
+        #: ``BlackBox`` arguments after the inputs, and may return jacobian
+        #: columns for them (trailing entries of each packOutputs row).
+        #: Those columns feed ONLY the reported d(objective)/d(constant)
+        #: sensitivities -- a constant is fixed, so nothing about the solve
+        #: itself depends on them.
+        self.constants = BBList()
+
         self.inputVariables_optimization = None
         self.outputVariables_optimization = None
+
+        #: The formulation-side Params matched to `constants`, set by
+        #: ``RuntimeConstraint``; empty for a box that declares none.
+        self.constantParams_optimization = []
 
         # A simple description of the model
         self.description = None
@@ -521,6 +538,13 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         """
         self.inputVariables_optimization = inputVariables_optimization
         self.outputVariables_optimization = outputVariables_optimization
+
+    def setOptimizationConstants(self, constantParams_optimization):
+        """Record which formulation Constants feed this box's declared
+        `constants`, matched by position exactly as inputs are. Called by
+        `Formulation.RuntimeConstraint`, not by a model author."""
+        self.constantParams_optimization = list(constantParams_optimization
+                                                or [])
 
     # ---------------------------------------------------------------------------------------------------------------------
     # pyomo things
@@ -685,9 +709,13 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         multi_out = isinstance(base_values, (list, tuple))
         n_out = len(base_mags)
 
+        # bb_inputs carries declared constants as trailing arguments; they
+        # are differentiated exactly like inputs (the columns feed the
+        # constant-sensitivity report).
+        decls = list(self.inputs) + list(self.constants)
         in_mags, in_units = [], []
         for j, iv in enumerate(bb_inputs):
-            in_units.append(self.inputs[j].units)
+            in_units.append(decls[j].units)
             in_mags.append(np.asarray(self.pyomo_value(iv), dtype=float))
 
         # block[k][j] : (output k dims) + (input j dims)
@@ -811,6 +839,16 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     value_correctedUnits = pyomo_units.convert(value, localUnits)
                     bb_inputs.append(value_correctedUnits)
 
+            # Declared constants ride along as trailing arguments, converted
+            # from the formulation Param's units to the units the box
+            # declared, exactly as variable inputs are.
+            bb_consts = []
+            for k, cdecl in enumerate(self.constants):
+                cparam = self.constantParams_optimization[k]
+                cval = pyo.value(cparam) * pyomo_units.get_units(cparam)
+                bb_consts.append(pyomo_units.convert(cval, cdecl.units))
+            bb_inputs = bb_inputs + bb_consts
+
             bbo = self.BlackBox(*bb_inputs)
 
             # A box that declares availableDerivative=0 returns VALUES ONLY
@@ -886,6 +924,8 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             outputJacobian = (
                 np.ones([self._NunwrappedOutputs, self._NunwrappedInputs]) * -1
             )
+            constJacobian = np.zeros([self._NunwrappedOutputs,
+                                      len(self.constants)])
             ptr_row = 0
             ptr_col = 0
 
@@ -1013,9 +1053,34 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                             )
                         )
 
+                # Trailing entries of the jacobian row are d(output)/d(const)
+                # columns for the declared constants. They never enter the
+                # optimizer's jacobian -- a Constant is not a column of the
+                # NLP -- but the sensitivity pass chain-rules them into the
+                # reported d(objective)/d(constant), so they are converted
+                # here in the compound units (output units / constant units)
+                # exactly as the variable columns are.
+                for k2, cdecl in enumerate(self.constants):
+                    cparam = self.constantParams_optimization[k2]
+                    raw = self.attachUnits(
+                        jacobianList[i][len(self.inputs) + k2],
+                        lounits / cdecl.units)
+                    ocunits = pyomo_units.get_units(cparam)
+                    if isinstance(oopt, pyomo.core.base.var.ScalarVar):
+                        vals = [raw]
+                    else:
+                        vals = [raw[vi]
+                                for vi in list(oopt.index_set().data())]
+                    for rr, v in enumerate(vals):
+                        constJacobian[ptr_row + rr, k2] = pyo.value(
+                            pyomo_units.convert(v, oounits / ocunits))
+
                 ptr_row += ptr_row_step
 
             cache['pyomo_jacobian'] = sps.coo_matrix(outputJacobian)
+            cache['constant_jacobian'] = {
+                self.constantParams_optimization[k2].name: constJacobian[:, k2]
+                for k2 in range(len(self.constants))}
             self._cache = cache
 
     # ---------------------------------------------------------------------------------------------------------------------
@@ -1413,7 +1478,10 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         A single declared input is returned bare; several come back as a
         list: ``x, y = self.sanitizeInputs(x, y, strip_units=True)``.
         """
-        nameList = [self.inputs[i].name for i in range(0, len(self.inputs))]
+        # Declared constants arrive as trailing arguments after the inputs,
+        # and are sanitized identically -- one combined declaration list.
+        _decls = list(self.inputs) + list(self.constants)
+        nameList = [_decls[i].name for i in range(0, len(_decls))]
 
         strip_units = False
         if 'strip_units' in kwargs:
@@ -1444,9 +1512,9 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
         for i in range(0, len(nameList)):
             name = nameList[i]
-            nameCheck = self.inputs[i].name
-            unts = self.inputs[i].units
-            size = self.inputs[i].size
+            nameCheck = _decls[i].name
+            unts = _decls[i].units
+            size = _decls[i].size
 
             # should be impossible
             # if name != nameCheck:
@@ -1491,6 +1559,17 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
+    def constant_jacobian(self):
+        """``{constant name: d(outputs)/d(constant)}`` at the cached point.
+
+        One flat column per declared constant, over the unwrapped outputs,
+        in (output optimization units)/(constant units) -- the frame the
+        KKT sensitivity recovery works in. Empty for a box that declares no
+        constants. Evaluates the box if the cache is cold.
+        """
+        self.fillCache()
+        return dict(self._cache.get('constant_jacobian') or {})
+
     @staticmethod
     def _jacobianBlockShape(output, input_):
         """The numpy shape a d(output)/d(input) block must have, or None.
@@ -1553,10 +1632,15 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
         jac_rows = ([list(r) for r in jacobian] if multi
                     else [list(jacobian)])
-        if len(jac_rows) != n_out or any(len(r) != n_in for r in jac_rows):
+        n_const = len(self.constants)
+        n_cols = n_in + n_const
+        if len(jac_rows) != n_out or any(len(r) != n_cols for r in jac_rows):
             raise ValueError(
                 'packOutputs expected a jacobian of %d row(s) with %d '
-                'entries each (d output / d input)' % (n_out, n_in))
+                'entries each (d output / d input%s)'
+                % (n_out, n_cols,
+                   ', then d output / d constant for the %d declared '
+                   'constant(s)' % n_const if n_const else ''))
 
         # Each block's shape must be (output dims) + (input dims): a scalar
         # for scalar/scalar, a length-n vector when exactly one side is a
@@ -1567,10 +1651,11 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         # unit converter, naming nothing the modeller wrote. The classic slip
         # is np.diag() on a vector-output/scalar-input block -- right for the
         # vector/vector blocks next to it, silently 3x3 where (3,) belongs.
+        in_decls = list(self.inputs) + list(self.constants)
         for k in range(n_out):
-            for j in range(n_in):
+            for j in range(n_cols):
                 expected = self._jacobianBlockShape(self.outputs[k],
-                                                    self.inputs[j])
+                                                    in_decls[j])
                 if expected is None:
                     continue                     # a flexible-length dimension
                 got = np.shape(getattr(jac_rows[k][j], 'magnitude',
@@ -1582,18 +1667,18 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                         hint = (" Input '%s' is a scalar, so this block is a "
                                 'vector over the output elements; np.diag() '
                                 'belongs only on vector-input blocks.'
-                                % self.inputs[j].name)
+                                % in_decls[j].name)
                     raise ValueError(
                         'packOutputs: the jacobian block d(%s)/d(%s) must '
                         'have shape %r (output dims + input dims), but got '
-                        '%r.%s' % (self.outputs[k].name, self.inputs[j].name,
+                        '%r.%s' % (self.outputs[k].name, in_decls[j].name,
                                    expected, got, hint))
 
         packed_jac = []
         for k in range(n_out):
             row = []
-            for j in range(n_in):
-                dunits = self.outputs[k].units / self.inputs[j].units
+            for j in range(n_cols):
+                dunits = self.outputs[k].units / in_decls[j].units
                 row.append(self.convert(
                     self.attachUnits(jac_rows[k][j], dunits), dunits))
             packed_jac.append(row)

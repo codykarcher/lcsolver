@@ -429,13 +429,16 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
     # numbers with a warning nobody read. Each output of the box is the
     # equality ``out - box(in) == 0``, whose gradient is +1 on the output
     # variable and -J on the inputs.
-    # No Constant enters a box, so its multiplier is not needed afterwards
-    # and is discarded like a bound multiplier; the column only has to be
-    # present so the OTHER duals are recovered correctly.
+    # The grey-box rows' own multipliers ARE needed afterwards: a box may
+    # declare formulation Constants (RuntimeConstraint's `constants=`), and
+    # the reported d(objective)/d(constant) then includes the path through
+    # the box -- lambda times the box's d(output)/d(constant) column. The
+    # owner marker carries which block and which of its output rows this
+    # column is, so `sensitivities` can do that chain rule.
     for _blk, grads in _greybox_gradients(model, variables):
-        for g in grads:
+        for _r, g in enumerate(grads):
             columns.append(g)
-            owners.append(None)
+            owners.append(('gb', _blk, _r))
 
     # Active variable bounds participate in stationarity too.
     for i, v in enumerate(variables):
@@ -507,9 +510,15 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
     resid = float(np.linalg.norm(A_s @ lam_s - rhs_s) / (denom if denom > 0 else 1.0))
     _duals_from_kkt.last_residual = resid
 
+    greybox_duals = []
     for owner, value in zip(owners, lam):
-        if owner is not None:
-            duals[owner] = float(value)
+        if owner is None:
+            continue
+        if isinstance(owner, tuple) and owner and owner[0] == 'gb':
+            greybox_duals.append((owner[1], owner[2], float(value)))
+            continue
+        duals[owner] = float(value)
+    _duals_from_kkt.last_greybox_duals = greybox_duals
     return duals
 
 
@@ -550,6 +559,18 @@ def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
     grads = {name: np.zeros(len(owners)) for name in constants}
     for i, con in enumerate(owners):
         if con is None:
+            continue
+        if isinstance(con, tuple) and con and con[0] == 'gb':
+            # A grey-box output row g = out - box(in, c): its gradient in a
+            # declared constant is -d(box)/d(c), read from the box itself.
+            _blk, _r = con[1], con[2]
+            try:
+                cj = _blk.get_external_model().constant_jacobian()
+            except Exception:
+                continue
+            for name, colv in cj.items():
+                if name in grads:
+                    grads[name][i] = -float(colv[_r])
             continue
         bound, _ = _bound_of(con)
         g = _param_gradient(con.body, index)
@@ -702,9 +723,26 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     # normalized log-log sensitivities are identical to those defined on the
     # declared-units model. (method='fd' re-solves through the same correction
     # and needs neither.)
+    # A box that declares Constants contributes to their sensitivities
+    # through its own jacobian columns, and only the KKT recovery produces
+    # the grey-box row duals that contribution needs -- IPOPT's suffix has
+    # no entries for rows that are not pyomo Constraints. So such a model
+    # goes down the KKT route on 'auto', and an explicit 'suffix' request
+    # is honoured but warned incomplete.
+    _gb_constants = any(
+        getattr(blk.get_external_model(), 'constantParams_optimization', None)
+        for blk in _greybox_blocks(model))
     if method != 'fd' and duals is None:
         use_suffix = (method in ('auto', 'suffix')
-                      and _duals_from_suffix(model) is not None)
+                      and _duals_from_suffix(model) is not None
+                      and not (_gb_constants and method == 'auto'))
+        if _gb_constants and method == 'suffix':
+            warnings.warn(
+                "[LC-W312] this model's black box(es) declare Constants, "
+                "whose sensitivity contribution needs KKT-recovered "
+                "grey-box duals; method='suffix' cannot include it, so "
+                "those sensitivities are missing the path through the box. "
+                "Use method='auto' or 'kkt'.", RuntimeWarning, stacklevel=2)
         if not use_suffix:
             from lcsolver.presolve.unitCorrector import unit_corrector
             model = unit_corrector(model)
@@ -730,8 +768,12 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
 
     if duals is None:
         _duals_from_kkt.last_residual = None
-        duals = constraint_duals(model, method=method, rtol=rtol)
-        used = 'suffix' if (method != 'kkt' and _duals_from_suffix(model)) else 'kkt'
+        _duals_from_kkt.last_greybox_duals = []
+        _method = ('kkt' if (_gb_constants and method == 'auto')
+                   else method)
+        duals = constraint_duals(model, method=_method, rtol=rtol)
+        used = ('suffix' if (_method != 'kkt' and _duals_from_suffix(model))
+                else 'kkt')
     else:
         used = 'given'
     residual = getattr(_duals_from_kkt, 'last_residual', None)
@@ -769,6 +811,22 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             g[name] = g.get(name, 0.0) - dv
         for name, dv in g.items():
             totals[name] -= lam * dv
+
+    # ... and the same term for each grey-box output row whose box declares
+    # Constants. The row is g = out - box(in, c) = 0, so its gradient in c
+    # is -d(box)/d(c) and the contribution is +lambda * d(box)/d(c) -- the
+    # chain rule through the black box that makes the reported
+    # d(objective)/d(constant) honest when part of the physics lives there.
+    if used == 'kkt':
+        for _blk, _r, lam in (getattr(_duals_from_kkt,
+                                      'last_greybox_duals', None) or []):
+            try:
+                cj = _blk.get_external_model().constant_jacobian()
+            except Exception:
+                continue
+            for name, colv in cj.items():
+                if name in totals:
+                    totals[name] += lam * float(colv[_r])
 
     out = {}
     for name, pd in constants.items():

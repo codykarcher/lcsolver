@@ -1042,7 +1042,8 @@ class Formulation(ConcreteModel):
         """`ConstraintList`, with every entry declared holographic."""
         return self.ConstraintList(conList, holographic=True)
 
-    def RuntimeConstraint(self, outputs, operators, inputs, black_box):
+    def RuntimeConstraint(self, outputs, operators, inputs, black_box,
+                          constants=None):
         """Declare ``outputs == black_box(inputs)`` as a constraint.
 
         This is how an analysis code enters a model. The body is not an
@@ -1125,7 +1126,42 @@ class Formulation(ConcreteModel):
             if opr not in ["==", ">=", "<="]:
                 raise ValueError("Invalid operator")
 
+        # Formulation CONSTANTS the box consumes, wired positionally against
+        # its own `constants` declarations. A Constant is not an optimizer
+        # column, so these never touch the grey-box jacobian; the box's
+        # d(output)/d(constant) columns feed only the sensitivity report,
+        # where d(objective)/d(constant) then includes the path through the
+        # black box.
+        constants_raw = constants
+        if constants_raw is None:
+            constants_raw = []
+        elif isinstance(constants_raw, (pyomo.core.base.param.ScalarParam,
+                                        pyomo.core.base.param.ParamData)):
+            constants_raw = [constants_raw]
+        elif isinstance(constants_raw, (list, tuple)):
+            constants_raw = list(constants_raw)
+        else:
+            raise ValueError('Invalid type for runtime constraint constants')
+        for cp in constants_raw:
+            if isinstance(cp, pyomo.core.base.param.IndexedParam):
+                raise NotImplementedError(
+                    'indexed Constants are not yet supported as black-box '
+                    'constants; pass scalar Constants')
+            if not isinstance(cp, (pyomo.core.base.param.ScalarParam,
+                                   pyomo.core.base.param.ParamData)):
+                raise ValueError(
+                    'runtime constraint constants must be formulation '
+                    'Constants (pyomo Params); got %s'
+                    % type(cp).__name__)
+        n_declared = len(getattr(black_box, 'constants', []) or [])
+        if len(constants_raw) != n_declared:
+            raise ValueError(
+                'the black box %s declares %d constant(s) but %d were wired '
+                'in; the pairing is positional, so the counts must match'
+                % (type(black_box).__name__, n_declared, len(constants_raw)))
+
         black_box.setOptimizationVariables(inputs_raw, outputs_raw)
+        black_box.setOptimizationConstants(constants_raw)
 
         outputs_raw_length = len(outputs_raw)
         operators_raw_length = len(operators_raw)
