@@ -833,6 +833,26 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 "cvxopt has no such option. Drop the argument, or use the "
                 "IPOPT backend." % _linear_solver)
 
+    # Permission for values-only black boxes (availableDerivative=0) to have
+    # their jacobians approximated by central finite differences. Stamped
+    # onto every grey-box model NOW, before detection clones the formulation,
+    # so the clones carry it; without the flag such a box raises when its
+    # jacobian is first requested rather than silently inventing one.
+    _fd_flag = kwargs.pop('allow_blackbox_finite_difference', None)
+    if _fd_flag is not None:
+        try:
+            from pyomo.contrib.pynumero.interfaces.external_grey_box import (
+                ExternalGreyBoxBlock,
+            )
+            for _blk in m.component_data_objects(ExternalGreyBoxBlock,
+                                                 descend_into=True,
+                                                 active=True):
+                _ex = _blk.get_external_model()
+                if _ex is not None:
+                    _ex.allow_finite_difference = bool(_fd_flag)
+        except ImportError:
+            pass
+
     want_checks = diagnostics not in (None, 'off', False)
     # Bind the corrected clone to a local: `structures['variables']` holds only
     # the VarData objects, and if the clone were collected here their parent

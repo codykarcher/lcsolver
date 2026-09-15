@@ -422,6 +422,21 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         # Defines the order of derivative available in the black box
         self.availableDerivative = 0
 
+        #: Permission to approximate a missing jacobian by finite differences.
+        #: OFF by default and set through ``solve(f,
+        #: allow_blackbox_finite_difference=True)``, never silently: central
+        #: differences cost 2 extra BlackBox calls per scalar input per
+        #: iterate, and a noisy analysis differentiates badly -- both are
+        #: decisions the modeller must make, not defaults.
+        self.allow_finite_difference = False
+
+        #: Relative step for the finite-difference fallback, applied to each
+        #: input's current magnitude (with `fd_absolute_step` as the floor
+        #: near zero). 1e-6 balances truncation against the noise floor of a
+        #: typical analysis code; a box may override either on itself.
+        self.fd_relative_step = 1e-6
+        self.fd_absolute_step = 1e-8
+
         self._cache = None
         self._NunwrappedOutputs = None
         self._NunwrappedInputs = None
@@ -625,6 +640,101 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             return val * unts
         return val
 
+    def _output_magnitudes(self, values):
+        """Each output as a bare float or ndarray, in its DECLARED units.
+
+        The finite-difference loop compares outputs across perturbed calls,
+        which only means something with every value in one unit system; the
+        declared output units are that system, and the derivative built from
+        these magnitudes is exactly what `packOutputs` would have attached
+        units to.
+        """
+        vals = values if isinstance(values, (list, tuple)) else [values]
+        out = []
+        for k, v in enumerate(vals):
+            u = self.outputs[k].units
+            converted = self.convert(self.attachUnits(v, u), u)
+            out.append(np.asarray(self.pyomo_value(converted), dtype=float))
+        return out
+
+    def _finite_difference_jacobian(self, bb_inputs, base_values):
+        """Central-difference jacobian for a values-only box.
+
+        Refused unless the caller granted permission (``solve(f,
+        allow_blackbox_finite_difference=True)``): the approximation costs
+        two extra ``BlackBox`` calls per scalar input per iterate, and a
+        noisy analysis differentiates badly -- both are the modeller's call.
+
+        The step is ``fd_relative_step`` of each input's current magnitude,
+        floored at ``fd_absolute_step`` near zero, applied in the box's own
+        declared input units. Blocks come back shaped exactly as
+        `packOutputs` expects -- (output dims) + (input dims) -- so the rest
+        of `fillCache` cannot tell them from author-supplied derivatives.
+        """
+        if not self.allow_finite_difference:
+            raise ValueError(
+                "black box %r declares availableDerivative=0: it returns "
+                "values only, and the optimizer needs d(output)/d(input). "
+                "Either return jacobians from BlackBox, or pass "
+                "allow_blackbox_finite_difference=True to solve() to "
+                "approximate them by central differences (2 extra BlackBox "
+                "calls per scalar input per iterate)."
+                % type(self).__name__)
+
+        base_mags = self._output_magnitudes(base_values)
+        multi_out = isinstance(base_values, (list, tuple))
+        n_out = len(base_mags)
+
+        in_mags, in_units = [], []
+        for j, iv in enumerate(bb_inputs):
+            in_units.append(self.inputs[j].units)
+            in_mags.append(np.asarray(self.pyomo_value(iv), dtype=float))
+
+        # block[k][j] : (output k dims) + (input j dims)
+        blocks = [[np.zeros(base_mags[k].shape + in_mags[j].shape)
+                   for j in range(len(bb_inputs))]
+                  for k in range(n_out)]
+
+        for j in range(len(bb_inputs)):
+            flat_idx = ([()] if in_mags[j].shape == ()
+                        else list(np.ndindex(*in_mags[j].shape)))
+            for idx in flat_idx:
+                x = float(in_mags[j][idx]) if idx != () or in_mags[j].shape \
+                    else float(in_mags[j])
+                h = max(self.fd_relative_step * abs(x),
+                        self.fd_absolute_step)
+
+                def _call(sign):
+                    pert = []
+                    for jj, iv in enumerate(bb_inputs):
+                        if jj != j:
+                            pert.append(iv)
+                            continue
+                        mag = np.array(in_mags[jj], dtype=float, copy=True)
+                        if mag.shape == ():
+                            mag = mag + sign * h
+                            pert.append(float(mag) * in_units[jj])
+                        else:
+                            mag[idx] += sign * h
+                            pert.append(mag * in_units[jj])
+                    return self._output_magnitudes(self.BlackBox(*pert))
+
+                plus, minus = _call(+1.0), _call(-1.0)
+                for k in range(n_out):
+                    col = (plus[k] - minus[k]) / (2.0 * h)
+                    if in_mags[j].shape == ():
+                        blocks[k][j][...] = col
+                    else:
+                        blocks[k][j][(Ellipsis,) + idx] = col
+
+        # Collapse 0-d blocks to plain floats and match packOutputs's
+        # single-output convention (one row, not a list of rows).
+        for k in range(n_out):
+            for j in range(len(bb_inputs)):
+                if blocks[k][j].shape == ():
+                    blocks[k][j] = float(blocks[k][j])
+        return blocks if multi_out else blocks[0]
+
     def fillCache(self):
         """Cross the boundary once: call `BlackBox` and store what came back.
 
@@ -702,6 +812,15 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     bb_inputs.append(value_correctedUnits)
 
             bbo = self.BlackBox(*bb_inputs)
+
+            # A box that declares availableDerivative=0 returns VALUES ONLY
+            # -- there is no (values, jacobian) tuple to unpack. The
+            # optimizer still needs a jacobian, so this either raises (the
+            # default: a derivative the author never wrote must not be
+            # invented silently) or, with allow_finite_difference granted
+            # through solve(), builds one by central differences.
+            if not self.availableDerivative:
+                bbo = (bbo, self._finite_difference_jacobian(bb_inputs, bbo))
 
             cache['raw'] = bbo
             cache['raw_value'] = bbo[0]
