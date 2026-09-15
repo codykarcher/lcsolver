@@ -75,6 +75,7 @@ User's Guide
    checks.rst
    debugging.rst
    ipopt.rst
+   linear_solvers.rst
    results.rst
    sensitivities.rst
    examples.rst

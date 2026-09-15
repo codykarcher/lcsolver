@@ -280,3 +280,9 @@ A more direct test is to solve something and name the solver::
 ``Invalid value "ma27" for option linear_solver`` means IPOPT was built without
 HSL. The same message for ``mumps`` means it was built without MUMPS --- a
 source build against HSL only, which is a perfectly good place to be.
+
+Since then the switch has become a first-class argument on every route --
+``lcsolver.solve(f, linear_solver='ma27')`` -- with the name validated and
+the build probed before anything runs. Which solver to pick, what we
+measured across them, and how to build a multi-solver binary are in
+:doc:`linear_solvers`.
