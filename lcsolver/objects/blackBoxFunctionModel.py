@@ -384,9 +384,9 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         # Analysis handles refuse deepcopy ("ctypes objects containing pointers
         # cannot be pickled") and used to abort the whole model clone(), so copy
         # attribute by attribute.  Sharing is DECLARED via reference_attributes;
-        # an undeclared attribute that refuses to copy still shares (old models
-        # keep working) but warns [LC-W311] -- the old bare except also aliased
-        # mutable state between clones, silently corrupting both
+        # an undeclared attribute that refuses to copy is an ERROR naming its
+        # own one-line fix [LC-E312] -- the old bare except shared silently
+        # and aliased mutable state between clones, corrupting both
         cls = self.__class__
         new = cls.__new__(cls)
         memo[id(self)] = new
@@ -406,17 +406,16 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             try:
                 new.__dict__[key] = copy.deepcopy(val, memo)
             except Exception as exc:
-                import warnings
-                warnings.warn(
-                    "[LC-W311] attribute %r of %s cannot be deep-copied "
-                    "(%s: %s) and was shared BY REFERENCE with the clone. "
-                    "If it is a live analysis handle (a pyCAPS Problem, a "
-                    "solver session), declare that on the class: "
-                    "reference_attributes = (%r,). If it is mutable state, "
-                    "sharing it can silently corrupt both copies."
-                    % (key, cls.__name__, type(exc).__name__, exc, key),
-                    RuntimeWarning, stacklevel=2)
-                new.__dict__[key] = val
+                raise TypeError(
+                    "[LC-E312] attribute %r of %s cannot be deep-copied "
+                    "(%s: %s), and sharing it with the clone silently is "
+                    "not allowed. If it is a live analysis handle (a pyCAPS "
+                    "Problem, a solver session), declare that on the class: "
+                    "reference_attributes = (%r,). If it is working state "
+                    "the clone should rebuild, add it to _reset_on_copy "
+                    "instead."
+                    % (key, cls.__name__, type(exc).__name__, exc, key)
+                ) from exc
         return new
 
     def setOptimizationVariables(

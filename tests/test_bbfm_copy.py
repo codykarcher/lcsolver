@@ -3,7 +3,7 @@
 Live handles (pyCAPS, CFD sessions, ctypes) can't deep-copy, so clones must
 share them by reference. A bare ``except: share`` used to alias mutable state
 silently; now sharing is declared (``reference_attributes``), an undeclared
-non-copyable attribute warns [LC-W311], and caches are reset on the clone.
+non-copyable attribute is an error [LC-E312], and caches are reset on the clone.
 """
 import copy
 import warnings
@@ -63,14 +63,14 @@ class TestReferenceAttributes:
             clone = copy.deepcopy(box)
         assert clone.capsProblem is box.capsProblem
 
-    def test_undeclared_handle_is_shared_with_lc_w311(self):
+    def test_undeclared_handle_is_refused_with_lc_e312(self):
         box = _UndeclaredBox()
-        with pytest.warns(RuntimeWarning, match='LC-W311') as rec:
-            clone = copy.deepcopy(box)
-        assert clone.capsProblem is box.capsProblem
-        msg = str(rec[0].message)
+        with pytest.raises(TypeError, match='LC-E312') as ctx:
+            copy.deepcopy(box)
+        msg = str(ctx.value)
         assert "'capsProblem'" in msg            # names the attribute
         assert 'reference_attributes' in msg     # names the fix
+        assert '_reset_on_copy' in msg           # names the other fix
 
     def test_ordinary_attributes_are_still_copied(self):
         box = _DeclaredBox()
