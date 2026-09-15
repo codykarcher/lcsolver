@@ -811,12 +811,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         raise ValueError(
             f"sp_method must be 'sia' or 'pccp'; got {_sp_method!r}")
 
-    # `linear_solver` selects IPOPT's inner linear solver (mumps / ma27 /
-    # pardiso / ...). The NAME is validated here, before any backend runs,
-    # for the same reason sp_method is; availability is probed later at the
-    # backend, which knows whether it is driving the executable or cyipopt.
-    # cvxopt is its own interior-point implementation with no such option,
-    # so asking for one on a cvxopt route is a mistake in the call.
+    # linear_solver selects IPOPT's inner linear solver.  Validate the NAME
+    # here before any backend runs (same reason as sp_method); availability
+    # is probed later at the backend, which knows its route.  cvxopt has no
+    # such option, so pairing them is a mistake in the call
     _linear_solver = kwargs.get('linear_solver')
     if _linear_solver is not None:
         from lcsolver.environment import KNOWN_IPOPT_LINEAR_SOLVERS
@@ -833,11 +831,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 "cvxopt has no such option. Drop the argument, or use the "
                 "IPOPT backend." % _linear_solver)
 
-    # `linear_solver_library` supplies the shared library a RUNTIME-LOADED
-    # solver comes from: ma57/ma77/ma86/ma97 out of a full CoinHSL build,
-    # pardiso out of Panua's library. It rides with linear_solver and is
-    # meaningless alone or with a compiled-in solver -- both refused here,
-    # in the caller's own frame.
+    # linear_solver_library supplies the dlopened library for a
+    # runtime-loaded solver (hsllib for ma57/77/86/97, pardisolib for
+    # pardiso).  Meaningless alone or with a compiled-in solver; refuse both
+    # here, in the caller's own frame
     _ls_library = kwargs.get('linear_solver_library')
     if _ls_library is not None:
         if _linear_solver is None:
@@ -852,11 +849,8 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 'linear_solver_library applies only to ma57/ma77/ma86/ma97 '
                 'and pardiso' % _linear_solver)
 
-    # Permission for values-only black boxes (availableDerivative=0) to have
-    # their jacobians approximated by central finite differences. Stamped
-    # onto every grey-box model NOW, before detection clones the formulation,
-    # so the clones carry it; without the flag such a box raises when its
-    # jacobian is first requested rather than silently inventing one.
+    # Stamp finite-difference permission onto every grey-box model NOW,
+    # before detection clones the formulation, so the clones carry it
     _fd_flag = kwargs.pop('allow_blackbox_finite_difference', None)
     if _fd_flag is not None:
         try:
@@ -1040,14 +1034,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                                      **kwargs)),
                 sensitivities, _skipdeg, _st)
         if structures is not None and detection_failed is None:
-            # Detection RAN and said not-GP/SP, so the model is about to take
-            # the raw route -- probably to its author's surprise, since a
-            # grey-box model is usually written as a GP/SP with opaque rows
-            # precisely to get SIA. Say why the structured route was refused
-            # (the detector's blame list has the offending row) and, when the
-            # call carried SIAOptions, that those are about to be discarded:
-            # `_strip_routing_kwargs` drops 'options' on this route, and with
-            # it every step-size protection the caller asked for.
+            # Detection ran and said not-GP/SP, so this grey-box model is
+            # about to take the raw route -- probably to its author's
+            # surprise.  Say why (the detector's blame list), and that any
+            # SIAOptions are about to be discarded
             from lcsolver.solvers.sequential.sia import SIAOptions
             blockers = (structures.get('blockers') or {}).get(
                 'Signomial_Program') or []
@@ -1180,11 +1170,9 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
     """
     from lcsolver.postsolve.writeback import write_solution
 
-    # The sequential routes solve MANY IPOPT sub-problems through their own
-    # machinery, so the linear solver is resolved once here -- probed against
-    # the executable build the sub-problem factory uses -- and threaded in:
-    # for SIA through SIAOptions.ipopt_options (an explicit user setting
-    # there wins), for PCCP into the inner GP solves directly.
+    # Resolve the linear solver once here and thread it in: for SIA through
+    # SIAOptions.ipopt_options (an explicit user setting wins), for PCCP
+    # into the inner GP solves
     if linear_solver is not None:
         from lcsolver.environment import require_linear_solver
         linear_solver = require_linear_solver(linear_solver, route='pyomo',

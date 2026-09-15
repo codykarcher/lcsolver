@@ -1126,12 +1126,9 @@ class Formulation(ConcreteModel):
             if opr not in ["==", ">=", "<="]:
                 raise ValueError("Invalid operator")
 
-        # Formulation CONSTANTS the box consumes, wired positionally against
-        # its own `constants` declarations. A Constant is not an optimizer
-        # column, so these never touch the grey-box jacobian; the box's
-        # d(output)/d(constant) columns feed only the sensitivity report,
-        # where d(objective)/d(constant) then includes the path through the
-        # black box.
+        # Formulation Constants the box consumes, wired positionally against
+        # its own constants declarations.  Never optimizer columns; their
+        # jacobian columns feed only the sensitivity report
         constants_raw = constants
         if constants_raw is None:
             constants_raw = []

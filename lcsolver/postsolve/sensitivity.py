@@ -430,11 +430,9 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
     # equality ``out - box(in) == 0``, whose gradient is +1 on the output
     # variable and -J on the inputs.
     # The grey-box rows' own multipliers ARE needed afterwards: a box may
-    # declare formulation Constants (RuntimeConstraint's `constants=`), and
-    # the reported d(objective)/d(constant) then includes the path through
-    # the box -- lambda times the box's d(output)/d(constant) column. The
-    # owner marker carries which block and which of its output rows this
-    # column is, so `sensitivities` can do that chain rule.
+    # declare Constants, and their sensitivities chain through lambda times
+    # the box's d(output)/d(constant) column.  The owner marker says which
+    # block and which output row this column is
     for _blk, grads in _greybox_gradients(model, variables):
         for _r, g in enumerate(grads):
             columns.append(g)
@@ -723,12 +721,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     # normalized log-log sensitivities are identical to those defined on the
     # declared-units model. (method='fd' re-solves through the same correction
     # and needs neither.)
-    # A box that declares Constants contributes to their sensitivities
-    # through its own jacobian columns, and only the KKT recovery produces
-    # the grey-box row duals that contribution needs -- IPOPT's suffix has
-    # no entries for rows that are not pyomo Constraints. So such a model
-    # goes down the KKT route on 'auto', and an explicit 'suffix' request
-    # is honoured but warned incomplete.
+    # Only the KKT recovery produces grey-box row duals, and a box that
+    # declares Constants needs them; such a model goes down the KKT route on
+    # 'auto', and an explicit 'suffix' request is honoured but warned
     _gb_constants = any(
         getattr(blk.get_external_model(), 'constantParams_optimization', None)
         for blk in _greybox_blocks(model))
@@ -812,11 +807,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         for name, dv in g.items():
             totals[name] -= lam * dv
 
-    # ... and the same term for each grey-box output row whose box declares
-    # Constants. The row is g = out - box(in, c) = 0, so its gradient in c
-    # is -d(box)/d(c) and the contribution is +lambda * d(box)/d(c) -- the
-    # chain rule through the black box that makes the reported
-    # d(objective)/d(constant) honest when part of the physics lives there.
+    # ... and the same term for grey-box rows whose box declares Constants:
+    # g = out - box(in, c) = 0, so dg/dc = -d(box)/d(c) and the contribution
+    # is +lambda * d(box)/d(c)
     if used == 'kkt':
         for _blk, _r, lam in (getattr(_duals_from_kkt,
                                       'last_greybox_duals', None) or []):

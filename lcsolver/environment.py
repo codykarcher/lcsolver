@@ -183,22 +183,13 @@ def ipopt_available():
 
 
 def ensure_own_libs_first(executable):
-    """Make ``executable`` load ITS OWN ``libipopt``, not a shadowed one.
+    """Make the executable load ITS OWN libipopt, not a shadowed one.
 
-    A dynamic-loader path (``DYLD_LIBRARY_PATH`` on macOS,
-    ``LD_LIBRARY_PATH`` on Linux) pointing at one IPOPT install shadows the
-    shared library of EVERY OTHER install by name: an executable from a
-    MUMPS-capable build then silently runs the shadowing build's
-    ``libipopt.3.dylib``, reporting that build's linear solvers as its own.
-    Observed exactly so: with ``~/.zshenv`` exporting the MA27-only build's
-    lib dir, three different MUMPS-capable binaries (conda-forge, Homebrew,
-    a fresh source build) all probed as "no mumps, has ma27".
-
-    Prepending the executable's own sibling ``lib`` directory wins the
-    search without disturbing the rest of the path, so this is safe to do
-    for whichever executable is currently selected. No-op when the
-    executable has no sibling ``libipopt`` (a static build, or a distro
-    layout the heuristic does not know).
+    A loader path (DYLD_LIBRARY_PATH here) pinned to one IPOPT install
+    shadows every other install's libipopt by name -- three different
+    MUMPS-capable binaries all probed as MA27-only this way.  Prepending
+    the executable's own sibling lib directory wins the search; no-op when
+    there is no sibling libipopt.
     """
     if not executable:
         return
@@ -314,20 +305,16 @@ def _quiet():
             os.close(devnull)
 
 
-#: Every linear solver an upstream IPOPT can be built against. The headline
-#: three -- mumps, ma27, pardiso -- are what `require_linear_solver` probes
-#: when composing an availability message; the rest are accepted and probed
-#: individually so a build that carries them can be asked for them.
+# Every linear solver an upstream IPOPT can be built against.  The headline
+# three (mumps, ma27, pardiso) compose the availability message
 KNOWN_IPOPT_LINEAR_SOLVERS = (
     'mumps', 'ma27', 'ma57', 'ma77', 'ma86', 'ma97',
     'pardiso', 'pardisomkl', 'spral', 'wsmp',
 )
 
-#: Solvers IPOPT loads from a shared library AT RUNTIME, and the IPOPT
-#: option that names that library. These need no rebuild -- an IPOPT
-#: without them still accepts the name if handed the right library, which
-#: is how MA57/MA86/MA97 (a full CoinHSL build) and Panua Pardiso are used
-#: on a machine where only the stock build is installed.
+# Solvers IPOPT dlopens at runtime, and the option naming their library.
+# No rebuild needed: hand hsllib a full CoinHSL (ma57/77/86/97) or
+# pardisolib a Panua Pardiso and the stock build runs them
 RUNTIME_LOADED_LINEAR_SOLVERS = {
     'ma57': 'hsllib', 'ma77': 'hsllib', 'ma86': 'hsllib', 'ma97': 'hsllib',
     'pardiso': 'pardisolib',
@@ -335,20 +322,13 @@ RUNTIME_LOADED_LINEAR_SOLVERS = {
 
 
 def linear_solver_library_option(name):
-    """The IPOPT option a runtime-loaded solver reads its library from
-    (``'hsllib'`` or ``'pardisolib'``), or None for a compiled-in solver."""
+    """'hsllib' or 'pardisolib' for a runtime-loaded solver, else None"""
     return RUNTIME_LOADED_LINEAR_SOLVERS.get(str(name).strip().lower())
 
 
 def _spral_runtime_env():
-    """SPRAL's documented OpenMP requirements, set process-wide.
-
-    IPOPT's install notes require ``OMP_CANCELLATION=TRUE`` and
-    ``OMP_PROC_BIND=TRUE`` when running with SPRAL; without them the solver
-    can underperform or stall. Set here (inherited by the ipopt executable
-    and read by an in-process cyipopt alike) rather than asked of every
-    caller. Existing explicit settings are left alone.
-    """
+    """SPRAL's required OpenMP settings, set process-wide (the ipopt
+    executable inherits them); explicit user settings are left alone"""
     os.environ.setdefault('OMP_CANCELLATION', 'TRUE')
     os.environ.setdefault('OMP_PROC_BIND', 'TRUE')
 

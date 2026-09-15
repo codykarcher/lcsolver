@@ -429,8 +429,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self.inputVariables_optimization = None
         self.outputVariables_optimization = None
 
-        #: The formulation-side Params matched to `constants`, set by
-        #: ``RuntimeConstraint``; empty for a box that declares none.
+        # Formulation-side Params matched to self.constants, set by RuntimeConstraint
         self.constantParams_optimization = []
 
         # A simple description of the model
@@ -439,18 +438,13 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         # Defines the order of derivative available in the black box
         self.availableDerivative = 0
 
-        #: Permission to approximate a missing jacobian by finite differences.
-        #: OFF by default and set through ``solve(f,
-        #: allow_blackbox_finite_difference=True)``, never silently: central
-        #: differences cost 2 extra BlackBox calls per scalar input per
-        #: iterate, and a noisy analysis differentiates badly -- both are
-        #: decisions the modeller must make, not defaults.
+        # Permission to finite-difference a missing jacobian (2 extra BlackBox
+        # calls per scalar input per iterate).  Off by default; set through
+        # solve(f, allow_blackbox_finite_difference=True), never silently
         self.allow_finite_difference = False
 
-        #: Relative step for the finite-difference fallback, applied to each
-        #: input's current magnitude (with `fd_absolute_step` as the floor
-        #: near zero). 1e-6 balances truncation against the noise floor of a
-        #: typical analysis code; a box may override either on itself.
+        # Central difference step: fd_relative_step of each input's magnitude,
+        # floored at fd_absolute_step near zero
         self.fd_relative_step = 1e-6
         self.fd_absolute_step = 1e-8
 
@@ -458,41 +452,23 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self._NunwrappedOutputs = None
         self._NunwrappedInputs = None
 
-    #: Attributes a subclass declares as SHARED BY REFERENCE across clones --
-    #: the supported way to hold a live analysis handle (a pyCAPS Problem, a
-    #: CFD session, a ctypes/SWIG wrapper) on a black box::
-    #:
-    #:     class MsesAnalysis(BlackBoxFunctionModel):
-    #:         reference_attributes = ('capsProblem', 'mses')
-    #:
-    #: Every clone of the model (unit correction clones the whole formulation)
-    #: then drives the SAME external analysis, which is the only meaningful
-    #: semantic for a stateful resource. Inherited declarations accumulate
-    #: across the class hierarchy.
+    # Attributes shared BY REFERENCE with every clone -- how a box holds a live
+    # analysis handle (a pyCAPS Problem, a CFD session, a ctypes wrapper):
+    #     reference_attributes = ('capsProblem', 'mses')
+    # Every clone then drives the SAME external analysis.  Declarations
+    # accumulate over the class hierarchy
     reference_attributes = ()
 
-    #: Internal working state that is neither copied nor shared: it is reset
-    #: on the clone and rebuilt on demand. Sharing a cache between clones
-    #: would let one model's evaluation answer another's question.
+    # Working state reset (not copied, not shared) on clone; rebuilt on demand
     _reset_on_copy = ('_cache',)
 
     def __deepcopy__(self, memo):
-        # A black box routinely holds a handle to the analysis it drives, and
-        # such handles refuse deepcopy ("ctypes objects containing pointers
-        # cannot be pickled"). Under the generic protocol that single
-        # attribute aborted the whole model clone() in unit_corrector,
-        # killing every solve of a formulation whose box stored its analysis
-        # object. Copy attribute-by-attribute instead.
-        #
-        # Sharing by reference is DECLARED, not inferred: an attribute in
-        # `reference_attributes` is handed to the clone as-is, silently,
-        # because the author said that is what it is. An UNDECLARED attribute
-        # that refuses deepcopy is still shared -- refusing outright would
-        # break every model written against the old behavior -- but it now
-        # says so [LC-W311], because the old bare `except: share` also
-        # swallowed genuine failures: mutable state that failed to copy was
-        # silently aliased between clones, and whichever model wrote it last
-        # corrupted the other.
+        # Analysis handles refuse deepcopy ("ctypes objects containing pointers
+        # cannot be pickled") and used to abort the whole model clone(), so copy
+        # attribute by attribute.  Sharing is DECLARED via reference_attributes;
+        # an undeclared attribute that refuses to copy still shares (old models
+        # keep working) but warns [LC-W311] -- the old bare except also aliased
+        # mutable state between clones, silently corrupting both
         cls = self.__class__
         new = cls.__new__(cls)
         memo[id(self)] = new
@@ -664,36 +640,28 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             return val * unts
         return val
 
+    # ---------------------------------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------------------------------
     def _output_magnitudes(self, values):
-        """Each output as a bare float or ndarray, in its DECLARED units.
-
-        The finite-difference loop compares outputs across perturbed calls,
-        which only means something with every value in one unit system; the
-        declared output units are that system, and the derivative built from
-        these magnitudes is exactly what `packOutputs` would have attached
-        units to.
-        """
+        """Each output as a bare float or ndarray, in its declared units"""
         vals = values if isinstance(values, (list, tuple)) else [values]
         out = []
-        for k, v in enumerate(vals):
+        for k in range(0, len(vals)):
             u = self.outputs[k].units
-            converted = self.convert(self.attachUnits(v, u), u)
+            converted = self.convert(self.attachUnits(vals[k], u), u)
             out.append(np.asarray(self.pyomo_value(converted), dtype=float))
         return out
 
+    # ---------------------------------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------------------------------
     def _finite_difference_jacobian(self, bb_inputs, base_values):
         """Central-difference jacobian for a values-only box.
 
-        Refused unless the caller granted permission (``solve(f,
-        allow_blackbox_finite_difference=True)``): the approximation costs
-        two extra ``BlackBox`` calls per scalar input per iterate, and a
-        noisy analysis differentiates badly -- both are the modeller's call.
-
-        The step is ``fd_relative_step`` of each input's current magnitude,
-        floored at ``fd_absolute_step`` near zero, applied in the box's own
-        declared input units. Blocks come back shaped exactly as
-        `packOutputs` expects -- (output dims) + (input dims) -- so the rest
-        of `fillCache` cannot tell them from author-supplied derivatives.
+        Refused unless solve(f, allow_blackbox_finite_difference=True) granted
+        permission.  Step is fd_relative_step of each input's magnitude
+        (floored at fd_absolute_step), in the declared input units; blocks
+        come back shaped exactly as packOutputs expects, so the rest of
+        fillCache cannot tell them from author-supplied derivatives.
         """
         if not self.allow_finite_difference:
             raise ValueError(
@@ -709,9 +677,8 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         multi_out = isinstance(base_values, (list, tuple))
         n_out = len(base_mags)
 
-        # bb_inputs carries declared constants as trailing arguments; they
-        # are differentiated exactly like inputs (the columns feed the
-        # constant-sensitivity report).
+        # bb_inputs carries declared constants at the end; differentiate them
+        # like inputs (their columns feed the constant-sensitivity report)
         decls = list(self.inputs) + list(self.constants)
         in_mags, in_units = [], []
         for j, iv in enumerate(bb_inputs):
@@ -839,9 +806,8 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     value_correctedUnits = pyomo_units.convert(value, localUnits)
                     bb_inputs.append(value_correctedUnits)
 
-            # Declared constants ride along as trailing arguments, converted
-            # from the formulation Param's units to the units the box
-            # declared, exactly as variable inputs are.
+            # Declared constants ride along as trailing arguments, converted to
+            # the units the box declared just like the variable inputs
             bb_consts = []
             for k, cdecl in enumerate(self.constants):
                 cparam = self.constantParams_optimization[k]
@@ -851,12 +817,9 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             bbo = self.BlackBox(*bb_inputs)
 
-            # A box that declares availableDerivative=0 returns VALUES ONLY
-            # -- there is no (values, jacobian) tuple to unpack. The
-            # optimizer still needs a jacobian, so this either raises (the
-            # default: a derivative the author never wrote must not be
-            # invented silently) or, with allow_finite_difference granted
-            # through solve(), builds one by central differences.
+            # availableDerivative=0 means values only -- no jacobian tuple to
+            # unpack.  Either raise (default) or, with permission granted
+            # through solve(), build one by central differences
             if not self.availableDerivative:
                 bbo = (bbo, self._finite_difference_jacobian(bb_inputs, bbo))
 
@@ -1053,13 +1016,10 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                             )
                         )
 
-                # Trailing entries of the jacobian row are d(output)/d(const)
-                # columns for the declared constants. They never enter the
-                # optimizer's jacobian -- a Constant is not a column of the
-                # NLP -- but the sensitivity pass chain-rules them into the
-                # reported d(objective)/d(constant), so they are converted
-                # here in the compound units (output units / constant units)
-                # exactly as the variable columns are.
+                # Trailing row entries are d(output)/d(constant) columns.  They
+                # never enter the optimizer's jacobian (a Constant is not an NLP
+                # column); the sensitivity pass chain-rules them into the
+                # reported d(objective)/d(constant)
                 for k2, cdecl in enumerate(self.constants):
                     cparam = self.constantParams_optimization[k2]
                     raw = self.attachUnits(
@@ -1478,8 +1438,8 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         A single declared input is returned bare; several come back as a
         list: ``x, y = self.sanitizeInputs(x, y, strip_units=True)``.
         """
-        # Declared constants arrive as trailing arguments after the inputs,
-        # and are sanitized identically -- one combined declaration list.
+        # Declared constants arrive as trailing arguments; sanitize them
+        # identically via one combined declaration list
         _decls = list(self.inputs) + list(self.constants)
         nameList = [_decls[i].name for i in range(0, len(_decls))]
 
@@ -1560,26 +1520,20 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
     def constant_jacobian(self):
-        """``{constant name: d(outputs)/d(constant)}`` at the cached point.
-
-        One flat column per declared constant, over the unwrapped outputs,
-        in (output optimization units)/(constant units) -- the frame the
-        KKT sensitivity recovery works in. Empty for a box that declares no
-        constants. Evaluates the box if the cache is cold.
-        """
+        """{constant name: d(outputs)/d(constant)} at the cached point, one
+        flat column per declared constant over the unwrapped outputs, in
+        (output optimization units)/(constant units).  Empty when the box
+        declares no constants; evaluates the box if the cache is cold."""
         self.fillCache()
         return dict(self._cache.get('constant_jacobian') or {})
 
+    # ---------------------------------------------------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------------------------------
     @staticmethod
     def _jacobianBlockShape(output, input_):
-        """The numpy shape a d(output)/d(input) block must have, or None.
-
-        Concatenates the declared output dims with the declared input dims
-        (a scalar contributes no dims, so scalar/scalar expects the empty
-        shape ``()``).  Returns None -- meaning "do not check" -- when either
-        side declares a flexible-length dimension, since the true length is
-        only known at run time.
-        """
+        """Numpy shape a d(output)/d(input) block must have: (output dims) +
+        (input dims), scalars contributing none.  None means do-not-check (a
+        flexible-length dimension is only known at run time)."""
         dims = []
         for declared in (output.size, input_.size):
             if declared in (0, None):
@@ -1642,15 +1596,10 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                    ', then d output / d constant for the %d declared '
                    'constant(s)' % n_const if n_const else ''))
 
-        # Each block's shape must be (output dims) + (input dims): a scalar
-        # for scalar/scalar, a length-n vector when exactly one side is a
-        # size-n vector, an (n, m) matrix for vector/vector. Checked HERE, in
-        # the modeller's own stack frame, because the alternative is what this
-        # replaced: the grey-box NLP consumed the block element-by-element and
-        # a wrong shape surfaced as an AttributeError from deep inside Pyomo's
-        # unit converter, naming nothing the modeller wrote. The classic slip
-        # is np.diag() on a vector-output/scalar-input block -- right for the
-        # vector/vector blocks next to it, silently 3x3 where (3,) belongs.
+        # Check every block's shape HERE, in the modeller's own stack frame --
+        # a wrong shape used to surface as an AttributeError from deep inside
+        # pyomo's unit converter.  The classic slip is np.diag() on a
+        # vector-output/scalar-input block: 3x3 where (3,) belongs
         in_decls = list(self.inputs) + list(self.constants)
         for k in range(n_out):
             for j in range(n_cols):

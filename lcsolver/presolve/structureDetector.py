@@ -78,12 +78,9 @@ def _divide_or_disqualify(structures, numerator, denominator, name=None,
     materialized as rows. Disqualifying the log-space structures and carrying
     on lets the linear ones through.
 
-    The disqualification is BLAMED, not just flagged.  ``x >= 0`` lands here
-    too -- the zero drops out and only ``-x`` remains -- and a single such
-    bound used to clear GP and SP with no message at all.  On a grey-box
-    model that silence rerouted the whole solve: not-SP sends it down the raw
-    IPOPT path instead of SIA, discarding every SIAOptions setting on the
-    way, and the first visible symptom was a crash three layers deep.
+    The disqualification is blamed, not just flagged: a single x >= 0 bound
+    used to clear GP/SP with no message, silently rerouting grey-box models
+    off SIA.
     """
     if not numerator:
         _blame(structures, ['Geometric_Program', 'Signomial_Program'],
@@ -379,14 +376,10 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # Eg, no discrete, no weird sets, etc
     N_bound_cons = 0
     boundCollector = None if bounds_as_rows else ComponentMap()
-    #: Variables whose declared bounds a log-space program cannot express:
-    #: (name, which bound, value). A zero or negative bound is a perfectly
-    #: ordinary LP/NLP declaration, so nothing is refused here -- but the
-    #: GP/SP flags WILL come out False for it, through a rearrangement so
-    #: indirect that the blame it produces ('a true signomial') names the
-    #: bound row without saying the bound is the problem. Recording the
-    #: offenders at the declaration, where the value is still in hand, lets
-    #: them be blamed in the terms the author wrote.
+    # Variables whose declared bounds a log-space program cannot express.
+    # The GP/SP flags will come out False for these through a rearrangement
+    # so indirect the row-level blame is misleading; record them here, where
+    # the declared value is still in hand, and blame in the author's terms
     nonpositive_bounds = []
 
     def _note_nonpositive(v):
@@ -558,10 +551,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                   "Geometric_Program":[True,[],[]],
                   "Signomial_Program":[True,[],[]],} # Convex, LogConvex, Convex_QCQP,
 
-    # Blame nonpositive declared bounds up front, in the author's own terms.
-    # The bound rows they become still flip the GP/SP flags below; this makes
-    # the blame list SAY it was the bound (`bounds=[0.0, 0.1]`, say) rather
-    # than describing the rearranged row it turned into.
+    # Blame nonpositive declared bounds up front, in the author's own terms
+    # (the bound rows they become still flip the GP/SP flags below)
     for _nm, _which, _val in nonpositive_bounds:
         _blame(structures, ['Geometric_Program', 'Signomial_Program'],
                "variable '%s'" % _nm,

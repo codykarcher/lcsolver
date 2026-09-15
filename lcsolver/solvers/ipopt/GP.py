@@ -126,9 +126,8 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     Returns a dict with ``status``, ``primal objective``, ``x``.
     """
     if linear_solver is not None:
-        # Resolved here, at the top of the chain, so the probe talks about
-        # the same route _assemble_and_solve will choose below; the choice
-        # then travels in `options`, which every helper already threads.
+        # Resolve here, at the top of the chain, against the same route
+        # _assemble_and_solve will choose; the choice travels in options
         from lcsolver.environment import (
             linear_solver_library_option,
             require_linear_solver,
@@ -172,8 +171,7 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     res = _build_and_solve_gp(m, n, groups, relations, tee, options,
                               method, executable, form)
     if isinstance(res, dict):
-        # Which linear solver ran is the first question when two machines
-        # disagree on a solve; None means IPOPT's own build default.
+        # first question when two machines disagree; None = build default
         res['linear_solver'] = (options or {}).get('linear_solver')
     return res
 

@@ -124,16 +124,12 @@ from lcsolver.presolve.walkerSupportFunctions import (
 )
 
 def _units_match(u1, u2, tol=1e-9):
-    """Whether two pint units (already in base units) are the same dimension.
+    """Same dimension, within tolerance on the exponents.
 
-    NOT ``u1 == u2``.  Pint compares the exponent floats exactly, and a
-    fractional exponent poisons them: with a Constant in [N/W^0.803] times a
-    power [W^0.803], the walker builds ``kg^0.197*m^-0.606*s^0.409`` times
-    ``kg^0.803*m^1.606*s^-2.409`` and the seconds exponent comes out
-    ``-1.9999999999999998`` -- not ``-2.0``, so ``==`` said the product was
-    not newtons.  Worse, pint's *formatter* rounds for display, so the
-    resulting report printed ``[N] =/= [N]``.  Exponents are order-ten
-    numbers, so an absolute tolerance is enough.
+    NOT u1 == u2: pint compares exponent floats exactly, and fractional
+    exponents (a Constant in N/W^0.803 times W^0.803) leave residues like
+    second**-1.9999999999999998 -- which pint's formatter then rounds for
+    display, so the failure printed [N] =/= [N].
     """
     if u1 == u2:
         return True
@@ -144,8 +140,7 @@ def _units_match(u1, u2, tol=1e-9):
 
 
 def _is_dimensionless(u, tol=1e-9):
-    """Dimensionless within the same tolerance -- a residual ``kg^1e-16``
-    left by fractional-exponent arithmetic is still dimensionless."""
+    """Dimensionless within tolerance (a residual kg^1e-16 still counts)"""
     return all(abs(e) <= tol for e in dict(getattr(u, '_units', {})).values())
 
 
@@ -170,30 +165,16 @@ def handle_num_node(visitor, node):
 def handle_negation_node(visitor,node,arg1):
     # WARNING: PYOMO CONVERTS 1 and -1 TO UNITS (replaces value with a unary sign)
     if isinstance(node.args[0],_PyomoUnit): #checks to see if node is a Pyomo unit (for cases like -1*units and 1*units)
-        # Read the child, not `node.expr` -- a negation node carries `args` and
-        # has no `expr`, so this raised AttributeError for every expression it
-        # was meant to handle. It is reached whenever a term's coefficient is
-        # exactly 1, because Pyomo folds `1.0*units.m` down to the bare unit
-        # and negates that: `a*m - 1.0*m` hits it and `a*m - 1.5*m` does not,
-        # which is why the failure looked like it depended on the numbers.
-        #
-        # Converted to base units like every other leaf, rather than returned
-        # in its declared units. `units` here is a pint unit throughout the
-        # walker, and the sum node compares those for equality -- handing back
-        # a Pyomo units container made every sum containing a negated unit
-        # report mismatching units instead.
+        # Read the child, not node.expr (a negation node has no expr).  Hit
+        # whenever a coefficient is exactly 1: pyomo folds 1.0*units.m to the
+        # bare unit and negates that.  Convert to base units like every other
+        # leaf so the sum node's pint comparison holds
         K = as_quantity(1.0 * node.args[0]).to_base_units()
         return unitsPack(expr = value(node) * K.magnitude, units = K.units)
     else:
-        # Negate the *rebuilt* child, not the original node. Returning `node`
-        # here silently discarded every unit conversion performed inside a
-        # negated subexpression: in `A*((x - y)**2 - (x - z)**2)` with z in
-        # feet and everything else in metres, the first difference was
-        # rebuilt as `x - 0.3048*z` but the second, sitting under the
-        # negation, came back as the untouched `- (x - z)**2`. The constraint
-        # then evaluated with feet read as metres -- no error, just a wrong
-        # number. Swapping the two operands used to "fix" it, which is how
-        # this was found.
+        # Negate the REBUILT child, not the original node -- returning node
+        # silently discarded every unit conversion inside a negated
+        # subexpression (feet read as metres, no error, wrong number)
         return unitsPack(expr=-arg1.expr, units=arg1.units)
 
 def handle_sumExpression_node(visitor,node, *args):

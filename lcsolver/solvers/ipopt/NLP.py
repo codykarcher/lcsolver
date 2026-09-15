@@ -234,9 +234,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     summary = _summarize(results)
     summary['solver'] = route
     summary['problem_structure'] = 'nonlinear_program'
-    # None means IPOPT's own build default (typically ma27 when compiled
-    # with HSL, else mumps) -- worth recording, since which linear solver
-    # ran is the first question when two machines disagree on a solve.
+    # first question when two machines disagree; None = build default
     summary['linear_solver'] = options.get('linear_solver')
 
     tc = summary['termination_condition']
