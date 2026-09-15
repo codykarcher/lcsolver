@@ -426,23 +426,70 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self._NunwrappedOutputs = None
         self._NunwrappedInputs = None
 
+    #: Attributes a subclass declares as SHARED BY REFERENCE across clones --
+    #: the supported way to hold a live analysis handle (a pyCAPS Problem, a
+    #: CFD session, a ctypes/SWIG wrapper) on a black box::
+    #:
+    #:     class MsesAnalysis(BlackBoxFunctionModel):
+    #:         reference_attributes = ('capsProblem', 'mses')
+    #:
+    #: Every clone of the model (unit correction clones the whole formulation)
+    #: then drives the SAME external analysis, which is the only meaningful
+    #: semantic for a stateful resource. Inherited declarations accumulate
+    #: across the class hierarchy.
+    reference_attributes = ()
+
+    #: Internal working state that is neither copied nor shared: it is reset
+    #: on the clone and rebuilt on demand. Sharing a cache between clones
+    #: would let one model's evaluation answer another's question.
+    _reset_on_copy = ('_cache',)
+
     def __deepcopy__(self, memo):
-        # A black box routinely holds a handle to the analysis it drives -- a
-        # pyCAPS Problem, a CFD session, a ctypes/SWIG wrapper -- and such
-        # handles refuse deepcopy ("ctypes objects containing pointers cannot
-        # be pickled"). Under the generic protocol that single attribute
-        # aborted the whole model clone() in unit_corrector, killing every
-        # solve of a formulation whose box stored its analysis object. Copy
-        # attribute-by-attribute instead, and share by reference anything that
-        # refuses: the clone must drive the SAME external analysis -- a
-        # stateful resource cannot be meaningfully duplicated anyway.
+        # A black box routinely holds a handle to the analysis it drives, and
+        # such handles refuse deepcopy ("ctypes objects containing pointers
+        # cannot be pickled"). Under the generic protocol that single
+        # attribute aborted the whole model clone() in unit_corrector,
+        # killing every solve of a formulation whose box stored its analysis
+        # object. Copy attribute-by-attribute instead.
+        #
+        # Sharing by reference is DECLARED, not inferred: an attribute in
+        # `reference_attributes` is handed to the clone as-is, silently,
+        # because the author said that is what it is. An UNDECLARED attribute
+        # that refuses deepcopy is still shared -- refusing outright would
+        # break every model written against the old behavior -- but it now
+        # says so [LC-W311], because the old bare `except: share` also
+        # swallowed genuine failures: mutable state that failed to copy was
+        # silently aliased between clones, and whichever model wrote it last
+        # corrupted the other.
         cls = self.__class__
         new = cls.__new__(cls)
         memo[id(self)] = new
+        declared = set()
+        for klass in cls.__mro__:
+            declared |= set(getattr(klass, 'reference_attributes', ()) or ())
+        reset = set()
+        for klass in cls.__mro__:
+            reset |= set(getattr(klass, '_reset_on_copy', ()) or ())
         for key, val in self.__dict__.items():
+            if key in declared:
+                new.__dict__[key] = val
+                continue
+            if key in reset:
+                new.__dict__[key] = None
+                continue
             try:
                 new.__dict__[key] = copy.deepcopy(val, memo)
-            except Exception:
+            except Exception as exc:
+                import warnings
+                warnings.warn(
+                    "[LC-W311] attribute %r of %s cannot be deep-copied "
+                    "(%s: %s) and was shared BY REFERENCE with the clone. "
+                    "If it is a live analysis handle (a pyCAPS Problem, a "
+                    "solver session), declare that on the class: "
+                    "reference_attributes = (%r,). If it is mutable state, "
+                    "sharing it can silently corrupt both copies."
+                    % (key, cls.__name__, type(exc).__name__, exc, key),
+                    RuntimeWarning, stacklevel=2)
                 new.__dict__[key] = val
         return new
 

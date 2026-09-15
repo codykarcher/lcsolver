@@ -519,6 +519,11 @@ class TestEDIBlackBox(unittest.TestCase):
             copy.deepcopy(handle)
 
         class Square(BlackBoxFunctionModel):
+            # Declared shared-by-reference: the supported way to hold a live
+            # handle. An UNDECLARED one still shares but warns [LC-W311];
+            # tests/test_bbfm_copy.py covers that contract.
+            reference_attributes = ('analysis',)
+
             def __init__(self):
                 super().__init__()
                 self.description = 'y = x**2 with an external handle'
