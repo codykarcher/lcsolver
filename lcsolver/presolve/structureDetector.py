@@ -61,7 +61,8 @@ from lcsolver.presolve.detectorSupportFunctions import (
      unstructured_dict,
 )
 
-def _divide_or_disqualify(structures, numerator, denominator):
+def _divide_or_disqualify(structures, numerator, denominator, name=None,
+                          row=None):
     """``gpRow_divide``, unless there is no numerator left to divide.
 
     Subtracting the negative monomials leaves NOTHING when every monomial is
@@ -76,8 +77,23 @@ def _divide_or_disqualify(structures, numerator, denominator):
     could not be detected** through the default path where bounds are
     materialized as rows. Disqualifying the log-space structures and carrying
     on lets the linear ones through.
+
+    The disqualification is BLAMED, not just flagged.  ``x >= 0`` lands here
+    too -- the zero drops out and only ``-x`` remains -- and a single such
+    bound used to clear GP and SP with no message at all.  On a grey-box
+    model that silence rerouted the whole solve: not-SP sends it down the raw
+    IPOPT path instead of SIA, discarding every SIAOptions setting on the
+    way, and the first visible symptom was a crash three layers deep.
     """
     if not numerator:
+        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+               name or '(unnamed constraint)',
+               'has no positive term once everything is moved to one side. '
+               'This is what a nonpositive bound becomes (x >= 0, x >= -10): '
+               'a log-space variable is strictly positive, so such a bound '
+               'is not expressible in a GP/SP. Make the lower bound a small '
+               'positive number to keep the model a GP/SP',
+               row=row)
         for k in ('Geometric_Program', 'Signomial_Program'):
             structures[k][0] = False
             structures[k][1] = None
@@ -363,22 +379,41 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # Eg, no discrete, no weird sets, etc
     N_bound_cons = 0
     boundCollector = None if bounds_as_rows else ComponentMap()
+    #: Variables whose declared bounds a log-space program cannot express:
+    #: (name, which bound, value). A zero or negative bound is a perfectly
+    #: ordinary LP/NLP declaration, so nothing is refused here -- but the
+    #: GP/SP flags WILL come out False for it, through a rearrangement so
+    #: indirect that the blame it produces ('a true signomial') names the
+    #: bound row without saying the bound is the problem. Recording the
+    #: offenders at the declaration, where the value is still in hand, lets
+    #: them be blamed in the terms the author wrote.
+    nonpositive_bounds = []
+
+    def _note_nonpositive(v):
+        lb, ub = v.bounds
+        if lb is not None and lb <= 0:
+            nonpositive_bounds.append((v.name, 'lower bound', lb))
+        elif ub is not None and ub <= 0:
+            nonpositive_bounds.append((v.name, 'upper bound', ub))
+
     for vr in variableList:
         # check if it's a vector, matrix, etc...
         if isinstance(vr,pyomo.core.base.var.IndexedVar):
-            # Get the set the variable is indexed over, this would be [1,2,3,4...] for a vector 
+            # Get the set the variable is indexed over, this would be [1,2,3,4...] for a vector
             # or [(1,1), (1,2)... ] for a matrix
             ix_st = list(vr.index_set())
             # Iterate for all the variables in the indexed set (eg elements in the vector)
             for ix in ix_st:
+                _note_nonpositive(vr[ix])
                 [success, pyomo_component, N_bound_cons] = implementVariableBound(vr[ix],pyomo_component,N_bound_cons,boundCollector)
                 if not success:
-                    return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) } 
+                    return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) }
 
         else: #variable is scalar
+            _note_nonpositive(vr)
             [success, pyomo_component, N_bound_cons] = implementVariableBound(vr,pyomo_component,N_bound_cons,boundCollector)
             if not success:
-                return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) } 
+                return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) }
 
     # get all the objectives
     objectives    = [ obj for obj in pyomo_component.component_data_objects(pyo.Objective , descend_into=True, active=True ) ]
@@ -518,10 +553,22 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # starts building the output dict
     # Structured as : [strucure_present, the gp matrix stack, the constraint operator list]
     structures = {"blockers": {},
-                  "Linear_Program"   :[True,[],[]], 
+                  "Linear_Program"   :[True,[],[]],
                   "Quadratic_Program":[True,[],[]],
-                  "Geometric_Program":[True,[],[]], 
-                  "Signomial_Program":[True,[],[]],} # Convex, LogConvex, Convex_QCQP, 
+                  "Geometric_Program":[True,[],[]],
+                  "Signomial_Program":[True,[],[]],} # Convex, LogConvex, Convex_QCQP,
+
+    # Blame nonpositive declared bounds up front, in the author's own terms.
+    # The bound rows they become still flip the GP/SP flags below; this makes
+    # the blame list SAY it was the bound (`bounds=[0.0, 0.1]`, say) rather
+    # than describing the rearranged row it turned into.
+    for _nm, _which, _val in nonpositive_bounds:
+        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+               "variable '%s'" % _nm,
+               'declares a nonpositive %s (%g). A log-space variable is '
+               'strictly positive, so this bound is not expressible in a '
+               'GP/SP; make it a small positive number to keep the model a '
+               'GP/SP' % (_which, _val))
 
     # Current implementation only allows for one objective
     if len(objectives) != 1:
@@ -745,7 +792,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         posMonomial[1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, [negMonomial])
                         lhs_final = _divide_or_disqualify(structures, lhs_inter,
-                                                          [posMonomial])
+                                                          [posMonomial],
+                                                          name=c.name, row=i + 1)
                     else:
                         negPosynomial = [ copy.deepcopy(lhs_zeroed[nmi]) for nmi in negative_monomial_indices ]
                         posPosynomial = copy.deepcopy(negPosynomial)
@@ -753,7 +801,8 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                             posPosynomial[ii][1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, negPosynomial)
                         lhs_final = _divide_or_disqualify(structures, lhs_inter,
-                                                          posPosynomial)
+                                                          posPosynomial,
+                                                          name=c.name, row=i + 1)
                     # this is where the else indent should be if present
 
                     if not all([rw[1]>0.0 for rw in lhs_final]):
