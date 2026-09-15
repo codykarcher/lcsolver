@@ -73,6 +73,7 @@ User's Guide
    submodels.rst
    solvers.rst
    checks.rst
+   debugging.rst
    ipopt.rst
    results.rst
    sensitivities.rst
