@@ -6,22 +6,11 @@
 
 """Find a feasible point, or name the constraints that prevent one.
 
-The machinery has been here for a while, as the elastic Phase I inside the SIA
-solver, and it was reachable only by building a low-level ``Problem`` by hand.
-That is the wrong shape for the question it answers, which is one people ask
-constantly and early: *is this model even satisfiable, and if not, what do I
-have to relax?*
-
-Two things make the elastic (L1) form the right one to expose. Its optimum is
-**sparse**: constraints that can be satisfied go to zero slack and drop out, so
-what remains is an approximate irreducible inconsistent subsystem -- the actual
-answer -- rather than the flat field of identical residuals a min-max Phase I
-leaves behind. And when it succeeds it hands back a strictly feasible point,
-which is worth more than the reassurance: a hard model started from a feasible
-point is a different problem from one started at the author's guesses.
-
-So the result is *passable*. ``solve(f, start=result)`` begins from the point
-this found::
+Exposes the elastic Phase I that already lived inside the SIA solver. The L1
+form is the right one: its optimum is sparse (rows that can be satisfied drop
+to zero slack, leaving an approximate irreducible inconsistent subsystem),
+and on success it hands back a strictly feasible point. The result is
+passable::
 
     result = feasibility(f)
     if not result.feasible:
@@ -42,16 +31,15 @@ __all__ = ["FeasibilityResult", "feasibility"]
 class FeasibilityResult:
     """What the Phase I found: a point, or the rows that stop one existing."""
 
-    #: True when every constraint is satisfied to ``feasibility_tolerance``.
+    # True when every constraint is satisfied to feasibility_tolerance
     feasible: bool = False
-    #: The point reached, in the order of ``structures['variables']``. Feasible
-    #: when ``feasible``; the least-infeasible point found otherwise, which is
-    #: still usually a better start than the author's guesses.
+    # the point reached, ordered like structures['variables']; the
+    # least-infeasible point when not feasible (still a better start)
     x: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    #: Per-constraint slack. Zero where the row is satisfied.
+    # per-constraint slack, zero where the row is satisfied
     slacks: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    #: ``[(row_index, slack, [variable names])]`` for the rows that keep a
-    #: positive slack, largest first. Empty when feasible.
+    # [(row_index, slack, [variable names])] for rows keeping a positive
+    # slack, largest first; empty when feasible
     blocking: list = field(default_factory=list)
     iterations: int = 0
     names: list = field(default_factory=list)
@@ -60,11 +48,8 @@ class FeasibilityResult:
     def summary(self, top=12) -> str:
         """The report, as a string. ``print(result.summary())``.
 
-        Fuller than the one-line verdict, because a feasibility answer is only
-        useful with its context: how many rows were examined, how far off the
-        worst of them is, and -- when there is no point -- which variables the
-        blocking rows have in common, since that is usually where the
-        modelling error is.
+        Includes what a bare verdict lacks: rows examined, worst slack, and
+        which variables the blocking rows share (the usual error site).
         """
         L = ['feasibility', '-----------']
         n = len(self.slacks)
@@ -79,9 +64,8 @@ class FeasibilityResult:
             L.append('  This ignored the objective entirely: the point is '
                      'feasible, not optimal.')
             if n:
-                # Clamped: the elastic slacks are >= 0 by construction and a
-                # small negative is interior-point round-off, which reads as
-                # nonsense next to the word "slack".
+                # clamped: slacks are >= 0 by construction, a small negative
+                # is interior-point round-off
                 worst = max(0.0, float(max(self.slacks)))
                 L.append(f'  Worst remaining slack {worst:.3e}, within '
                          f'tolerance.')
@@ -142,22 +126,12 @@ class FeasibilityResult:
 def feasibility(model, x0=None, options=None, top=12, presolve=True):
     """Find a feasible point for ``model``, or say what prevents one.
 
-    Accepts a :class:`~lcsolver.objects.formulation.Formulation` or an already
-    detected structure. Runs the elastic Phase I:
-
-    .. math::  \\min \\sum_i s_i \\quad\\text{s.t.}\\quad \\log g_i(x) \\le s_i,
-               \\; s_i \\ge 0
-
-    Returns a :class:`FeasibilityResult`. It is truthy when feasible, carries
-    the point in ``.x``, and can be handed to ``solve(f, start=result)``.
-
-    ``x0`` defaults to the model's current values -- the author's guesses
-    before a solve, the previous answer after one. ``top`` caps how many
-    blocking rows the report lists.
-
-    This solves a *feasibility* problem and ignores the objective entirely. A
-    point it returns satisfies the constraints; it is not optimal and is not
-    claimed to be.
+    Accepts a Formulation or an already detected structure. Runs the elastic
+    Phase I: min sum(s_i) s.t. log g_i(x) <= s_i, s_i >= 0. Returns a
+    FeasibilityResult -- truthy when feasible, point in .x, passable to
+    solve(f, start=result). x0 defaults to the model's current values; top
+    caps the blocking rows listed. Ignores the objective entirely: the point
+    is feasible, not optimal.
     """
     import pyomo.environ as pyo
 
@@ -168,9 +142,8 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
 
     st = _as_structures(model)
     if st.get('bounds') is not None:
-        # The presolve form splits bounds out of the rows, and Phase I reads
-        # rows. Detect afresh rather than quietly looking for a point in a
-        # problem with no variable bounds.
+        # Phase I reads rows, and this form split bounds out of them; detect
+        # afresh rather than search a problem with no variable bounds
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
         st = structure_detector(unit_corrector(model))
@@ -190,8 +163,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     options = options or SIAOptions()
     text, x1, slacks = explain_infeasibility(problem, x0[:problem.n],
                                              options=options, k=top)
-    # explain_infeasibility reports the count in its prose; pull it back out so
-    # the structured result does not have to be parsed to learn it.
+    # pull the iteration count back out of explain_infeasibility's prose
     import re as _re
     _m = _re.search(r'in (\d+) iterations|after (\d+) elastic', text)
     n_iter = int(next(g for g in (_m.groups() if _m else ()) if g)) if _m else 0

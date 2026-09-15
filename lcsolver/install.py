@@ -6,49 +6,19 @@
 
 """Get a working solver stack: cvxopt, IPOPT, cyipopt.
 
-Why this exists at all
-----------------------
+pip cannot finish the job: there is no IPOPT executable on PyPI, and cyipopt
+is sdist-only, so it compiles against an IPOPT already on the machine. IPOPT
+has to come from a package manager (conda-forge, apt, Homebrew) or source.
+Python rather than shell so it behaves the same on Windows.
 
-``pip install lcsolver`` cannot finish the job, and no amount of dependency
-metadata will change that:
+Default install is a MUMPS build (the only redistributable linear solver).
+MA27 -- what you actually want under a GP/SP, see docs/ipopt.rst -- is free
+for academic use but cannot be redistributed, so:
+  ``--ma27 <path>``       build IPOPT against MA27 sources, relink cyipopt
+  ``--relink-cyipopt``    just the cyipopt half, against an existing MA27 build
+Both run the shipped install_ipopt.sh.
 
-* There is no IPOPT executable on PyPI. Not under any name.
-* cyipopt is **sdist-only** on PyPI --- every release to date, no wheels --- so
-  ``pip install cyipopt`` compiles against an IPOPT that must already be on the
-  machine, with pkg-config able to find it.
-
-So IPOPT has to come from a package manager (conda-forge, apt, Homebrew) or
-from source. That is what this script does. It is Python rather than shell so
-that it behaves the same on Windows, where a ``.sh`` bootstrap does not run at
-all.
-
-What you get by default
------------------------
-
-A **MUMPS** build of IPOPT, because MUMPS is the only linear solver whose
-licence permits redistribution and therefore the only one any package manager
-can ship. That is a working install and the right first move.
-
-MA27 --- which is what you actually want under a geometric or signomial
-program, see ``docs/ipopt.rst`` --- is free for academic use but cannot be
-redistributed, so it has to be fetched by hand and IPOPT has to be rebuilt
-against it. Two supported routes, both of which run the same
-``install_ipopt.sh`` that has always done this job:
-
-``lcsolver-install-solvers --ma27 <path>``
-    From scratch, or on top of an existing MUMPS install. Builds IPOPT against
-    the MA27 sources at ``<path>``, relinks cyipopt against that build, and
-    prints the environment to set.
-
-``lcsolver-install-solvers --relink-cyipopt``
-    Just the cyipopt half, for when the executable is already an MA27 build but
-    the in-process route is still on a package-manager MUMPS one.
-
-With no ``--ma27`` and no sources found, the default install runs and finishes
-by telling you MA27 is the upgrade and how to take it.
-
-Nothing here modifies an environment without printing the exact commands first
-and asking.
+Nothing here modifies an environment without printing the plan and asking.
 """
 
 import os
@@ -81,11 +51,8 @@ _MA27_SEARCH = (
 # plumbing
 # --------------------------------------------------------------------------
 class Step:
-    """One command, with a human sentence explaining it.
-
-    Kept as an object rather than a bare callable so the whole plan can be
-    printed and approved before any of it runs.
-    """
+    """One command plus a human sentence, so the whole plan can be printed
+    and approved before any of it runs."""
 
     def __init__(self, description, command=None, action=None, env=None,
                  optional=False):
@@ -104,9 +71,8 @@ class Step:
 
     def run(self):
         if self.action is not None:
-            # Print it too. Some steps are instructions the script cannot carry
-            # out itself (anything needing root); showing them only in the plan
-            # means the run appears to do nothing and say nothing.
+            # print it too: some steps are instructions (anything needing root)
+            # and would otherwise run silently
             print(f'\n==> {self.description}')
             return self.action()
         environ = dict(os.environ)
@@ -117,12 +83,10 @@ class Step:
 
 
 def _conda():
-    """The conda executable and the environment it would modify, or ``None``.
+    """The conda executable and the environment it would modify, or None.
 
-    ``CONDA_PREFIX`` rather than ``conda info`` because the question is not
-    "is conda installed" but "which environment is active right now" --- that
-    is the one an unqualified ``conda install`` writes into, and the one the
-    user needs to see named before approving anything.
+    CONDA_PREFIX first: the question is which environment is active now --
+    the one an unqualified ``conda install`` writes into.
     """
     exe = shutil.which('conda') or shutil.which('mamba') or shutil.which('micromamba')
     if not exe:
@@ -130,9 +94,8 @@ def _conda():
 
     prefix = os.environ.get('CONDA_PREFIX')
     if not prefix:
-        # conda is installed but this shell never activated anything. Ask conda
-        # itself where an install would land, rather than concluding there is
-        # no conda and sending the user to a 20-minute source build.
+        # conda installed but nothing activated: ask conda where an install
+        # would land rather than sending the user to a source build
         try:
             import json
             out = subprocess.run([exe, 'info', '--json'], capture_output=True,
@@ -150,12 +113,8 @@ def _conda():
 
 
 def _packaged_script(name):
-    """Absolute path to a shipped helper script.
-
-    Looked up inside the installed package rather than relative to the repo,
-    because ``lcsolver-install-solvers`` has to work from a wheel install where
-    ``utilities/`` was never installed.
-    """
+    """Absolute path to a shipped helper script. Looked up inside the
+    installed package, not the repo -- a wheel install has no utilities/."""
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, 'scripts', name)
     if not os.path.isfile(path):
@@ -171,12 +130,8 @@ def _ipopt_build_prefix(executable):
 
 
 def _looks_like_ma27(path):
-    """Is there actually MA27 Fortran under here?
-
-    Cheap structural check. The failure it prevents is the expensive one: the
-    HSL build happily produces a library with no solver in it, and you find out
-    an hour later when IPOPT rejects ``linear_solver ma27``.
-    """
+    """Is there actually MA27 Fortran under here? The HSL build happily
+    produces a library with no solver in it -- catch that up front."""
     if not path or not os.path.isdir(path):
         return False
     for root in (path, os.path.join(path, 'src'), os.path.join(path, 'ma27')):
@@ -213,25 +168,17 @@ def _confirm(prompt, assume_yes):
 def _plan_default(report, conda, args):
     """Steps for the plain install: cvxopt, IPOPT+MUMPS, cyipopt.
 
-    Returns ``(steps, source_build_root)``. The second value is set only when
-    IPOPT ends up being built from source, in which case the caller has to
-    print the environment to export --- a source build is not on anyone's PATH
-    by default.
+    Returns ``(steps, source_build_root)``; the root is set only when IPOPT
+    is built from source, so the caller can print the exports (a source build
+    is on nobody's PATH).
     """
     steps = []
     source_root = None
 
     def finish(collected):
-        """Append the PyNumero ASL fetch, whatever else was decided.
-
-        It goes through a helper rather than being written at the end of the
-        function because there are several early returns above it, and the case
-        that matters most reaches one of them: an environment that already has
-        ipopt and cyipopt (a conda env from environment.yml, say) has nothing
-        else to do, returns early, and is exactly the environment where the
-        missing ASL library is the only thing standing between it and a
-        working black-box solve.
-        """
+        """Append the PyNumero ASL fetch, whatever else was decided. A helper
+        because every early return above needs it too -- an env that already
+        has ipopt+cyipopt may be missing only the ASL library."""
         if not args.skip_cyipopt and not _pynumero_asl_available():
             collected.append(_plan_pynumero_asl())
         return collected
@@ -247,13 +194,9 @@ def _plan_default(report, conda, args):
     want_ipopt = not have_ipopt and not args.skip_ipopt
     want_cyipopt = not have_cyipopt and not args.skip_cyipopt
 
-    # An MA27 executable already here, and cyipopt missing: build cyipopt
-    # against *that* IPOPT rather than installing a package-manager one. The
-    # obvious `conda install cyipopt` would pull conda's MUMPS IPOPT with it
-    # and link against that, so the executable route would run MA27 while
-    # black-box models -- which are forced onto cyipopt -- quietly ran MUMPS.
-    # This is the common case for a second environment on a machine where MA27
-    # was built once.
+    # MA27 executable already here, cyipopt missing: build cyipopt against
+    # THAT IPOPT. `conda install cyipopt` would link conda's MUMPS one, so
+    # black-box models would quietly run MUMPS while everything else ran MA27.
     if want_cyipopt and have_ipopt and report['ipopt'].get('ma27') is True:
         steps.extend(_plan_relink(_ipopt_build_prefix(exe)))
         want_cyipopt = False
@@ -295,9 +238,8 @@ def _plan_default(report, conda, args):
                 'and re-run.',
                 action=lambda: 0))
         else:
-            # Last resort, and the reason install_ipopt.sh grew a MUMPS mode:
-            # MUMPS is redistributable, so unlike the MA27 path this needs no
-            # manual download and can run unattended.
+            # last resort: MUMPS is redistributable, so unlike MA27 this
+            # needs no manual download and can run unattended
             source_root = _ma27_build_root(args)
             steps.append(Step(
                 f'build IPOPT against MUMPS from source into '
@@ -310,8 +252,7 @@ def _plan_default(report, conda, args):
 
     if want_cyipopt:
         if source_root:
-            # Point it at what was just built rather than letting pkg-config
-            # find nothing: the source build is not on PATH yet.
+            # point at what was just built; the source build isn't on PATH yet
             steps.extend(_plan_relink(os.path.join(source_root, 'ipopt', 'build')))
         else:
             steps.append(Step(
@@ -325,13 +266,9 @@ def _plan_default(report, conda, args):
 def _pynumero_asl_available():
     """Can Pyomo's in-process NLP interface actually load its ASL library?
 
-    Installing cyipopt is not enough to use the in-process route. Pyomo builds
-    the NLP through PyNumero, which needs a compiled ``pynumero_ASL`` shared
-    library that ships with neither pyomo nor cyipopt --- it is fetched
-    separately by ``pyomo download-extensions``. Without it, every black-box
-    solve dies with "Cannot load the PyNumero ASL interface", which names a
-    component the user has never heard of and gives no hint that one command
-    fixes it.
+    The pynumero_ASL shared library ships with neither pyomo nor cyipopt;
+    without it every black-box solve dies with "Cannot load the PyNumero ASL
+    interface".
     """
     try:
         from pyomo.contrib.pynumero.asl import AmplInterface
@@ -341,33 +278,18 @@ def _pynumero_asl_available():
 
 
 def _plan_pynumero_asl():
-    """Get the PyNumero ASL library, which is not where you would expect.
-
-    Two dead ends first, because both look like the answer:
-
-    ``pyomo download-extensions`` does not provide it. That command fetches
-    gjh and MC++, prints "Finished downloading Pyomo extensions" and exits 0,
-    which is a convincing way to believe the problem is solved when nothing
-    has changed.
-
-    conda-forge's ``pynumero_libraries`` does provide it, but its newest build
-    (1.3) requires Python <= 3.8, so on any current interpreter conda cannot
-    solve for it at all.
-
-    That leaves compiling it, which is what ``pyomo build-extensions`` does.
-    It needs cmake and a C compiler, and it is why this step is allowed to
-    fail without failing the install: an environment that cannot build it
-    still has a perfectly good executable route, and loses only the black-box
-    models that must go in-process.
+    """Build the PyNumero ASL library. Two dead ends that look like the
+    answer: `pyomo download-extensions` does not provide it (exits 0 having
+    changed nothing), and conda-forge's pynumero_libraries needs Python <=3.8.
+    So it has to be compiled (cmake + C compiler) -- optional, since a build
+    failure only loses the black-box models, not the executable route.
     """
     return Step(
         "build Pyomo's PyNumero ASL library, so cyipopt can evaluate a model "
         "at all (needs cmake and a C compiler)",
-        # `pyomo build-extensions` builds *every* extension and fails as a
-        # whole when any of them cannot be built -- on a stock macOS runner it
-        # dies on MC++ wanting pybind11, having never reached PyNumero. This
-        # calls the PyNumero builder directly, so the only thing that can fail
-        # is the thing we actually want.
+        # call the PyNumero builder directly: `pyomo build-extensions` fails
+        # as a whole when any extension fails (MC++ wanting pybind11 kills it
+        # on stock macOS before PyNumero is even reached)
         command=[sys.executable, '-c',
                  'from pyomo.contrib.pynumero.build import build_pynumero; '
                  'build_pynumero()'],
@@ -379,12 +301,8 @@ def _ma27_build_root(args):
 
 
 def _plan_ma27(sources, args):
-    """Steps to build IPOPT against MA27 and point cyipopt at it.
-
-    Delegates the build itself to the shipped ``install_ipopt.sh``, which is
-    the same script that has always done this, rather than reimplementing an
-    autotools build in Python.
-    """
+    """Steps to build IPOPT against MA27 and point cyipopt at it. Delegates
+    the build to the shipped install_ipopt.sh."""
     if sys.platform.startswith('win'):
         raise RuntimeError(
             'building IPOPT against MA27 needs bash and autotools, which this '
@@ -400,20 +318,15 @@ def _plan_ma27(sources, args):
         f'      (into {root}/ipopt -- clones IPOPT, ASL and HSL, then compiles; '
         f'this takes a while)',
         command=['bash', script, root],
-        # The script's own contract is that sources live at
-        # <root>/MA27/ma27-1.0.0. MA27_SRC lets it take them from wherever the
-        # user actually put them without a copy, and without changing the
-        # one-argument form anyone is already using by hand.
+        # MA27_SRC lets the script take sources from wherever the user put
+        # them, without changing its one-argument form
         env={'MA27_SRC': sources})]
 
     if not args.skip_cyipopt:
         steps.extend(_plan_relink(build))
-        # --ma27 is a complete install in its own right -- the README's
-        # quickstart runs it on a machine with nothing -- so it needs the ASL
-        # library just as much as the default path does. It reaches this
-        # branch without passing through the planner that would otherwise add
-        # it, which left the documented fast path building IPOPT, MA27 and
-        # cyipopt and still unable to evaluate a black box.
+        # --ma27 is a complete install in its own right and skips the default
+        # planner -- without this the documented quickstart built everything
+        # and still couldn't evaluate a black box
         if not _pynumero_asl_available():
             steps.append(_plan_pynumero_asl())
 
@@ -421,13 +334,9 @@ def _plan_ma27(sources, args):
 
 
 def _plan_relink(build):
-    """Rebuild cyipopt against a specific IPOPT build.
-
-    Needed because cyipopt links whatever IPOPT it was compiled against: a
-    conda cyipopt stays on conda's MUMPS forever, no matter what the executable
-    on PATH is. Black-box models are the ones that care, since they must use
-    the in-process route.
-    """
+    """Rebuild cyipopt against a specific IPOPT build. cyipopt links whatever
+    it was compiled against -- a conda cyipopt stays on conda's MUMPS forever,
+    and black-box models are stuck with it."""
     include = os.path.join(build, 'include', 'coin-or')
     lib = os.path.join(build, 'lib')
     env = {
@@ -456,13 +365,8 @@ def _plan_relink(build):
 # after the fact
 # --------------------------------------------------------------------------
 def _finish_source_build(root, linear_solver='MA27'):
-    """Record the build and say what, if anything, is left to do.
-
-    The script has already printed whether a loader path is needed (it tests
-    the binary rather than assuming). What is left is the part that used to be
-    a shell-profile instruction and no longer is: LCsolver records this build
-    and prefers it, so there is nothing to export for LCsolver's benefit.
-    """
+    """Record the build and say what, if anything, is left to do. LCsolver
+    records the build and prefers it, so no shell-profile export is needed."""
     build = os.path.join(root, 'ipopt', 'build')
     exe = os.path.join(build, 'bin', 'ipopt')
 
@@ -528,9 +432,8 @@ def main(argv=None):
     print(_fmt(report))
     print()
 
-    # A pin that points at nothing has to be fixed by the user: installing
-    # another IPOPT would not help, because the pin outranks whatever gets
-    # installed and the machine would stay broken in the same way.
+    # A broken pin has to be fixed by the user; it outranks anything
+    # installed here.
     pinned = os.environ.get(IPOPT_EXECUTABLE_ENV)
     if pinned and not os.path.isfile(pinned):
         print(f'error: {IPOPT_EXECUTABLE_ENV} is set to {pinned}, which does '
@@ -592,8 +495,7 @@ def main(argv=None):
         if conda.get('activated'):
             where = f'the active conda environment "{conda["name"]}"'
         else:
-            # Worth spelling out: no environment is active, so conda picks its
-            # base, and installing into base is a choice people regret.
+            # no env active means conda picks base, a choice people regret
             where = (f'the conda environment at {conda["prefix"]} -- no '
                      f'environment is currently activated, so this is conda\'s '
                      f'default')
@@ -623,8 +525,7 @@ def main(argv=None):
 
     # ---- report ------------------------------------------------------------
     if built_root:
-        # A source build is not on PATH and nothing else will put it there, so
-        # the exports are the last necessary step rather than a footnote.
+        # a source build is not on PATH; the exports are a necessary step
         _finish_source_build(built_root, built_solver)
         return 0
 

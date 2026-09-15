@@ -6,30 +6,16 @@
 
 """What solvers this installation actually has, and which one will be used.
 
-Three questions this module answers, none of which the solve path answers on
-its own:
+Answers three questions the solve path doesn't:
+1. Which ``ipopt`` binary wins? conda activate prepends $CONDA_PREFIX/bin,
+   so a MUMPS build can silently shadow a source-built MA27 one.
+2. Which linear solver does that binary carry? Fixed at IPOPT build time and
+   the biggest determinant of GP/SP behaviour; has to be probed by solving.
+3. Is cyipopt (the in-process route, required for black-box constraints)
+   present, and linked against the same IPOPT as the executable?
 
-1. Which ``ipopt`` binary wins? More than one can be on ``PATH`` --- a conda
-   environment puts its own in ``$CONDA_PREFIX/bin``, which ``conda activate``
-   prepends, so a source build of IPOPT that a user made specifically to get
-   MA27 can be shadowed by the prebuilt MUMPS one without any error at all.
-   The symptom is slower and flakier solves, which reads as "lcsolver is
-   flaky".
-
-2. Which linear solver does that binary carry? This is fixed at IPOPT build
-   time and is the single largest determinant of behaviour on a geometric or
-   signomial program (see ``docs/ipopt.rst``). It cannot be read out of a
-   version string; it has to be probed by solving something.
-
-3. Is cyipopt --- the in-process route, and the only one that can evaluate a
-   black-box constraint --- present, and is it linked against the *same* IPOPT
-   as the executable? A conda cyipopt and a source-built MA27 executable are a
-   perfectly common and perfectly silent mismatch.
-
-``LCSOLVER_IPOPT_EXECUTABLE``
-    Set this to an absolute path to pin the executable regardless of ``PATH``
-    order. It exists because telling a user to reorder ``PATH`` against
-    ``conda activate`` is advice that works until the next shell.
+Set ``LCSOLVER_IPOPT_EXECUTABLE`` to pin the executable regardless of PATH
+order (reordering PATH against conda activate only lasts until the next shell).
 """
 
 import contextlib
@@ -42,11 +28,8 @@ import sys
 IPOPT_EXECUTABLE_ENV = 'LCSOLVER_IPOPT_EXECUTABLE'
 AUTOSELECT_ENV = 'LCSOLVER_IPOPT_AUTOSELECT'
 
-#: Where the installer records an IPOPT it built. A source build lands
-#: somewhere like ``~/software/ipopt/build/bin``, which is on nobody's PATH,
-#: and the alternative to remembering it is telling every user to paste an
-#: export into a shell profile -- a step that is easy to skip and silently
-#: leaves the build unused.
+# Where the installer records an IPOPT it built. Source builds land off-PATH,
+# and asking users to edit a shell profile silently leaves the build unused.
 STATE_FILE = os.path.join(os.path.expanduser('~'), '.config', 'lcsolver',
                           'solvers.json')
 
@@ -54,9 +37,8 @@ STATE_FILE = os.path.join(os.path.expanduser('~'), '.config', 'lcsolver',
 # session. Nothing here changes while a process is running.
 _PROBE_CACHE = {}
 
-# Resolution is cached too: it can involve probing, and it is consulted once
-# per solve -- including inside the SLCP and SIA loops, which solve thousands
-# of subproblems.
+# Cache the resolution too: it can probe, and it's consulted once per solve,
+# including inside the SLCP/SIA loops.
 _RESOLVED = None
 
 
@@ -94,23 +76,12 @@ def record_ipopt(path):
 def ipopt_choice():
     """``(path, reason)`` for the ``ipopt`` LCsolver will use.
 
-    The order is deliberate, and the middle of it is the part worth explaining.
-
-    1. ``LCSOLVER_IPOPT_EXECUTABLE``, if set. Always wins, even if broken ---
-       a pin that points at nothing is a mistake to report, not to route around.
-    2. Otherwise, among every candidate (``PATH``, plus whatever the installer
-       recorded), **an MA27 build beats one without it**, regardless of order.
-
-    That second rule is the whole reason this function exists. ``conda
-    activate`` prepends ``$CONDA_PREFIX/bin`` to ``PATH`` in every new shell,
-    so a prebuilt MUMPS IPOPT shadows a source build made specifically to get
-    MA27 --- silently, since both solve, one just worse. Honouring ``PATH``
-    strictly means that machine stays misconfigured until somebody notices the
-    performance and reads the docs. Preferring MA27 means it never happens.
-
-    The probe only runs when there is more than one candidate, which on most
-    machines is never. ``LCSOLVER_IPOPT_AUTOSELECT=0`` restores strict
-    ``PATH`` order.
+    LCSOLVER_IPOPT_EXECUTABLE always wins (even if broken -- a bad pin is a
+    mistake to report, not route around). Otherwise an MA27 build beats one
+    without it regardless of PATH order: conda activate prepends
+    $CONDA_PREFIX/bin, so a prebuilt MUMPS ipopt silently shadows a source
+    build made specifically for MA27. Probes only when there is more than one
+    candidate; LCSOLVER_IPOPT_AUTOSELECT=0 restores strict PATH order.
     """
     global _RESOLVED
     if _RESOLVED is not None:
@@ -164,10 +135,9 @@ def _forget_resolution():
 
 
 def ipopt_available():
-    """Is there any usable IPOPT here --- the executable, or cyipopt?
+    """Is there any usable IPOPT here -- the executable, or cyipopt?
 
-    Not cached: Pyomo's own availability check is a PATH lookup, and caching
-    would make an IPOPT installed mid-session invisible.
+    Not cached: caching would make an IPOPT installed mid-session invisible.
     """
     try:
         from lcsolver.solvers.ipopt.NLP import _executable_available
@@ -185,11 +155,9 @@ def ipopt_available():
 def ensure_own_libs_first(executable):
     """Make the executable load ITS OWN libipopt, not a shadowed one.
 
-    A loader path (DYLD_LIBRARY_PATH here) pinned to one IPOPT install
-    shadows every other install's libipopt by name -- three different
-    MUMPS-capable binaries all probed as MA27-only this way.  Prepending
-    the executable's own sibling lib directory wins the search; no-op when
-    there is no sibling libipopt.
+    A loader path (DYLD_LIBRARY_PATH) pinned to one install shadows every
+    other libipopt by name -- once made three MUMPS binaries probe as
+    MA27-only. Prepend the executable's sibling lib dir; no-op without one.
     """
     if not executable:
         return
@@ -214,12 +182,8 @@ def ensure_own_libs_first(executable):
 def ipopt_solver_factory(executable=None):
     """``SolverFactory('ipopt')`` that honours the executable pin.
 
-    Every route that drives the AMPL interface should go through this rather
-    than constructing the factory itself, or ``LCSOLVER_IPOPT_EXECUTABLE`` ends
-    up respected on some code paths and ignored on others --- which is worse
-    than not having it, because the SLCP and SIA loops (the ones that run
-    thousands of IPOPT solves and care most about the linear solver) are
-    exactly the paths that would ignore it.
+    All AMPL-route callers should use this, or LCSOLVER_IPOPT_EXECUTABLE gets
+    respected on some paths and ignored on others (notably the SLCP/SIA loops).
     """
     import pyomo.environ as pyo
 
@@ -230,11 +194,7 @@ def ipopt_solver_factory(executable=None):
 
 
 def ipopt_executables_on_path():
-    """Every ``ipopt`` on ``PATH``, in the order the shell would find them.
-
-    Used to detect shadowing: if entry 0 lacks MA27 and a later entry has it,
-    the user built IPOPT for nothing.
-    """
+    """Every ``ipopt`` on PATH, in shell lookup order. Used to detect shadowing."""
     found = []
     seen = set()
     for directory in os.environ.get('PATH', '').split(os.pathsep):
@@ -257,15 +217,9 @@ def ipopt_executables_on_path():
 def _quiet():
     """Swallow the noise a deliberately-failing probe makes.
 
-    A probe for a linear solver the build does not have is *expected* to fail,
-    and IPOPT is loud about it -- Pyomo logs "Solver returned non-zero return
-    code" at ERROR and the option documentation gets echoed in full. Printing
-    that while answering "does this build have MA27?" reads as a crash.
-
-    Three layers, because the noise comes from three places: the Pyomo logger,
-    Python-level stdout/stderr, and --- for the in-process route --- IPOPT's
-    own C++ output, which writes to the file descriptors directly and ignores
-    ``sys.stdout`` entirely. Only ``dup2`` reaches that last one.
+    Three layers: the Pyomo logger, Python-level stdout/stderr, and IPOPT's
+    C++ output, which writes to the file descriptors directly -- only dup2
+    reaches that one.
     """
     logger = logging.getLogger('pyomo')
     previous = logger.level
@@ -282,9 +236,8 @@ def _quiet():
         os.dup2(devnull, 1)
         os.dup2(devnull, 2)
     except Exception:
-        # No usable file descriptors (embedded interpreter, some notebook
-        # kernels). The Python-level redirect below still applies; a chattier
-        # report is better than a failed one.
+        # No usable fds (embedded interpreter, some notebook kernels); the
+        # Python-level redirect below still applies.
         pass
 
     try:
@@ -337,22 +290,13 @@ def require_linear_solver(name, route='pyomo', executable=None,
                           library=None):
     """Validate and probe a requested IPOPT ``linear_solver``.
 
-    Returns the normalized (lower-cased) name when the build on ``route``
-    carries it. Raises ``ValueError`` for a name IPOPT has never heard of,
-    and ``SolverUnavailable`` -- naming what IS available -- when the name is
-    legitimate but this build lacks it, so the failure reads as an install
-    gap rather than as IPOPT dying mid-solve with an option error.
-
-    For the cyipopt route a probe can be inconclusive (cyipopt missing, or
-    unable to solve even the probe model); the name is then passed through
-    untested, and IPOPT itself reports if the solver is absent -- guessing
-    ``False`` there would refuse builds that actually carry the solver.
-
-    ``library`` is the shared library for a RUNTIME-LOADED solver
-    (ma57/ma77/ma86/ma97 from a full CoinHSL build, pardiso from Panua);
-    it is validated to exist and passed to the probe under the right IPOPT
-    option (``hsllib``/``pardisolib``). Passing one for a compiled-in
-    solver is refused as a mistake in the call.
+    Returns the normalized name if the build on ``route`` carries it.
+    ValueError for an unknown name; SolverUnavailable (naming what IS
+    available) when the build lacks it, so it reads as an install gap rather
+    than IPOPT dying mid-solve. An inconclusive cyipopt probe passes the name
+    through untested -- guessing False would refuse working builds.
+    ``library`` is the shared lib for a runtime-loaded solver (hsllib/
+    pardisolib); refused for a compiled-in one.
     """
     from lcsolver.core.errors import SolverUnavailable
 
@@ -415,11 +359,9 @@ def require_linear_solver(name, route='pyomo', executable=None,
 def linear_solver_available(name, executable=None, library=None):
     """Does this IPOPT build carry the ``name`` linear solver?
 
-    Probed by solving a one-variable problem with ``linear_solver <name>``: a
-    build without it rejects the option and fails. There is no reliable way to
-    ask the binary directly --- ``--print-options`` does not list the compiled
-    set on every version. ``library`` rides along as ``hsllib``/``pardisolib``
-    for a runtime-loaded solver.
+    Probed by solving a one-variable problem with ``linear_solver <name>`` --
+    there is no reliable way to ask the binary directly. ``library`` rides
+    along as hsllib/pardisolib for a runtime-loaded solver.
     """
     executable = executable or ipopt_executable()
     key = (os.path.realpath(executable) if executable else None, name,
@@ -457,14 +399,9 @@ def linear_solver_available(name, executable=None, library=None):
     return result
 
 
-# Run in a child interpreter, for a reason that is not obvious: refusing an
-# option makes IPOPT's C++ journalist emit the whole option documentation, and
-# it flushes that at *process exit*, long after any dup2 redirection has been
-# undone. In-process there is no point at which it can be silenced. A child
-# process has its own exit, and its output goes to a pipe.
-#
-# All three answers come from one child, so this costs one interpreter start
-# rather than three.
+# Run in a child interpreter: IPOPT's C++ journalist flushes its option-error
+# dump at process exit, after any dup2 redirection is undone, so in-process it
+# cannot be silenced. One child answers all three questions.
 _CYIPOPT_PROBE = r'''
 import json, sys
 out = {"baseline": False, "ma27": None, "mumps": None}
@@ -523,10 +460,8 @@ def _cyipopt_probe():
 def cyipopt_linear_solver_available(name):
     """Same question for the in-process route, which links its own IPOPT.
 
-    Returns ``True``/``False``, or ``None`` when the probe could not run at
-    all --- cyipopt absent, or present but unable to solve even a one-variable
-    model. That is a different fact from "this build lacks MA27", and
-    reporting it as ``False`` produces a confidently wrong diagnosis.
+    True/False, or None when the probe could not run at all (cyipopt absent
+    or broken) -- a different fact from "this build lacks MA27".
     """
     probe = _cyipopt_probe()
     if not probe.get('baseline'):
@@ -558,15 +493,9 @@ def _ipopt_version(executable):
 # the report
 # --------------------------------------------------------------------------
 def check_solvers(probe=True):
-    """Collect the solver situation as a plain dict.
-
-    Parameters
-    ----------
-    probe : bool
-        Run the linear-solver probes. Each is a real (tiny) solve; turning
-        them off makes the report fast and leaves the ``ma27``/``mumps`` fields
-        ``None``.
-    """
+    """Collect the solver situation as a plain dict. ``probe=False`` skips
+    the linear-solver probes (each is a tiny real solve) and leaves the
+    ma27/mumps fields None."""
     report = {
         'cvxopt': {'available': False, 'version': None},
         'ipopt': {'executable': None, 'pinned': False, 'version': None,
@@ -606,10 +535,8 @@ def check_solvers(probe=True):
             report['ipopt']['ma27'] = linear_solver_available('ma27', exe)
             report['ipopt']['mumps'] = linear_solver_available('mumps', exe)
 
-            # An MA27 build losing to one without it. Resolution prefers MA27,
-            # so reaching here means something overrode that: a pin, or
-            # LCSOLVER_IPOPT_AUTOSELECT=0. Either is deliberate, and either
-            # deserves saying out loud rather than silently costing robustness.
+            # An MA27 build losing to one without it: resolution prefers MA27,
+            # so a pin or AUTOSELECT=0 overrode it -- say so out loud.
             if not report['ipopt']['ma27']:
                 for other in list(on_path) + [recorded_ipopt()]:
                     if not other or (os.path.realpath(other)
@@ -639,11 +566,8 @@ def check_solvers(probe=True):
         report['cyipopt']['available'] = True
         report['cyipopt']['version'] = getattr(cyipopt, '__version__', 'unknown')
 
-        # cyipopt alone is not a working in-process route. Pyomo builds the
-        # NLP through PyNumero, whose ASL shared library ships separately from
-        # both packages; without it every black-box solve fails with "Cannot
-        # load the PyNumero ASL interface", which names a component most users
-        # have never heard of.
+        # cyipopt alone is not a working in-process route: PyNumero's ASL
+        # library ships separately, and without it every black-box solve fails.
         report['cyipopt']['pynumero_asl'] = _pynumero_asl_available()
         if not report['cyipopt']['pynumero_asl']:
             report['warnings'].append(
@@ -661,8 +585,8 @@ def check_solvers(probe=True):
             'require it -- the AMPL executable route cannot evaluate a Python '
             'callback. Run `lcsolver-install-solvers`.')
 
-    # A mismatch is not an error, but it is worth naming: the two routes will
-    # behave differently on the same model and that is otherwise mystifying.
+    # A mismatch isn't an error, but the two routes behaving differently on
+    # the same model is otherwise mystifying.
     if (probe and report['ipopt']['ma27'] is True
             and report['cyipopt']['available']
             and report['cyipopt']['ma27'] is False):
@@ -690,9 +614,7 @@ def _fmt(report):
     if i['executable']:
         add(f"ipopt         {i['executable']}")
         if i['reason']:
-            # Never leave "why this binary?" to be inferred: with several
-            # installed, the answer is the difference between a fast solve and
-            # a flaky one.
+            # always say why this binary won; with several installed it matters
             add(f"              {i['reason']}")
         if i['version']:
             add(f"              {i['version']}")
@@ -735,10 +657,8 @@ def _fmt(report):
     return '\n'.join(lines)
 
 
-#: Exit status for "the report ran fine and the install is incomplete". Kept
-#: distinct from 1 so a caller can tell a missing solver from this command
-#: falling over, which is otherwise indistinguishable -- an uncaught exception
-#: also exits 1.
+# Exit status for "report ran fine, install is incomplete". Distinct from 1
+# so a missing solver is distinguishable from this command falling over.
 EXIT_INCOMPLETE = 3
 
 

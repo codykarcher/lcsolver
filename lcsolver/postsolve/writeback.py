@@ -6,15 +6,10 @@
 
 """Write a solver's solution back onto the Pyomo model.
 
-The cvxopt backends solve a transformed problem (log-space for a geometric
-program, matrix form for LP/QP) and return a raw solver dictionary whose ``x``
-vector is indexed by the variable ordering established in
-``structure_detector``. Without this module that vector is never applied to the
-model, so after a successful solve ``pyo.value(f.x)`` still returns the initial
-guess -- which is almost never what the caller wants.
-
-``structure_detector`` publishes the ordering as ``structures['variables']``;
-this module maps the solution vector onto those variables.
+The cvxopt backends solve a transformed problem and return a raw dict whose
+``x`` vector follows the ordering ``structure_detector`` publishes as
+``structures['variables']``. Without this module that vector is never applied,
+so after a successful solve ``pyo.value(f.x)`` still returns the initial guess.
 """
 
 from pyomo.common.dependencies import numpy as np
@@ -24,18 +19,15 @@ from pyomo.core.base.componentuid import ComponentUID
 def _resolve_on(model, v):
     """Find the counterpart of variable ``v`` on ``model``, or None.
 
-    A ``ComponentUID`` is built from the component *object* rather than from
-    ``v.name``. That matters for indexed variables: ``model.find_component(name)``
-    round-trips through a string, so 'sK[0]' has to be re-parsed, and a variable
-    whose parent component has been collected reports its name as
-    '[Unattached VarData]' -- which the CUID parser turns into a bare index with
-    no component name and then raises ``TypeError`` on. Going through the object
-    keeps the real index values (ints, strings, tuples) intact and never parses.
+    The CUID is built from the component object, not ``v.name``:
+    ``find_component`` round-trips through a string, and a collected parent
+    reports '[Unattached VarData]', which the CUID parser raises TypeError
+    on. The object keeps real index values intact and never parses.
     """
     try:
         cuid = ComponentUID(v)
     except Exception:
-        # v's parent component is gone, so it can no longer be located by name.
+        # v's parent component is gone; it can no longer be located by name
         return None
     return cuid.find_component_on(model)
 
@@ -49,41 +41,17 @@ def _name_of(v):
 
 
 def write_solution(structures, res, model=None):
-    """Set each Pyomo variable to its solved value.
+    """Set each Pyomo variable to its solved value; returns ``{name: value}``.
 
-    Parameters
-    ----------
-    structures : dict
-        Output of ``structure_detector``; must contain ``'variables'``.
-    res : dict
-        Solver result dictionary; must contain ``'x'``.
-    model : optional
-        The model to write onto. This matters: ``unit_corrector`` calls
-        ``.clone()``, so ``structures['variables']`` belong to a *copy* of the
-        user's model. Writing to them leaves the caller's model untouched --
-        exactly the bug this module exists to fix. When ``model`` is supplied,
-        each variable is resolved onto it by ``ComponentUID`` (see
-        ``_resolve_on``), which handles indexed variables correctly.
-
-        THE CLONE IS WRITTEN TOO. It is already in hand and already the right
-        list, so bringing it to the solution costs one extra ``set_value`` per
-        variable -- against re-deriving it, which is a second unit-correct and
-        a second walk of the model. That matters because the post-solve checks
-        need exactly this: the DETECTED form, at the SOLVED point. Left holding
-        the initial guess, the clone is useless to them and they re-detect from
-        scratch, which on a few-thousand-row model is about half the wall clock
-        of the whole solve.
-
-    Returns
-    -------
-    dict
-        ``{variable_name: value}`` for every variable written.
-
-    Notes
-    -----
-    Values are written with ``.set_value(..., skip_validation=True)`` so that a
-    solution which sits marginally outside a declared bound (a normal outcome of
-    an interior-point solve) is still recorded rather than raising.
+    ``structures`` must carry 'variables' (the detector's ordering), ``res``
+    an 'x'. Pass ``model`` to resolve each variable onto the caller's model
+    by ComponentUID: unit_corrector clones, so ``structures['variables']``
+    belong to a copy and writing only them leaves the caller's model
+    untouched. The clone is written too -- the post-solve checks need the
+    DETECTED form at the SOLVED point, and re-detecting costs ~half the wall
+    clock of the whole solve. Writes use ``set_value(skip_validation=True)``
+    so a point marginally outside a declared bound (normal for interior
+    point) is still recorded rather than raising.
     """
     if 'variables' not in structures:
         raise KeyError(
@@ -112,8 +80,8 @@ def write_solution(structures, res, model=None):
         val = float(x[i])
         target = v
         if model is not None:
-            # Resolve onto the caller's model, since `variables` may belong to
-            # the clone produced by unit_corrector.
+            # resolve onto the caller's model; `variables` may belong to
+            # the unit_corrector clone
             found = _resolve_on(model, v)
             if found is None:
                 unresolved.append(_name_of(v))

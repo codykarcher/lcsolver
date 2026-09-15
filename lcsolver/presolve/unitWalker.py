@@ -127,9 +127,8 @@ def _units_match(u1, u2, tol=1e-9):
     """Same dimension, within tolerance on the exponents.
 
     NOT u1 == u2: pint compares exponent floats exactly, and fractional
-    exponents (a Constant in N/W^0.803 times W^0.803) leave residues like
-    second**-1.9999999999999998 -- which pint's formatter then rounds for
-    display, so the failure printed [N] =/= [N].
+    exponents leave residues like second**-1.9999999999999998, which the
+    formatter rounds for display -- so the failure printed [N] =/= [N].
     """
     if u1 == u2:
         return True
@@ -165,16 +164,13 @@ def handle_num_node(visitor, node):
 def handle_negation_node(visitor,node,arg1):
     # WARNING: PYOMO CONVERTS 1 and -1 TO UNITS (replaces value with a unary sign)
     if isinstance(node.args[0],_PyomoUnit): #checks to see if node is a Pyomo unit (for cases like -1*units and 1*units)
-        # Read the child, not node.expr (a negation node has no expr).  Hit
-        # whenever a coefficient is exactly 1: pyomo folds 1.0*units.m to the
-        # bare unit and negates that.  Convert to base units like every other
-        # leaf so the sum node's pint comparison holds
+        # read the child, not node.expr (a negation node has no expr); pyomo
+        # folds 1.0*units.m to the bare unit. Convert to base units like any leaf
         K = as_quantity(1.0 * node.args[0]).to_base_units()
         return unitsPack(expr = value(node) * K.magnitude, units = K.units)
     else:
-        # Negate the REBUILT child, not the original node -- returning node
-        # silently discarded every unit conversion inside a negated
-        # subexpression (feet read as metres, no error, wrong number)
+        # negate the REBUILT child -- returning node silently discarded every
+        # unit conversion inside a negated subexpression (feet read as metres)
         return unitsPack(expr=-arg1.expr, units=arg1.units)
 
 def handle_sumExpression_node(visitor,node, *args):
@@ -195,12 +191,9 @@ def handle_pow_node(visitor, node, arg1, arg2):
     if not _is_dimensionless(arg2.units): # units in power is a nono
         raise ValueError('Function handle_pow_node cannot handle units %s in the exponent'%(arg2))
 
-    # A SYMBOLIC exponent: a Constant (mutable Param), or an expression over
-    # Constants. This is legal, and it is the only way to get a sensitivity to
-    # an exponent -- but only over a dimensionless base. Were the base
-    # dimensional, the units of the result would depend on a number a deck can
-    # change, so the model would not have fixed units at all; that is refused
-    # here rather than left to surface as a pint error deeper down.
+    # A SYMBOLIC exponent (a Constant, or expression over Constants) is legal
+    # over a dimensionless base only: a dimensional base would give the result
+    # units that depend on a deck value. Refuse here, not as a pint error later.
     if _is_dimensionless(arg1.units):
         return unitsPack(expr=arg1.expr**arg2.expr, units=dimensionless)
 
@@ -226,22 +219,12 @@ def handle_unit_node(visitor, node):
     K = as_quantity(1.0 * node).to_base_units() # correction factor
     return unitsPack(expr=K.magnitude, units=K.units)
 
-#: What each unary function does to its argument's units. Mirrors Pyomo's own
-#: table in ``pyomo.core.base.units_container`` so that LCsolver and
-#: ``pyomo.environ.units.get_units`` agree rather than inventing a second
-#: convention.
-#:
-#: ``'dimensionless'``
-#:     the argument must be dimensionless and the result is dimensionless.
-#:     Covers log/log10/exp, and the trigonometric functions too: their
-#:     argument is an angle, and an angle's base unit is the radian, which pint
-#:     reports as dimensionless. The inverse functions return radians, again
-#:     dimensionless in base units. Since this walker converts everything to
-#:     base units before comparing, the one rule covers both directions.
-#: ``'same'``
-#:     the result carries the argument's units (ceil, floor).
-#: ``'sqrt'``
-#:     the result carries the argument's units to the one-half power.
+# What each unary function does to its argument's units; mirrors Pyomo's own
+# table in pyomo.core.base.units_container so the two conventions agree.
+# 'dimensionless': argument and result dimensionless -- covers trig too, since
+#   radians are dimensionless in base units and this walker compares there
+# 'same': result carries the argument's units (ceil, floor)
+# 'sqrt': result carries the argument's units to the one-half power
 _UNARY_UNITS = {
     'log': 'dimensionless', 'log10': 'dimensionless', 'exp': 'dimensionless',
     'sin': 'dimensionless', 'cos': 'dimensionless', 'tan': 'dimensionless',
@@ -257,16 +240,9 @@ _UNARY_UNITS = {
 def handle_unary_node(visitor, node, arg1):
     """``sin(x)``, ``exp(x)``, ``sqrt(x)`` and friends.
 
-    This used to call ``units.get_units(arg1)`` unconditionally on its way in.
-    ``arg1`` is a :data:`unitsPack`, not a Pyomo expression, so that raised
-    ``AttributeError: 'unitsPack' object has no attribute
-    'is_expression_type'`` for *every* unary function -- including ``sqrt``,
-    which the branch below was written to support. The AttributeError then
-    surfaced through the unit reporter as a mismatch whose two sides agreed,
-    which is a contradiction on the face of it.
-
-    ``x ** 0.5`` was unaffected, being a power node rather than a unary one,
-    which is why models that spell their roots that way never hit this.
+    Used to call units.get_units(arg1) on a unitsPack (not a Pyomo
+    expression), which raised for EVERY unary function; x**0.5 is a power
+    node, so models spelling roots that way never hit it.
     """
     fcn_handle = node.getname()
     rule = _UNARY_UNITS.get(fcn_handle)

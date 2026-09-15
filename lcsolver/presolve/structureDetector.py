@@ -65,22 +65,10 @@ def _divide_or_disqualify(structures, numerator, denominator, name=None,
                           row=None):
     """``gpRow_divide``, unless there is no numerator left to divide.
 
-    Subtracting the negative monomials leaves NOTHING when every monomial is
-    negative, which is what a bound like ``x >= -10`` becomes. Such a
-    constraint has no positive part, so it is not a posynomial ratio and is not
-    expressible as a geometric or signomial program at all -- but it is a
-    perfectly ordinary linear constraint, and the model may well be a valid LP
-    or QP.
-
-    Before this, ``gpRow_divide`` indexed ``gr1[0]`` on the empty list and the
-    whole detector raised, so **any LP or QP with a negative variable bound
-    could not be detected** through the default path where bounds are
-    materialized as rows. Disqualifying the log-space structures and carrying
-    on lets the linear ones through.
-
-    The disqualification is blamed, not just flagged: a single x >= 0 bound
-    used to clear GP/SP with no message, silently rerouting grey-box models
-    off SIA.
+    An all-negative constraint (what x >= -10 becomes as a row) has no
+    positive part, so it is not a GP/SP -- but may be a fine LP/QP.
+    gpRow_divide used to raise on the empty list and kill detection of the
+    whole model. Disqualify GP/SP (with blame, so it isn't silent) and carry on.
     """
     if not numerator:
         _blame(structures, ['Geometric_Program', 'Signomial_Program'],
@@ -107,13 +95,9 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
 
     otherwise, returns [True, updated_pyomo_component, N_bounds_cons]
 
-    If ``collect`` is a ComponentMap, the resolved ``(lower, upper)`` pair is
-    recorded there and **no** Pyomo constraint is built. The bounds then travel
-    as bounds rather than as rows, which is what a solver actually wants: IPOPT
-    and cvxopt both take variable bounds natively, and writing ``x <= c`` as a
-    row makes every downstream stage pay for it -- the expression walker parses
-    it, the row list carries it, and an SP sub-problem rebuilds it as a
-    log-sum-exp once per iteration. On SPaircraft that is 4859 of 6126 rows.
+    If ``collect`` is a ComponentMap, the (lower, upper) pair is recorded there
+    and no Pyomo constraint is built. Solvers take bounds natively, and bound
+    rows cost every downstream stage (4859 of 6126 rows on SPaircraft).
     """
     # Reject if variable is not continuous
     if vr.domain.name not in ['Reals','NonNegativeReals','NonPositiveReals']:
@@ -148,9 +132,8 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
 
     # Now that bounds are set, need to add them to the pyomo object
     # only do if lower bound is present
-    # Rows this detector created on an earlier pass are recorded on the
-    # component, so RE-detection (Monte Carlo loops, sweeps, continuation)
-    # replaces them from the current declarations instead of colliding.
+    # rows we created on an earlier pass are recorded on the component, so
+    # re-detection (Monte Carlo, sweeps) replaces them instead of colliding
     _owned = getattr(pyomo_component, '_lc_detector_bound_keys', None)
     if _owned is None:
         _owned = set()
@@ -177,8 +160,7 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
                         _found = True
                         break
                 # This should never happen, but if you can't find a unique key then we notify the user
-                # (and the raise fires ONLY on failure now -- it used to fire
-                # unconditionally after the loop, break or no break)
+                # (used to raise unconditionally after the loop, break or no break)
                 if not _found:
                     raise ValueError('Could not found a unique identifier for the lower bound on variable '+vr.name)
         # Now that we have a key, add the new constraint to the pyomo object
@@ -214,11 +196,8 @@ def implementVariableBound(vr,pyomo_component,N_bound_cons,collect=None):
 
     return [True, pyomo_component, N_bound_cons]
 
-#: What each backend can read. A structure carries features -- bounds split
-#: out, equalities condensed, columns substituted away -- and a backend that
-#: cannot read one of them will not fail, it will quietly solve a DIFFERENT
-#: problem. That is the failure mode this repository keeps rediscovering, so
-#: the capability is declared rather than remembered.
+# What each backend can read. A backend handed a feature it can't read
+# doesn't fail, it quietly solves a different problem -- so declare it.
 CONSUMES = {
     'solve_LP':   {'bounds_in_rows'},
     'solve_QP':   {'bounds_in_rows'},
@@ -243,11 +222,7 @@ def features(structures):
 
 
 def require(structures, who):
-    """Refuse a structure carrying a feature ``who`` cannot read.
-
-    Cheap, and it turns "this backend silently ignored half the problem" into
-    an error naming the feature and the backend.
-    """
+    """Refuse a structure carrying a feature ``who`` cannot read."""
     can = CONSUMES.get(who)
     if can is None:
         return
@@ -255,8 +230,7 @@ def require(structures, who):
                                             'columns_removed'}
     if not missing:
         return
-    # Say what to do about it, not merely what is wrong. The remedy is the
-    # part a caller actually needs.
+    # name the remedy, not just the problem
     remedy = {
         'bounds_split': "re-run structure_detector with bounds_as_rows=True",
     }
@@ -276,11 +250,8 @@ def require_bounds_as_rows(structures, who):
 def _require_bounds_as_rows_legacy(structures, who):
     """Refuse structures whose bounds a backend is about to ignore.
 
-    A backend that reads only the rows would silently solve an unbounded
-    relaxation if handed ``bounds_as_rows=False`` output -- the bounds are in
-    ``structures['bounds']`` and nothing would look at them. Failing loudly is
-    the only safe default; a silently relaxed problem still returns an answer,
-    and that answer can look entirely reasonable.
+    With bounds_as_rows=False the bounds sit in structures['bounds']; a
+    rows-only backend would silently solve the unbounded relaxation.
     """
     if structures.get('bounds') is not None:
         raise ValueError(
@@ -294,20 +265,11 @@ def _require_bounds_as_rows_legacy(structures, who):
 def _drop_zero_terms(gpRows):
     """Remove terms whose leading coefficient is exactly zero.
 
-    ``0 * x`` contributes nothing to a sum, so a zero-coefficient term is not
-    a modelling error -- it is an absent term. But the GP/SP tests below ask
-    ``coefficient > 0``, which a zero fails exactly as a NEGATIVE coefficient
-    does, so the classifier read it as a subtraction and rejected the whole
-    model with "structure is neither a GP nor an SP".
-
-    That matters because ``0 * some_variable`` is the natural way to write a
-    units-correct absent term in a parameterised model -- an architecture with
-    no fuel tank contributing no tank weight, say. Dropping the term here is
-    exact and makes that idiom work.
-
-    A row that is ALL zero terms is left alone: an identically-zero expression
-    is a real problem and should be reported as one further down, not silently
-    turned into an empty posynomial.
+    0*x is an absent term (the natural units-correct way to zero out a term
+    in a parameterised model), but the coefficient>0 GP/SP tests read it as a
+    subtraction and rejected the model. A row that is ALL zero terms is left
+    alone: an identically-zero expression is a real problem and should be
+    reported further down, not turned into an empty posynomial.
     """
     if not gpRows:
         return gpRows
@@ -319,11 +281,8 @@ def _drop_zero_terms(gpRows):
 def _blame(structures, classes, name, reason, row=None):
     """Record which row ruled out which problem class, and why.
 
-    The detector otherwise only flips a global flag, so a model that "is an
-    SP" cannot say what stopped it being a GP -- which is the first thing
-    anyone wants to know, because a signomial constraint is usually one term
-    away from a posynomial one. Cheap: a few tuples, appended where the flag
-    was already being cleared.
+    Otherwise only a global flag flips, and a model that "is an SP" cannot
+    say what stopped it being a GP.
     """
     blk = structures.setdefault('blockers', {})
     for cls in classes:
@@ -335,28 +294,15 @@ def _blame(structures, classes, name, reason, row=None):
 def structure_detector(pyomo_component, bounds_as_rows=True):
     """Detect the optimization structure of a Pyomo model.
 
-    ``bounds_as_rows`` selects how bounds declared on a variable are carried.
-
-    ``True`` (default)
-        Each bound becomes a Pyomo constraint and then a row, as it always
-        has. Every existing caller sees exactly what it saw before.
-
-    ``False``
-        Bounds are published as ``structures['bounds']`` -- a list of
-        ``(lower, upper)`` aligned with ``structures['variables']`` -- and no
-        rows are emitted for them. A solver that takes variable bounds
-        natively should prefer this: it is the same problem with far fewer
-        rows, and the reduction is large (SPaircraft goes from 6126 rows to
-        1267).
-
-    Nothing is tightened or dropped when bounds are split out; the values pass
-    through unchanged. That matters here, because SPaircraft needs the full
-    1e-30..1e30 box for the reference solution to be inside it, and a presolve
-    that "cleaned up" those limits would cut off the answer.
+    bounds_as_rows=True (default): each declared variable bound becomes a
+    constraint row, as always. False: bounds go to structures['bounds'], a
+    (lower, upper) list aligned with structures['variables'], with no rows
+    emitted -- far fewer rows for solvers that take bounds natively
+    (SPaircraft: 6126 -> 1267). Values pass through untightened; SPaircraft
+    needs its full 1e-30..1e30 box.
     """
-    # Accept the previous step's result directly, so the chain composes:
-    #   structures = structure_detector(unit_check(f))
-    # rather than making the caller reach inside for `.model`.
+    # Accept the previous step's result directly, so
+    # structure_detector(unit_check(f)) composes without reaching for .model
     if hasattr(pyomo_component, 'model') and hasattr(pyomo_component, 'ok'):
         if not pyomo_component.ok:
             raise ValueError(
@@ -376,10 +322,9 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # Eg, no discrete, no weird sets, etc
     N_bound_cons = 0
     boundCollector = None if bounds_as_rows else ComponentMap()
-    # Variables whose declared bounds a log-space program cannot express.
-    # The GP/SP flags will come out False for these through a rearrangement
-    # so indirect the row-level blame is misleading; record them here, where
-    # the declared value is still in hand, and blame in the author's terms
+    # Variables whose declared bounds a log-space program cannot express;
+    # record them here while the declared value is still in hand, so the
+    # blame reads in the author's terms rather than the rearranged row's
     nonpositive_bounds = []
 
     def _note_nonpositive(v):
@@ -413,36 +358,24 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # get all the constraints
     constraints   = [ con for con in pyomo_component.component_objects(     pyo.Constraint, descend_into=True, active=True ) ]
 
-    # Drop constraints that contain no Vars before the numbering below is
-    # established. A constant-only constraint -- `Qmax >= Q` where both were
-    # substituted, say -- carries no structure, but feeding it to the
-    # posynomial machinery zeroes it to a bare negative number
-    # (10 - 100 = -90, then +1 -> -89); the negative leading coefficient
-    # reads as a subtraction and silently declares the whole model
-    # unstructured, so a model that IS a GP gets misrouted to a general NLP
-    # solver with no diagnostic.
-    #
-    # This must happen here rather than inside the loop: `parseDict_GP` is
-    # handed `i+1` from `enumerate(constraints)` and uses it to group
-    # monomials by constraint, so skipping one mid-loop leaves a gap in the
-    # numbering and later indexing walks off the end of the operator list.
+    # Drop constant-only constraints (e.g. `Qmax >= Q` with both substituted)
+    # before the numbering below is set: the posynomial machinery zeroes them
+    # to a bare negative number, which reads as a subtraction and silently
+    # declares a valid GP unstructured. Must happen here, not mid-loop:
+    # parseDict_GP groups monomials by i+1, and a gap in the numbering walks
+    # off the end of the operator list.
     _kept = []
     for con in constraints:
         datas = list(con.values())
         if datas and not any(list(identify_variables(c.expr)) for c in datas):
             try:
                 if not all(bool(pyo.value(c.expr)) for c in datas):
-                    # A constraint with no variables that evaluates false is a
-                    # proof of infeasibility, and the cheapest one available --
-                    # available before any solve is attempted. Flag it as such
-                    # rather than only as "unstructured": callers otherwise
-                    # read the absence of structure as "send it to a general
-                    # NLP solver", which then reports a bare
-                    # termination_condition=infeasible and loses the sentence
-                    # that says WHICH constraint and why.
-                    # Only the model's own constants; the expression also
-                    # carries Pyomo unit parameters, and "dimensionless = 1"
-                    # is noise in a message meant to say what is wrong.
+                    # A var-free constraint that evaluates false is the
+                    # cheapest possible infeasibility proof; flag it as such,
+                    # or the model routes to an NLP solver that reports a bare
+                    # termination_condition=infeasible with no constraint name.
+                    # Only report the model's own constants; Pyomo unit
+                    # parameters ("dimensionless = 1") are noise here.
                     try:
                         own = {c.name for c in pyomo_component.get_constants()}
                     except Exception:
@@ -469,8 +402,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                                        con.name,
                                        f' ({vals})' if vals else '')}
             except Exception:
-                # Not evaluable (mismatched units, say) -- that is the unit
-                # checker's job to report, not something to guess at here.
+                # not evaluable (mismatched units?) -- the unit checker's job to report
                 pass
             continue
         _kept.append(con)
@@ -640,14 +572,11 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # print(structures)
         conCounter = 0
         operatorList = []
-        #: (row index, name, rows produced) for every '==' constraint, kept
-        #: regardless of which flags are still alive. The monomial-equality
-        #: check below used to read the GP row list, which is None once
-        #: anything else has cleared the GP flag -- so on a model that was
-        #: already non-GP for another reason, posynomial equalities were never
-        #: examined and never blamed. That made the blame list incomplete, and
-        #: an incomplete blame list is worse than none: `structure_report`
-        #: infers "simplifies to a GP after presolve" from it.
+        # (row index, name, rows produced) for every '==' constraint, kept
+        # regardless of which flags are still alive: the monomial-equality
+        # check used to read the GP row list (None once GP was cleared), so
+        # posynomial equalities went unblamed and structure_report misread
+        # the incomplete blame list
         equality_rows = {}
         # Iterate over the constraints
         for i, con in enumerate(constraints):
@@ -744,22 +673,12 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                     unique, counts = numpy.unique([lhz[0] for lhz in lhs_zeroed], return_counts=True)
                     countDict = dict(zip(unique, counts))
                     if len(unique) > 1:
-                        # lhs - rhs came out as a fraction N/D, which happens
-                        # whenever the constraint divides by a multi-term
-                        # expression -- `z == 1 - a*(1-y)/(1+y)` and the like.
-                        #
-                        # Once the constraint has been moved to the form
-                        # N/D {<=,==,>=} 0 the denominator can be dropped:
-                        # every variable in a GP or SP is strictly positive, so
-                        # a denominator whose monomials all carry positive
-                        # coefficients is itself strictly positive, and
-                        # dividing through by it preserves the relation and its
-                        # direction. What remains, N {<=,==,>=} 0, is exactly
-                        # what the rest of this branch expects.
-                        #
-                        # A denominator with a negative coefficient could
-                        # change sign over the domain, so its direction is not
-                        # safe to assume; that case is still rejected.
+                        # lhs - rhs came out as a fraction N/D (the constraint
+                        # divides by a multi-term expression). In N/D {<=,==,>=} 0
+                        # form an all-positive-coefficient denominator is
+                        # strictly positive (GP/SP vars are), so drop it and
+                        # keep N {op} 0. A negative coefficient could change
+                        # sign over the domain, so that case is still rejected.
                         numerator_rows = [r for r in lhs_zeroed if r[0] >= 0]
                         denominator_rows = [r for r in lhs_zeroed if r[0] < 0]
                         if (not numerator_rows or not denominator_rows
@@ -837,16 +756,11 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         if structures['Signomial_Program'][0] != False:
             structures['Signomial_Program'][2] = operatorList
 
-        # A geometric program admits only MONOMIAL equalities: `log-sum-exp == 0`
-        # is not a convex set, so a posynomial equality is a signomial
-        # constraint however it is written. Any '==' row that expanded to more
-        # than one term is one of those.
-        #
-        # Every offender is recorded, not just the first, and the scan runs
-        # whatever the GP flag currently says. Both matter: it used to `break`
-        # after one and to be skipped entirely once GP was already False, so
-        # the three drag-fit equalities in the Hoburg UAV went unblamed on a
-        # model that another constraint had already made non-GP.
+        # A GP admits only MONOMIAL equalities (log-sum-exp == 0 is not a
+        # convex set), so any '==' that expanded to more than one term is a
+        # signomial constraint. Record every offender, whatever the GP flag
+        # says: it used to break after one / skip when already non-GP, and
+        # the Hoburg UAV drag-fit equalities went unblamed.
         for conIx, (name, n_rows) in sorted(equality_rows.items()):
             if n_rows > 1:
                 _blame(structures, ['Geometric_Program'], name,
@@ -861,25 +775,20 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     structures['info']['N_cons_total']    = N_cons
     structures['info']['N_cons_noBounds'] = N_cons - N_bound_cons
     structures['info']['N_cons_bounds']   = N_bound_cons
-    # Publish the variable ordering used for the exponent/coefficient columns.
-    # The solution vector returned by the cvxopt backends is indexed in exactly
-    # this order, so downstream code (notably solution write-back) needs it.
+    # Publish the variable ordering for the exponent/coefficient columns; the
+    # cvxopt solution vector is indexed this way, so write-back needs it
     structures['variables'] = list(unwrappedVariables)
-    # Variable bounds, in the same order, when they were not turned into rows.
-    # `None` distinguishes "bounds are in the rows, as always" from "bounds are
-    # here and there are none on this variable", which is an empty list.
+    # Variable bounds in the same order when not turned into rows; None means
+    # "bounds are in the rows, as always"
     structures['bounds'] = (
         None if boundCollector is None
         else [boundCollector.get(v, (None, None)) for v in unwrappedVariables])
-    # Keep a strong reference to the model the variables came from. Callers
-    # routinely write `structure_detector(unit_corrector(m))`, which leaves the
-    # clone unreferenced; once it is collected, the IndexedVar components die
-    # with it and every VarData in `variables` reports its name as
-    # '[Unattached VarData]', breaking name-based write-back.
+    # Keep a strong reference to the model: structure_detector(unit_corrector(m))
+    # leaves the clone unreferenced, and once collected every VarData reports
+    # '[Unattached VarData]', breaking name-based write-back
     structures['model'] = pyomo_component
-    # A dict subclass with named fields. Every existing consumer indexes it
-    # exactly as before; new code can read `.kind`, `.space`, `.terms(i)`
-    # instead of learning the positional row format.
+    # dict subclass with named fields; old consumers index as before, new
+    # code can read .kind, .space, .terms(i)
     return as_detected(structures)
 
 

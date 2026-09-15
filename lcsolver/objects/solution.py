@@ -6,21 +6,16 @@
 
 """What a solve produced, held on its own and printed on request.
 
-Pyomo reloads a solution onto the model, so ``pyo.value(m.x)`` answers after a
-solve. That is convenient and LCsolver keeps doing it, but it leaves the result with
-nowhere to live: to see what happened you must already know which variables to
-ask about, one at a time, and which model object to ask -- and asking the wrong
-one returns the initial guess with no indication anything is wrong, because
-``unit_corrector`` cloned the model before detection.
+Pyomo reloads the solution onto the model, but the result then has nowhere to
+live: you must know which variables to ask about and which model object to
+ask -- the wrong one silently returns the initial guess, because
+unit_corrector cloned the model before detection.
 
-A :class:`Solution` is the answer as an object. It carries the objective, every
-variable and constant with its units and description, and the sensitivities
-when they have been computed, and it prints them as a table. ``f.solution``
-builds one from the model's current values.
-
-The layout follows the ``OptimizationOutput.result`` table from corsair:
-objective first, then variables, then constants, then sensitivities, each
-column width computed from its contents so the colons line up.
+A :class:`Solution` is the answer as an object: objective, every variable and
+constant with units and description, sensitivities when computed, printed as
+a table. ``f.solution`` builds one from the model's current values. Layout
+follows corsair's ``OptimizationOutput.result``: objective, variables,
+constants, sensitivities, column widths computed so the colons line up.
 """
 from __future__ import annotations
 
@@ -35,11 +30,10 @@ _ELEMENT = re.compile(r'^(.*)\[([0-9, ]+)\]$')
 
 
 def _split_element(name):
-    """``'V[2]'`` -> ``('V', (2,))``, ``'x[0,1]'`` -> ``('x', (0, 1))``.
+    """``'V[2]'`` -> ``('V', (2,))``; None when the name carries no index.
 
-    None when the name carries no index. This is the reverse of how Pyomo
-    names the element of an indexed component, and is what lets ``sol['V[2]']``
-    keep working after the vector is stacked into one array-valued entry.
+    Reverses Pyomo's element naming so ``sol['V[2]']`` keeps working after
+    the vector is stacked into one array-valued entry.
     """
     m = _ELEMENT.match(name)
     if not m:
@@ -53,24 +47,12 @@ def _element_name(name, index):
 
 
 def _alphabetical(name):
-    """Sort key for a displayed name: how a reader would alphabetize it.
+    """Sort key: case folded, digit runs compared as numbers.
 
-    Two things a plain string sort gets wrong in a table someone is scanning
-    for a name they already know.
-
-    CASE. ASCII orders every capital ahead of every lowercase, so ``Re_station``
-    files before ``area_disk`` rather than between ``radius`` and ``rho``. An
-    engineering model capitalizes on the convention of the quantity -- Re, CT,
-    M -- not to signal precedence, so case is folded away.
-
-    DIGITS. A vector prints one row per element, and lexicographically
-    ``[10]`` sits between ``[1]`` and ``[2]``: a twenty-segment chain reads
-    0, 10, 11, ... 19, 1, 2. Runs of digits are compared as numbers so the
-    elements come out in the order they are indexed.
-
-    Each part is tagged with its kind so a numeric run is never compared
-    against a text one, and the untouched name is appended by the caller to
-    break ties -- otherwise ``Re`` and ``re`` would order arbitrarily.
+    A plain string sort files ``Re_station`` before ``area_disk`` (ASCII
+    case) and puts ``[10]`` between ``[1]`` and ``[2]``. Parts are
+    kind-tagged so numbers never compare against text; the caller appends
+    the raw name to break ties like ``Re`` vs ``re``.
     """
     return tuple((1, int(p)) if p.isdigit() else (0, p.lower())
                  for p in _DIGITS.split(name))
@@ -99,11 +81,9 @@ def _units(u):
 class Entry:
     """One named quantity: its value, units and description.
 
-    A vector or array variable is ONE entry, its value a numpy array in the
-    declared shape, rather than one entry per element. That is how it was
-    declared and how a caller wants it back -- to save, to slice, to hand to
-    the next model as a guess -- and printing it per element is the table's
-    job, not the data's.
+    An array variable is ONE entry holding a numpy array in its declared
+    shape -- how a caller wants it back (to save, slice, or hand to the next
+    model as a guess). Printing per element is the table's job, not the data's.
     """
 
     __slots__ = ('name', 'value', 'units', 'description')
@@ -138,11 +118,9 @@ class Entry:
 class EntryMap(dict):
     """``{name: Entry}`` that also answers for the elements of an array.
 
-    Iterating gives the stacked names -- ``V``, not ``V[0]``, ``V[1]``,
-    ``V[2]`` -- so a loop over the solution sees each quantity once, in the
-    shape it was declared. But a sensitivity is computed per element and keyed
-    by the element's Pyomo name, and a reader who knows a name from the printed
-    table may well ask for ``sol['V[2]']``; both resolve here to a scalar
+    Iterating gives the stacked names (``V``, not ``V[0]``...), so each
+    quantity appears once. But sensitivities are keyed per element and a
+    reader may ask for ``sol['V[2]']``; both resolve here to a scalar
     :class:`Entry` cut from the array.
     """
 
@@ -190,28 +168,24 @@ class Solution:
         self.variables = EntryMap(variables or {})
         self.constants = EntryMap(constants or {})
         self.sensitivities = dict(sensitivities) if sensitivities else None
-        #: Constants whose sensitivity the problem does not determine, because
-        #: the active set is degenerate. Hidden from the table by default: the
-        #: value returned for one of these is a property of which dual vector
-        #: was recovered, not of the design.
+        # Constants whose sensitivity the problem does not determine
+        # (degenerate active set); hidden from the table by default
         self.ambiguous = set(ambiguous or ())
-        #: Holographic constraints found ACTIVE at this solution. Non-empty
-        #: means the answer is on a limit that was declared never to bind.
+        # Holographic constraints found ACTIVE at this solution: the answer
+        # sits on a limit declared never to bind
         self.holographic = list(holographic or [])
-        #: How many were DECLARED, so the report can say "2 of 3" rather than
-        #: "2 of 2" and understate how much of the model was being watched.
+        # how many were DECLARED, so the report can say "2 of 3"
         self.holographic_total = holographic_total or len(self.holographic)
         self.status = status
         self.solver = solver
         self.structure = structure
-        #: How the solve went: detected/prescribed structure, route, status.
-        #: A dict stashed by solve() on the model (``_solve_report``); None
-        #: when the model was solved some other way.
+        # How the solve went (dict stashed by solve() as _solve_report);
+        # None when the model was solved some other way
         self.report = dict(report) if report else None
-        #: Code-tagged messages ([LC-Wxxx] ...) the solve captured instead of
-        #: printing. Rendered in the summary's Post Solve Report.
+        # code-tagged [LC-Wxxx] messages captured instead of printed;
+        # rendered in the summary's Post Solve Report
         self.messages = list(messages or [])
-        #: ``[(flat_prefix, dotted_path)]``, longest first, for display only.
+        # [(flat_prefix, dotted_path)], longest first, for display only
         self.groups = sorted(groups or [], key=lambda p: -len(p[0]))
 
     # -- access ------------------------------------------------------------
@@ -245,17 +219,13 @@ class Solution:
     def display_name(self, name):
         """``wing_box_t_cap`` shown as ``wing.box.t_cap``.
 
-        Groups namespace by flat prefix so that nothing downstream has to know
-        about them, but a reader wants the hierarchy back. The dotted path is
-        carried from the group rather than derived by swapping underscores for
-        dots, which would turn a group named ``landing_gear`` into
-        ``landing.gear``.
+        The dotted path is carried from the group rather than derived by
+        swapping underscores for dots, which would turn ``landing_gear``
+        into ``landing.gear``.
         """
         for prefix, path in self.groups:
-            # An empty prefix is a group that namespaces nothing -- a builder
-            # shared between a standalone model and a larger one that mounts it
-            # under a prefix. Every name starts with '', so matching on it
-            # would file the entire model under that group.
+            # An empty prefix namespaces nothing; every name starts with '',
+            # so matching on it would file the entire model under that group.
             if prefix and name.startswith(prefix):
                 return path + '.' + name[len(prefix):]
         return name
@@ -263,12 +233,9 @@ class Solution:
     def _order(self, names):
         """Ungrouped first, then grouped, each alphabetically.
 
-        A model's own quantities are the ones its author is looking for, and
-        they get buried when a hundred namespaced ones sort in among them.
-
-        Within each of the two, `_alphabetical` orders the way a reader would:
-        case folded and vector indices numeric. The raw name rides along last
-        so that names differing only in case still have a settled order.
+        A model's own quantities get buried when a hundred namespaced ones
+        sort in among them. The raw name rides along last so names differing
+        only in case still have a settled order.
         """
         return sorted(names, key=lambda n: (self.display_name(n) != n,
                                             _alphabetical(self.display_name(n)),
@@ -276,11 +243,8 @@ class Solution:
 
     @staticmethod
     def _rows(entries):
-        """``{row_name: Entry}`` with every array broken out per element.
-
-        The table prints ``V[0]``, ``V[1]``, ``V[2]`` -- a row that is a whole
-        vector cannot be read -- but the entries themselves stay stacked.
-        """
+        """``{row_name: Entry}`` with every array broken out per element
+        for printing; the entries themselves stay stacked."""
         out = {}
         for n, e in entries.items():
             if e.is_array:
@@ -360,14 +324,10 @@ class Solution:
                 show_ambiguous=False):
         """The table, as a string.
 
-        ``top`` keeps only the ``n`` largest sensitivities by magnitude, and
-        ``sensitivity_tol`` drops everything below a threshold. A model with
-        two hundred constants prints two hundred rows otherwise, and the ones
-        worth reading are the handful at the top.
-
-        ``show_ambiguous`` includes the sensitivities the problem does not
-        determine, marked with ``?``. They are hidden by default because they
-        look exactly like answers.
+        ``top`` keeps the n largest sensitivities, ``sensitivity_tol`` drops
+        the rest -- two hundred constants otherwise print two hundred rows.
+        ``show_ambiguous`` includes the ones the problem does not determine,
+        marked ``?``; hidden by default because they look exactly like answers.
         """
         L = ['']
         if self.report:
@@ -407,21 +367,12 @@ class Solution:
             if not items:
                 L += [f'   all below {sensitivity_tol:g}', '']
             else:
-                # RANKED GLOBALLY BY MAGNITUDE, and deliberately not split
-                # ungrouped-first the way the tables above are. There the
-                # reader is looking up a name they already know, and a model's
-                # own quantities get buried among a hundred namespaced ones.
-                # Here the ranking IS the content: the question a sensitivity
-                # table answers is "what is this design most sensitive to",
-                # and filing every sub-model's constants below every top-level
-                # one answers a different question -- it puts a 0.001 in the
-                # assembly above a 1.5 in a block, so the largest number in
-                # the model lands twenty rows down.
-                #
-                # Ties break alphabetically so that constants of genuinely
-                # equal sensitivity -- a pair that always appears as a product
-                # -- keep a settled order across runs instead of falling back
-                # on dict insertion.
+                # RANKED GLOBALLY BY MAGNITUDE, deliberately not
+                # ungrouped-first like the tables above: here the ranking IS
+                # the content, and filing sub-model constants below top-level
+                # ones would put a 0.001 in the assembly above a 1.5 in a
+                # block. Ties break alphabetically so equal pairs keep a
+                # settled order across runs.
                 items.sort(key=lambda kv: (-abs(kv[1]),
                                            _alphabetical(self.display_name(kv[0])),
                                            self.display_name(kv[0])))
@@ -484,10 +435,9 @@ class Solution:
                    report=None):
         """Read the model's current values into a Solution.
 
-        Deliberately reads the model handed to it rather than any structure
-        detected from it: a detected structure holds variables belonging to the
-        unit-corrected clone, which was never solved, and reading those returns
-        the initial guess.
+        Reads the model handed to it, not a detected structure: detected
+        variables belong to the never-solved unit-corrected clone and read
+        as the initial guess.
         """
         import pyomo.environ as pyo
 
@@ -504,10 +454,9 @@ class Solution:
         def stacked(v):
             """An indexed component as one array in its declared shape.
 
-            The shape is the one the declaration recorded (``size=[3, 4]``);
-            a component that carries none is read as a flat vector of its
-            keys in order. An element that cannot be evaluated is NaN, so the
-            array keeps its shape and the rest of the elements stay usable.
+            Shape from the declaration (``size=[3, 4]``); without one, a flat
+            vector of keys in order. Unevaluable elements become NaN so the
+            rest stay usable.
             """
             shape = getattr(v, '_edi_shape', None)
             keys = list(v.keys())

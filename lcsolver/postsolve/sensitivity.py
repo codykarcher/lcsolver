@@ -6,75 +6,22 @@
 
 """Sensitivity of the optimum to the Constants of a formulation.
 
-This is the LCsolver analogue of the sensitivity report that `GPkit` prints for a
-geometric program: for every ``Constant`` in the model it reports how strongly
-the optimal objective responds to that constant. The reported quantity is the
-log-log sensitivity (an elasticity)
+The GPkit-style report: for every Constant, the log-log sensitivity
 
-.. math::
+    s_c = d log f* / d log c = (c / f*) df*/dc
 
-    s_c \\;=\\; \\frac{d \\log f^*}{d \\log c}
-          \\;=\\; \\frac{c}{f^*}\\, \\frac{d f^*}{d c}
+which is unitless, so comparable across constants with different units.
+Computed exactly from a single solve via the envelope theorem: with lambda_i
+the constraint duals,
 
-so ``s_c = 2`` means "a 1% increase in this constant raises the optimum by
-about 2%", and the sign tells you the direction. Elasticities are unitless,
-which makes them comparable across constants carrying different physical units
--- the main reason this, rather than the raw derivative, is the headline number.
+    df*/dtheta = df/dtheta - sum_i lambda_i d(body_i - bound_i)/dtheta
 
-How it works
-------------
-The naive way to obtain these numbers is to perturb each constant and re-solve,
-which costs ``2N`` solves for ``N`` constants and is both slow and limited by
-the solver's convergence tolerance. Instead this module uses the envelope
-theorem, which gives the answer *exactly* from a single solve.
-
-Write each constraint in the form Pyomo stores it, ``body`` versus ``bound``
-(the bound being ``lower`` or ``upper``), and let :math:`\\lambda_i` be the
-constraint's dual. At the optimum the primal variables are stationary, so the
-total derivative of the optimum with respect to a constant :math:`\\theta`
-collapses to the *partial* derivatives at fixed :math:`x^*`:
-
-.. math::
-
-    \\frac{d f^*}{d \\theta}
-      = \\frac{\\partial f}{\\partial \\theta}
-      - \\sum_i \\lambda_i \\frac{\\partial (\\text{body}_i - \\text{bound}_i)}
-                                  {\\partial \\theta}
-
-Every partial derivative here is taken symbolically with Pyomo's reverse-mode
-differentiation, so the result carries no truncation error whatsoever: it is the
-exact derivative of the model, not a difference quotient. One reverse sweep
-gives the derivatives with respect to every constant in an expression at once,
-so the cost is one solve plus one walk per active constraint -- independent of
-how many constants the model has.
-
-Where the duals come from
--------------------------
-The formula needs duals keyed by Pyomo constraint, and LCsolver has several solver
-backends. Rather than reach into each backend's transformed problem, this module
-obtains them in one of two backend-agnostic ways:
-
-``suffix``
-    If the model carries a populated ``dual`` Suffix -- which the IPOPT route
-    imports directly from the solver -- those duals are used as-is.
-
-``kkt``
-    Otherwise (the cvxopt LP/QP/GP/SP backends, which solve a transformed
-    problem and return only a raw vector) the duals are recovered from the
-    primal solution by solving the KKT stationarity condition
-
-    .. math:: \\nabla_x f = \\sum_{i \\in \\mathcal{A}} \\lambda_i \\nabla_x
-              (\\text{body}_i - \\text{bound}_i)
-
-    in the least-squares sense over the active set :math:`\\mathcal{A}`. This
-    needs nothing but the primal solution, so it works for every backend
-    uniformly and does not depend on any solver's internal row ordering.
-
-For a signomial program (SP/SLCP) the duals describe the final convex
-subproblem, so the sensitivities are a local approximation about the returned
-point rather than a global statement. This is the intended reading, and it
-matches how such sensitivities are used in practice; ``result['approximate']``
-flags it.
+Every partial is taken symbolically (Pyomo reverse mode), so no truncation
+error and no re-solves. Duals come from a populated ``dual`` Suffix (the
+IPOPT route) or, for the cvxopt backends, are recovered from the primal
+solution by least-squares KKT stationarity over the active set. For an SP
+the duals describe the final convex subproblem, so the sensitivities are
+local to the returned point; ``result['approximate']`` flags it.
 """
 
 import collections
@@ -92,42 +39,20 @@ __all__ = ["sensitivities", "constraint_duals", "dual_ambiguity",
            "format_sensitivities"]
 
 
-#: Relative tolerance for deciding that a constraint is binding.
-#:
-#: This must be looser than the accuracy of the primal solution, not tighter.
-#: An interior-point solve returns a point satisfying its constraints to a few
-#: parts in 1e6, so a 1e-6 test misclassifies genuinely-tight constraints as
-#: slack; dropping even one of them from the stationarity system corrupts every
-#: recovered dual. Measured on the aircraft GP, the recovered duals are correct
-#: to 8e-6 and completely insensitive to this value anywhere in 1e-5 .. 1e-2,
-#: so 1e-4 sits in the middle of a wide plateau.
+# Relative tolerance for calling a constraint binding. Must be looser than the
+# primal accuracy (~1e-6 from interior point) or tight constraints get dropped,
+# corrupting every recovered dual. On the aircraft GP the duals are correct to
+# 8e-6 and insensitive anywhere in 1e-5..1e-2, so 1e-4 sits mid-plateau.
 ACTIVE_RTOL = 1e-4
 
-#: Relative size of a constant's null-space component above which its
-#: sensitivity is reported as undetermined rather than returned as a number.
-#:
-#: When the active-constraint Jacobian is rank deficient the duals are not
-#: unique -- any vector from the null space can be added to them and
-#: stationarity still holds. `lstsq` picks the minimum-norm member of that
-#: family, silently, so an undetermined sensitivity comes back looking like an
-#: ordinary answer. A sensitivity is determined exactly when the constant's
-#: gradient vector over the active set is orthogonal to that null space, which
-#: is what this measures.
-#:
-#: The value sits in an empty band rather than being tuned. Measured on
-#: SPaircraft, whose active set is rank deficient by 23, the 195 constants
-#: land either below 1e-8 or above 1e-4 and NOTHING falls in between; any
-#: threshold inside that decade selects the same 40. Below the band is
-#: orthogonality blurred by conditioning -- the scaled system has a condition
-#: number of 2e17, so a true zero shows up as 1e-12 rather than 1e-16 -- and
-#: above it is a real component. Hiding those 40 takes the largest reported
-#: sensitivity from 315.86, which is not a credible log-log sensitivity, to
-#: 1.71, which is.
+# Fraction of a constant's active-set gradient lying in the stationarity null
+# space above which its sensitivity is reported undetermined (rank-deficient
+# duals). Sits in an empty band: on SPaircraft the 195 constants land below
+# 1e-8 or above 1e-4, nothing between; hiding those 40 takes 315.86 -> 1.71.
 DUAL_AMBIGUITY_TOL = 1e-6
 
-#: Relative stationarity residual above which the recovered duals are reported
-#: as untrustworthy. A converged solve sits several orders of magnitude below
-#: this; the aircraft GP reaches 1.6e-6.
+# Relative stationarity residual above which recovered duals are reported as
+# untrustworthy. A converged solve sits far below this (aircraft GP: 1.6e-6).
 KKT_RESIDUAL_WARN = 1e-3
 
 
@@ -135,10 +60,7 @@ KKT_RESIDUAL_WARN = 1e-3
 # small helpers
 # ---------------------------------------------------------------------------
 def _d(expr, wrt):
-    """Exact partial derivative of a Pyomo expression, as a float.
-
-    Returns 0.0 when the expression is absent or does not involve ``wrt``.
-    """
+    """Exact partial d(expr)/d(wrt) as a float; 0.0 when absent or independent."""
     if expr is None:
         return 0.0
     if not hasattr(expr, 'is_expression_type'):
@@ -173,14 +95,13 @@ def _grad(expr, wrt_list):
 def _bound_of(con):
     """The bound a constraint is measured against, and whether it is an equality.
 
-    Pyomo hoists a mutable Param out of the body and into the bound, so the
-    parameter dependence of a constraint such as ``x >= p`` lives entirely in
-    ``con.lower``. Both sides therefore have to be differentiated.
+    Pyomo hoists a mutable Param into the bound (``x >= p`` lives in
+    ``con.lower``), so both sides have to be differentiated.
     """
     lower, upper = con.lower, con.upper
     if lower is not None and upper is not None:
-        # Equality, or a ranged constraint. For a range, the binding side is
-        # whichever the body currently sits on.
+        # equality or ranged; for a range, the binding side is whichever
+        # the body currently sits on
         try:
             if pyo.value(lower) == pyo.value(upper):
                 return upper, True
@@ -200,14 +121,9 @@ def _bound_of(con):
 def _residual_scale(con, variables):
     """Natural magnitude of a constraint, for a scale-aware feasibility test.
 
-    Comparing a residual against the bound alone is useless when the bound is
-    zero, which is the normal case here: LCsolver moves everything to one side, so a
-    constraint reads ``body <= 0``. A weight constraint on an aircraft then has
-    terms of order 1e4 N and an interior-point solver leaves a residual of order
-    1e-1 -- tight to five significant figures, yet an absolute test would call
-    it slack. The scale used instead is the magnitude of the largest term,
-    ``max_j |x_j d(body)/dx_j|``, which is the quantity the residual should be
-    judged against.
+    The bound is routinely 0 (LCsolver moves everything to one side), so judge
+    the residual against the largest term, ``max_j |x_j d(body)/dx_j|`` --
+    a 1e4 N weight constraint with a 1e-1 residual is tight, not slack.
     """
     g = _grad(con.body, variables)
     xs = np.array([abs(pyo.value(v)) if v.value is not None else 0.0
@@ -219,19 +135,11 @@ def _residual_scale(con, variables):
 def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
     """True if the constraint is binding at the current point.
 
-    The comparison is against the constraint's own natural magnitude and
-    nothing else. An earlier version tested ``rtol * max(1.0, scale)``, whose
-    floor silently turned this relative test into an ABSOLUTE one for every
-    constraint smaller than unit scale -- and a dimensionless quantity below 1
-    is ordinary outside aerospace. On the oxygenator GP the index of hemolysis
-    sits at 2e-5 against a slack lower bound of 1e-12: the residual is 2e-5,
-    the floored threshold is 1e-4, so a bound seven orders of magnitude away
-    was declared active. That put one more column in the stationarity system
-    than there are variables, which made the active set genuinely rank
-    deficient, which made the duals genuinely non-unique -- so LC-W303 fired
-    correctly and hid five sensitivities that were, by then, really undetermined
-    (DP_max came back +0.019 against a true -0.301, the wrong sign). Removing
-    the floor restores agreement with finite differences to ~1e-5.
+    Compared against the constraint's own natural magnitude only. An earlier
+    ``rtol * max(1.0, scale)`` floor made the test absolute below unit scale:
+    on the oxygenator GP it declared a slack 1e-12 bound active, made the
+    active set rank deficient, and gave a wrong-signed dual. No floor:
+    agreement with finite differences to ~1e-5.
     """
     bound, is_eq = _bound_of(con)
     if is_eq:
@@ -246,27 +154,20 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
         if variables is not None:
             scale = _residual_scale(con, variables)
         else:
-            # No variables to measure terms against, so the bound is the only
-            # scale available. It is routinely 0 here (LCsolver moves everything
-            # to one side), and only then is there nothing better than 1.0 --
-            # floor on that case alone, never on a bound that is merely small.
+            # no variables to measure terms against, so the bound is the only
+            # scale; fall back to 1.0 only when it is exactly 0, never floor
+            # a bound that is merely small
             scale = abs(bd) if bd else 1.0
-    # Both branches above are strictly positive; guard anyway rather than
-    # shrink the tolerance to nothing on a caller-supplied scale.
+    # guard against a caller-supplied nonpositive scale
     return abs(b - bd) <= rtol * (scale if scale > 0 else 1.0)
 
 
 def _param_gradient(expr, index):
     """``{name: d expr / d constant}`` for every Constant appearing in ``expr``.
 
-    One reverse sweep answers for every constant at once, so this is called
-    once per constraint rather than once per (constraint, constant) pair. The
-    difference is the whole cost of the routine: an aircraft model has a couple
-    of hundred constants and a couple of hundred active constraints, and the
-    pairwise form walks the same expressions tens of thousands of times to
-    learn -- for nearly all of them -- that the constant does not appear.
-    Restricting each walk to the constants actually present is the other half:
-    a constraint typically mentions two or three.
+    One reverse sweep per constraint, restricted to the constants actually
+    present (typically two or three); the pairwise form walks the same
+    expressions tens of thousands of times on an aircraft model.
     """
     out = {}
     if expr is None or not hasattr(expr, 'is_expression_type'):
@@ -295,11 +196,8 @@ def _param_gradient(expr, index):
 
 
 def _constants(model):
-    """Every LCsolver Constant, as individual ParamData, keyed by name.
-
-    An LCsolver ``Constant`` is a mutable Pyomo ``Param``; an indexed Constant
-    contributes one entry per element, matching how GPkit reports vectors.
-    """
+    """Every LCsolver Constant (mutable Param) as ParamData keyed by name;
+    an indexed Constant contributes one entry per element, GPkit-style."""
     out = {}
     for p in model.component_objects(pyo.Param, active=True, descend_into=True):
         if not p.mutable:
@@ -360,17 +258,11 @@ def _greybox_blocks(model):
 def _greybox_gradients(model, variables):
     """``[(block, [grad_1, ..., grad_m])]`` for each grey box on the model.
 
-    One gradient per box output, over ``variables``: ``+1`` on the output
-    variable and ``-d(out)/d(in)`` on each input, so that the row reads as the
-    equality ``out - box(in) == 0`` in the same sign convention as the body -
-    bound columns of an ordinary constraint. The box's inputs and outputs are
-    matched to ``variables`` by name, which is what survives the unit-corrected
-    clone the KKT recovery runs on.
-
-    The jacobian is read from the box's cache when the current point is the
-    one it last evaluated (the normal case straight after a solve), so this
-    usually costs no call to the analysis code. A box that cannot be evaluated
-    is skipped rather than allowed to lose the whole sensitivity pass.
+    One gradient per output over ``variables``: +1 on the output variable,
+    -d(out)/d(in) on each input, i.e. the equality ``out - box(in) == 0`` in
+    the body - bound sign convention. Matched by name so it survives the
+    unit-corrected clone; the jacobian usually comes from the box's cache,
+    and a box that cannot be evaluated is skipped rather than losing the pass.
     """
     index = {v.name: i for i, v in enumerate(variables)}
     out = []
@@ -397,16 +289,15 @@ def _greybox_gradients(model, variables):
     return out
 
 
-#: A KKT stationarity system, kept so that the ambiguity test can reuse it.
+# A KKT stationarity system, kept so that the ambiguity test can reuse it.
 KKTSystem = collections.namedtuple("KKTSystem", "A_s rhs_s col_scale owners")
 
 
 def _kkt_system(model, rtol=ACTIVE_RTOL):
     """Assemble the scaled stationarity system ``A_s lambda_s = rhs_s``.
 
-    Separated from solving it because :func:`dual_ambiguity` needs the same
-    matrix, and assembling it is the expensive half -- one symbolic gradient
-    per active constraint.
+    Separate from solving because dual_ambiguity needs the same matrix, and
+    assembly (one symbolic gradient per active constraint) is the expensive half.
     """
     obj = _objective(model)
     variables = _variables(model)
@@ -420,19 +311,12 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
         owners.append(con)
 
     # A RuntimeConstraint is an ExternalGreyBoxBlock, not a pyo.Constraint, so
-    # the loop above never sees it -- and without its column the objective
-    # gradient along the box's inputs and outputs has nothing to balance
-    # against. The stationarity system is then inconsistent by construction:
-    # every black-box model reported LC-W302 (8.7e-2 on a wing sized through
-    # masstran, 2.6e-5 with the column present) and, worse, the duals of the
-    # ordinary constraints came out wrong, so the sensitivities were bad
-    # numbers with a warning nobody read. Each output of the box is the
-    # equality ``out - box(in) == 0``, whose gradient is +1 on the output
-    # variable and -J on the inputs.
-    # The grey-box rows' own multipliers ARE needed afterwards: a box may
-    # declare Constants, and their sensitivities chain through lambda times
-    # the box's d(output)/d(constant) column.  The owner marker says which
-    # block and which output row this column is
+    # the loop above never sees it; without its column the stationarity system
+    # is inconsistent (every black-box model fired LC-W302) and the ordinary
+    # duals come out wrong. Each output is the equality out - box(in) == 0:
+    # +1 on the output variable, -J on the inputs. The grey-box multipliers
+    # are kept -- a box may declare Constants, whose sensitivities chain
+    # through lambda -- and the owner marker records which block and row.
     for _blk, grads in _greybox_gradients(model, variables):
         for _r, g in enumerate(grads):
             columns.append(g)
@@ -459,14 +343,10 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
     A = np.column_stack(columns)
     rhs = _grad(obj.expr, variables)
 
-    # Equilibrate before solving. In an engineering model the variables span
-    # many orders of magnitude (a Reynolds number next to a skin-friction
-    # coefficient), which makes the raw stationarity system badly conditioned
-    # and the recovered duals meaningless. Scaling each row by its variable's
-    # value turns the system into one about *relative* changes, where every
-    # entry is O(1); scaling each column by the constraint's own magnitude does
-    # the same across constraints. Both are undone afterwards, so the duals
-    # returned are in natural units.
+    # Equilibrate before solving: the variables span many orders of magnitude,
+    # so scale rows by variable value (relative changes, O(1) entries) and
+    # columns by constraint magnitude. Both are undone afterwards, so the
+    # duals come back in natural units.
     xs = np.array([abs(pyo.value(v)) if v.value is not None else 0.0
                    for v in variables])
     row_scale = np.where(xs > 0, xs, 1.0)
@@ -480,11 +360,10 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
 def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
     """Recover duals from the primal solution via KKT stationarity.
 
-    Solves ``grad f = sum_i lambda_i grad(body_i - bound_i)`` in the least-squares
-    sense over the active set, in the same sign convention Pyomo's ``dual``
-    Suffix uses. Active variable bounds are included as columns so that
-    stationarity can actually be met; their multipliers are then discarded,
-    since a variable bound is a number and cannot depend on a Constant.
+    Least-squares solve of ``grad f = sum_i lambda_i grad(body_i - bound_i)``
+    over the active set, in Pyomo's dual-Suffix sign convention. Active
+    variable bounds are included as columns so stationarity can be met, then
+    their multipliers are discarded (a bound cannot depend on a Constant).
     """
     system = _kkt_system(model, rtol)
     duals = ComponentMap()
@@ -499,11 +378,8 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
         return duals
     lam = lam_s / col_scale
 
-    # How well the recovered duals actually satisfy stationarity, measured in
-    # the scaled (relative) space. A large value means the active set is wrong
-    # or the point is not a local optimum -- either way the sensitivities built
-    # from these duals are not trustworthy, so record it rather than let the
-    # failure pass silently.
+    # Stationarity residual in the scaled space. Large means a wrong active
+    # set or not a local optimum; record it rather than fail silently.
     denom = np.linalg.norm(rhs_s)
     resid = float(np.linalg.norm(A_s @ lam_s - rhs_s) / (denom if denom > 0 else 1.0))
     _duals_from_kkt.last_residual = resid
@@ -523,14 +399,10 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
 def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
     """How undetermined each constant's sensitivity is, as a relative size.
 
-    Returns ``{name: r}`` where ``r`` is the fraction of the constant's
-    active-set gradient vector that lies in the null space of the stationarity
-    system. ``r == 0`` means the sensitivity is the same for every valid choice
-    of duals; ``r > 0`` means it is not determined by the problem at all, and
-    the number that comes back is an artefact of which dual vector was picked.
-
-    A degenerate active set is the normal state of an engineering model, not a
-    pathology -- SPaircraft carries 23 degrees of freedom -- so this is
+    Returns ``{name: r}``, the fraction of the constant's active-set gradient
+    lying in the stationarity null space. r == 0: same answer for every valid
+    dual vector; r > 0: the number is an artefact of which duals were picked.
+    A degenerate active set is normal (SPaircraft: 23 dof), so this is
     reported rather than treated as a failure.
     """
     if system is None:
@@ -552,15 +424,15 @@ def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
         return dict.fromkeys(constants, 0.0)     # full rank: nothing ambiguous
     null_basis = Vt[rank:].T
 
-    # The constant's gradient over the active set. A variable bound is a
-    # number and cannot depend on a Constant, so those columns stay zero.
+    # The constant's gradient over the active set; variable-bound columns
+    # stay zero (a bound cannot depend on a Constant).
     grads = {name: np.zeros(len(owners)) for name in constants}
     for i, con in enumerate(owners):
         if con is None:
             continue
         if isinstance(con, tuple) and con and con[0] == 'gb':
-            # A grey-box output row g = out - box(in, c): its gradient in a
-            # declared constant is -d(box)/d(c), read from the box itself.
+            # grey-box row g = out - box(in, c): gradient in a declared
+            # constant is -d(box)/d(c), read from the box itself
             _blk, _r = con[1], con[2]
             try:
                 cj = _blk.get_external_model().constant_jacobian()
@@ -589,16 +461,9 @@ def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
 def constraint_duals(model, method='auto', rtol=ACTIVE_RTOL):
     """Duals for every active constraint, keyed by Pyomo constraint.
 
-    Parameters
-    ----------
-    model : Formulation
-        A model holding a solution.
-    method : {'auto', 'suffix', 'kkt'}
-        Where to get the duals. ``'auto'`` prefers a populated ``dual`` Suffix
-        (the IPOPT route) and falls back to KKT recovery from the primal
-        solution (the cvxopt backends).
-    rtol : float
-        Relative tolerance for deciding whether a constraint is binding.
+    ``method='auto'`` prefers a populated ``dual`` Suffix (the IPOPT route)
+    and falls back to KKT recovery from the primal (the cvxopt backends);
+    'suffix' or 'kkt' force one. ``rtol`` is the active-set tolerance.
     """
     if method not in ('auto', 'suffix', 'kkt'):
         raise ValueError("method must be 'auto', 'suffix', or 'kkt'; "
@@ -623,10 +488,9 @@ def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
                       abs_step=1e-6, solve_fn=None):
     """Central-difference sensitivities by re-solving the model per Constant.
 
-    Duals are never consulted, so this is immune to the degenerate-active-set
-    failure of KKT recovery. Cost: two solves per Constant. Requires that the
-    solve backend writes the solution back onto the model (every LCsolver backend
-    does), and leaves the model re-solved at the baseline on exit.
+    Never consults duals, so immune to the degenerate-active-set failure of
+    KKT recovery. Costs two solves per Constant; leaves the model re-solved
+    at the baseline on exit.
     """
     if solve_fn is None:
         from lcsolver.solvers.solver import cvxopt_solve as solve_fn
@@ -659,71 +523,28 @@ def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
 
 def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
                   duals=None, approximate=None, check_ambiguity=True):
-    """Sensitivity of the optimum to every Constant in the model.
+    """Sensitivity of the optimum to every Constant; call after ``solve(f)``.
 
-    Parameters
-    ----------
-    model : Formulation
-        A model that already holds a solution. Every LCsolver backend writes the
-        solution back onto the model, so this is the state after ``solve(f)``.
-    normalized : bool
-        When True (the default) report the log-log sensitivity
-        ``d log f* / d log c``, which is unitless and therefore comparable
-        across constants. When False report the raw derivative ``d f* / d c``,
-        which carries units of ``[objective]/[constant]``.
-    method : {'auto', 'suffix', 'kkt', 'fd'}
-        How to obtain the constraint duals; see :func:`constraint_duals`.
-        ``'fd'`` bypasses duals entirely and central-differences the optimum
-        with respect to each Constant by re-solving the model. It is the slow,
-        assumption-free fallback for the degenerate-active-set case in which
-        dual recovery is ambiguous (large stationarity residual): exactness of
-        the dual route is traded for ~2 extra solves per Constant. The model is
-        left holding the baseline solution afterwards.
-    rtol : float
-        Relative tolerance for the active-set test.
-    duals : ComponentMap, optional
-        Precomputed duals, to avoid recovering them again.
-    approximate : bool, optional
-        Marks the result as a local approximation. Set automatically for a
-        signomial program, whose duals come from the final convex subproblem.
-    check_ambiguity : bool
-        Test which sensitivities the problem actually determines. A degenerate
-        active set leaves the duals non-unique, and a sensitivity that depends
-        on which dual vector was chosen is an artefact rather than an answer.
-        Costs one SVD of the stationarity system -- 0.2s on SPaircraft -- and
-        is what keeps a meaningless +315 out of the table.
-
-    Returns
-    -------
-    dict
-        ``{'sensitivities': {name: value}, 'objective': f*, 'normalized': bool,
-        'method': str, 'approximate': bool, 'ambiguous': [name, ...],
-        'ambiguity': {name: float}}``
-
-    Notes
-    -----
-    The result is exact for LP, QP and GP: every partial derivative is taken
-    symbolically, so there is no step size to choose and no truncation error.
-    For a signomial program it describes the final convex subproblem and is
-    therefore local to the returned point.
+    ``normalized=True`` gives the unitless ``d log f* / d log c``; False the
+    raw ``d f* / d c``. ``method`` is 'auto'/'suffix'/'kkt' as in
+    :func:`constraint_duals`, or 'fd' to central-difference by re-solving
+    (~2 solves per Constant; the assumption-free fallback when dual recovery
+    is ambiguous). ``check_ambiguity`` costs one SVD (0.2s on SPaircraft) and
+    flags sensitivities the problem does not determine -- it keeps a
+    meaningless +315 out of the table. Exact for LP/QP/GP; for an SP, local
+    to the final convex subproblem. Returns a dict with 'sensitivities',
+    'objective', 'normalized', 'method', 'stationarity_residual', 'ambiguity',
+    'ambiguous', and 'approximate'.
     """
-    # Frame selection. Suffix duals (the IPOPT route) belong to the original
-    # model's constraint objects, so that path stays on the original model.
-    # KKT recovery, however, must run on the UNIT-CORRECTED twin: the raw
-    # model's constraint expressions mix declared units (a Prouty weight
-    # coefficient in lb/ft^2.3 beside a chord in m), so evaluating them raw
-    # gives numbers in no consistent frame -- genuinely tight constraints look
-    # slack, the recovered active set is wrong, and the stationarity system
-    # goes inconsistent (observed as a residual of 0.19 on the first model
-    # with non-SI Constants). unit_corrector folds the conversion factors into
-    # the expressions as literals, the cloned variable values ride along
-    # unchanged, and the Params keep their names and magnitudes, so the
-    # normalized log-log sensitivities are identical to those defined on the
-    # declared-units model. (method='fd' re-solves through the same correction
-    # and needs neither.)
-    # Only the KKT recovery produces grey-box row duals, and a box that
-    # declares Constants needs them; such a model goes down the KKT route on
-    # 'auto', and an explicit 'suffix' request is honoured but warned
+    # Frame selection. Suffix duals (IPOPT) belong to the original model's
+    # constraint objects, so that path stays there. KKT recovery must run on
+    # the UNIT-CORRECTED twin: raw expressions mix declared units, so tight
+    # constraints look slack and the stationarity system goes inconsistent
+    # (residual 0.19 on the first non-SI model). unit_corrector folds the
+    # conversions in as literals; names, magnitudes, and the normalized
+    # sensitivities are unchanged. Only KKT recovery produces grey-box row
+    # duals, which a box that declares Constants needs: such a model goes
+    # KKT on 'auto', and an explicit 'suffix' is honoured but warned.
     _gb_constants = any(
         getattr(blk.get_external_model(), 'constantParams_optimization', None)
         for blk in _greybox_blocks(model))
@@ -753,9 +574,8 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     if method == 'fd':
         return _fd_sensitivities(model, fstar, normalized=normalized)
 
-    # A signomial program is solved as a sequence of convex subproblems, so its
-    # duals belong to the last of those. Flag that unless the caller has said
-    # otherwise, so the approximation is never silently presented as exact.
+    # SP duals belong to the last convex subproblem; flag the approximation
+    # unless the caller has said otherwise.
     if approximate is None:
         structure = getattr(model, '_edi_last_problem_structure', None)
         if structure is not None and 'signomial' in str(structure):
@@ -773,10 +593,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         used = 'given'
     residual = getattr(_duals_from_kkt, 'last_residual', None)
 
-    # A sensitivity built on duals that do not satisfy stationarity is not a
-    # sensitivity, it is a plausible-looking number. Both failure modes below
-    # are reachable from a solve that did not converge, so say so loudly rather
-    # than return a table of quiet zeros.
+    # Duals that don't satisfy stationarity give plausible-looking garbage;
+    # both failure modes are reachable from a non-converged solve, so warn
+    # loudly rather than return a table of quiet zeros.
     if len(duals) == 0:
         warnings.warn(
             "[LC-W302] no binding constraints were found, so every sensitivity will be "
@@ -808,8 +627,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             totals[name] -= lam * dv
 
     # ... and the same term for grey-box rows whose box declares Constants:
-    # g = out - box(in, c) = 0, so dg/dc = -d(box)/d(c) and the contribution
-    # is +lambda * d(box)/d(c)
+    # dg/dc = -d(box)/d(c), so the contribution is +lambda * d(box)/d(c)
     if used == 'kkt':
         for _blk, _r, lam in (getattr(_duals_from_kkt,
                                       'last_greybox_duals', None) or []):
@@ -837,9 +655,8 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
         else:
             out[name] = total
 
-    # Which of these the problem actually determines. Reported alongside
-    # rather than dropped here: a caller asking for raw numbers should get
-    # them, and the display layer decides what to show.
+    # Report which of these the problem actually determines; the display
+    # layer decides what to hide.
     ambiguity, ambiguous = {}, []
     if check_ambiguity:
         try:

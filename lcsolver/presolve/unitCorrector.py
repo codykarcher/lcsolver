@@ -64,10 +64,8 @@ def _units_of(expr):
 def _describe_mismatch(name, cexpr, exc):
     """Say what is wrong, in the terms the author wrote it in.
 
-    The previous message was `Error with constraint: <expression>` -- it named
-    the constraint and stopped there, leaving the author to work out which side
-    was wrong and by how much. Almost always the answer is a single missing
-    factor, and the checker already knows what it is.
+    The old message named the constraint and stopped; the answer is almost
+    always a single missing factor, and the checker already knows it.
     """
     lines = [f'Error in units for {name}:', '', f'    {cexpr}', '']
 
@@ -89,10 +87,8 @@ def _describe_mismatch(name, cexpr, exc):
         lines.append(f'    [{left or "?"}]  =/=  [{right or "?"}]')
         lines.append('')
         if left and right and left != right:
-            # Pyomo converts freely between units of the same dimension, so
-            # reaching here means the two sides are not the same dimension at
-            # all and no conversion between them exists. The ratio is still
-            # worth printing: it is exactly what the short side is missing.
+            # Pyomo converts freely within a dimension, so reaching here means
+            # different dimensions; the ratio is what the short side is missing
             factor = None
             try:
                 a, b = pyo.units.get_units(cexpr.args[0]), \
@@ -115,17 +111,12 @@ def _describe_mismatch(name, cexpr, exc):
             lines.append('  than between its sides -- most often a sum whose '
                          'terms disagree.')
 
-    # The raw error carries object reprs and is several hundred characters of
-    # pointer addresses; keep the head of it for anyone debugging the walker
-    # itself, and no more.
+    # keep only the head of the raw error, for anyone debugging the walker
     detail = ' '.join(str(exc).split())
-    # Pyomo appends a repr of every offending node, which is pointer addresses
-    # and nothing a modeller can act on. The sentence before them is the part
-    # worth keeping.
+    # Pyomo appends reprs of every offending node (pointer addresses); drop them
     if '<' in detail:
         detail = detail.split('<', 1)[0]
-    # Cutting at the repr can land mid-argument-list; back up to the end of the
-    # sentence before it, which is the part that names the failing node.
+    # cutting at the repr can land mid-argument-list; back up to the sentence end
     if detail.count('(') > detail.count(')'):
         detail = (detail.rsplit(':', 1)[0] if ':' in detail
                   else detail.split('(', 1)[0])
@@ -139,11 +130,8 @@ def _describe_mismatch(name, cexpr, exc):
 def _join_failures(failures):
     """Every mismatch in one message, in the order they were written.
 
-    Checking stops at the first failure only if the checker raises there, and
-    a model whose units are wrong in one place is usually wrong in several --
-    the same missing conversion repeated. Reporting them one solve at a time
-    makes the author pay a full round trip per constraint, so the walk carries
-    on past a failure and reports the lot, as the preconditioner does.
+    The walk carries on past a failure and reports the lot; one error per
+    round trip is expensive and the same missing conversion usually repeats.
     """
     if len(failures) == 1:
         return failures[0]
@@ -156,24 +144,17 @@ def unit_corrector(pyomo_component):
     if not isinstance(pyomo_component, BlockData):
         raise ValueError( "Invalid type %s passed into the convexity detector"%(str(type(pyomo_component))))
 
-    # IDEMPOTENCY: correcting twice is semantically the identity, and the
-    # second walk previously CRASHED outright -- detector-added bound rows
-    # carry bracketed names ('FS_M[0]_lowerBound') whose rendered .name
-    # differs from their attribute key, so the delete-and-replace below
-    # could not find them.  sensitivities() re-corrects internally, which
-    # made every post-solve sensitivity read on an already-corrected model
-    # fail (silently, until the attach path learned to report).  Return a
-    # fresh clone to preserve the fresh-copy contract every caller holds.
+    # IDEMPOTENCY: correcting twice is the identity, but the second walk used
+    # to crash on detector-added bound rows (bracketed .name differs from the
+    # attribute key), breaking sensitivities() on corrected models. Return a
+    # fresh clone to keep the fresh-copy contract every caller holds.
     if getattr(pyomo_component, '_lc_unit_corrected', False):
         return pyomo_component.clone()
 
     corrected_model = pyomo_component.clone()
-    # Stamp the clone with the identity of what it was cloned FROM.  Detected
-    # structures carry this clone, and a caller may hand those structures back
-    # to solve() to skip re-detecting.  Handed structures belonging to a
-    # DIFFERENT formulation, the backends would solve that other model's clone
-    # and write its numbers onto this one -- the same shape, so no error, just
-    # the wrong answer.  solve() compares this token and refuses.
+    # Stamp the clone with the identity of what it was cloned FROM: structures
+    # from a DIFFERENT formulation handed back to solve() would write that
+    # model's numbers onto this one with no error. solve() compares the token.
     token = getattr(pyomo_component, '_edi_identity', None)
     if token is None:
         import uuid
@@ -184,9 +165,8 @@ def unit_corrector(pyomo_component):
             pass
     try:
         corrected_model._edi_source_identity = token
-        # ... and WHICH REVISION of it.  The clone freezes the constants as they
-        # were; a later load_constants makes it stale, and solving a stale clone
-        # answers the previous deck.
+        # ... and WHICH REVISION: a later load_constants makes the clone
+        # stale, and solving a stale clone answers the previous deck
         corrected_model._edi_source_revision = getattr(
             pyomo_component, '_edi_revision', 0)
     except Exception:
@@ -210,7 +190,7 @@ def unit_corrector(pyomo_component):
     #corrected_model.clear() #clears out corrected_model
     visitor = _UnitVisitor()
 
-    #: Every mismatch found, reported together at the end.
+    # every mismatch found, reported together at the end
     failures = []
 
 
@@ -256,11 +236,9 @@ def unit_corrector(pyomo_component):
 ######################## Delete Old and Add Corrected Constraint ########################
 
                 # need to put rv into new pyomo model
-                # Replace via the component HANDLE and its storage key:
-                # .name renders quoted for names with special characters
-                # (e.g. detector bound rows named FS_M[0]_lowerBound), and
-                # __delattr__ on the rendered form cannot find the
-                # attribute.
+                # replace via the component HANDLE and its storage key: .name
+                # renders quoted for bracketed names (FS_M[0]_lowerBound) and
+                # __delattr__ on the rendered form can't find the attribute
                 _key = con.local_name
                 corrected_model.del_component(con)  # remove existing constraint
                 corrected_model.add_component(_key, pyo.Constraint(expr=rv))  # define a new one
@@ -284,11 +262,8 @@ def unit_corrector(pyomo_component):
 class UnitCheck:
     """The result of :func:`unit_check`: did the units balance, and the model.
 
-    Carries a ``summary()`` like every other object in the pre-solve chain, so
-    a reader does not have to remember which step returns what. ``model`` is
-    the corrected clone -- the thing to hand to
-    :func:`~lcsolver.presolve.structureDetector.structure_detector` -- and the
-    result is truthy when the units balance.
+    Carries a summary() like the rest of the pre-solve chain. model is the
+    corrected clone to hand to structure_detector; truthy when balanced.
     """
 
     __slots__ = ('ok', 'model', 'failures', 'n_objectives', 'n_constraints')
@@ -329,17 +304,10 @@ class UnitCheck:
 def unit_check(pyomo_component, raise_on_error=True):
     """Check that a model's units balance; the first step of the chain.
 
-    The same walk as :func:`unit_corrector` -- this is the name to use -- but
-    it returns a :class:`UnitCheck` rather than the bare corrected model, so
-    the units step answers to ``summary()`` like the rest of the chain::
-
-        check = unit_check(f)
-        print(check.summary())
-        structures = structure_detector(check.model)
-
-    ``raise_on_error=False`` reports a mismatch instead of raising, which is
-    what a diagnostic caller wants: asking what is wrong with a model is
-    exactly when it is most likely to be wrong.
+    Same walk as unit_corrector but returns a UnitCheck, so the units step
+    answers to summary() like the rest of the chain:
+    structure_detector(unit_check(f).model). raise_on_error=False reports a
+    mismatch instead of raising, for diagnostic callers.
     """
     import pyomo.environ as pyo
 
