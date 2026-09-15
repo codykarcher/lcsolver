@@ -107,15 +107,8 @@ def decodeUnits(u_val):
 
 
 def _reject_flexible_size(what, name, size):
-    """A component of the model cannot be of unknown length.
-
-    ``np.inf`` is how a *black box* declares an input whose length it takes
-    from whatever it is handed, which is what lets one box serve a three
-    element vector in one model and a ten element one in another. A Variable
-    or a Constant is the thing doing the handing, so it has to say how many
-    elements it has. Worth its own message because the two declarations sit
-    a few lines apart in a model file and read alike.
-    """
+    """Refuse np.inf as a size. Flexible length is for black-box inputs;
+    a Variable/Constant must state its own length."""
     for entry in (size if isinstance(size, (list, tuple)) else [size]):
         if isinstance(entry, str) or (
             isinstance(entry, (float, _np.floating)) and _np.isinf(entry)
@@ -128,38 +121,18 @@ def _reject_flexible_size(what, name, size):
 
 
 def _index_map(what, name, values, size, keyword):
-    """An array of initial values, laid out onto the component's index set.
-
-    Pyomo initializes an indexed component from a dict keyed by the index --
-    ``(i, j)`` for a matrix -- and a nested list handed to it instead fails
-    with ``KeyError: "Index '0' is not valid for indexed component 'e'"``,
-    which names neither the shape it wanted nor the shape it got. Writing the
-    dict comprehension by hand is the workaround, and it is noise in a file
-    whose whole purpose is to be read::
-
-        value={(i, j): dist[i][j] for i in range(3) for j in range(4)}
-        value=[[15.0, 40.0, 90.0, 130.0], ...]          # this, instead
-
-    Numpy's layout is used, because everything else about an LCsolver vector
-    already follows it: the outer level is the FIRST index, so ``values[i][j]``
-    is element ``(i, j)``.
-
-    The shape has to match ``size`` exactly. That is the part that matters: a
-    3x4 array quietly accepted for a 4x3 declaration is a transposed model
-    that solves and answers a different question -- the same reason
-    :mod:`lcsolver.objects.vector` refuses to broadcast silently.
-
-    A single number is left alone, since Pyomo gives it to every element, and
-    so is a dict, which is already in the form Pyomo wants.
+    """Convert a nested list of initial values to the index-keyed dict Pyomo
+    wants, numpy layout (first index outermost). Shape must match size exactly:
+    a transposed array is a different model that solves without complaint.
+    A single number or a dict is passed through unchanged.
     """
     if values is None or isinstance(values, (dict, _Unset)):
         return values
     if not isinstance(values, (list, tuple, _np.ndarray)):
         return values
 
-    # Anything that is not a concrete shape -- np.inf, a string, a float --
-    # is left to `_reject_flexible_size` and Pyomo's own size validation,
-    # which have better messages for it than a shape comparison would.
+    # Non-concrete shapes (np.inf, strings, floats) are left to
+    # _reject_flexible_size and Pyomo, which have better messages
     dims = list(size) if isinstance(size, (list, tuple)) else [size]
     if any(not isinstance(dim, (int, _np.integer)) or isinstance(dim, bool)
            for dim in dims if dim is not None):
@@ -208,12 +181,8 @@ def _unwrap_0d(result):
 
 
 class EDIVar(VectorComponent, IndexedVar):
-    """An indexed Variable that also reads as a vector.
-
-    The behaviour is in :class:`~lcsolver.objects.vector.VectorComponent`; this is
-    only the pairing with Pyomo's class. Declared here rather than there so
-    that the vector module stays free of Pyomo component internals.
-    """
+    """An indexed Variable that also reads as a vector. Behavior lives in
+    VectorComponent; this is just the pairing with Pyomo's class."""
 
 
 class EDIParam(VectorComponent, IndexedParam):
@@ -221,14 +190,12 @@ class EDIParam(VectorComponent, IndexedParam):
 
 
 class _ScalarVectorOps:
-    """Comparisons for a SCALAR component against a vector operand.
+    """Comparisons for a scalar component against a vector operand.
 
-    Python hands the LEFT operand the comparison first, and Pyomo raises on
-    an indexed operand rather than returning NotImplemented -- so a scalar on
-    the left of a vector row (``P_installed >= P`` with ``P`` a sized
-    Variable) would never reach the vector's own broadcasting.  These
-    overrides route a vector operand back through the array machinery, one
-    row per element, and leave every other comparison to Pyomo.
+    Python asks the left operand first and Pyomo raises on an indexed operand
+    instead of returning NotImplemented, so `scalar >= vector` would never
+    reach the vector's broadcasting. Route vector operands back through the
+    array machinery; leave everything else to Pyomo.
     """
 
     def __ge__(self, other):
@@ -259,28 +226,18 @@ class LCScalarParam(_ScalarVectorOps, ScalarParam):
 
 
 def _is_black_box(entry):
-    """Is this `ConstraintList` entry a black box rather than a list of rows?
-
-    A black box is ``[outputs, operators, inputs, box]``, so it is told apart
-    by what it IS -- four parts whose last one is the box -- and not merely by
-    being a list. Anything else that arrives as a list is a list of rows, and
-    gets flattened. Without this a helper returning several rows could not be
-    dropped into a list whole: four rows would be read as a runtime
-    constraint, and any other count would raise.
-    """
+    """Is this ConstraintList entry a black box, [outputs, operators, inputs,
+    box]? Detected by shape (4 parts, last is the box), not by being a list,
+    so a helper returning several rows can be dropped in whole."""
     from lcsolver.objects.blackBoxFunctionModel import BlackBoxFunctionModel
     return (isinstance(entry, (tuple, list)) and len(entry) == 4
             and isinstance(entry[3], BlackBoxFunctionModel))
 
 
 def _flatten_rows(items):
-    """Every `ConstraintList` entry, with nesting and arrays flattened away.
-
-    Black boxes and dicts are leaves; numpy arrays -- what an elementwise
-    comparison between two vectors produces -- ravel to one entry per element,
-    so ``f.ConstraintList(M >= f.broadcast_rows(cap, n))`` declares a
-    constraint per element instead of handing a matrix row to `Constraint`.
-    """
+    """Flatten ConstraintList entries. Black boxes and dicts are leaves;
+    numpy arrays (elementwise vector comparisons) ravel to one entry per
+    element instead of handing a matrix row to Constraint."""
     if isinstance(items, _np.ndarray):
         items = items.ravel().tolist()
     for item in items:
@@ -295,35 +252,14 @@ def _flatten_rows(items):
 
 
 class Group:
-    """A named region of a formulation.
-
-    Every multi-part model in this repository was namespacing by hand::
-
-        def add_wing(f, ..., prefix="Wing_"):
-            V = lambda n, g, u, d: f.Variable(name=f"{prefix}{n}", guess=g,
-                                              units=u, description=d)
-
-    Nine of twenty-six model files open with a shim of that shape, which is the
-    API reporting a defect: when every author independently invents the same
-    abbreviation, the canonical form is wrong for the thing they do fifty times
-    a file. The prefix is half of what those shims are for; the other half is
-    the length of ``f.Variable(name=..., guess=..., units=..., description=...)``.
-
-    A group supplies both::
+    """A named region of a formulation: prefixed declarations, positional args.
 
         wing = f.group('wing')
         AR = wing.Variable('AR', 11.0, '-', 'aspect ratio')     # -> wing_AR
-        box = wing.group('box')
-        t   = box.Variable('t_cap', 0.01, 'm', 'cap thickness') # -> wing_box_t_cap
+        t = wing.group('box').Variable('t_cap', 0.01, 'm', 'cap thickness')
 
-    and ``f.wing`` reaches it afterwards, so a builder no longer has to thread a
-    prefix string through its signature and back out again.
-
-    Names stay **flat** -- ``wing_box_t_cap``, joined by underscores -- rather
-    than becoming Pyomo sub-blocks. That keeps the detector, the unit walker,
-    write-back and every saved reference solution working exactly as they do
-    now; the hierarchy is in how you write the model, not in a second component
-    tree to keep consistent with the first.
+    Names stay flat (wing_box_t_cap), not Pyomo sub-blocks, so the detector,
+    unit walker, write-back and saved reference solutions all work unchanged.
     """
 
     __slots__ = ('_formulation', '_prefix', '_name', '_groups', '_path')
@@ -345,22 +281,13 @@ class Group:
 
     @property
     def path(self):
-        """The dotted path used when printing, e.g. ``wing.box``.
-
-        Carried rather than derived from the prefix: a group named
-        ``landing_gear`` has prefix ``landing_gear_``, and turning underscores
-        into dots would render it ``landing.gear``.
-        """
+        """Dotted path for printing, e.g. 'wing.box'. Carried, not derived:
+        'landing_gear' would otherwise render as 'landing.gear'."""
         return self._path
 
     def group(self, name, prefix=None):
-        """A nested group, named ``<this>_<name>``.
-
-        ``prefix`` overrides the flat name, as on
-        :meth:`Formulation.group`; it is taken as written rather than
-        appended to this group's own prefix, so a nested group can carry a
-        name a model already publishes.
-        """
+        """A nested group, named <this>_<name>. `prefix` overrides the flat
+        name and is taken as written, not appended to this group's prefix."""
         if name not in self._groups:
             self._groups[name] = Group(self._formulation, name,
                                        prefix if prefix is not None
@@ -413,24 +340,16 @@ class Group:
         groups = object.__getattribute__(self, '_groups')
         if item in groups:
             return groups[item]
-        # A quantity may legitimately be named for a Python keyword -- a wing
-        # taper ratio is `lambda` in every reference this repository is
-        # checked against, and the name is load-bearing because the gpkit
-        # cross-check maps `\lambda` onto it. `wing.lambda` is a syntax
-        # error, so the trailing underscore PEP 8 prescribes for exactly this
-        # collision is accepted: `wing.lambda_`.
+        # `wing.lambda` is a syntax error but taper ratio really is named
+        # `lambda` (the gpkit cross-check depends on it), so accept the
+        # PEP 8 trailing underscore: `wing.lambda_`
         if item.endswith('_') and keyword.iskeyword(item[:-1]):
             item = item[:-1]
         # Otherwise fall through to the component this group named.
         return getattr(self._formulation, f'{self._prefix}{item}')
 
     def __getitem__(self, item):
-        """``g['name']`` for the same thing as ``g.name``.
-
-        Attribute access is how a group is meant to be read, but a name held
-        in a variable has to be looked up somehow, and a group is often passed
-        where a dictionary of quantities used to be.
-        """
+        """g['name'] as an alias for g.name, for names held in a variable."""
         try:
             return getattr(self, item)
         except AttributeError as exc:
@@ -448,51 +367,14 @@ class Group:
 
 
 class Formulation(ConcreteModel):
-    """An optimization model, and a record of what it is made of.
+    """A Pyomo ConcreteModel plus a declaration API that records everything.
 
-    A Formulation *is* a Pyomo ``ConcreteModel`` -- every Pyomo idiom keeps
-    working, and anything Pyomo can do to a model it can do to this one. What
-    it adds is a declaration API that refuses, at the point of writing, the
-    things an engineering model otherwise gets wrong silently:
-
-    * `Variable` and `Constant` will not be declared without units (``'-'``
-      for a pure number), so comparing feet against metres is a dimensional
-      error rather than a plausible wrong answer;
-    * `Variable` will not be declared without a guess either, because for a
-      signomial or black-box model the starting point decides which optimum
-      is reached -- see `require_guesses` for the exemption;
-    * a vector quantity reads as a vector: ``x[-1]``, ``x >= y`` elementwise,
-      `sum` (plain ``sum(x)`` is refused, because iterating a Pyomo indexed
-      component yields its index keys and would silently add ``0 + 1 + 2``);
-    * a constraint can be declared *holographic* -- it must hold, but if it
-      binds the answer is not an answer (see `HolographicConstraint`);
-    * an analysis code enters as a `RuntimeConstraint` and is thereafter an
-      ordinary constraint.
-
-    Everything declared is also recorded, in declaration order, with its units
-    and description. That record is what `get_variables` and its siblings hand
-    back, what makes `solution` a printable table rather than a dictionary of
-    floats, and what lets `sensitivities` report against constants by name.
-
-    A model is written top down::
-
-        f = Formulation()
-        x = f.Variable('x', guess=1.0, units='m', description='the x variable')
-        c = f.Constant('c', value=2.0, units='m', description='a constant')
-        f.Objective(x)
-        f.ConstraintList([x >= c])
-        sol = lcsolver.solve(f)
-
-    Declarations return the component and also attach it as ``f.<name>``,
-    because that is how Pyomo names things. `group` gives a model with more
-    than a handful of them somewhere to put the prefixes that its authors were
-    otherwise threading through every builder signature by hand.
-
-    After a solve the values are written back onto this model, so
-    ``pyo.value(f.x)`` answers with the optimum rather than the guess.
-
-    Names in `RESERVED_NAMES` are refused: a component so named would shadow
-    the attribute of the same name and make it unreachable.
+    Variable/Constant require units and (by default) a guess; vectors read as
+    vectors; constraints can be holographic; a black box enters as a
+    RuntimeConstraint. Everything declared is recorded in order with units and
+    description, which is what get_variables, solution, and sensitivities read.
+    Declarations return the component and attach it as f.<name>; after a solve
+    the values are written back, so pyo.value(f.x) answers with the optimum.
     """
 
     def __init__(self):
@@ -503,11 +385,10 @@ class Formulation(ConcreteModel):
         self._constraint_counter = 0
 
         self._groups = {}
-        #: Names of constraints declared holographic -- there to bound the
-        #: problem, not to shape the answer. See `HolographicConstraint`.
+        # names of constraints declared holographic, see HolographicConstraint
         self._holographic = set()
         self._sensitivity_cache = None
-        #: Set False to let `Variable` omit its guess. See `require_guesses`.
+        # set False to let Variable omit its guess, see require_guesses
         self._require_guesses = True
         self._defaulted_guesses = []
 
@@ -520,23 +401,14 @@ class Formulation(ConcreteModel):
         self._constraint_keys = []
         self._allConstraint_keys = []
 
-    #: Names a formulation reserves for itself. A component of one of these
-    #: names would shadow the attribute, so `f.solution` would return a
-    #: variable and the real solution would be unreachable.
+    # Reserved names: a component so named would shadow the attribute and
+    # make it unreachable
     RESERVED_NAMES = ('solution', 'sensitivities', 'group')
 
     def __setattr__(self, key, value):
-        """Set the attribute, and let a :class:`SubModel` learn its own name.
-
-        Attaching a block is how it gets both a formulation and a name::
-
-            f.ferry_model = FerryModel(n_segments=20)
-
-        so the attribute IS the name -- the group its components live in, the
-        prefix on every deck key, the row label in the sensitivity table. There
-        is no second place to spell it and so no way for the two to drift.
-        Anything else assigned to a formulation is set exactly as before.
-        """
+        """Set the attribute, and let a SubModel learn its own name.
+        `f.ferry_model = FerryModel(...)` -- the attribute IS the name, so the
+        group, deck prefix and sensitivity label can never drift apart."""
         ConcreteModel.__setattr__(self, key, value)
         if key.startswith('_'):
             return
@@ -546,18 +418,9 @@ class Formulation(ConcreteModel):
 
     @property
     def solution(self):
-        """The current values, as a :class:`~lcsolver.objects.solution.Solution`.
-
-        Pyomo reloads a solution onto the model, and LCsolver keeps doing that, so
-        `pyo.value(f.x)` answers after a solve. This is the same information
-        with somewhere to live: objective, every variable and constant with its
-        units and description, and the sensitivities once computed, printable
-        as a table.
-
-        It reads THIS model, which is the one a solve writes back to. A
-        detected structure holds the unit-corrected clone's variables, and that
-        clone is never solved -- reading it returns the initial guess.
-        """
+        """The current values as a printable Solution. Reads THIS model, the
+        one a solve writes back to -- a detected structure's clone is never
+        solved and would return the initial guess."""
         from lcsolver.objects.solution import Solution
 
         return Solution.from_model(self, sensitivities=self._sensitivity_cache,
@@ -594,25 +457,15 @@ class Formulation(ConcreteModel):
 
     # -- grouping -----------------------------------------------------------
     def group(self, name, prefix=None):
-        """A named region of the model; see :class:`Group`.
-
-        ``f.group('wing')`` returns it and ``f.wing`` reaches it afterwards, so
-        a builder can stop threading a prefix string through its signature.
-
-        ``prefix`` overrides the flat name each member gets, which defaults to
-        ``<name>_``. That is for a model whose component names are already
-        published -- ``Wing_AR`` verified against a saved reference solution,
-        say. Such a model can adopt groups for what they give it (the shorter
-        declaration, `f.wing`, dotted output) without renaming anything, which
-        would otherwise mean rewriting the reference alongside it and losing
-        the check.
-        """
+        """A named region of the model; see Group. `f.group('wing')` returns
+        it and `f.wing` reaches it afterwards. `prefix` overrides the default
+        `<name>_` member prefix, for models whose component names are already
+        published against a saved reference solution."""
         self._check_name_available(name, 'group')
         if name not in self._groups:
-            # A component of the same name wins attribute lookup, since Pyomo
-            # resolves it before __getattr__ is ever reached -- the group would
-            # be created, then be permanently unreachable as `f.<name>`. Say so
-            # rather than leaving a shadowed object behind.
+            # A component of the same name wins attribute lookup before
+            # __getattr__ is reached, so the group would be permanently
+            # unreachable as f.<name> -- refuse rather than shadow
             if self.component(name) is not None:
                 raise ValueError(
                     f"cannot create a group named {name!r}: this formulation "
@@ -626,26 +479,10 @@ class Formulation(ConcreteModel):
 
     @property
     def require_guesses(self):
-        """Whether :meth:`Variable` insists on an initial guess. Default True.
-
-        The guess is required on purpose: it makes the author state what they
-        expect a quantity to be, it mirrors ``Constant``, and it tells the
-        backend the intended scale -- which is real information when the
-        problem is signomial or carries a black box, where the starting point
-        decides which optimum you reach.
-
-        Turning it off is for someone who knows their model is a geometric
-        program, where the solve is global in log space and the guess cannot
-        change the answer::
-
-            f.require_guesses = False
-            AR = f.Variable('AR', units='-', description='aspect ratio')
-
-        Variables that took a default are recorded and reported by
-        ``lcsolver.presolve.optimization_check``, so the omission stays visible
-        rather than
-        becoming invisible.
-        """
+        """Whether Variable insists on an initial guess. Default True: for a
+        signomial or black-box model the starting point decides which optimum
+        is reached. Set False for a known GP, where the solve is global in log
+        space; defaulted guesses are still reported by optimization_check."""
         return self._require_guesses
 
     @require_guesses.setter
@@ -672,50 +509,14 @@ class Formulation(ConcreteModel):
         self, name, guess=UNSET, units=None, description='', size=None,
         bounds=None, domain=None
     ):
-        """Declare a quantity the solver is free to choose.
-
-        Returns the Pyomo ``Var``, and attaches it as ``f.<name>``, so the
-        declaration can be used directly in the constraints that follow::
-
-            x = f.Variable('x', guess=1.0, units='m', description='the x variable')
-
-        ``units`` has no default and omitting it is an error, even for a pure
-        number -- write ``'-'`` (or ``''``, or ``'dimensionless'``) for that
-        case. A quantity that never said what it is cannot be checked against
-        the one it is compared to, and an unchecked model does not fail, it
-        answers.
-
-        ``guess`` is required for a related reason: it makes the author state
-        the scale they expect, and where the problem is signomial or carries a
-        black box the starting point selects the optimum. A model that is a
-        geometric program is genuinely exempt -- the solve is global in log
-        space -- and says so once, via ``f.require_guesses = False``, after
-        which the guess defaults to 1.0 and the omission is still reported by
-        ``lcsolver.presolve.optimization_check``.
-
-        ``size`` declares a vector or an array: ``size=3`` for a length-3
-        vector, ``size=[3, 4]`` for a 3x4 one, indexed from zero. The result
-        behaves as a numpy array of the individual ``VarData`` objects (see
-        :mod:`lcsolver.objects.vector`), so slicing, negative indexing and
-        elementwise comparison all work, and ``x >= y`` over two vectors yields
-        one constraint per element for `ConstraintList` to take. ``guess`` may
-        then be a single number, given to every element, or an array of exactly
-        the declared shape -- exactly, because a transposed array is a
-        different model and it would solve without complaint. Omitting ``size``
-        (or ``size=0``) declares a scalar.
-
-        ``np.inf`` is not a size here. Flexible length belongs to a black-box
-        input, which takes its length from whatever component it is handed; a
-        Variable is the thing doing the handing and has to state its own.
-
-        ``bounds`` is a ``(lower, upper)`` pair of plain numbers, read in the
-        declared units, and ``domain`` is a Pyomo domain such as
-        ``NonNegativeReals``. Both are hard limits the solver may sit on
-        without saying so; a limit that exists only to keep the problem well
-        posed, or to mark where a fit stops being valid, is better written as a
-        `HolographicConstraint`, which is checked after every solve for having
-        bound.
-        """
+        """Declare a quantity the solver is free to choose; returns the Var
+        and attaches it as f.<name>. `units` is required ('-' for a pure
+        number) and so is `guess` unless require_guesses is False. `size`
+        declares a vector (size=3) or array (size=[3, 4]) that reads as numpy;
+        `guess` may then be a number or an array of exactly the declared
+        shape. `bounds` is (lower, upper) in the declared units, `domain` a
+        Pyomo domain -- both hard limits; a well-posedness or fit-validity
+        limit is better written as a HolographicConstraint."""
         self._check_name_available(name, 'variable')
         if guess is UNSET:
             if self._require_guesses:
@@ -727,8 +528,7 @@ class Formulation(ConcreteModel):
                     "model is a geometric program, where the solve is global "
                     "in log space and the guess cannot change the answer, set "
                     "`f.require_guesses = False` first.")
-            # A geometric program is scale-free in log space, so 1 is as good a
-            # starting point as any; what matters is that it is positive.
+            # a GP is scale-free in log space; any positive start works
             guess = 1.0
             self._defaulted_guesses.append(name)
         if units is None:
@@ -846,32 +646,13 @@ class Formulation(ConcreteModel):
         return self.__dict__[name]
 
     def Constant(self, name, value, units, description='', size=None, within=None):
-        """Declare a number the model depends on but does not choose.
-
-        The same declaration as `Variable`, with ``value`` in place of
-        ``guess`` and the same rules for ``units`` (required; ``'-'`` for
-        dimensionless) and ``size``::
-
-            c = f.Constant('c', value=[1.0, 2.0], units='-', size=2,
-                           description='a constant c')
-
-        What is declared is a *mutable* Pyomo ``Param``, and that is the reason
-        to prefer it over writing the number into the constraint. A literal is
-        invisible: it cannot be changed and the model re-solved without
-        rebuilding it, and nothing can report against it. A Constant can, and
-        `sensitivities` does -- every one of them is ranked by
-        ``d log(f*) / d log(c)`` after a solve, from one solve, symbolically.
-        So anything a designer might later want the price of should be a
-        Constant rather than a number in an expression.
-
-        ``within`` is the Pyomo domain the value must lie in (default
-        ``Reals``); it is the ``Param`` spelling of `Variable`'s ``domain``.
-
-        One asymmetry with `Variable` to know about: for a Constant, ``size=1``
-        declares a scalar rather than a length-1 vector, so a single-element
-        list passed as its ``value`` will be rejected by Pyomo. Use ``size=2``
-        or more for a genuine vector, and omit ``size`` for a scalar.
-        """
+        """Declare a number the model depends on but does not choose: a
+        mutable Param, so it can be swapped via load_constants and ranked by
+        sensitivities -- a literal in an expression can be neither. Same rules
+        as Variable for units and size, with `value` in place of `guess` and
+        `within` in place of `domain`. One asymmetry: for a Constant size=1
+        declares a scalar, not a length-1 vector, so a single-element list
+        value is rejected by Pyomo; use size=2+ or omit size."""
         self._check_name_available(name, 'constant')
         if within is None:
             within = Reals
@@ -963,20 +744,9 @@ class Formulation(ConcreteModel):
         return self.__dict__[name]
 
     def Objective(self, expr, sense=minimize):
-        """Declare the quantity to be minimized -- ``f.Objective(c / x)``.
-
-        ``sense=maximize`` for the other direction; both names come from Pyomo
-        and are re-exported by lcsolver.
-
-        Nothing is returned. The objective is attached as ``objective_1``,
-        ``objective_2``, ... in declaration order, which is the order
-        `get_objectives` reports and the reason `check_units` can walk them.
-
-        More than one may be declared, but a model with more than one is not a
-        structured problem: `lcsolver.presolve.structureDetector` classifies it
-        as unstructured and says so, since there is no single quantity for a
-        GP, SP or QP to be about. Declare one.
-        """
+        """Declare the quantity to be minimized (sense=maximize for the other
+        direction). Attached as objective_1, objective_2, ... in order.
+        More than one is allowed but classifies as unstructured; declare one."""
         self._objective_counter += 1
         self.add_component(
             'objective_' + str(self._objective_counter),
@@ -989,24 +759,10 @@ class Formulation(ConcreteModel):
     #     pass
 
     def Constraint(self, expr, holographic=False):
-        """Declare one constraint, and return the name it was given.
-
-        ``f.Constraint(x + y <= 1.0 * units.m)``. The comparison operator has
-        already built the expression; this attaches it to the formulation as
-        ``constraint_1``, ``constraint_2``, ... The counter is shared with
-        `RuntimeConstraint`, so the numbering follows the model as written and
-        a black box does not create a gap in it.
-
-        Most models should be using `ConstraintList` instead: it takes them all
-        at once, accepts black-box entries beside algebraic ones, and flattens
-        a vector comparison into its elements. This is the one-at-a-time form
-        underneath, and the name it returns -- ``'constraint_4'`` -- is the
-        handle for the component afterwards, via ``f.constraint_4``.
-
-        ``holographic=True`` records the constraint as one that must hold but
-        must not bind; `HolographicConstraint` is the way to say that, and
-        explains why it is worth saying.
-        """
+        """Declare one constraint; returns the name it was given
+        ('constraint_4'), the counter shared with RuntimeConstraint so
+        numbering follows the model as written. Most models should use
+        ConstraintList instead. holographic=True: see HolographicConstraint."""
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
         self.add_component(conName, pyo.Constraint(expr=expr))
@@ -1018,24 +774,11 @@ class Formulation(ConcreteModel):
         return conName
 
     def HolographicConstraint(self, expr):
-        """A constraint that must hold but must not *bind*.
-
-        Some constraints are not part of the design problem; they are there to
-        keep it well posed. A 1e-30..1e30 box that stops a variable running to
-        zero. The edges of the data a fit was made from. A limit that says
-        "beyond here I am not modelling anything, I am extrapolating".
-
-        The answer is only meaningful if none of them is active. An optimum
-        sitting on the edge of a fit's validity is not an optimum, it is the
-        solver telling you it wanted to go somewhere you have no data for, and
-        the number it returned is whatever the fit happened to extrapolate to.
-        That is easy to miss, because the solve converges and the answer looks
-        like any other.
-
-        So they are declared, not merely written, and every solve checks them
-        and says so. Nothing about the constraint itself changes -- it is
-        imposed exactly as an ordinary one -- only that LCsolver knows to watch it.
-        """
+        """A constraint that must hold but must not bind: a well-posedness box,
+        the edge of a fit's data. An optimum sitting on one is the solver
+        extrapolating, and the solve still converges -- so these are declared,
+        and every solve checks whether any of them bound. The constraint
+        itself is imposed exactly as an ordinary one."""
         return self.Constraint(expr, holographic=True)
 
     def HolographicConstraintList(self, conList):
@@ -1044,39 +787,14 @@ class Formulation(ConcreteModel):
 
     def RuntimeConstraint(self, outputs, operators, inputs, black_box,
                           constants=None):
-        """Declare ``outputs == black_box(inputs)`` as a constraint.
-
-        This is how an analysis code enters a model. The body is not an
-        expression that can be written down and differentiated in advance; it
-        is a routine the solver calls at every iterate, which is why it is
-        called a *runtime* constraint. Underneath it is a Pyomo
-        ``ExternalGreyBoxBlock``, so a model containing one has to be solved
-        through cyipopt -- ``solve`` switches to that route by itself.
-
-        ``outputs`` and ``inputs`` are Pyomo variables, singly or in a list;
-        indexed ones are unwrapped element by element for the solver. They must
-        be Variables, not expressions: the box is handed values and its
-        derivatives land on these columns of the jacobian, and there is nothing
-        to differentiate an expression through.
-
-        The pairing with the box's own declarations is **positional**, not by
-        name. The i-th entry of ``inputs`` supplies the i-th input the box
-        declared, and it is that declaration that says what units the box
-        wants; the conversion happens at the boundary, so a model in metres can
-        drive a box that thinks in feet without either side knowing. Getting
-        the order wrong therefore does not raise, it converts the wrong
-        quantity -- keep the lists in declaration order.
-
-        ``operators`` is ``'=='``, or a list of them, one per output. ``'>='``
-        and ``'<='`` are accepted and validated but not yet applied: every
-        runtime constraint is currently imposed as an equality.
-
-        Usually written inside `ConstraintList` rather than called directly::
-
-            f.ConstraintList([
-                [z, '==', [x, y], UnitCircle()],
-                x + y <= 1.0 * units.m,
-            ])
+        """Declare outputs == black_box(inputs) as a constraint, via an
+        ExternalGreyBoxBlock (so solve takes the cyipopt route). Inputs and
+        outputs must be Variables, not expressions; indexed ones are unwrapped
+        elementwise. The pairing with the box's declarations is POSITIONAL --
+        units convert at the boundary, so a wrong order does not raise, it
+        converts the wrong quantity. `operators` is '==' or a list per output;
+        '>='/'<=' validate but the cyipopt route still imposes equalities.
+        Usually written inside ConstraintList: [z, '==', [x, y], UnitCircle()].
         """
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
@@ -1189,14 +907,11 @@ class Formulation(ConcreteModel):
             black_box, inputs=inputs_unwrapped, outputs=outputs_unwrapped
         )
         # Operators, one per UNWRAPPED output (broadcast a single entry).
-        # Recorded on the block for the sequential bridge, which emits
-        # '>=' / '<=' runtime constraints as ONE-SIDED rows --- the form
-        # the Hoburg/helicopter free-section results use: when the model
-        # itself presses the output onto the box (minimized drag, capped
-        # ood, stall-margined clmax), an inequality binds at the optimum
-        # WITHOUT creating a black-box equality manifold for the solver
-        # to fall off.  The cyipopt route still imposes equalities and
-        # ignores this record (its TODO stands).
+        # Recorded for the sequential bridge, which emits '>='/'<=' as
+        # one-sided rows: when the model presses the output onto the box,
+        # the inequality binds at the optimum without a black-box equality
+        # manifold for the solver to fall off. The cyipopt route still
+        # imposes equalities and ignores this record (its TODO stands).
         ops = (operators_raw * len(outputs_unwrapped)
                if len(operators_raw) == 1 else list(operators_raw))
         if len(ops) != len(outputs_unwrapped):
@@ -1207,12 +922,9 @@ class Formulation(ConcreteModel):
     # Explicit functions rather than more operator overloading: a reduction or
     # a broadcast has to say which axis it means, and an operator cannot.
     def sum(self, vector, axis=None):
-        """Sum a vector or matrix, optionally along one axis.
-
-        The reason this exists rather than plain ``sum``: iterating an indexed
-        Pyomo component yields its index KEYS, so ``sum(x)`` returns
-        ``0 + 1 + 2``. LCsolver refuses that now, and this is what it points at.
-        """
+        """Sum a vector or matrix, optionally along one axis. Exists because
+        iterating an indexed Pyomo component yields its index KEYS, so plain
+        sum(x) would return 0 + 1 + 2."""
         return _unwrap_0d(as_array(vector).sum(axis=axis))
 
     def prod(self, vector, axis=None):
@@ -1220,16 +932,10 @@ class Formulation(ConcreteModel):
         return _unwrap_0d(_np.prod(as_array(vector), axis=axis))
 
     def scalar_sum(self, parts):
-        """Add SCALAR quantities, refusing anything vector-valued.
-
-        A rollup -- a weight statement, a power budget -- is a scalar sum by
-        construction.  Both Python's ``sum`` and :meth:`sum` accept a vector
-        among the parts and quietly return an ARRAY, which downstream becomes
-        one constraint per element instead of one row: a different model that
-        still solves.  This says the intent instead, and the seed is the first
-        part rather than a dimensionless zero, so units are checked on every
-        addition rather than against a bare 0.
-        """
+        """Add scalar quantities, refusing anything vector-valued. A vector
+        slipping into a rollup quietly becomes one constraint per element
+        downstream; the seed is the first part rather than a bare 0, so units
+        are checked on every addition."""
         parts = list(parts)
         for part in parts:
             if hasattr(part, 'shape') and getattr(part, 'shape', ()) != ():
@@ -1247,23 +953,17 @@ class Formulation(ConcreteModel):
         return out
 
     def retype_to_float(self, x):
-        """The float behind a number or a declared Constant.
-
-        For the handful of places that need a VALUE at build time rather than
-        a symbol in a row: a station guess grid, a branch on whether a term
-        exists at all, and every GP EXPONENT -- an exponent is a number, never
-        a parameter, so anything used as one has to come through here.
-        """
+        """The float behind a number or a declared Constant, for places that
+        need a VALUE at build time -- notably GP exponents, which are numbers,
+        never parameters."""
         if isinstance(x, (int, float)):
             return float(x)
         return float(pyo.value(x))
 
     def broadcast_rows(self, vector, n):
-        """``vector`` repeated as each of ``n`` rows -> ``(n, len(vector))``.
-
-        LCsolver never broadcasts silently, so this is how a per-column limit is
-        compared against a matrix.
-        """
+        """`vector` repeated as each of `n` rows -> (n, len(vector)). LCsolver
+        never broadcasts silently; this compares a per-column limit against a
+        matrix."""
         return broadcast_rows(vector, n)
 
     def broadcast_cols(self, vector, n):
@@ -1271,52 +971,13 @@ class Formulation(ConcreteModel):
         return broadcast_cols(vector, n)
 
     def ConstraintList(self, conList, holographic=False):
-        """Declare all the constraints at once; the way a model should be written.
-
-        An entry may be any of three things, and which one it is decides how it
-        is handled:
-
-        * an algebraic comparison, ``x + y <= 1.0 * units.m``, which goes to
-          `Constraint`;
-        * a numpy array of them -- what an elementwise comparison between two
-          vectors produces -- which is flattened first, so
-          ``f.ConstraintList([M >= f.broadcast_rows(cap, n)])`` declares one
-          constraint per element instead of handing a matrix row to
-          `Constraint`;
-        * a black box, as the four positional parts
-          ``[outputs, operators, inputs, box]`` or a dict of the same keywords,
-          which goes to `RuntimeConstraint`.
-
-        The three can be mixed freely in one list, which is the point::
-
-            f.ConstraintList([
-                [z, '==', [x, y], UnitCircle()],
-                x + y <= 1.0 * units.m,
-                v >= w,                            # vectors: one per element
-            ])
-
-        A runtime constraint has to arrive as its parts rather than as an
-        expression, since there is no expression -- that is why entries are
-        dispatched on type instead of simply being added.
-
-        A PLAIN LIST OF ROWS IS ALSO AN ENTRY, flattened in place. A helper
-        that returns several rows -- a `ConstraintGenerator`, a point maker --
-        can be dropped in whole::
-
-            f.ConstraintList([
-                cl * solidity == 6. * CT,
-                f.polar.generate_rows(cl, tau, Re, cd),      # however many rows it is
-            ])
-
-        A black box is told apart from a list of rows by what it IS rather
-        than by being a list: four parts whose last is a
-        `BlackBoxFunctionModel`. Nothing else about a list is load-bearing, so
-        a generator returning one row and a generator returning five read the
-        same at the call site.
-
-        ``holographic=True`` marks every algebraic entry as holographic; see
-        `HolographicConstraintList`. Nothing is returned.
-        """
+        """Declare all the constraints at once. Entries dispatch on type: an
+        algebraic comparison goes to Constraint; a vector comparison flattens
+        to one constraint per element; a black box -- [outputs, operators,
+        inputs, box] or a dict of the same keywords -- goes to
+        RuntimeConstraint; a plain list of rows (a generator's output) is
+        flattened in place. The three can be mixed freely in one list.
+        holographic=True marks every algebraic entry; nothing is returned."""
         for con in _flatten_rows(conList):
             if isinstance(con, dict):
                 self.RuntimeConstraint(**con)
@@ -1326,15 +987,10 @@ class Formulation(ConcreteModel):
                 self.Constraint(con, holographic=holographic)
 
     def get_variables(self):
-        """The variables declared through `Variable`, in declaration order.
-
-        Only those. A Pyomo ``Var`` put on the model with ``add_component`` is
-        a perfectly good variable and the solver will treat it as one, but it
-        will not appear here, because these lists are the record of what
-        LCsolver knows the provenance of -- what has units, a description and a
-        stated guess, and can therefore be reported on. If a variable is
-        missing from a solution table, this is why.
-        """
+        """The variables declared through Variable, in declaration order.
+        A Var added by hand via add_component is not here -- these lists are
+        what LCsolver can report on, and why a hand-added variable is missing
+        from the solution table."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1342,13 +998,9 @@ class Formulation(ConcreteModel):
         ]
 
     def get_constants(self):
-        """The constants declared through `Constant`, in declaration order.
-
-        The same restriction as `get_variables`: a ``Param`` added by hand is
-        not here. These are the constants `sensitivities` reports against, so
-        a number that does not appear in this list is a number no one will ever
-        be told the price of.
-        """
+        """The constants declared through Constant, in declaration order.
+        Same restriction as get_variables; these are what sensitivities
+        reports against."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1356,32 +1008,12 @@ class Formulation(ConcreteModel):
         ]
 
     def load_constants(self, constants):
-        """Set declared constants from an input deck, after the build.
-
-        ``constants`` is a mapping of constant name to value::
-
-            f = build_my_model()
-            f.load_constants({'weight_payload': 600.0, 'v_cruise': 62.0})
-            result = lcsolver.solve(f)
-
-        This is the counterpart to declaring a number as a `Constant` rather
-        than writing it into a constraint. A Constant is a mutable Pyomo
-        ``Param``, so a model is built once with its defaults declared inline
-        and a deck is applied to the built model, instead of threading a
-        configuration dictionary through the constructor and rebuilding for
-        every case. Re-solving after a load is the ordinary cycle: nothing is
-        reconstructed, so a sweep is a loop over loads and solves.
-
-        Names are the ones `Constant` was called with, group prefixes
-        included -- ``'wing_area'`` for a constant declared on
-        ``f.group('wing')``. A name that is not a declared constant raises
-        ``KeyError`` rather than being ignored, with near-misses suggested,
-        because a deck key that silently does nothing is a model that
-        silently sizes the wrong thing. A `Constant` declared with ``size``
-        takes a sequence of that length.
-
-        Returns the formulation, so a load can be chained onto a build.
-        """
+        """Set declared constants from an input deck (name -> value), after
+        the build; a sweep is a loop over loads and solves. Names include
+        group prefixes ('wing_area'). An unknown name raises KeyError with
+        near-misses suggested -- a deck key that silently does nothing sizes
+        the wrong thing. A sized Constant takes a sequence of that length.
+        Returns the formulation, so a load can be chained onto a build."""
         import difflib
 
         known = {c.name: c for c in self.get_constants()}
@@ -1405,20 +1037,15 @@ class Formulation(ConcreteModel):
                     comp[k].set_value(float(v))
             else:
                 comp.set_value(float(value))
-        # Constants changed, so any structures detected earlier hold a clone
-        # with the OLD values.  Solving with those would answer the previous
-        # deck's question and report it as this one's, with no error, so the
-        # revision is bumped and solve() refuses stale structures.
+        # Structures detected earlier hold a clone with the OLD values, which
+        # would answer the previous deck's question -- bump the revision so
+        # solve() refuses stale structures
         self._edi_revision = getattr(self, '_edi_revision', 0) + 1
 
         return self
 
     def get_objectives(self):
-        """The objectives declared through `Objective`, in declaration order.
-
-        A list because more than one can be declared, not because more than one
-        is useful; see `Objective`.
-        """
+        """The objectives declared through Objective, in declaration order."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1427,13 +1054,8 @@ class Formulation(ConcreteModel):
 
     def get_constraints(self):
         """Every declared constraint, algebraic and runtime alike, in order.
-
-        The two kinds are different objects -- a ``Constraint`` component and
-        an ``ExternalGreyBoxBlock`` -- so anything that walks this list has to
-        expect both, which is exactly what `check_units` has to do. Use
-        `get_explicitConstraints` or `get_runtimeConstraints` to get one kind
-        and not the other.
-        """
+        Walkers must expect both Constraint and ExternalGreyBoxBlock; use
+        get_explicitConstraints / get_runtimeConstraints for one kind."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1441,12 +1063,8 @@ class Formulation(ConcreteModel):
         ]
 
     def get_explicitConstraints(self):
-        """The algebraic constraints only -- the ones with an expression.
-
-        These are the constraints anything symbolic can work on: unit
-        correction, structure detection, the duals a sensitivity is read from.
-        A runtime constraint has no body to read, so it is not here.
-        """
+        """The algebraic constraints only -- the ones with an expression that
+        unit correction, structure detection and duals can work on."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1455,12 +1073,8 @@ class Formulation(ConcreteModel):
 
     def get_runtimeConstraints(self):
         """The black-box constraints only, as their grey-box blocks.
-
-        Non-empty is the fact that decides how the model must be solved: a
-        formulation with one of these cannot go through the AMPL-based IPOPT
-        route, which has no way to call Python at an iterate, and ``solve``
-        takes the cyipopt route instead.
-        """
+        Non-empty means solve must take the cyipopt route -- the AMPL-based
+        IPOPT route cannot call Python at an iterate."""
         return [
             self.__dict__[nm]
             for nm in self.__dict__.keys()
@@ -1468,23 +1082,11 @@ class Formulation(ConcreteModel):
         ]
 
     def sensitivities(self, normalized=True, **kwargs):
-        """How strongly the optimum responds to each Constant.
-
-        Call this after a solve. By default it returns the log-log sensitivity
-        ``d log(f*) / d log(c)`` for every Constant, which is unitless and so
-        comparable across constants with different physical units. Pass
-        ``normalized=False`` for the raw derivative ``d f* / d c``.
-
-        The numbers come from the constraint duals via the envelope theorem, so
-        they cost one solve regardless of how many constants the model has, and
-        every partial derivative is taken symbolically rather than by
-        differencing. See :mod:`lcsolver.postsolve.sensitivity` for the details.
-
-        Returns
-        -------
-        dict
-            See :func:`lcsolver.postsolve.sensitivity.sensitivities`.
-        """
+        """How strongly the optimum responds to each Constant; call after a
+        solve. Default is the log-log sensitivity d log(f*) / d log(c)
+        (normalized=False for the raw derivative). Comes from the duals via
+        the envelope theorem -- one solve, all symbolic. Returns the dict from
+        lcsolver.postsolve.sensitivity.sensitivities."""
         from lcsolver.postsolve.sensitivity import sensitivities as _sens
 
         return _sens(self, normalized=normalized, **kwargs)
@@ -1496,62 +1098,33 @@ class Formulation(ConcreteModel):
         print(format_sensitivities(self.sensitivities(**kwargs)))
 
     def _detected(self):
-        """This formulation's detected structure, units corrected first.
-
-        Detection reads the corrected twin, not the declared model: a
-        constraint stated in feet against one in metres is a different set of
-        exponents, and classifying the uncorrected form can call the same
-        model by a different name.
-        """
+        """This formulation's detected structure, units corrected first --
+        classifying the uncorrected form can name the same model differently."""
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector
         return structure_detector(unit_corrector(self), bounds_as_rows=False)
 
     def structure_report(self, top=5):
-        """What kind of problem this is, and what stops it being a simpler one.
-
-        Answers the question a class name raises rather than settles: an SP is
-        an SP *because of specific constraints*, and they are usually a
-        reformulation away from posynomial. Names them, with their bodies.
-
-        ``top`` caps the constraints listed per class; ``top=None`` lists all.
-        Returns the text and prints nothing.
-        """
+        """What kind of problem this is and which constraints stop it being a
+        simpler one, named with their bodies. `top` caps the constraints
+        listed per class (None for all); returns the text, prints nothing."""
         from lcsolver.presolve.reductions import structure_report as _report
         return _report(self, top=top)
 
     def optimization_check(self, top=5):
-        """Every structural check, in one call: structure, then presolve.
-
-        The pre-solve half of the report -- it needs no solution. Pass the
-        solved model to `lcsolver.presolve.optimization_check` directly for
-        the degeneracy and cancellation checks, which do.
-        """
+        """Every structural check in one call, needing no solution. Pass the
+        solved model to lcsolver.presolve.optimization_check directly for the
+        degeneracy and cancellation checks, which do."""
         from lcsolver.presolve.reductions import optimization_check
         return optimization_check(self, structure_top=top)
 
     def check_units(self):
-        """Assert that every declared objective and constraint balances dimensionally.
-
-        Raises ``pyomo.core.base.units_container.UnitsError`` naming the first
-        one that does not, and returns nothing otherwise. It is Pyomo's
-        ``assert_units_consistent``, applied to what this formulation declared
-        -- which is a check that can exist at all only because units are
-        mandatory on every `Variable` and `Constant`, so both sides of every
-        comparison have something to say.
-
-        Runtime constraints are skipped: a grey-box block has no expression to
-        walk. Their units are checked instead where they can be, at the
-        boundary, every time the box is evaluated -- inputs converted into the
-        units the box declared, outputs and jacobian converted back out of them
-        -- and a conversion that cannot be made raises there.
-
-        Calling this is optional, not a step before solving. ``solve`` will not
-        run a dimensionally inconsistent model either: unit correction raises
-        ``UnitMismatch`` with a report saying which constraint and what the
-        correction would be. This is the version to reach for while a model is
-        still being written, when there is nothing to solve yet.
-        """
+        """Assert every declared objective and constraint balances
+        dimensionally; raises UnitsError naming the first that does not.
+        Runtime constraints are skipped -- a grey-box block has no expression
+        to walk; their units are checked at the boundary on every evaluation.
+        Optional: solve's unit correction catches this too. This is the
+        version to reach for while a model is still being written."""
         for i in range(1, self._objective_counter + 1):
             assert_units_consistent(self.__dict__['objective_' + str(i)])
 

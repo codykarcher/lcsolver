@@ -5,28 +5,16 @@
 # submodel.py -- SubModel, the base class a reusable block of a model is
 # written as.
 #
-# A block is a PACKAGE: its variables, its constants, and the constraints that
-# tie them together, declared in one object that the formulation then owns by
-# name,
+# A block packages its variables, constants and rows in one object the
+# formulation owns by name:
 #
 #     f.rotor_beam_model = RotorBeamModel(n_stations=8)
 #
-# after which f.rotor_beam_model.thickness_skin reaches the handle, and the
-# flat component is namespaced by the same name (rotor_beam_model_thickness
-# _skin), so a deck key, a sensitivity row, and the attribute path all read the
-# same.  The attribute the block is attached as IS its name -- there is no
-# second place to spell it and therefore no way for the two to drift.
-#
-# A block declares only what it OWNS.  A quantity two blocks share -- a blade
-# count, a root cutout -- is declared once by the assembly and the handle is
-# assigned in, so there is one constant and one deck key for it rather than two
-# that can drift apart.
-#
-# Declaring through the model (self.Variable / self.Constant) rather than
-# through a bare group does two things beyond namespacing: every declared
-# handle is also set as an attribute of the model, so the block's own rows and
-# its caller reach quantities by name instead of by dict key; and the model
-# keeps its declaration lists, so a block can be asked what it owns.
+# The attribute IS the name: the deck key, sensitivity row, and attribute path
+# all read the same and cannot drift. A block declares only what it OWNS;
+# shared quantities are declared once by the assembly and assigned in.
+# Declaring through the model sets each handle as an attribute and keeps the
+# declaration lists, so a block can be asked what it owns.
 
 import types
 
@@ -34,14 +22,9 @@ __all__ = ['SubModel']
 
 
 class _Inputs:
-    """Read-only view of a block's declared inputs, handed out by
-    :meth:`SubModel.bind_inputs`.
-
-    Read-only because it is a VIEW, not state: writing through it would change
-    nothing the formulation can see, so the write is refused rather than
-    silently lost.  A missing name reports what the block actually declares,
-    since a mistyped input is otherwise a bare AttributeError at build time.
-    """
+    """Read-only view of a block's declared inputs, from bind_inputs.
+    Writes are refused rather than silently lost (it is a view, not state);
+    a missing name reports what the block actually declares."""
 
     __slots__ = ('_d',)
 
@@ -69,10 +52,7 @@ class _Inputs:
 
 def _referenced_names(code):
     """Every attribute/global name a code object mentions, nested ones too.
-
-    ``m.area_disk`` and ``self.area_disk`` both put ``area_disk`` in
-    ``co_names``, so this sees an input as used either way.
-    """
+    m.area_disk and self.area_disk both land in co_names."""
     out = set(code.co_names)
     for const in code.co_consts:
         if isinstance(const, types.CodeType):    # comprehensions, closures
@@ -98,93 +78,39 @@ def _wrap(text, width):
 class SubModel:
     """One packaged piece of a sizing problem: variables, constants, rows.
 
-    Subclasses declare in :meth:`build` through ``self.Variable`` /
-    ``self.Constant`` and post through ``self.ConstraintList``, or through
-    ``self.HolographicConstraintList`` for rows that must hold but must not
-    bind.
-
-    THE FORMULATION IS NOT PASSED IN.  A block is attached to a formulation by
-    assignment, and that assignment is what hands it both the formulation and
-    its name::
-
-        f.ferry_model = FerryModel(n_segments=20)
-
-    The constructor takes only the SETTINGS -- the things that change which
-    rows exist.
-
-    INPUTS ARE ASSIGNED, NOT PASSED.  A block with thirty inputs makes a
-    thirty-argument call that no reader can check against the signature, so
-    they arrive one per line afterwards::
-
-        f.ferry_model.area_disk   = area_disk
-        f.ferry_model.weight_fuel = weight_fuel
-        ...
-
-    Each line names the input on the left and the assembly's quantity on the
-    right, so a mismatch is visible where it happens rather than as a position
-    in an argument list.
-
-    ALL OF THE INPUTS OR NONE OF THEM.  Passing them to the constructor is
-    still allowed -- a four-input block reads fine that way -- but a call that
-    names SOME of them raises, listing what is missing.  That is the one
-    reading which cannot be right: it looks like a complete construction, and
-    it builds nothing.  Settings are not part of this, since they are what the
-    constructor is for.
-
-    THE BLOCK BUILDS WHEN ITS LAST INPUT ARRIVES.  :attr:`input_variables` and
-    :attr:`input_constants` list what it needs; assigning the final one calls
-    :meth:`build`.  Nothing is posted before then, so a block that never
-    receives an input posts NO ROWS AT ALL -- a model that silently loses
-    constraints and still solves.  That failure does not announce itself, so
-    ``solve()`` refuses to run a formulation with an unbuilt block attached;
-    see :func:`lcsolver.presolve.reductions.unbuilt_blocks_check`.
-
-    The two input lists are kept apart because they are different promises to
-    the assembly.  An input VARIABLE is something the optimizer moves -- the
-    block writes rows that shape it and reads a solved value back.  An input
-    CONSTANT is something the assembly fixed -- it appears in a deck, it earns
-    a sensitivity, and nothing the block does can change it.  A quantity handed
-    in under the wrong heading still solves, so :meth:`get_status` prints them
-    separately and says what each one is actually wired to.
-
-    :meth:`get_status` is the way to look at a block: what it needs, what is
-    connected to each of those, what it declares, and what it hands back.
+    Subclasses declare and post in build(). The formulation is NOT passed in:
+    attachment by assignment (`f.ferry_model = FerryModel(n_segments=20)`)
+    hands the block both its formulation and its name; the constructor takes
+    only settings. Inputs are assigned one per line afterwards -- or all of
+    them in the constructor, never some: a partial call looks complete and
+    builds nothing. build() runs when the last input arrives; solve() refuses
+    a formulation with an unbuilt block, which would silently post no rows.
+    get_status() shows what a block needs, what is wired in, what it owns.
     """
 
-    #: Names of input DESIGN VARIABLES that must be assigned before building.
+    # input DESIGN VARIABLES that must be assigned before building
     input_variables = ()
 
-    #: Names of input CONSTANTS that must be assigned before building.
+    # input CONSTANTS that must be assigned before building
     input_constants = ()
 
-    #: Inputs whose kind is not being declared. Prefer the two lists above;
-    #: this exists so a block written before they did keeps working.
+    # inputs whose kind is not declared; kept so older blocks keep working
     inputs = ()
 
-    #: Things this block hands BACK, beyond its declared components: ``{name:
-    #: what a caller does with it}``. An expression a block exposes as an
-    #: attribute -- Prouty's ``component_weights``, a power sum -- is invisible
-    #: otherwise, since it is in no component list and no sensitivity table.
+    # {name: what a caller does with it} for things handed back beyond the
+    # declared components -- an exposed expression is invisible otherwise
     provides = {}
 
-    #: Names a subclass declares but deliberately never references in build()
-    #: -- an input reached through getattr() with a computed name, say.  Listing
-    #: one here exempts it from the staleness check below.
+    # names declared but deliberately never referenced in build() (e.g.
+    # reached through getattr with a computed name); exempt from the
+    # staleness check below
     _allow_unused_inputs = ()
 
     def __init_subclass__(cls, **kwargs):
-        """Refuse a declaration no ``build()`` consumes.
-
-        The two directions of drift are not symmetric.  Reading an input that
-        was never declared fails loudly on its own -- ``self.foo`` raises the
-        first time the block builds.  DECLARING one nothing reads is the silent
-        half: the block goes on waiting for an input it does not need and the
-        assembly goes on wiring it, and nothing ever complains.  That half is
-        caught here, when the class is defined.
-
-        The walk is over the MRO, not just this class: a subclass may inherit
-        its tuples from a parent whose ``build()`` is what uses them.
-        """
+        """Refuse a declared input no build() uses -- the silent half of the
+        drift (reading an undeclared one already fails loudly). Walks the MRO,
+        since a subclass may inherit its tuples from the parent whose build()
+        uses them."""
         super().__init_subclass__(**kwargs)
         used = set()
         for klass in cls.__mro__:
@@ -211,43 +137,26 @@ class SubModel:
         return out
 
     def bind_inputs(self):
-        """This block's declared inputs, as one read-only namespace.
-
-        Bound as ``m`` by convention, at the top of :meth:`build`::
-
-            m = self.bind_inputs()
-            ...
-            CT * m.rho * m.area_disk * m.v_tip**2 >= m.k_download * m.weight_gross
-
-        The tuples become the ONLY place an input is named.  Unpacking each one
-        into a local rebuilt those tuples as a second, hand-maintained list that
-        could quietly fall out of step; reaching them through the namespace
-        cannot, and the prefix marks at a glance which symbols in a row arrived
-        from the assembly and which the block owns.
-
-        A SNAPSHOT, taken when build() runs.  That is not a constraint in
-        practice: the block builds once, when its last input is assigned, and
-        the handles it captures are mutated in place rather than rebound.
-
-        Aliasing one back out (``solidity = m.solidity``) to keep a dense row
-        readable is fine -- it is checked against the tuples, since dropping the
-        name makes ``m.solidity`` raise.  Do it for the few that earn it; alias
-        all of them and the second list is back.
-        """
+        """This block's declared inputs as one read-only namespace, bound as
+        `m` by convention at the top of build(). The tuples stay the only
+        place an input is named -- unpacking each into a local rebuilds them
+        as a second hand-maintained list -- and the `m.` prefix marks which
+        symbols arrived from the assembly. A snapshot taken at build; fine,
+        since handles are mutated in place, not rebound. Aliasing a few back
+        out for a dense row is fine; alias them all and the second list is
+        back."""
         return _Inputs({name: getattr(self, name)
                         for name in self.required_inputs()})
 
     def __init__(self, formulation=None, name=None, prefix=None, **kwargs):
-        # ``Block('name')`` and ``Block(f, 'name')`` both still work: a block
-        # written before the assignment syntax names itself, and one attached
-        # by assignment takes the attribute as its name.
+        # Block('name') and Block(f, 'name') both still work: a block written
+        # before the assignment syntax names itself
         if isinstance(formulation, str) and name is None:
             formulation, name = None, formulation
         required = self.required_inputs()
-        # Inputs may be passed to the constructor instead of assigned, but it
-        # is ALL OF THEM OR NONE.  A partial call is the one reading that
-        # cannot be right: it looks like a complete construction and builds
-        # nothing, and the block then sits there posting no rows.
+        # Inputs may be passed to the constructor instead of assigned, but
+        # ALL OF THEM OR NONE: a partial call looks complete, builds nothing,
+        # and posts no rows
         given = {key: kwargs.pop(key) for key in list(kwargs)
                  if key in required}
         settings = kwargs
@@ -255,10 +164,9 @@ class SubModel:
             raise TypeError(self._partial_call_message(given, required))
 
         object.__setattr__(self, '_pending', set(required))
-        # A block handed its formulation up front and declaring no inputs does
-        # its work in its own __init__, the older way; it is built by
-        # definition and never waits.  Constructed bare, the same block has
-        # nothing to wait for either, so ATTACHING is what builds it.
+        # A no-input block handed its formulation up front works in its own
+        # __init__ (the older way) and is built by definition; constructed
+        # bare, attaching is what builds it
         object.__setattr__(self, '_built',
                            formulation is not None and not required)
         object.__setattr__(self, '_prefix', prefix)
@@ -320,14 +228,10 @@ class SubModel:
 
     # ---- attachment ----
     def _attach(self, formulation, name):
-        """Called by ``Formulation.__setattr__`` when this block is assigned.
-
-        This is where a block constructed bare learns which formulation it
-        belongs to and what it is called.  Re-assigning an already-attached
-        block (to a second name, or to a second formulation) does nothing: its
-        components are already declared, and declaring them again under a new
-        namespace would be a copy rather than an alias.
-        """
+        """Called by Formulation.__setattr__ when this block is assigned;
+        a bare block learns its formulation and name here. Re-assigning an
+        attached block does nothing -- redeclaring under a new namespace
+        would be a copy, not an alias."""
         if self.formulation is not None:
             return
         self.formulation = formulation
@@ -395,10 +299,9 @@ class SubModel:
         return rows
 
     def HolographicConstraint(self, expr):
-        """A row that must hold but must not *bind* -- a fit's validity
-        envelope, a modelling limit, a box that keeps the problem well posed.
-        Every solve checks it and reports any that came out active.  See
-        `Formulation.HolographicConstraint` for why it is worth declaring."""
+        """A row that must hold but must not bind; every solve checks it and
+        reports any that came out active. See
+        Formulation.HolographicConstraint."""
         return self.Constraint(expr, holographic=True)
 
     def HolographicConstraintList(self, rows):
@@ -407,16 +310,10 @@ class SubModel:
 
     # ---- what this block needs, what it owns, what it hands back ----
     def get_status(self):
-        """Print what this block needs, what is wired to it, and what it owns.
-
-        Five sections: the input VARIABLES and what each is connected to, the
-        input CONSTANTS and the same, the variables and constants this block
-        DECLARES, and anything it :attr:`provides` beyond those.  An input not
-        yet assigned is called out rather than omitted, because an input that
-        never arrives is the one failure this syntax makes possible.
-
-        Prints.  Use :meth:`status_text` for the same report as a string.
-        """
+        """Print what this block needs, what is wired to it, and what it
+        owns. An unassigned input is called out rather than omitted -- an
+        input that never arrives is the one failure this syntax makes
+        possible. Use status_text for the same report as a string."""
         print(self.status_text())
 
     def status_text(self):
