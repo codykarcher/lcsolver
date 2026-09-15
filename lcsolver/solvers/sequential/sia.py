@@ -102,6 +102,24 @@ class SIAOptions:
         self.tau0 = 1.0
         self.tau_factor = 5.0
         self.tau_max = 1e12
+        # near-feasible band (multiples of feasibility_tolerance) inside
+        # which tau decays back toward tau0 instead of holding: an elevated
+        # penalty in the endgame drowns the objective term (MSES camber
+        # run: tau parked at 5.0 from iteration 41 to the stop)
+        self.tau_relief_band = 10.0
+        # declared RELATIVE noise floor of the analysis (0 = off).  Sets
+        # the effective feasibility band for guards/stall/recovery and
+        # accepts objective steps whose predicted log-change is below it:
+        # below the analysis noise, "worse" and "no change" are the same
+        # measurement (MSES camber run: ratio=-1.0 rejection churn at
+        # violations the box cannot resolve)
+        self.analysis_noise = 0.0
+        # violations within this many times feasibility_tolerance are
+        # repaired IN PLACE (targeted equality restore) instead of a full
+        # Phase-I re-entry, which hops to the feasible interior and gives
+        # back objective it must re-earn (camber run: a 1.2e-5 violation
+        # cost a 145 N hop re-earned over 12 iterations)
+        self.restoration_inplace_band = 100.0
         self.tau_binding = 0.9         # raise tau once a multiplier reaches
                                        # this fraction of it -- see solve_sia
         # --- trust region, only applied to LINEARIZED constraints ---------
@@ -545,6 +563,26 @@ def _restore(problem, x, options, has_blackbox, cache, done, k, why,
     v_before = _violation(problem, x)
     if v_before <= options.feasibility_tolerance:
         return x, done, False           # feasible already; nothing to restore
+    # Proportionate response: a near-tolerance violation is repaired IN
+    # PLACE by the targeted equality restore before paying for a Phase-I
+    # re-entry, which hops to the feasible interior and gives back
+    # objective the run must re-earn
+    _band = float(getattr(options, 'restoration_inplace_band', 0.0) or 0.0)
+    if _band > 0.0 and v_before <= _band * options.feasibility_tolerance:
+        try:
+            _fn = restore_composite_bb if has_blackbox else restore_equalities
+            x_ip, _h = _fn(problem, x.copy(),
+                           iters=options.phase1_restore_iterations,
+                           tol=min(options.feasibility_tolerance, 1e-10))
+            v_ip = _violation(problem, np.asarray(x_ip, dtype=float))
+            if (np.all(np.isfinite(x_ip)) and np.all(np.asarray(x_ip) > 0)
+                    and v_ip <= options.feasibility_tolerance):
+                if options.verbose:
+                    print(f"  itr {k + 1:3d}  RESTORATION ({why}) repaired "
+                          f"in place: viol {v_before:.3e} -> {v_ip:.3e}")
+                return np.asarray(x_ip, dtype=float), done, True
+        except Exception:
+            pass                        # fall through to Phase I
     if options.verbose:
         print(f"  itr {k + 1:3d}  RESTORATION ({why}, viol {v_before:.3e}) "
               f"-> re-entering Phase I")
@@ -1481,7 +1519,8 @@ def restore_composite_bb(problem, x, iters=12, tol=1e-9, passes=3):
     gated ``not has_blackbox``, and the silent skip left box rows violated
     2-100x while reported as success.
     """
-    x = np.array(x, dtype=float).copy()
+    x0 = np.array(x, dtype=float).copy()
+    x = x0.copy()
     gb = [(i, c.body.out_index) for i, c in enumerate(problem.constraints)
           if c.operator == '==' and getattr(c.body, 'out_index', None)
           is not None]
@@ -1490,16 +1529,24 @@ def restore_composite_bb(problem, x, iters=12, tol=1e-9, passes=3):
     skip = frozenset(i for i, _ in gb)
     frz = frozenset(j for _, j in gb)
     h_gb = math.inf
-    for _ in range(max(1, int(passes))):
-        for i, j in gb:                       # exact closure, one eval each
-            x[j] *= float(problem.constraints[i].body(x))
-        x, h_st = restore_equalities(problem, x, iters=iters, tol=tol,
-                                     skip_rows=skip, freeze_cols=frz)
-        h_gb = max(abs(math.log(float(problem.constraints[i].body(x))))
-                   for i, _ in gb)
-        if h_gb <= tol:
-            break
-    return x, max(h_gb, h_st)
+    try:
+        for _ in range(max(1, int(passes))):
+            for i, j in gb:                   # exact closure, one eval each
+                x[j] *= float(problem.constraints[i].body(x))
+            x, h_st = restore_equalities(problem, x, iters=iters, tol=tol,
+                                         skip_rows=skip, freeze_cols=frz)
+            h_gb = max(abs(math.log(float(problem.constraints[i].body(x))))
+                       for i, _ in gb)
+            if h_gb <= tol:
+                break
+        return x, max(h_gb, h_st)
+    except Exception:
+        # The restore is a POLISH: it re-evaluates the analysis at shifted
+        # points, and an analysis code can fail there even beside a point
+        # it just solved (MSES: restart divergence at a near-identical
+        # design killed a whole camber run from inside this step).  A
+        # failed polish returns the un-polished point, never an exception
+        return x0, math.inf
 
 
 def _phase1_l1(problem, x, options, has_blackbox, cache=None):
@@ -1936,12 +1983,24 @@ def _relative_change_converged(problem, res, options, k):
             return False
         fired.append(f"variables {dx:.2e} <= {v_tol:g}")
     # A point that moved nothing but is not a design is not an answer.
-    if _violation(problem, x) > options.feasibility_tolerance:
+    # A declared analysis noise floors the test: sub-noise violation is
+    # indistinguishable from feasible
+    _eff = max(options.feasibility_tolerance,
+               float(getattr(options, 'analysis_noise', 0.0) or 0.0))
+    _v = _violation(problem, x)
+    if _v > _eff:
         return False
     res.converged = True
+    notes = ""
+    if _v > options.feasibility_tolerance:
+        notes += ("; feasible to the declared analysis noise "
+                  f"({_v:.1e}), not to feasibility_tolerance")
+    if getattr(res, '_rel_step_binding', False):
+        notes += ("; the trust radius was binding at the stop, so the "
+                  "step size was constrained, not chosen")
     res.status = ("converged: relative change between accepted iterates "
                   "within tolerance (" + ", ".join(fired)
-                  + "); no KKT certificate")
+                  + "); no KKT certificate" + notes)
     res.x, res.objective = x, problem.objective_value(x)
     res.iterations = k + 1
     if options.verbose:
@@ -2010,6 +2069,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _recovering = False
     _recover_budget = 0
     _recover_best = np.inf
+    # guards, stall counters and recovery measure feasibility against this:
+    # a declared analysis noise floors it, since sub-noise violation is
+    # indistinguishable from feasible.  The KKT certificate is unaffected
+    _eff_feas = max(options.feasibility_tolerance,
+                    float(getattr(options, 'analysis_noise', 0.0) or 0.0))
     _v0 = _violation(problem, x)
     if options.phase1 and _v0 > options.feasibility_tolerance:
         if options.verbose:
@@ -2348,7 +2412,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # slacks come off and normal Phase II resumes. Budget expired first
         # = terminate as infeasible.
         if _recovering:
-            if viol <= options.feasibility_tolerance:
+            if viol <= _eff_feas:
                 _recovering = False
                 use_slacks = False
                 res.phase1_feasible = True
@@ -2374,7 +2438,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         # counter is CONSECUTIVE iterations infeasible, reset only by
         # feasibility -- excusing 10% progress let a creeping violation run
         # forever (ladder rungs 3/6/7/8: 1500 iterations, restorations = 0).
-        if viol > options.feasibility_tolerance:
+        if viol > _eff_feas:
             _infeas_stall += 1
             _infeas_best = min(_infeas_best, viol)
         else:
@@ -2566,6 +2630,17 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     actual = math.log(max(f_old, 1e-300)) \
                         - math.log(max(problem.objective_value(x_new), 1e-300))
                     ratio = actual / pred if abs(pred) > 1e-300 else 1.0
+                    _noise = float(getattr(options, 'analysis_noise', 0.0)
+                                   or 0.0)
+                    if _noise > 0.0 and abs(pred) <= _noise:
+                        # predicted change below what the analysis can
+                        # resolve: a ratio here measures noise, not the
+                        # model.  Accept rather than churn the radius
+                        ratio = 1.0
+                        if options.verbose:
+                            print(f"  itr {k + 1:3d}  noise-level step "
+                                  f"(|pred|={abs(pred):.2e} <= "
+                                  f"analysis_noise); accepted")
                     # The objective ratio alone is not an acceptance test: a
                     # step can buy objective by leaving the feasible set
                     # (ROM section: 1619 -> 1521 while feasibility went to
@@ -2573,9 +2648,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     v_old = _violation(problem, x)
                     v_new = _violation(problem, x_new)
                     _g = 1.0 if _strict_feas else _FEAS_GUARD
-                    if (v_new > options.feasibility_tolerance
-                            and v_new > _g * max(v_old,
-                                                 options.feasibility_tolerance)):
+                    if (v_new > _eff_feas
+                            and v_new > _g * max(v_old, _eff_feas)):
                         ratio = -1.0
 
         # --- feasibility guard, applied to EVERY level of the cascade ---
@@ -2605,7 +2679,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if (_recovering and va_seen is not None
                 and _recover_best < 1.0e-2
                 and va_seen > max(5.0 * _recover_best,
-                                  10.0 * options.feasibility_tolerance)):
+                                  10.0 * _eff_feas)):
             ratio = -1.0
             _rejected_by_guard = True
         if _filter is not None and va_seen is not None:
@@ -2665,7 +2739,7 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # through a rejection streak (165 straight rejections, zero
             # restorations fired).
             if (not _recovering
-                    and _violation(problem, x) > options.feasibility_tolerance):
+                    and _violation(problem, x) > _eff_feas):
                 _infeas_stall += 1
                 if _infeas_stall >= int(getattr(options,
                                                 'restoration_patience', 0)
@@ -2755,9 +2829,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             # L2 over the WHOLE vector, not the max component: one lever
             # flipping while 1600 variables advance is progress (the max-
             # norm version replayed a byte-identical 7-state loop).
-            _d1 = float(np.linalg.norm(x_new - x))
-            _d0 = float(np.linalg.norm(x - _zz_prev))
-            _net = float(np.linalg.norm(x_new - _zz_prev))
+            # log space: raw units let one Reynolds-scale variable drown
+            # the norm, and the comparisons below are against LOG-space
+            # trust quantities
+            _lx_new, _lx, _lzz = (np.log(x_new), np.log(x),
+                                  np.log(_zz_prev))
+            _d1 = float(np.linalg.norm(_lx_new - _lx))
+            _d0 = float(np.linalg.norm(_lx - _lzz))
+            _net = float(np.linalg.norm(_lx_new - _lzz))
             _s = max(_d1, _d0)
             if options.verbose:
                 print(f"       zz: d1={_d1:.3e} d0={_d0:.3e} "
@@ -2817,6 +2896,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         res.history.append(x.copy())
         res.objectives.append(problem.objective_value(x))
 
+        # was the step pressed against the trust box?  The stop rule notes
+        # it: a small step the region FORCED is not the same evidence as a
+        # small step the design chose
+        res._rel_step_binding = bool(float(np.abs(d).max()) >= 0.95 * radius)
         if _relative_change_converged(problem, res, options, k):
             break
 
@@ -2878,15 +2961,19 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             lam_max = float(np.max(vals)) if vals else 0.0
         need = (slack > options.feasibility_tolerance
                 or lam_max >= options.tau_binding * tau)
-        if need and tau < options.tau_max:
+        # near-feasible: everything within the relief band of tolerance.
+        # Escalating here drowns the objective in the endgame; decay instead
+        _band = float(getattr(options, 'tau_relief_band', 10.0))
+        _near = (slack <= _band * options.feasibility_tolerance
+                 and lam_max < options.tau_binding * tau
+                 and _violation(problem, x)
+                 <= max(_band * options.feasibility_tolerance, _eff_feas))
+        if need and not _near and tau < options.tau_max:
             tau = min(options.tau_max,
                       tau * options.tau_factor,
                       max(tau * options.tau_factor,
                           options.tau_factor * lam_max))
-        elif (not need and tau > options.tau0
-              and _violation(problem, x) <= options.feasibility_tolerance):
-            # Relief: tau ratchets during the infeasible transient and
-            # otherwise never comes back down, drowning the objective term.
+        elif _near and tau > options.tau0:
             tau = max(options.tau0, tau / options.tau_factor)
 
     else:
