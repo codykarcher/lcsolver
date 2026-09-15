@@ -811,6 +811,28 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         raise ValueError(
             f"sp_method must be 'sia' or 'pccp'; got {_sp_method!r}")
 
+    # `linear_solver` selects IPOPT's inner linear solver (mumps / ma27 /
+    # pardiso / ...). The NAME is validated here, before any backend runs,
+    # for the same reason sp_method is; availability is probed later at the
+    # backend, which knows whether it is driving the executable or cyipopt.
+    # cvxopt is its own interior-point implementation with no such option,
+    # so asking for one on a cvxopt route is a mistake in the call.
+    _linear_solver = kwargs.get('linear_solver')
+    if _linear_solver is not None:
+        from lcsolver.environment import KNOWN_IPOPT_LINEAR_SOLVERS
+        _linear_solver = str(_linear_solver).strip().lower()
+        if _linear_solver not in KNOWN_IPOPT_LINEAR_SOLVERS:
+            raise ValueError(
+                'unknown linear_solver %r. IPOPT linear solvers are: %s'
+                % (kwargs['linear_solver'],
+                   ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
+        kwargs['linear_solver'] = _linear_solver
+        if solver == 'cvxopt' or convex_backend == 'cvxopt':
+            raise ValueError(
+                "linear_solver=%r selects IPOPT's inner linear solver, and "
+                "cvxopt has no such option. Drop the argument, or use the "
+                "IPOPT backend." % _linear_solver)
+
     want_checks = diagnostics not in (None, 'off', False)
     # Bind the corrected clone to a local: `structures['variables']` holds only
     # the VarData objects, and if the clone were collected here their parent
@@ -945,7 +967,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     if solver == 'ipopt-convex':
         return _attach_sensitivities(m, _finish(_convex_ipopt(m, structures=structures, presolve=_presolve, **kwargs)), sensitivities, _skipdeg, _st)
     if solver == 'ipopt':
-        return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
+        return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
@@ -1006,7 +1028,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 'is not a detected GP/SP, so it needs the raw IPOPT route -- '
                 'and no usable IPOPT installation was found. Run '
                 '`lcsolver-install-solvers`; see docs/ipopt.rst.')
-        return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)),
+        return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), **_strip_routing_kwargs(kwargs)),
                                      sensitivities, _skipdeg, _st)
 
     cvxopt_failure = None
@@ -1024,7 +1046,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 'structured problem with cvxopt instead. The answer is the '
                 'same, but IPOPT is the default backend and is required for '
                 'black-box constraints. Run `lcsolver-install-solvers` -- see '
-                'docs/ipopt.rst.',
+                'docs/ipopt.rst.'
+                + (' The requested linear_solver=%r is an IPOPT option and '
+                   'is IGNORED by cvxopt.' % kwargs['linear_solver']
+                   if kwargs.get('linear_solver') else ''),
                 RuntimeWarning, stacklevel=2)
             backend = 'cvxopt'
         try:
@@ -1074,7 +1099,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
                'it. ' if not structured else '')
             + 'Run `lcsolver-install-solvers`. See docs/ipopt.rst.')
-    return _attach_sensitivities(m, ipopt_solve(m, **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
+    return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
 
 
 # help(solve) should tell the whole story, not just the wrapper's.
@@ -1087,11 +1112,11 @@ def _strip_routing_kwargs(kwargs):
     exception was MASKED by `ipopt_solve() got an unexpected keyword
     argument 'sp_method'` from the fallback, hiding the real error)."""
     drop = ('sp_method', 'options', 'sia_options', 'sp_form', 'presolve',
-            'split_equalities', 'pair_equalities')
+            'split_equalities', 'pair_equalities', 'linear_solver')
     return {k: v for k, v in kwargs.items() if k not in drop}
 
 
-def _solve_sp(structures, m, sp_method='sia', **kwargs):
+def _solve_sp(structures, m, sp_method='sia', linear_solver=None, **kwargs):
     """Solve a signomial program. SIA by default.
 
     A signomial has no convex form, so both routes here iterate on convex
@@ -1114,12 +1139,22 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
     """
     from lcsolver.postsolve.writeback import write_solution
 
+    # The sequential routes solve MANY IPOPT sub-problems through their own
+    # machinery, so the linear solver is resolved once here -- probed against
+    # the executable build the sub-problem factory uses -- and threaded in:
+    # for SIA through SIAOptions.ipopt_options (an explicit user setting
+    # there wins), for PCCP into the inner GP solves directly.
+    if linear_solver is not None:
+        from lcsolver.environment import require_linear_solver
+        linear_solver = require_linear_solver(linear_solver, route='pyomo')
+
     if sp_method == 'pccp':
         from lcsolver.solvers.sequential.pccp import solve_SP
         from lcsolver.solvers.ipopt.GP import solve_gp_rows_ipopt
 
         def _inner(rows, relations, x0=None):
-            return solve_gp_rows_ipopt(rows, relations, x0=x0)
+            return solve_gp_rows_ipopt(rows, relations, x0=x0,
+                                       linear_solver=linear_solver)
 
         res = solve_SP(structures, m, gp_solver=_inner,
                        **{k: v for k, v in kwargs.items()
@@ -1134,6 +1169,14 @@ def _solve_sp(structures, m, sp_method='sia', **kwargs):
         raise ValueError(f"sp_method must be 'sia' or 'pccp'; got {sp_method!r}")
 
     from lcsolver.solvers.sequential.bridge import solve_sia
+
+    if linear_solver is not None:
+        from lcsolver.solvers.sequential.sia import SIAOptions
+        _opts = kwargs.get('options')
+        if not isinstance(_opts, SIAOptions):
+            _opts = SIAOptions()
+            kwargs['options'] = _opts
+        _opts.ipopt_options.setdefault('linear_solver', linear_solver)
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',
@@ -1262,7 +1305,7 @@ def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
     if structures['Signomial_Program'][0]:
         return _solve_sp(structures, m, presolve=presolve, **kwargs)
     # Nothing structured left to exploit.
-    return ipopt_solve(m, **_strip_routing_kwargs(kwargs))
+    return ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), **_strip_routing_kwargs(kwargs))
 
 
 

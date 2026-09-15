@@ -106,7 +106,8 @@ def _log_box(n, groups):
 
 
 def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
-                        method='auto', executable=None, form='auto'):
+                        method='auto', executable=None, form='auto',
+                        linear_solver=None):
     """Solve a geometric program given only its monomial rows, with IPOPT.
 
     This is the row-level core of :func:`solve_gp_ipopt`, split out so that it
@@ -124,6 +125,20 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
 
     Returns a dict with ``status``, ``primal objective``, ``x``.
     """
+    if linear_solver is not None:
+        # Resolved here, at the top of the chain, so the probe talks about
+        # the same route _assemble_and_solve will choose below; the choice
+        # then travels in `options`, which every helper already threads.
+        from lcsolver.environment import require_linear_solver
+        from lcsolver.solvers.ipopt.NLP import _executable_available
+        _route = (method if method != 'auto'
+                  else ('pyomo' if _executable_available('ipopt')
+                        else 'cyipopt'))
+        options = dict(options or {})
+        options['linear_solver'] = require_linear_solver(
+            linear_solver, route=_route,
+            executable=executable if _route == 'pyomo' else None)
+
     groups = _group_rows(rows)
     if 0 not in groups:
         raise ValueError('no objective monomials found in the GP structure')
@@ -147,8 +162,13 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     box = _log_box(n, groups)
     m.t = pyo.Var(m.J, initialize=_t0,
                   bounds=lambda _m, j: (-box[j], box[j]))
-    return _build_and_solve_gp(m, n, groups, relations, tee, options,
-                               method, executable, form)
+    res = _build_and_solve_gp(m, n, groups, relations, tee, options,
+                              method, executable, form)
+    if isinstance(res, dict):
+        # Which linear solver ran is the first question when two machines
+        # disagree on a solve; None means IPOPT's own build default.
+        res['linear_solver'] = (options or {}).get('linear_solver')
+    return res
 
 
 # How the posynomials are written for IPOPT.
@@ -394,7 +414,8 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
 
 
 def solve_gp_ipopt(structures, model=None, tee=False, options=None,
-                   method='auto', executable=None, form='auto'):
+                   method='auto', executable=None, form='auto',
+                   linear_solver=None):
     """Solve a detected geometric program with IPOPT in log space.
 
     Returns a dict shaped like the other LCsolver backends: ``status``,
@@ -415,7 +436,8 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
         x0.append(val if (val is not None and val > 0) else None)
 
     res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
-                              method=method, executable=executable, form=form)
+                              method=method, executable=executable, form=form,
+                              linear_solver=linear_solver)
     if model is not None:
         from lcsolver.postsolve.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)

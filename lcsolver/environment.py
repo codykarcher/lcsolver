@@ -275,6 +275,61 @@ def _quiet():
             os.close(devnull)
 
 
+#: Every linear solver an upstream IPOPT can be built against. The headline
+#: three -- mumps, ma27, pardiso -- are what `require_linear_solver` probes
+#: when composing an availability message; the rest are accepted and probed
+#: individually so a build that carries them can be asked for them.
+KNOWN_IPOPT_LINEAR_SOLVERS = (
+    'mumps', 'ma27', 'ma57', 'ma77', 'ma86', 'ma97',
+    'pardiso', 'pardisomkl', 'spral', 'wsmp',
+)
+
+
+def require_linear_solver(name, route='pyomo', executable=None):
+    """Validate and probe a requested IPOPT ``linear_solver``.
+
+    Returns the normalized (lower-cased) name when the build on ``route``
+    carries it. Raises ``ValueError`` for a name IPOPT has never heard of,
+    and ``SolverUnavailable`` -- naming what IS available -- when the name is
+    legitimate but this build lacks it, so the failure reads as an install
+    gap rather than as IPOPT dying mid-solve with an option error.
+
+    For the cyipopt route a probe can be inconclusive (cyipopt missing, or
+    unable to solve even the probe model); the name is then passed through
+    untested, and IPOPT itself reports if the solver is absent -- guessing
+    ``False`` there would refuse builds that actually carry the solver.
+    """
+    from lcsolver.core.errors import SolverUnavailable
+
+    key = str(name).strip().lower()
+    if key not in KNOWN_IPOPT_LINEAR_SOLVERS:
+        raise ValueError(
+            'unknown linear_solver %r. IPOPT linear solvers are: %s'
+            % (name, ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
+
+    if route == 'pyomo':
+        ok = linear_solver_available(key, executable)
+    else:
+        ok = cyipopt_linear_solver_available(key)
+        if ok is None:
+            return key
+    if not ok:
+        if route == 'pyomo':
+            present = [s for s in ('ma27', 'mumps', 'pardiso')
+                       if linear_solver_available(s, executable)]
+        else:
+            present = [s for s in ('ma27', 'mumps', 'pardiso')
+                       if cyipopt_linear_solver_available(s)]
+        raise SolverUnavailable(
+            "the linear solver %r is not available in this IPOPT build "
+            "(route: %s%s). Probed as available here: %s. See docs/ipopt.rst "
+            "for building IPOPT with additional linear solvers."
+            % (key, route,
+               f', executable {executable}' if executable else '',
+               ', '.join(present) if present else 'none of ma27/mumps/pardiso'))
+    return key
+
+
 def linear_solver_available(name, executable=None):
     """Does this IPOPT build carry the ``name`` linear solver?
 

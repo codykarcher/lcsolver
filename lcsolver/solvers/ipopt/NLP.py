@@ -106,7 +106,7 @@ def _summarize(results):
 
 # ---------------------------------------------------------------------------
 def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
-                load_solutions=True):
+                load_solutions=True, linear_solver=None):
     """Solve an LCsolver ``Formulation`` with IPOPT.
 
     Parameters
@@ -126,6 +126,12 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         IPOPT options, e.g. ``{'tol': 1e-8, 'max_iter': 500}``.
     load_solutions : bool
         Load the solution onto the model. Left at ``True`` in normal use.
+    linear_solver : str, optional
+        IPOPT's inner linear solver -- ``'mumps'``, ``'ma27'``,
+        ``'pardiso'``, or any other name IPOPT knows. Validated and probed
+        against the build actually being used, so an absent solver raises
+        ``SolverUnavailable`` naming what is available instead of IPOPT
+        dying on an option error. Overrides ``options['linear_solver']``.
 
     Returns
     -------
@@ -162,6 +168,12 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         raise RuntimeError(
             "this model contains black-box (grey-box) constraints, which the "
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
+
+    if linear_solver is not None:
+        from lcsolver.environment import require_linear_solver
+        options['linear_solver'] = require_linear_solver(
+            linear_solver, route=route,
+            executable=executable if route == 'pyomo' else None)
 
     # Ask the solver for constraint duals. They cost nothing extra and are what
     # `lcsolver.postsolve.sensitivity` uses to report how the optimum responds to each
@@ -214,6 +226,10 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     summary = _summarize(results)
     summary['solver'] = route
     summary['problem_structure'] = 'nonlinear_program'
+    # None means IPOPT's own build default (typically ma27 when compiled
+    # with HSL, else mumps) -- worth recording, since which linear solver
+    # ran is the first question when two machines disagree on a solve.
+    summary['linear_solver'] = options.get('linear_solver')
 
     tc = summary['termination_condition']
     ok = tc in (str(TerminationCondition.optimal),
