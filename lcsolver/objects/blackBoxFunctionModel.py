@@ -1325,6 +1325,27 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------
+    @staticmethod
+    def _jacobianBlockShape(output, input_):
+        """The numpy shape a d(output)/d(input) block must have, or None.
+
+        Concatenates the declared output dims with the declared input dims
+        (a scalar contributes no dims, so scalar/scalar expects the empty
+        shape ``()``).  Returns None -- meaning "do not check" -- when either
+        side declares a flexible-length dimension, since the true length is
+        only known at run time.
+        """
+        dims = []
+        for declared in (output.size, input_.size):
+            if declared in (0, None):
+                continue
+            seq = declared if isinstance(declared, (list, tuple)) else [declared]
+            for d in seq:
+                if d == FLEXIBLE_LENGTH:
+                    return None
+                dims.append(int(d))
+        return tuple(dims)
+
     def packOutputs(self, values, jacobian=None):
         """Attach declared units to outputs and shape the ``BlackBox`` return.
 
@@ -1370,6 +1391,37 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
             raise ValueError(
                 'packOutputs expected a jacobian of %d row(s) with %d '
                 'entries each (d output / d input)' % (n_out, n_in))
+
+        # Each block's shape must be (output dims) + (input dims): a scalar
+        # for scalar/scalar, a length-n vector when exactly one side is a
+        # size-n vector, an (n, m) matrix for vector/vector. Checked HERE, in
+        # the modeller's own stack frame, because the alternative is what this
+        # replaced: the grey-box NLP consumed the block element-by-element and
+        # a wrong shape surfaced as an AttributeError from deep inside Pyomo's
+        # unit converter, naming nothing the modeller wrote. The classic slip
+        # is np.diag() on a vector-output/scalar-input block -- right for the
+        # vector/vector blocks next to it, silently 3x3 where (3,) belongs.
+        for k in range(n_out):
+            for j in range(n_in):
+                expected = self._jacobianBlockShape(self.outputs[k],
+                                                    self.inputs[j])
+                if expected is None:
+                    continue                     # a flexible-length dimension
+                got = np.shape(getattr(jac_rows[k][j], 'magnitude',
+                                       jac_rows[k][j]))
+                if got != expected:
+                    hint = ''
+                    if (len(expected) == 1 and len(got) == 2
+                            and got[0] == got[1] == expected[0]):
+                        hint = (" Input '%s' is a scalar, so this block is a "
+                                'vector over the output elements; np.diag() '
+                                'belongs only on vector-input blocks.'
+                                % self.inputs[j].name)
+                    raise ValueError(
+                        'packOutputs: the jacobian block d(%s)/d(%s) must '
+                        'have shape %r (output dims + input dims), but got '
+                        '%r.%s' % (self.outputs[k].name, self.inputs[j].name,
+                                   expected, got, hint))
 
         packed_jac = []
         for k in range(n_out):
