@@ -106,7 +106,8 @@ def _summarize(results):
 
 # ---------------------------------------------------------------------------
 def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
-                load_solutions=True, linear_solver=None):
+                load_solutions=True, linear_solver=None,
+                linear_solver_library=None):
     """Solve an LCsolver ``Formulation`` with IPOPT.
 
     Parameters
@@ -170,10 +171,17 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
 
     if linear_solver is not None:
-        from lcsolver.environment import require_linear_solver
+        from lcsolver.environment import (
+            linear_solver_library_option,
+            require_linear_solver,
+        )
         options['linear_solver'] = require_linear_solver(
             linear_solver, route=route,
-            executable=executable if route == 'pyomo' else None)
+            executable=executable if route == 'pyomo' else None,
+            library=linear_solver_library)
+        if linear_solver_library is not None:
+            options[linear_solver_library_option(
+                options['linear_solver'])] = str(linear_solver_library)
 
     # Ask the solver for constraint duals. They cost nothing extra and are what
     # `lcsolver.postsolve.sensitivity` uses to report how the optimum responds to each

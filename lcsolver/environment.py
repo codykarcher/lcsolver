@@ -323,8 +323,38 @@ KNOWN_IPOPT_LINEAR_SOLVERS = (
     'pardiso', 'pardisomkl', 'spral', 'wsmp',
 )
 
+#: Solvers IPOPT loads from a shared library AT RUNTIME, and the IPOPT
+#: option that names that library. These need no rebuild -- an IPOPT
+#: without them still accepts the name if handed the right library, which
+#: is how MA57/MA86/MA97 (a full CoinHSL build) and Panua Pardiso are used
+#: on a machine where only the stock build is installed.
+RUNTIME_LOADED_LINEAR_SOLVERS = {
+    'ma57': 'hsllib', 'ma77': 'hsllib', 'ma86': 'hsllib', 'ma97': 'hsllib',
+    'pardiso': 'pardisolib',
+}
 
-def require_linear_solver(name, route='pyomo', executable=None):
+
+def linear_solver_library_option(name):
+    """The IPOPT option a runtime-loaded solver reads its library from
+    (``'hsllib'`` or ``'pardisolib'``), or None for a compiled-in solver."""
+    return RUNTIME_LOADED_LINEAR_SOLVERS.get(str(name).strip().lower())
+
+
+def _spral_runtime_env():
+    """SPRAL's documented OpenMP requirements, set process-wide.
+
+    IPOPT's install notes require ``OMP_CANCELLATION=TRUE`` and
+    ``OMP_PROC_BIND=TRUE`` when running with SPRAL; without them the solver
+    can underperform or stall. Set here (inherited by the ipopt executable
+    and read by an in-process cyipopt alike) rather than asked of every
+    caller. Existing explicit settings are left alone.
+    """
+    os.environ.setdefault('OMP_CANCELLATION', 'TRUE')
+    os.environ.setdefault('OMP_PROC_BIND', 'TRUE')
+
+
+def require_linear_solver(name, route='pyomo', executable=None,
+                          library=None):
     """Validate and probe a requested IPOPT ``linear_solver``.
 
     Returns the normalized (lower-cased) name when the build on ``route``
@@ -337,6 +367,12 @@ def require_linear_solver(name, route='pyomo', executable=None):
     unable to solve even the probe model); the name is then passed through
     untested, and IPOPT itself reports if the solver is absent -- guessing
     ``False`` there would refuse builds that actually carry the solver.
+
+    ``library`` is the shared library for a RUNTIME-LOADED solver
+    (ma57/ma77/ma86/ma97 from a full CoinHSL build, pardiso from Panua);
+    it is validated to exist and passed to the probe under the right IPOPT
+    option (``hsllib``/``pardisolib``). Passing one for a compiled-in
+    solver is refused as a mistake in the call.
     """
     from lcsolver.core.errors import SolverUnavailable
 
@@ -346,8 +382,26 @@ def require_linear_solver(name, route='pyomo', executable=None):
             'unknown linear_solver %r. IPOPT linear solvers are: %s'
             % (name, ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
 
+    libopt = linear_solver_library_option(key)
+    if library is not None:
+        if libopt is None:
+            raise ValueError(
+                'linear_solver_library was given, but %r is not a '
+                'runtime-loaded solver (those are: %s); the library would '
+                'be ignored' % (key,
+                                ', '.join(sorted(
+                                    RUNTIME_LOADED_LINEAR_SOLVERS))))
+        library = os.path.expanduser(str(library))
+        if not os.path.exists(library):
+            raise SolverUnavailable(
+                'the linear_solver_library for %r does not exist: %s'
+                % (key, library))
+
+    if key == 'spral':
+        _spral_runtime_env()
+
     if route == 'pyomo':
-        ok = linear_solver_available(key, executable)
+        ok = linear_solver_available(key, executable, library=library)
     else:
         ok = cyipopt_linear_solver_available(key)
         if ok is None:
@@ -359,26 +413,37 @@ def require_linear_solver(name, route='pyomo', executable=None):
         else:
             present = [s for s in ('ma27', 'mumps', 'pardiso')
                        if cyipopt_linear_solver_available(s)]
+        _lib_note = ''
+        if libopt is not None and library is None:
+            _lib_note = (' %r is a runtime-loaded solver: pass '
+                         'linear_solver_library=<path to the %s library> '
+                         'if you have one.' % (key,
+                                               'CoinHSL' if libopt == 'hsllib'
+                                               else 'Pardiso'))
         raise SolverUnavailable(
             "the linear solver %r is not available in this IPOPT build "
-            "(route: %s%s). Probed as available here: %s. See docs/ipopt.rst "
-            "for building IPOPT with additional linear solvers."
+            "(route: %s%s). Probed as available here: %s.%s See "
+            "docs/linear_solvers.rst for building IPOPT with additional "
+            "linear solvers."
             % (key, route,
                f', executable {executable}' if executable else '',
-               ', '.join(present) if present else 'none of ma27/mumps/pardiso'))
+               ', '.join(present) if present else 'none of ma27/mumps/pardiso',
+               _lib_note))
     return key
 
 
-def linear_solver_available(name, executable=None):
+def linear_solver_available(name, executable=None, library=None):
     """Does this IPOPT build carry the ``name`` linear solver?
 
     Probed by solving a one-variable problem with ``linear_solver <name>``: a
     build without it rejects the option and fails. There is no reliable way to
     ask the binary directly --- ``--print-options`` does not list the compiled
-    set on every version.
+    set on every version. ``library`` rides along as ``hsllib``/``pardisolib``
+    for a runtime-loaded solver.
     """
     executable = executable or ipopt_executable()
-    key = (os.path.realpath(executable) if executable else None, name)
+    key = (os.path.realpath(executable) if executable else None, name,
+           os.path.realpath(library) if library else None)
     if key in _PROBE_CACHE:
         return _PROBE_CACHE[key]
 
@@ -396,6 +461,11 @@ def linear_solver_available(name, executable=None):
         opt = (pyo.SolverFactory('ipopt', executable=executable)
                if executable else pyo.SolverFactory('ipopt'))
         opt.options['linear_solver'] = name
+        _libopt = linear_solver_library_option(name)
+        if library and _libopt:
+            opt.options[_libopt] = library
+        if name == 'spral':
+            _spral_runtime_env()
         with _quiet():
             res = opt.solve(probe, tee=False, load_solutions=False)
         result = (res.solver.termination_condition

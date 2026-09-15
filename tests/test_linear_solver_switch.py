@@ -74,13 +74,13 @@ class TestNameValidation:
 
     def test_names_are_normalized(self, monkeypatch):
         monkeypatch.setattr(env, 'linear_solver_available',
-                            lambda name, executable=None: True)
+                            lambda name, executable=None, library=None: True)
         assert require_linear_solver(' MA27 ') == 'ma27'
 
     def test_unavailable_solver_names_what_is_available(self, monkeypatch):
         monkeypatch.setattr(
             env, 'linear_solver_available',
-            lambda name, executable=None: name == 'ma27')
+            lambda name, executable=None, library=None: name == 'ma27')
         with pytest.raises(SolverUnavailable) as ctx:
             require_linear_solver('pardiso')
         msg = str(ctx.value)

@@ -164,7 +164,7 @@ def model_battery(include_synthetic=True):
     return battery
 
 
-def _run_one_inprocess(model_name, linear_solver):
+def _run_one_inprocess(model_name, linear_solver, library=None):
     """Build and solve one model here; print a parsable result line.
 
     This is the child side of `run_one` -- one (model, solver) cell per
@@ -184,7 +184,11 @@ def _run_one_inprocess(model_name, linear_solver):
             f = illconditioned_gp(n, spread)
         else:
             f = harvest_formulation(model_name)
-        res = lcsolver.solve(f, linear_solver=linear_solver)
+        from lcsolver.environment import linear_solver_library_option
+        _lib = (library if library and
+                linear_solver_library_option(linear_solver) else None)
+        res = lcsolver.solve(f, linear_solver=linear_solver,
+                             linear_solver_library=_lib)
         dt = time.perf_counter() - t0
         status = str(res.get('status', '?'))
         try:
@@ -200,7 +204,8 @@ def _run_one_inprocess(model_name, linear_solver):
     print('RESULT ' + json.dumps(out))
 
 
-def run_one(model_name, linear_solver, executable=None, timeout=120.0):
+def run_one(model_name, linear_solver, executable=None, timeout=120.0,
+            library=None):
     """One (model, solver) cell in a fresh subprocess with a hard timeout.
 
     In-process solves proved unkillable in practice: a divergent IPOPT run
@@ -216,6 +221,8 @@ def run_one(model_name, linear_solver, executable=None, timeout=120.0):
         env['LCSOLVER_IPOPT_EXECUTABLE'] = executable
     cmd = [sys.executable, os.path.abspath(__file__),
            '--_child', model_name, linear_solver]
+    if library:
+        cmd += ['--linear-solver-library', library]
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,
@@ -244,12 +251,17 @@ def main(argv=None):
                     help='comma-separated subset of model names')
     ap.add_argument('--timeout', type=float, default=120.0,
                     help='hard per-cell timeout in seconds')
+    ap.add_argument('--linear-solver-library', default=None,
+                    help='shared library for runtime-loaded solvers '
+                         '(hsllib for ma57/77/86/97, pardisolib for '
+                         'pardiso); ignored for compiled-in solvers')
     ap.add_argument('--_child', nargs=2, metavar=('MODEL', 'SOLVER'),
                     help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     if args._child:
-        _run_one_inprocess(*args._child)
+        _run_one_inprocess(*args._child,
+                           library=args.linear_solver_library)
         return []
 
     solvers = [s.strip() for s in args.linear_solvers.split(',') if s.strip()]
@@ -267,7 +279,8 @@ def main(argv=None):
         cells = []
         for s in solvers:
             r = run_one(name, s, executable=args.executable,
-                        timeout=args.timeout)
+                        timeout=args.timeout,
+                        library=args.linear_solver_library)
             rows.append({'model': name, 'linear_solver': s, **r})
             cell = (f'{r["status"]}/{r["time"]:.1f}s' if r['ok']
                     else f'FAIL({r["status"]})')

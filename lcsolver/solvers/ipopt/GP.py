@@ -107,7 +107,7 @@ def _log_box(n, groups):
 
 def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
                         method='auto', executable=None, form='auto',
-                        linear_solver=None):
+                        linear_solver=None, linear_solver_library=None):
     """Solve a geometric program given only its monomial rows, with IPOPT.
 
     This is the row-level core of :func:`solve_gp_ipopt`, split out so that it
@@ -129,7 +129,10 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
         # Resolved here, at the top of the chain, so the probe talks about
         # the same route _assemble_and_solve will choose below; the choice
         # then travels in `options`, which every helper already threads.
-        from lcsolver.environment import require_linear_solver
+        from lcsolver.environment import (
+            linear_solver_library_option,
+            require_linear_solver,
+        )
         from lcsolver.solvers.ipopt.NLP import _executable_available
         _route = (method if method != 'auto'
                   else ('pyomo' if _executable_available('ipopt')
@@ -137,7 +140,11 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
         options = dict(options or {})
         options['linear_solver'] = require_linear_solver(
             linear_solver, route=_route,
-            executable=executable if _route == 'pyomo' else None)
+            executable=executable if _route == 'pyomo' else None,
+            library=linear_solver_library)
+        if linear_solver_library is not None:
+            options[linear_solver_library_option(
+                options['linear_solver'])] = str(linear_solver_library)
 
     groups = _group_rows(rows)
     if 0 not in groups:
@@ -415,7 +422,7 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
 
 def solve_gp_ipopt(structures, model=None, tee=False, options=None,
                    method='auto', executable=None, form='auto',
-                   linear_solver=None):
+                   linear_solver=None, linear_solver_library=None):
     """Solve a detected geometric program with IPOPT in log space.
 
     Returns a dict shaped like the other LCsolver backends: ``status``,
@@ -437,7 +444,8 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
 
     res = solve_gp_rows_ipopt(gp[1], gp[2], x0=x0, tee=tee, options=options,
                               method=method, executable=executable, form=form,
-                              linear_solver=linear_solver)
+                              linear_solver=linear_solver,
+                              linear_solver_library=linear_solver_library)
     if model is not None:
         from lcsolver.postsolve.writeback import write_solution
         res['solution'] = write_solution(structures, res, model=model)

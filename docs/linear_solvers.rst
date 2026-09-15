@@ -60,25 +60,32 @@ executable's own ``lib`` directory first when probing or solving
 What we measured
 ----------------
 
-All runs: Ipopt 3.14.20, one dual-solver source build (MA27 + MUMPS 5.9.1),
-macOS arm64, 2026-09-15.
+All runs: Ipopt 3.14.20, one triple-solver source build (MA27 + MUMPS 5.9.1
++ SPRAL v2023.03.29), macOS arm64, 2026-09-15/16.
 
 * **Every model in examples/** (GPs, an LP, a QP, an SP) plus an
-  ill-conditioned synthetic family: identical status and objective on both
-  solvers, all sub-second. Small, clean log-space models do not stress the
-  factorization.
-* **737-800 / TASOPT deck** (lcjetliner, 1298 variables, SIA): both
-  certify in 39 iterations; MA27 110 s, MUMPS 122 s.
-* **SPaircraft D8.2** (York et al., AIAA J.; 1172 variables, SIA):
-  **MUMPS falsely declares the iteration-2 sub-problem infeasible**; the
-  run stops uncertified at 25,102 lbf, 17 % above the answer. MA27
-  certifies at 179 iterations / 35 s / 21,384.0 lbf. The failing
-  sub-problem is bundled at ``examples/data/d8_sia_subproblem.nl`` and
-  replayed by ``examples/linear_solver_switch.py`` and the test suite.
+  ill-conditioned synthetic family: identical status and objective on all
+  three solvers, all sub-second (SPRAL ~2x the wall time of MA27 at this
+  size -- OpenMP overhead, not arithmetic).
+* **The D8 sentinel sub-problem** (``examples/data/d8_sia_subproblem.nl``,
+  SIA tolerances): MA27 optimal in 0.13 s, SPRAL optimal in 0.40 s,
+  **MUMPS falsely declares it infeasible**.
+* **SPaircraft D8.2 full deck** (York et al., AIAA J.; 1172 variables,
+  SIA): MA27 certifies at 179 iterations / 35 s / 21,384.0 lbf; **SPRAL
+  certifies the same optimum at 149 iterations / 103 s**; MUMPS stops
+  uncertified at iteration 2, 17 % above the answer.
+* **737-800 / TASOPT deck** (lcjetliner, 1298 variables, SIA): MA27
+  39 iterations / 110 s; MUMPS 39 / 122 s; SPRAL 23 iterations / 157 s.
+  All three certify.
 
-Verdict: **MA27 is the right default for this problem class**; MUMPS is
-acceptable for small models and as a fallback, and the D8 capture is the
-regression sentinel that says when that assessment should be revisited.
+Verdict: **MA27 is the right default** (fastest, most robust). **SPRAL is
+a working, license-free alternative**: it certifies everything MA27 does
+-- including the sentinel MUMPS fails -- in consistently FEWER SIA
+iterations, at 1.5-3x the wall time on one machine (its OpenMP
+parallelism should close that gap on larger problems and more cores).
+The MA27-dependence concern is answered without forking anything. MUMPS
+remains acceptable only for small models. The D8 capture is the
+regression sentinel that says when this assessment should be revisited.
 
 Re-running the assessment::
 
@@ -115,18 +122,57 @@ solve. Recipe (macOS; Linux is the same modulo the loader variable)::
 (The HSL and ASL third-party builds are the ones
 ``utilities/install_ipopt.sh`` already produces.)
 
-Next steps for reducing MA27 dependence
----------------------------------------
+Building SPRAL into IPOPT
+-------------------------
 
-1. **SPRAL** (first): build ThirdParty-Metis, then SPRAL with OpenMP, then
-   IPOPT ``--with-spral``; run the benchmark battery plus the D8 capture
-   against it. If SPRAL certifies the D8, the license-freedom goal is met
-   with zero fork burden.
-2. **Runtime-loaded HSL** (MA57/MA86/MA97): the same coinhsl library
-   already built here exposes them; benchmark MA97 on the big SPs, since it
-   is the modern HSL answer for indefinite systems.
-3. **Pardiso via Panua** on Apple silicon if a license materialises;
-   MKL-Pardiso only on x86 machines.
-4. **UMFPACK/PETSc fork**: only if 1-3 all disappoint; budget ~1-2k lines
-   of C++ against ``SparseSymLinearSolverInterface`` plus permanent rebase
-   cost.
+Done and measured (see above). The recipe on macOS arm64::
+
+    brew install metis hwloc autoconf automake libtool  # gcc for gfortran
+    cd ~/software/ipopt
+    git clone --depth 1 --branch v2023.03.29 \
+        https://github.com/ralna/spral.git spral-src
+    cd spral-src && ./autogen.sh
+    CC=gcc-16 CXX=g++-16 FC=gfortran ./configure \
+        --prefix=$PWD/../SPRAL_build \
+        --with-blas="-L/opt/homebrew/opt/openblas/lib -lopenblas" \
+        --with-lapack="-L/opt/homebrew/opt/openblas/lib -lopenblas" \
+        --with-metis="-L/opt/homebrew/lib -lmetis" \
+        --with-metis-inc-dir=/opt/homebrew/include
+    make -j4 && make install
+
+then add to the IPOPT configure (alongside the HSL/MUMPS flags above),
+building IPOPT with the SAME gcc toolchain::
+
+    CC=gcc-16 CXX=g++-16 FC=gfortran \
+    CXXFLAGS="-O2 -fno-devirtualize-speculatively" \
+    ../Ipopt-src/configure ... \
+      --with-spral-cflags="-I$PWD/../SPRAL_build/include" \
+      --with-spral-lflags="-L$PWD/../SPRAL_build/lib -lspral \
+          -L/opt/homebrew/opt/openblas/lib -lopenblas \
+          -L/opt/homebrew/lib -lmetis -lhwloc \
+          -L$(dirname $(gcc-16 -print-file-name=libgomp.dylib)) \
+          -lgomp -lgfortran"
+
+Two gotchas, both hit and solved here: (1) SPRAL's C++ objects need the
+same C++ runtime as IPOPT's -- build both with gcc, or the link dies on
+libstdc++ symbols; (2) ``-fno-devirtualize-speculatively`` is REQUIRED
+with gcc: its speculative devirtualization emits references to the
+vtables of dependency-detector classes IPOPT declares but does not
+compile (Ma28), and the link fails on a symbol nothing actually uses.
+At runtime SPRAL needs ``OMP_CANCELLATION=TRUE`` and
+``OMP_PROC_BIND=TRUE``; LCsolver sets both automatically whenever
+``linear_solver='spral'`` is requested.
+
+Remaining avenues
+-----------------
+
+1. **Runtime-loaded HSL** (MA57/MA86/MA97): machinery is in place --
+   ``solve(f, linear_solver='ma97', linear_solver_library='/path/to/
+   libcoinhsl.dylib')`` -- but the coinhsl here is the MA27-only archive,
+   so benchmarking MA97 waits on a full CoinHSL tarball.
+2. **Pardiso**: same machinery (``linear_solver_library`` maps to
+   ``pardisolib``), untestable on this machine (Panua is commercial,
+   MKL is x86-only) -- ready for a licensed box.
+3. **UMFPACK/PETSc fork**: moot unless SPRAL disappoints at scale;
+   budget ~1-2k lines of C++ against ``SparseSymLinearSolverInterface``
+   plus permanent rebase cost.

@@ -51,6 +51,17 @@ SIA_TOLERANCES = {'tol': 1e-12, 'constr_viol_tol': 1e-12,
                   'acceptable_constr_viol_tol': 1e-10}
 
 
+def build():
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='-', description='x',
+                   bounds=[0.1, 10.0])
+    y = f.Variable(name='y', guess=1.0, units='-', description='y',
+                   bounds=[0.1, 10.0])
+    f.Objective(x + y)
+    f.Constraint(x * y >= 1.0 * units.dimensionless)
+    return f
+
+
 def part1_the_switch():
     """The API: same model, explicitly chosen linear solvers."""
     print('=' * 70)
@@ -58,18 +69,11 @@ def part1_the_switch():
     print('=' * 70)
 
     exe = ipopt_executable()
-    for name in ('ma27', 'mumps'):
+    for name in ('ma27', 'mumps', 'spral'):
         if not linear_solver_available(name, exe):
             print(f'  {name:<6}: not in this IPOPT build, skipped')
             continue
-        f = Formulation()
-        x = f.Variable(name='x', guess=1.0, units='-', description='x',
-                       bounds=[0.1, 10.0])
-        y = f.Variable(name='y', guess=1.0, units='-', description='y',
-                       bounds=[0.1, 10.0])
-        f.Objective(x + y)
-        f.Constraint(x * y >= 1.0 * units.dimensionless)
-        res = lcsolver.solve(f, linear_solver=name)
+        res = lcsolver.solve(build(), linear_solver=name)
         print(f'  {name:<6}: status={res["status"]}, '
               f'objective={float(res.objective):.6f}')
 
@@ -82,7 +86,7 @@ def part2_the_disagreement():
     print('=' * 70)
 
     exe = ipopt_executable()
-    for name in ('mumps', 'ma27'):
+    for name in ('mumps', 'ma27', 'spral'):
         if not linear_solver_available(name, exe):
             print(f'  {name:<6}: not in this IPOPT build, skipped')
             continue
@@ -97,6 +101,12 @@ def part2_the_disagreement():
         print(f'  {name:<6}: termination_condition={tc}  ->  {verdict}')
 
 
-if __name__ == '__main__':
-    part1_the_switch()
-    part2_the_disagreement()
+# Run as a script AND when executed by the test suite: the parts print
+# their comparison, and the module leaves behind a solved Formulation `f`
+# like every other example (the integration suite re-builds and re-solves
+# it to check the presolve is behavior-preserving).
+part1_the_switch()
+part2_the_disagreement()
+
+f = build()
+sol = lcsolver.solve(f)
