@@ -1,23 +1,10 @@
 """Unary functions must pass the unit checker.
 
-``handle_unary_node`` opened with ``units.get_units(arg1)``, where ``arg1`` is
-the walker's own ``unitsPack`` namedtuple rather than a Pyomo expression. That
-raised ``AttributeError: 'unitsPack' object has no attribute
-'is_expression_type'`` before any branch ran, so *every* unary function failed
--- including ``sqrt``, which the one branch below it existed to support.
-
-The AttributeError reached the user through the unit reporter, which dutifully
-printed both sides' units and observed that they agreed:
-
-    Error in units for objective 'objective_1':
-        sin(x) + x**2
-        [dimensionless]  =/=  [dimensionless]
-
--- a contradiction on its face, and a bad way to learn that ``sqrt`` was not
-supported. ``x ** 0.5`` was unaffected, being a power node, which is why models
-that spell their roots that way never noticed.
-
-The rules mirror ``pyomo.core.base.units_container`` so the two agree.
+``handle_unary_node`` called ``units.get_units`` on the walker's own
+``unitsPack`` namedtuple, so EVERY unary function raised -- including
+``sqrt`` -- and the error surfaced as a units report where both sides
+agreed. ``x ** 0.5`` was unaffected, being a power node. The rules mirror
+``pyomo.core.base.units_container`` so the two agree.
 """
 import pyomo.environ as pyo
 import pytest
@@ -25,8 +12,8 @@ import pytest
 from lcsolver import Formulation
 from lcsolver.presolve.unitCorrector import UnitMismatch, unit_corrector
 
-#: (name, callable, rule). 'dimensionless' takes a dimensionless argument and
-#: returns one; 'same' preserves units; 'sqrt' halves the exponents.
+# (name, callable, rule). 'dimensionless' takes a dimensionless argument and
+# returns one; 'same' preserves units; 'sqrt' halves the exponents.
 FUNCTIONS = [
     ('sqrt', pyo.sqrt, 'sqrt'),
     ('sin', pyo.sin, 'dimensionless'),

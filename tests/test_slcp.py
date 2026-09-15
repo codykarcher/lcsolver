@@ -113,13 +113,9 @@ class TestSLCPSolve(unittest.TestCase):
             self.assertLessEqual(r.max_violation, 1e-6, msg=f'{method}: {r.status}')
 
     def test_stalled_infeasible_is_not_reported_as_converged(self):
-        """A collapsed step at an INFEASIBLE point is a stall, not convergence.
-
-        Regression for the original behaviour, which set converged=True on step
-        magnitude alone. A signomial constraint that cannot be satisfied
-        anywhere (body >= 2 > 1 for every x) drives the iterates to a standstill
-        while remaining infeasible; the result must say so.
-        """
+        """A collapsed step at an INFEASIBLE point is a stall, not
+        convergence: the original behaviour set converged=True on step
+        magnitude alone, even on a constraint satisfiable nowhere."""
         def impossible(x):
             g = np.zeros(2)
             return 2.0, g          # body == 2 > 1 always, gradient 0 -> no way out
@@ -172,11 +168,9 @@ class TestSLCPSolve(unittest.TestCase):
         self.assertAlmostEqual(r_sp.objective, 2.0, places=5)
 
     def test_sp_form_multiterm_q_converges_efficiently(self):
-        """A multi-term q makes the AGM condensation a real approximation,
-        iterated to tightness. SP-form constraints always enter the Reduced
-        Lagrangian (they are only PARTLY exact -- q's curvature is condensed
-        away and BFGS is the only thing left to supply it); measured, omitting
-        them failed to converge from every start."""
+        """A multi-term q makes the AGM condensation a real approximation.
+        SP-form constraints always enter the Reduced Lagrangian -- q's
+        curvature is condensed away; omitting them failed from every start."""
         n = 3
         obj = slcp.Posynomial([(1.0, [1, 0, 0]), (1.0, [0, 1, 0]), (1.0, [0, 0, 1])], n)
         q = slcp.Posynomial([(0.6, [1, 1, 0]), (0.5, [0, 1, 1]),
@@ -211,11 +205,8 @@ class TestSLCPSolve(unittest.TestCase):
         self.assertTrue(np.allclose(r.history[0], [3.0, 3.0]))
 
     def test_signomial_constraint_is_honoured(self):
-        """A non-GP-compatible constraint, supplied as a callback.
-
-        min x  s.t.  2/(x + y) <= 1 and y <= 1, so x >= 1 at the optimum.
-        The ratio is not a sum of monomials, hence a Signomial.
-        """
+        """A non-GP-compatible constraint, supplied as a callback:
+        min x s.t. 2/(x + y) <= 1, y <= 1, so x >= 1 at the optimum."""
         from lcsolver.solvers.sequential.slcp import (Constraint, Posynomial, Problem,
                                             Signomial)
 
@@ -237,12 +228,9 @@ class TestSLCPSolve(unittest.TestCase):
         self.assertLessEqual(r.x[1], 1.0 + 1e-6)
 
     def test_reduced_lagrangian_excludes_exact_constraints(self):
-        """Paper Equation 14: posynomials are omitted from the BFGS Hessian.
-
-        With the reduced flag set, an exactly-imposed constraint must contribute
-        nothing to the gradient, so the result equals the objective's own log
-        gradient regardless of the multiplier.
-        """
+        """Paper Equation 14: posynomials are omitted from the BFGS Hessian,
+        so with the reduced flag an exactly-imposed constraint contributes
+        nothing and the result equals the objective's own log gradient."""
         problem = _xy_problem()
         x = np.array([2.0, 3.0])
         mults = np.array([5.0, 7.0])

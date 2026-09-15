@@ -6,16 +6,10 @@
 
 """`from lcsolver import units` gives Pyomo's units container.
 
-This used to be a name collision. ``lcsolver.units`` was the package holding
-unitCorrector and unitWalker, and Python binds a submodule onto its parent
-package as it imports it -- so the first ``from lcsolver.units.unitCorrector import
-...`` anywhere, including the lazy imports inside ``solve()``, replaced the
-name with the package and turned ``units.m`` into an AttributeError partway
-through a session.
-
-Those modules now live in :mod:`lcsolver.presolve` with the rest of the
-pre-solve chain, so the name is simply free. These tests pin both halves: the
-proxy is Pyomo's own object, and nothing in the package reclaims the name.
+This used to be a name collision: ``lcsolver.units`` was the package holding
+unitCorrector, and importing a submodule rebound the name mid-session,
+turning ``units.m`` into an AttributeError. Those modules now live in
+``lcsolver.presolve``; these tests pin that nothing reclaims the name.
 """
 import subprocess
 import sys
@@ -44,11 +38,8 @@ def test_usable_in_a_model_and_solves():
 
 
 def test_nothing_reclaims_the_name():
-    """The regression that motivated the move.
-
-    Importing the pre-solve modules must leave ``lcsolver.units`` alone. It did not
-    when they lived under that name.
-    """
+    """The regression that motivated the move: importing the pre-solve
+    modules must leave ``lcsolver.units`` alone."""
     import lcsolver
     from lcsolver.presolve.unitCorrector import unit_corrector   # noqa: F401
     from lcsolver.presolve.unitWalker import unitsPack           # noqa: F401
@@ -64,11 +55,8 @@ def test_edi_units_is_not_a_package_any_more():
 @pytest.mark.parametrize('first', ['lcsolver', 'presolve'],
                          ids=['lcsolver-first', 'presolve-first'])
 def test_both_import_orderings_in_a_fresh_interpreter(first):
-    """Import order must not decide what ``lcsolver.units`` means.
-
-    Run out of process: within one session the modules are already in
-    sys.modules, which is precisely the state that hid the original bug.
-    """
+    """Import order must not decide what ``lcsolver.units`` means. Run out
+    of process: in-session sys.modules state is what hid the original bug."""
     lead = ('import lcsolver' if first == 'lcsolver'
             else 'from lcsolver.presolve.unitCorrector import unit_corrector')
     code = (f'{lead}\n'

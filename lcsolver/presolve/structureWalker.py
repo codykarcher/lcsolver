@@ -396,11 +396,8 @@ def handle_num_node(visitor, node):
     # print('handling node handle_num_node(visitor, node):')
     elementDict = StructureDictionary()
     elementDict['constant']['status'] = 'yes'
-    # pyo.value resolves a mutable Param (or an expression over Params) to its
-    # number; a plain float passes through. Bare float() raises on a Pyomo
-    # object, which is how a Constant used as an EXPONENT -- legal, and the
-    # only way to get a sensitivity to an exponent -- used to reach the
-    # walker's generic error handler.
+    # pyo.value resolves Params to numbers; bare float() raised on a Constant
+    # used as an exponent (legal, needed for exponent sensitivities)
     elementDict['constant']['value'] = float(pyo.value(node))
     elementDict.propagate()
     return elementDict
@@ -506,9 +503,7 @@ class _StructureVisitor(StreamBasedExpressionVisitor):
             handles = self._operator_handles
             handler = handles.get(node.__class__)
             if handler is None:
-                # A subclass of a known component (LCScalarVar, LCScalarParam,
-                # a user's Var subclass) dispatches to its nearest base class's
-                # handler, cached so the walk stays one dict lookup per node.
+                # subclass of a known component: use the nearest base class handler, cached
                 for klass in node.__class__.__mro__:
                     handler = handles.get(klass)
                     if handler is not None:

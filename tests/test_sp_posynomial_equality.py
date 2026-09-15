@@ -1,20 +1,10 @@
 """A posynomial equality's reverse direction must not invert term by term.
 
-Regression test for a bug in ``solve_SP``: an equality whose numerator had
-been reduced to a *sum* of monomials was routed through the monomial-equality
-branch, which forms the reverse direction by inverting each row separately --
-coefficient reciprocated, exponents negated. That is only valid for a single
-monomial, because ``sum(1/m_i) != 1/sum(m_i)``.
-
-The effect was silent and scale-dependent. ``b == a - k*c`` becomes
-``(b + k*c)/a == 1`` after the negative term is moved across, and the reverse
-direction should be ``a/(b + k*c) <= 1``. The buggy form produced
-``a/b + a/(k*c) <= 1`` instead, which agrees only when one term dominates and
-is wrong by orders of magnitude otherwise.
-
-Found in the SPaircraft rebuild, where the fuselage wingbox station
-``x_b == x_wing - c_0 r_w/2`` came out as ``x_wing/x_b + 4 x_wing/c_0 <= 1``,
-evaluating to 13.8 instead of 1 at a point known to satisfy the model.
+Regression for a solve_SP bug: a sum-of-monomials numerator was routed
+through the monomial-equality branch, which inverts each row separately --
+valid only for a single monomial, since sum(1/m_i) != 1/sum(m_i). Silent and
+scale-dependent; found in the SPaircraft rebuild, where a wingbox station
+row evaluated to 13.8 instead of 1 at a point known to satisfy the model.
 """
 import pyomo.environ as pyo
 import pytest
@@ -26,11 +16,9 @@ M = pyo.units.m
 
 
 def _solve_difference(k: float, a_val: float, c_val: float) -> float:
-    """min b subject to b == a - k*c, with a and c pinned.
-
-    Only the *reverse* direction of the equality stops the objective driving
-    b to zero, so this pins down exactly the branch under test.
-    """
+    """min b s.t. b == a - k*c, with a and c pinned. Only the REVERSE
+    direction stops the objective driving b to zero, so this pins down
+    exactly the branch under test."""
     f = Formulation()
     a = f.Variable(name="a", guess=a_val, units="m", description="")
     c = f.Variable(name="c", guess=c_val, units="m", description="")

@@ -1,14 +1,9 @@
 """Constants consumed inside a black box earn honest reported sensitivities.
 
-A formulation Constant wired into a RuntimeConstraint (``constants=[f.c]``)
-reaches the box as a trailing BlackBox argument; the box returns
-d(output)/d(constant) columns as trailing jacobian entries, and the KKT
-sensitivity pass chain-rules them into the reported d(objective)/d(constant)
--- against the formulation constant's own name, exactly as if the physics
-had been written algebraically.
-
-The anchor model: minimize y subject to y == c * x**2 with x floored at 2,
-so y* = 4c and d log(f*) / d log(c) = 1 exactly, for any c.
+A Constant wired into a RuntimeConstraint reaches the box as a trailing
+argument; its jacobian columns are chain-ruled by the KKT pass into the
+reported d(objective)/d(constant), same as if written algebraically.
+Anchor model: min y s.t. y == c*x**2, x >= 2, so d log(f*)/d log(c) = 1.
 """
 import numpy as np
 import pytest

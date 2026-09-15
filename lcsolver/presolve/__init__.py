@@ -6,34 +6,20 @@
 
 """Everything that happens to a model before a solver sees it.
 
-These were three separate places -- ``lcsolver.units``, ``lcsolver.structure`` and a
-top-level ``lcsolver.presolve`` module -- which hid the fact that they are one
-pipeline, run in one order, each step consuming the last:
+One pipeline, run in order:
+1. unit_check validates dimensions, returns a clone in base units
+2. structure_detector classifies the clone (LP, QP, GP, SP) and publishes
+   the rows, variable ordering, and bounds the backends read
+3. reductions folds/eliminates what the detector found and reports on it
 
-1. :func:`~lcsolver.presolve.unitCorrector.unit_check` validates that the
-   constraints balance dimensionally and returns a clone converted to base
-   units. Nothing downstream is meaningful until this passes.
-2. :mod:`~lcsolver.presolve.structureDetector` walks that clone and classifies
-   it -- LP, QP, GP, SP -- publishing the rows, the variable ordering and the
-   bounds every backend reads.
-3. :mod:`~lcsolver.presolve.reductions` folds, eliminates and reduces what the
-   detector found, and reports on it -- :func:`optimization_check`,
-   :func:`structure_report`.
+Merging these also freed lcsolver.units to mean Pyomo's units container.
 
-Moving them together also frees the name ``lcsolver.units`` to mean what a modeller
-expects: Pyomo's units container, re-exported as ``from lcsolver import units``. It
-used to be this subpackage, and importing a submodule of it would silently
-rebind that name.
+solve() runs this chain internally and will accept it back:
 
-The chain, which ``solve()`` runs internally and will accept back::
-
-    from lcsolver.presolve import (unit_check, structure_detector,
-                              optimization_check, feasibility)
-
-    check      = unit_check(f)                  # print(check.summary())
-    structures = structure_detector(check)      # print(structures.summary())
-    report     = optimization_check(structures)  # print(report.summary())
-    start      = feasibility(structures)        # print(start.summary())
+    check      = unit_check(f)
+    structures = structure_detector(check)
+    report     = optimization_check(structures)
+    start      = feasibility(structures)
     solve(f, structures=structures, start=start)
 """
 

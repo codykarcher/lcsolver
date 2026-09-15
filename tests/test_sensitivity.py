@@ -154,11 +154,9 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
     # ---- structural cases ---------------------------------------------
     @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
     def test_constant_in_objective(self):
-        """A constant appearing only in the objective still gets a sensitivity.
-
-        f* = 2a, so the elasticity is exactly 1. This is the term the envelope
-        formula picks up from df/dtheta rather than from any dual.
-        """
+        """A constant appearing only in the objective still gets a
+        sensitivity: f* = 2a, elasticity exactly 1, picked up from df/dtheta
+        rather than any dual."""
         f = _objective_only()
         self._solve_ipopt(f)
         self.assertAlmostEqual(sensitivities(f)['sensitivities']['a'], 1.0, places=5)
@@ -192,12 +190,9 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 @unittest.skipIf(not numpy_available, 'sensitivity requires numpy')
 class TestSensitivityAgainstFiniteDifference(unittest.TestCase):
-    """A realistic GP, checked against perturb-and-re-solve.
-
-    This is the test that would catch an error in the dual bookkeeping: the
-    finite difference knows nothing about duals, the envelope theorem, or the
-    active set.
-    """
+    """A realistic GP, checked against perturb-and-re-solve: the finite
+    difference knows nothing about duals, the envelope theorem, or the
+    active set."""
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_gp_matches_finite_difference(self):
@@ -291,12 +286,8 @@ class TestSensitivityInterface(unittest.TestCase):
 
 class TestParameterGradient(unittest.TestCase):
     """The one-walk-per-expression gradient the envelope sum is built on.
-
-    Its predecessor asked for one constant at a time, which cost a full walk
-    per (constraint, constant) pair -- almost all of them returning zero
-    because the constant was not in that constraint. These are the cases where
-    the batched form could differ from the pairwise one.
-    """
+    Its predecessor walked once per (constraint, constant) pair; these are
+    the cases where the batched form could differ from the pairwise one."""
 
     def _index(self, f):
         from lcsolver.postsolve.sensitivity import _constants
@@ -352,15 +343,10 @@ class TestParameterGradient(unittest.TestCase):
                  'the ambiguity measure is read off the duals the IPOPT route '
                  'returns; the cvxopt fallback recovers a different dual vector')
 class TestDualAmbiguity(unittest.TestCase):
-    """Which sensitivities the problem actually determines.
-
-    A rank-deficient active set leaves the duals non-unique: any null-space
-    vector can be added and stationarity still holds. `lstsq` returns the
-    minimum-norm member of that family without saying so, so an undetermined
-    sensitivity comes back looking like an ordinary number. On SPaircraft that
-    produced a reported +315 -- not a credible log-log sensitivity -- from an
-    active set rank deficient by 23.
-    """
+    """Which sensitivities the problem actually determines. A rank-deficient
+    active set leaves the duals non-unique, and lstsq returns one member of
+    the family without saying so -- on SPaircraft that reported +315 from an
+    active set rank deficient by 23."""
 
     def test_a_nondegenerate_problem_reports_nothing_ambiguous(self):
         from lcsolver.solvers.ipopt import ipopt_solve
@@ -374,11 +360,9 @@ class TestDualAmbiguity(unittest.TestCase):
             self.assertLessEqual(r, DUAL_AMBIGUITY_TOL)
 
     def test_a_duplicated_constraint_makes_its_constant_undetermined(self):
-        """State the same binding constraint twice and the duals split freely.
-
-        Either multiplier can take the other's share, so any sensitivity that
-        reads them individually is an artefact of the split.
-        """
+        """State the same binding constraint twice and the duals split
+        freely; any sensitivity that reads them individually is an artefact
+        of the split."""
         from lcsolver.solvers.ipopt import ipopt_solve
 
         f = Formulation()
@@ -417,26 +401,15 @@ class TestDualAmbiguity(unittest.TestCase):
 
 class TestActiveSetIsScaleInvariant(unittest.TestCase):
     """A slack bound on a small-magnitude variable must read as slack.
-
-    The active-set test compares a residual against the constraint's own
-    natural magnitude. It used to compare against ``rtol * max(1.0, scale)``,
-    whose floor turned that relative test into an absolute one for anything
-    below unit scale -- invisible in aerospace, where variables are forces and
-    speeds, and immediate outside it. A dimensionless damage index of order
-    1e-5 sitting on a slack 1e-12 lower bound was declared active, which added
-    a column to the stationarity system, which made the active set rank
-    deficient, which made the duals non-unique. The failure then surfaced as
-    LC-W303 correctly hiding sensitivities that had genuinely become
-    undetermined -- so the visible symptom was two steps from the cause.
-    """
+    ``rtol * max(1.0, scale)`` turned the relative test absolute below unit
+    scale: a 1e-5 index on a slack 1e-12 bound read active, made the active
+    set rank deficient, and surfaced two steps later as LC-W303."""
 
     @staticmethod
     def _one_constraint(expr_of):
-        """A Formulation carrying a single constraint, and that constraint.
-
-        ``Formulation.Constraint`` returns the constraint's NAME, not the
-        component, so reach for the component itself.
-        """
+        """A Formulation carrying a single constraint, and that constraint --
+        ``Formulation.Constraint`` returns the NAME, so reach for the
+        component itself."""
         f = Formulation()
         y = f.Variable('y', 1.0e-5, '', 'a dimensionless index of order 1e-5')
         f.Objective(y)
@@ -483,11 +456,8 @@ class TestActiveSetIsScaleInvariant(unittest.TestCase):
     @unittest.skipUnless(_ipopt_available(), "ipopt not available")
     def test_a_small_scale_slack_bound_does_not_poison_the_duals(self):
         """End to end: the spurious column used to cost every sensitivity.
-
-        Without the slack bound this problem has one active constraint for one
-        free dimension and ``d log x / d log a == 1`` exactly. Adding a bound
-        that is seven orders of magnitude slack must not change that.
-        """
+        Without the slack bound, d log x / d log a == 1 exactly; a bound
+        seven orders of magnitude slack must not change that."""
         from lcsolver.solvers.ipopt import ipopt_solve
 
         f = Formulation()

@@ -150,11 +150,8 @@ def test_summary_report_section():
 
 def test_named_accessors_with_units():
     """variables()/constants()/sensitivities()/dimensioned_sensitivities().
-
-    One convention: no argument -> full flat dict keyed by display name;
-    a string -> the single quantity; a list -> a dict of those names.
-    Values carry units; dimensionless values come back as plain floats.
-    """
+    One convention: no argument -> full dict; a string -> the quantity; a
+    list -> a dict of those names. Values carry units."""
     f = Formulation()
     x = f.Variable(name='x', guess=2.0, units='m', bounds=[0.1, 10.0])
     y = f.Variable(name='y', guess=2.0, units='m', bounds=[0.1, 10.0])

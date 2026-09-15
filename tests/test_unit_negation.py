@@ -1,13 +1,9 @@
 """Unit conversion must survive a negated subexpression.
 
-Regression test for a bug in ``handle_negation_node``: it returned the
-original Pyomo node instead of the negation of the rebuilt child, so every
-conversion performed inside a negated subtree was silently discarded. No
-exception was raised -- the constraint simply evaluated with the wrong
-numbers, and swapping the two operands of the subtraction made it go away.
-
-Found via SPaircraft's fuselage bending model, where the zero-bending station
-is declared in feet while the neighbouring stations are in metres.
+``handle_negation_node`` returned the original node instead of the negation
+of the rebuilt child, silently discarding every conversion inside a negated
+subtree -- no exception, just wrong numbers. Found via SPaircraft's fuselage
+bending model (zero-bending station in feet, neighbours in metres).
 """
 import pyomo.environ as pyo
 

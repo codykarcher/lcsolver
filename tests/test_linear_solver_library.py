@@ -1,18 +1,10 @@
 """Runtime-loaded linear solvers: the linear_solver_library plumbing.
 
-MA57/MA77/MA86/MA97 (a full CoinHSL build) and Panua Pardiso are not
-compiled into IPOPT; IPOPT dlopens them from a library named by the
-``hsllib``/``pardisolib`` option. LCsolver exposes that as::
-
-    solve(f, linear_solver='ma97',
-          linear_solver_library='/path/to/libcoinhsl.dylib')
-
-validated in the caller's frame (a library without a solver name, or with a
-compiled-in solver, is a mistake in the call), probed with the library in
-place, and threaded to every route including SIA's sub-problem options.
-These tests cover the machinery without needing any licensed library --
-which is the point: the machinery must be ready on a machine that will
-never have one, so it works on the machine that does.
+MA57/77/86/97 and Pardiso are dlopened via the ``hsllib``/``pardisolib``
+option, exposed as ``solve(f, linear_solver=..., linear_solver_library=...)``
+-- validated in the caller's frame, probed with the library in place, and
+threaded to every route including SIA's sub-problems. Covered here without
+any licensed library, so the machinery is ready on a machine that has one.
 """
 import os
 

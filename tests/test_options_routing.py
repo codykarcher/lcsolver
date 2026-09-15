@@ -5,13 +5,11 @@
 #  ___________________________________________________________________________
 
 """``options`` is overloaded: an IPOPT dict on the convex paths, an
-SIAOptions object on the signomial path.  Before the type-routing fix, an
-SIAOptions passed to a solve that resolved to a pure GP crashed the
-structured backend into the raw-IPOPT fallback (LC-W201, the observed
-failure: TypeError "'SIAOptions' object is not iterable" while the GP
-backend iterated it as an options dict).  These tests pin the routing:
-mismatched objects are dropped, ``sia_options`` is the unambiguous
-spelling, and no combination degrades a GP solve off the structured path.
+SIAOptions object on the signomial path. An SIAOptions handed to a pure-GP
+solve used to crash the structured backend into the raw-IPOPT fallback
+(LC-W201). These tests pin the routing: mismatched objects are dropped,
+``sia_options`` is the unambiguous spelling, and no combination degrades
+a GP solve off the structured path.
 """
 import warnings
 

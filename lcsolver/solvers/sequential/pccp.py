@@ -163,18 +163,12 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
     require(structures, 'solve_SP')
     """Solve a signomial program by PCCP (penalty convex-concave).
 
-    Each iteration replaces the non-GP parts with a monomial approximation
-    about the current point, adds slack variables penalized at
-    ``penalty_exponent``, and solves the resulting geometric program.
-
-    ``gp_solver`` selects the *inner* GP solve and takes ``(rows, relations,
-    x0)``, returning a dict with ``'x'`` and ``'primal objective'``. It
-    defaults to the cvxopt backend. Passing
-    ``lcsolver.solvers.ipopt.GP.solve_gp_rows_ipopt`` runs the same PCCP
-    outer loop with IPOPT underneath, which is substantially more robust on
-    larger models -- cvxopt stalls with ``status='unknown'`` where IPOPT
-    converges. The outer algorithm is identical either way; only the
-    subproblem solver changes.
+    Each iteration monomializes the non-GP parts about the current point,
+    adds slacks penalized at penalty_exponent, and solves the resulting GP.
+    gp_solver picks the inner GP solve, (rows, relations, x0) -> dict with
+    'x' and 'primal objective'; defaults to cvxopt. Passing
+    ipopt.GP.solve_gp_rows_ipopt is more robust on larger models (cvxopt
+    stalls with status='unknown' where IPOPT converges).
     """
     if gp_solver is None:
         def gp_solver(rows, relations, x0=None):
@@ -269,23 +263,13 @@ def solve_SP(structures, m, reltol=1e-4, var_reltol = 1, max_iter = 50, use_pccp
                 newOperators.append('<=')
 
             elif operator == '==':
-                # Posynomial equality: p == 1 where p is a SUM of monomials.
-                # This arises whenever a constraint like `b == a - k*c` has
-                # its negative term moved across and is divided through.
-                #
-                # The forward direction p <= 1 is already GP. The reverse,
-                # 1/p <= 1, cannot be formed by inverting each monomial in
-                # turn, because sum(1/m_i) is not 1/sum(m_i). Doing that
-                # yields a/b + 1/(k*c) <= 1 in place of a/(b + k*c) <= 1 --
-                # silently, and wrong by orders of magnitude once the terms
-                # differ in scale. It is exact only when p has one term,
-                # which is the branch above.
-                #
-                # So the reverse is written as the fraction 1/p, with p as
-                # the denominator. The assembly below monomializes a
-                # denominator about the current iterate, which is the
-                # approximation PCCP wants, and is the same device the
-                # signomial-equality branch already uses.
+                # Posynomial equality: p == 1, p a sum of monomials (e.g.
+                # b == a - k*c with the negative term moved across). p <= 1
+                # is already GP; the reverse 1/p <= 1 can NOT be built by
+                # inverting each monomial (sum(1/m_i) != 1/sum(m_i) -- wrong
+                # by orders of magnitude), so write it as the fraction 1/p
+                # with p as the denominator, which the assembly below
+                # monomializes about the iterate.
                 constraintList.append(TemplateDict(copy.deepcopy(numeratorBuffer), None, False))
                 newOperators.append('<=')
 

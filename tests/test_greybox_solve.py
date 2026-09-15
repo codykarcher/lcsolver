@@ -6,20 +6,11 @@
 
 """Grey-box (black-box) constraints must survive cloning and solve correctly.
 
-Regression tests for two defects that together produced silently wrong
-answers on any black-box formulation:
-
-1. ``BBList`` (the black box's input/output container) raised inside
-   ``copy.deepcopy``, so ``model.clone()`` -- which ``unit_corrector`` runs on
-   every solve -- silently replaced each grey-box block's ``_ex_model`` with
-   ``None``.
-2. The auto-router classified the model from that gutted clone, saw a pure
-   GP, and solved it *without* the black-box rows, returning a confidently
-   wrong optimum with no warning.
-
-The fix gives ``BBList`` a correct ``__deepcopy__`` and routes formulations
-with grey-box constraints to SIA, which imposes each box as an opaque
-signomial row.
+Regressions for two defects that combined into silently wrong answers:
+``BBList`` raised inside deepcopy so clone() gutted each grey-box block's
+``_ex_model``, and the auto-router then saw a pure GP and solved without the
+black-box rows. Fix: a correct ``BBList.__deepcopy__`` plus routing grey-box
+formulations to SIA, which imposes each box as an opaque signomial row.
 """
 
 import pytest
@@ -49,19 +40,9 @@ class UnitCircle(BlackBoxFunctionModel):
 
 
 def _build():
-    """min 1/x + 1/y  s.t.  z = bb(x, y),  z <= 1.
-
-    Unique optimum x = y = 1/sqrt(2), objective 2 sqrt(2): the circle
-    constraint is active and only the black box knows its shape.
-
-    (History: this used to be min x + y with z >= 1, expecting sqrt(2) ---
-    but the symmetric point only satisfies FIRST-ORDER KKT there; it is a
-    local max of x + y along the arc, and the true minimum sits at the
-    x-bound corner (objective ~1.0099).  The old SIA stopped at the
-    saddle and the test enshrined it; the 2026-08 backtracking regime
-    correctly escapes to the better corner, so the model is re-posed to
-    make the symmetric point the genuine, interior, unique optimum.)
-    """
+    """min 1/x + 1/y  s.t.  z = bb(x, y),  z <= 1. Unique optimum
+    x = y = 1/sqrt(2), objective 2 sqrt(2). Re-posed from min x + y (whose
+    symmetric point was a saddle the old SIA stopped at and enshrined)."""
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='', bounds=[0.01, 10.0])
     y = f.Variable(name='y', guess=1.0, units='', bounds=[0.01, 10.0])
@@ -167,16 +148,9 @@ def test_auto_solve_routes_blackbox_to_sia():
 # algebraic scans cannot see.
 # ---------------------------------------------------------------------------
 def _bounded_through_the_box():
-    """min w  s.t.  w >= c0 + z,  x >= xmin,  y >= ymin,  z == bb(x, y).
-
-    Optimum x = xmin = 2, y = ymin = 1, z = xmin**2 + ymin**2 = 5, w = 6.
-    Analytic log-log sensitivities: c0 -> c0/w = 1/6,
-    xmin -> 2*xmin**2/w = 4/3, ymin -> 2*ymin**2/w = 1/3.
-
-    To the algebraic rows alone, x and y are unbounded above (and look
-    output-only: one monotone row each, free to escape upward) and z is
-    unbounded below. All three are pinned by the box.
-    """
+    """min w s.t. w >= c0 + z, x >= xmin, y >= ymin, z == bb(x, y). Optimum
+    x=2, y=1, z=5, w=6; log-log sensitivities c0->1/6, xmin->4/3, ymin->1/3.
+    To the algebraic rows alone all three look unbounded; the box pins them."""
     f = Formulation()
     x = f.Variable(name='x', guess=3.0, units='', description='x')
     y = f.Variable(name='y', guess=2.0, units='', description='y')

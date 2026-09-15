@@ -348,14 +348,9 @@ def test_missing_cvxopt_is_planned_even_though_it_is_a_hard_dependency():
 
 
 def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch):
-    """Installing cyipopt is not enough for the in-process route.
-
-    Pyomo builds the NLP through PyNumero, whose compiled ASL library ships
-    with neither pyomo nor cyipopt. Without it every black-box solve dies on
-    "Cannot load the PyNumero ASL interface" -- which is what a conda
-    environment built from environment.yml does, and it is the case that
-    reaches the early return in the planner, so it is the one worth pinning.
-    """
+    """Installing cyipopt is not enough: PyNumero's compiled ASL library ships
+    with neither pyomo nor cyipopt, and without it every black-box solve dies
+    on "Cannot load the PyNumero ASL interface"."""
     exe = _fake_ipopt(str(tmp_path))
     monkeypatch.setattr(install, '_pynumero_asl_available', lambda: False)
 
@@ -432,14 +427,9 @@ def test_ma27_plan_passes_the_sources_through_without_copying(tmp_path):
 @pytest.mark.skipif(sys.platform.startswith('win'),
                     reason='the MA27 build is not supported on Windows')
 def test_ma27_also_gets_the_asl_library(tmp_path, monkeypatch):
-    """`--ma27` is a complete install, not an add-on.
-
-    The README's quickstart runs it on a machine with nothing, so it has to
-    leave that machine able to evaluate a black box. It reaches its plan
-    without passing through the default planner, which is where the ASL step
-    was originally added -- and so the documented fast path built IPOPT, MA27
-    and cyipopt and still could not solve a grey-box model.
-    """
+    """`--ma27` is a complete install, not an add-on: it skips the default
+    planner where the ASL step was originally added, so the documented fast
+    path once built everything and still could not solve a grey-box model."""
     sources = tmp_path / 'ma27-1.0.0'
     sources.mkdir()
     (sources / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')

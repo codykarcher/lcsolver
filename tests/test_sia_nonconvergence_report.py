@@ -6,20 +6,11 @@
 
 """What `solve` says when SIA stops without a certificate.
 
-A non-converged SIA still returns a point, and that point looks exactly like a
-converged one to anything reading `res['x']`. The whole defence is the warning
-built in `_solve_sp`: it has to say that the answer is the best iterate rather
-than an optimum, how far from feasible it is, and -- keyed on how it failed --
-what to do about it.
-
-None of that had a test. The remedies are four separate branches selected by
-substrings of the status, so a status string reworded anywhere upstream would
-silently stop matching and the advice would just disappear from the message.
-
-The failure is induced by substituting the bridge's `solve_sia` rather than by
-finding a model that genuinely fails: the branches are keyed on the status
-text, so the status text is the input under test, and a real diverging model
-would pin this to whichever way that particular model happens to break.
+A non-converged SIA still returns a point that looks converged to anything
+reading `res['x']`; the whole defence is the warning built in `_solve_sp`.
+Its remedies are four branches keyed on status substrings, so a reworded
+status would silently drop the advice. The failure is induced by
+substituting the bridge's `solve_sia` -- the status text IS the input.
 """
 import warnings
 

@@ -1,12 +1,9 @@
 """Clone semantics of a black box holding a live analysis handle.
 
-A pyCAPS Problem, a CFD session, a ctypes wrapper -- none of these can be
-deep-copied, and every formulation clone (unit correction clones the model)
-must therefore share them by reference. That sharing used to happen through
-a bare ``except: share``, which also silently aliased any MUTABLE state that
-failed to copy. Now sharing is a declaration (``reference_attributes``), an
-undeclared non-copyable attribute warns [LC-W311], and internal caches are
-reset on the clone rather than copied or shared.
+Live handles (pyCAPS, CFD sessions, ctypes) can't deep-copy, so clones must
+share them by reference. A bare ``except: share`` used to alias mutable state
+silently; now sharing is declared (``reference_attributes``), an undeclared
+non-copyable attribute warns [LC-W311], and caches are reset on the clone.
 """
 import copy
 import warnings

@@ -1,18 +1,10 @@
 """Re-entry safety of the presolve pipeline, and honest attach failures.
 
-Every solve-in-a-loop workflow (Monte Carlo, sweeps, continuation)
-re-corrects and re-detects. These pin the three failure modes that made
-that impossible, found on the lcjetliner b737 anchor (2026-08-29):
-
-1. `unit_corrector` on an already-corrected model crashed deleting the
-   detector's bracketed-name bound rows ('FS_M[0]_lowerBound') -- and
-   `sensitivities()` re-corrects internally, so every post-solve
-   sensitivity read on a pre-corrected model failed.
-2. `structure_detector` re-detection collided with its own bound rows,
-   and the collision fallback raised even when its random-suffix retry
-   SUCCEEDED (the raise sat outside the success check).
-3. `_attach_sensitivities` swallowed such failures silently: an empty
-   table at a certified optimum with no message anywhere.
+Solve-in-a-loop workflows re-correct and re-detect. These pin the three
+failure modes that made that impossible (b737 anchor, 2026-08-29):
+`unit_corrector` crashed on an already-corrected model, `structure_detector`
+re-detection raised even when its collision retry succeeded, and
+`_attach_sensitivities` swallowed such failures silently.
 """
 
 import warnings

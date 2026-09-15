@@ -27,13 +27,9 @@ except Exception:                                    # pragma: no cover
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestSummingGuard(unittest.TestCase):
-    """`sum(x)` used to return the sum of the index keys, silently.
-
-    A real model asserted `L_dist_sum == sum(L_dist)` and got
-    `L_dist_sum == 10`; only a unit mismatch elsewhere caught it. Iteration
-    still yields keys, as Pyomo does -- it is only the accidental addition
-    that is refused.
-    """
+    """`sum(x)` used to return the sum of the index keys, silently: a real
+    model got `L_dist_sum == 10`, caught only by a unit mismatch elsewhere.
+    Iteration still yields keys; only the accidental addition is refused."""
 
     def _f(self):
         f = Formulation()
@@ -128,12 +124,8 @@ class TestElementwiseConstraints(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestElementwiseArithmetic(unittest.TestCase):
-    """Building the expressions, not just comparing them.
-
-    Comparisons alone were not enough to retire a single loop: a model writes
-    `V == M * a`, and with arithmetic missing from the component that raised,
-    so `for i in range(N)` had to stay to do the multiplying.
-    """
+    """Building the expressions, not just comparing them: with arithmetic
+    missing, `V == M * a` raised and `for i in range(N)` had to stay."""
 
     def _f(self):
         f = Formulation()
@@ -198,13 +190,9 @@ class TestElementwiseArithmetic(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestKeywordNamedQuantity(unittest.TestCase):
-    """A quantity may be named for a Python keyword.
-
-    A wing taper ratio is `lambda` in every reference this repository checks
-    against, and the flat name is load-bearing -- the gpkit cross-check maps
-    `\\lambda` onto it. `wing.lambda` is a syntax error, so the trailing
-    underscore PEP 8 prescribes for the collision is accepted instead.
-    """
+    """A quantity may be named for a Python keyword: a taper ratio is
+    `lambda` in every reference. `wing.lambda` is a syntax error, so the
+    PEP 8 trailing underscore is accepted instead."""
 
     def test_a_keyword_name_is_reachable_with_a_trailing_underscore(self):
         f = Formulation()
@@ -321,12 +309,9 @@ class TestMatrices(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestBroadcasting(unittest.TestCase):
-    """Shapes are never expanded silently.
-
-    numpy would spread a length-3 vector across the rows of a 2x3 matrix just
-    as readily as down its columns, and whichever the author meant, the other
-    reading is a different model that solves without complaint.
-    """
+    """Shapes are never expanded silently: numpy would spread a length-3
+    vector across rows or columns of a 2x3 matrix, and whichever the author
+    meant, the other reading is a different model that solves fine."""
 
     def _f(self):
         f = Formulation()
@@ -400,14 +385,9 @@ class TestConstraintListAcceptsArrays(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestGroupLookupByName(unittest.TestCase):
-    """A group reads like the dictionary of quantities it replaced.
-
-    The models used to hand a builder's output back as `dict(h=h, hft=hft,
-    ...)`, kept in step with the declarations by hand. The group already knows
-    those names, so it is returned instead -- and supporting `g['name']` means
-    it drops straight into anywhere the dictionary was passed, and a name held
-    in a variable can still be looked up.
-    """
+    """A group reads like the dictionary of quantities it replaced: the
+    group already knows the names a hand-kept `dict(h=h, ...)` duplicated,
+    and `g['name']` drops in anywhere the dictionary was passed."""
 
     def _f(self):
         f = Formulation()

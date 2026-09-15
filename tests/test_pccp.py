@@ -6,16 +6,11 @@
 
 """The penalty convex-concave loop, the other way to solve a signomial program.
 
-SIA is the default, so nothing in the rest of the suite reaches PCCP: a plain
-``solve`` on a signomial routes to ``sequential/bridge.solve_sia`` and the whole
-of ``sequential/pccp.py`` never runs. It is not dead code -- two documented
-routes reach it, ``solve(f, solver='cvxopt')`` and ``solve(f,
-sp_method='pccp')`` -- it simply had no test.
-
-What makes it testable without pinning numbers to whatever it happens to
-produce: PCCP and SIA are independent methods, so on a model with a known
-closed-form optimum all three paths must land on the same number. A
-transformation that quietly changes the problem shows up as a disagreement.
+SIA is the default, so nothing else in the suite reaches PCCP; its two
+documented routes are ``solver='cvxopt'`` and ``sp_method='pccp'``. PCCP and
+SIA are independent methods, so on a model with a known closed-form optimum
+all paths must land on the same number -- a transformation that quietly
+changes the problem shows up as a disagreement.
 """
 import numpy as np
 import pytest
@@ -33,13 +28,9 @@ from lcsolver.solvers.sequential.pccp import (              # noqa: E402
 
 
 def _sp():
-    """min x  s.t.  x >= y/(1+y),  y >= 1/2.
-
-    ``y/(1+y)`` is a monomial over a posynomial, which has no GP form, so the
-    detector calls this signomial. It rises with y, so y sits at its lower
-    bound of 1/2 and the optimum is (1/2)/(3/2) = 1/3 exactly -- a number to
-    check against that no solver here computed.
-    """
+    """min x s.t. x >= y/(1+y), y >= 1/2. No GP form, so detected signomial;
+    y sits at its lower bound and the optimum is 1/3 exactly -- a number to
+    check against that no solver here computed."""
     f = Formulation()
     x = f.Variable('x', 1.0, '-', 'x', bounds=[1e-3, 10.0])
     y = f.Variable('y', 1.0, '-', 'y', bounds=[1e-3, 10.0])
@@ -70,12 +61,9 @@ def test_sp_method_pccp_reaches_pccp():
 
 
 def test_pccp_and_sia_agree():
-    """The property worth asserting: two independent methods, one answer.
-
-    Neither number is remembered from a previous run -- 1/3 is the analytic
-    optimum -- so this fails if either method changes the problem rather than
-    if either changes its arithmetic.
-    """
+    """Two independent methods, one answer: 1/3 is the analytic optimum, so
+    this fails if either method changes the problem rather than its
+    arithmetic."""
     # The SIA route needs IPOPT. Without one, solve() downgrades the default
     # to cvxopt (LC-W202) whose SP route is PCCP -- so there is no second
     # method to agree with, and no SolverUnavailable for conftest to convert.
@@ -114,12 +102,8 @@ def _detected(f):
 
 def test_the_penalty_loop_can_be_turned_off():
     """`use_pccp=False` is the plain convex-concave loop, without the slacks.
-
-    The penalty variables exist to keep an infeasible sub-problem solvable;
-    this model's sub-problems are feasible from the start, so both settings
-    must reach the same optimum. That is what makes it a fair check of the
-    branch rather than of the model.
-    """
+    This model's sub-problems are feasible from the start, so both settings
+    must reach the same optimum -- a fair check of the branch."""
     st, m = _detected(_sp())
     on = solve_SP(st, m, use_pccp=True)
     st2, m2 = _detected(_sp())
@@ -139,12 +123,9 @@ def test_the_penalty_exponent_does_not_move_the_optimum():
 
 
 def test_running_out_of_iterations_is_an_error_not_a_wrong_answer():
-    """Stopping early must raise rather than return the last iterate.
-
-    PCCP terminates when the objective stops moving, which is a statement
-    about the loop rather than about optimality. Returning that iterate as
-    though it were a solution is the failure this guards.
-    """
+    """Stopping early must raise rather than return the last iterate:
+    "objective stopped moving" is a statement about the loop, not about
+    optimality."""
     st, m = _detected(_sp())
     with pytest.raises(RuntimeError, match='maximum iteration count'):
         solve_SP(st, m, max_iter=1, reltol=1e-16, var_reltol=1e-16)
@@ -167,8 +148,8 @@ def test_a_signomial_equality_is_handled():
 # ---------------------------------------------------------------------------
 # the two pieces of arithmetic underneath
 # ---------------------------------------------------------------------------
-#: One posynomial, ``2*x0*x1 + 3*x0**2``, in the row encoding the loop uses:
-#: ``[constraint index, coefficient, exponent per variable...]``.
+# One posynomial, 2*x0*x1 + 3*x0**2, in the row encoding the loop uses:
+# [constraint index, coefficient, exponent per variable...].
 _POSY = [[0, 2.0, 1.0, 1.0],
          [0, 3.0, 2.0, 0.0]]
 
@@ -181,14 +162,9 @@ def test_evaluate_posynomial_returns_the_value_and_its_gradient():
 
 
 def test_monomial_approximation_touches_the_posynomial_it_approximates():
-    """The condensation is exact at the point it is taken about, and below elsewhere.
-
-    That is the defining property of the arithmetic-geometric-mean step, and
-    it is what makes the convex-concave loop's sub-problem a valid inner
-    approximation: a monomial that ever exceeded the posynomial would let the
-    loop accept a point the original problem forbids. Checking the two
-    properties pins the approximation without hard-coding its exponents.
-    """
+    """The condensation is exact at the point it is taken about, and below
+    elsewhere -- the AGM property that makes the sub-problem a valid inner
+    approximation. Pins the approximation without hard-coding exponents."""
     x_star = [2.0, 5.0]
     mono = monomial_approximation(_POSY, x_star)
     assert len(mono) == 1, 'a monomial is one row'

@@ -20,11 +20,9 @@ cvxopt, cvxopt_available = attempt_import("cvxopt")
 
 
 def _ipopt_available():
-    """Is there a usable IPOPT? Several tests below assert what the
-    IPOPT route does, and without one `solve` falls back to cvxopt --
-    which answers correctly but by a different path, with different
-    duals, different report text and a different number of detector
-    walks. Those tests are about the route, not about the answer."""
+    """Is there a usable IPOPT? Without one `solve` falls back to cvxopt --
+    right answer, different route -- and several tests below are about the
+    route, not the answer."""
     try:
         from lcsolver.environment import ipopt_available
         return bool(ipopt_available())
@@ -65,12 +63,9 @@ def _rosenbrock():
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestWriteBack(unittest.TestCase):
-    """A solve must leave the solution ON the model, not only in the result dict.
-
-    This is a regression guard: previously cvxopt_solve returned a raw solver
-    dictionary and never applied it, so pyo.value(m.x) still returned the initial
-    guess after a successful solve.
-    """
+    """A solve must leave the solution ON the model, not only in the result
+    dict: cvxopt_solve used to return a raw dictionary and never apply it,
+    so pyo.value(m.x) still returned the guess after a successful solve."""
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_writes_solution_onto_model(self):
@@ -164,16 +159,10 @@ class TestIpopt(unittest.TestCase):
 
 
 def _unit_circle_model():
-    """min x + y  s.t.  z == x**2 + y**2 (via a BLACK BOX), z <= 1.
-
-    The analytic optimum is on the unit circle at x = y = -1/sqrt(2), z = 1.
-    The black box declares its inputs/outputs in feet while the model variables
-    are meters, so this also exercises unit conversion across the interface.
-
-    Bounds on x and y are deliberate: a grey-box model is evaluated wherever the
-    optimizer proposes, so an unbounded input can send the external code
-    somewhere it cannot be evaluated. Without them IPOPT diverges here.
-    """
+    """min x + y s.t. z == x**2 + y**2 (via a BLACK BOX), z <= 1. Optimum at
+    x = y = -1/sqrt(2). The box works in feet against meter variables, so
+    this also exercises unit conversion; the x/y bounds are deliberate --
+    without them IPOPT diverges."""
     from lcsolver import BlackBoxFunctionModel
 
     class UnitCircle(BlackBoxFunctionModel):
@@ -225,12 +214,9 @@ class TestIpoptBlackBox(unittest.TestCase):
 
     @unittest.skipIf(not _ipopt_route_available('cyipopt'), 'cyipopt is not available')
     def test_greybox_constraint_is_enforced(self):
-        """Regression guard: the solution must satisfy the BLACK-BOX constraint.
-
-        If the grey-box constraint were dropped, x and y would simply run to their
-        -2 bounds. Landing on the unit circle proves the external model is being
-        evaluated and enforced.
-        """
+        """Regression guard: the solution must satisfy the BLACK-BOX
+        constraint. Dropped, x and y would run to their -2 bounds; landing
+        on the unit circle proves the external model is enforced."""
         from lcsolver.solvers.ipopt import ipopt_solve
 
         f = _unit_circle_model()
@@ -267,12 +253,9 @@ def _gp_known_optimum():
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestConvexIpoptBackend(unittest.TestCase):
-    """IPOPT as an alternative backend for structured (convex) problems.
-
-    This is an option alongside cvxopt, not a replacement. A geometric program is
-    solved in log space, where it is convex, so the global-optimality guarantee is
-    preserved rather than being traded for general-NLP behavior.
-    """
+    """IPOPT as an alternative backend for structured (convex) problems --
+    an option alongside cvxopt, solved in log space so the global-optimality
+    guarantee is preserved."""
 
     @unittest.skipIf(not (_ipopt_route_available('pyomo')
                           or _ipopt_route_available('cyipopt')),
@@ -325,14 +308,9 @@ class TestConvexIpoptBackend(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_solve_defaults_to_ipopt_for_structured(self):
-        """`solve()` with nothing asked for goes to ipopt, not cvxopt.
-
-        `solve(m, solver='auto', convex_backend='ipopt', ...)` is the
-        signature, so asserting only the structure and the answer cannot tell
-        the two backends apart -- both get this model right. The 'solver' key
-        is set by the ipopt route and absent from the cvxopt one, so it is
-        what distinguishes them.
-        """
+        """`solve()` with nothing asked for goes to ipopt, not cvxopt. Both
+        backends get this model right, so the 'solver' key -- set by the
+        ipopt route, absent from cvxopt's -- is what distinguishes them."""
         from lcsolver.solvers.solver import solve
 
         f = _gp_known_optimum()
@@ -343,12 +321,8 @@ class TestConvexIpoptBackend(unittest.TestCase):
 
 
 def _indexed_gp(n=4):
-    """min sum_i sK[i] + y  s.t.  sK[i]*y >= 2, y >= 0.5.
-
-    With sK[i] = 2/y at the optimum the objective is 2n/y + y, minimized at
-    y = sqrt(2n) and sK[i] = 2/sqrt(2n). For n = 4 that is y = 2*sqrt(2) and
-    sK[i] = 1/sqrt(2).
-    """
+    """min sum_i sK[i] + y s.t. sK[i]*y >= 2, y >= 0.5. Optimum at
+    y = sqrt(2n), sK[i] = 2/sqrt(2n); for n = 4, y = 2*sqrt(2), sK[i] = 1/sqrt(2)."""
     f = Formulation()
     f.Variable(name='sK', guess=1.0, units='', description='sK', size=n)
     f.Variable(name='y', guess=1.0, units='', description='y')
@@ -362,22 +336,9 @@ def _indexed_gp(n=4):
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestIndexedVariableWriteBack(unittest.TestCase):
-    """Write-back must work for INDEXED variables, e.g. Variable(..., size=16).
-
-    Regression guard for two coupled bugs:
-
-    * ``structure_detector`` published only the VarData objects from the
-      ``unit_corrector`` clone. Callers write ``structure_detector(unit_corrector(m))``,
-      leaving the clone unreferenced; once it was collected the parent IndexedVar
-      went with it and every VarData reported its name as '[Unattached VarData]'.
-      Write-back then fed that string to ``find_component``, and ComponentUID
-      raised ``TypeError: attribute name must be string, not 'NoneType'``.
-      Scalar variables were unaffected, because there the VarData *is* the
-      component that ``structures['variables']`` keeps alive -- so the failure
-      only ever showed up on indexed variables.
-    * ``solve()``'s auto path swallowed that exception and fell through to raw
-      IPOPT, which failed later and for an unrelated-looking reason.
-    """
+    """Write-back must work for INDEXED variables. Two coupled bugs: the
+    collected unit-corrector clone stranded indexed VarData ('[Unattached
+    VarData]'), and solve()'s auto path swallowed the crash, falling to raw IPOPT."""
 
     def test_structures_keep_the_corrected_model_alive(self):
         import gc
@@ -448,13 +409,9 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
                           or _ipopt_route_available('cyipopt')),
                      'no IPOPT backend available')
     def test_auto_path_survives_garbage_collection(self):
-        """The clone must outlive a GC pass that lands mid-solve.
-
-        Pyomo blocks are freed by the cyclic collector rather than by refcount,
-        so before the fix this failure depended on when a collection happened to
-        run -- it showed up on real (larger) models and not on small ones.
-        Forcing a collection right after detection makes it deterministic.
-        """
+        """The clone must outlive a GC pass that lands mid-solve. Pyomo
+        blocks are freed by the cyclic collector, so the failure showed only
+        on larger models; forcing a collection here makes it deterministic."""
         import gc
         from lcsolver.solvers import solver as solver_module
 
@@ -505,13 +462,9 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_is_still_reachable_on_request(self):
-        """Changing the default must not remove the backend.
-
-        Asserting the answer alone would pass with ipopt silently serving the
-        request, which is the whole thing this is here to catch. cvxopt
-        returns its own cone payload -- 'dual objective', 'z', 's' -- and no
-        'solver' key, so those are the evidence that it ran.
-        """
+        """Changing the default must not remove the backend. The answer
+        alone would pass with ipopt silently serving the request; cvxopt's
+        cone payload ('dual objective', no 'solver' key) proves it ran."""
         from lcsolver.solvers import solver as solver_module
 
         f = _gp_known_optimum()
@@ -525,15 +478,9 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 @unittest.skipIf(not _ipopt_available(),
                  'both objective forms are IPOPT-side transformations')
 class TestGPObjectiveForm(unittest.TestCase):
-    """The GP backend can write posynomials two ways; neither suits everything.
-
-    'sum' hands IPOPT the posynomial itself, which is better conditioned when
-    log c + a.t is O(1..30) -- the JHO sailplane solves under 'sum' and fails
-    IPOPT's restoration phase under 'lse'. 'lse' takes the logarithm, which is
-    required once the arguments approach the exp() overflow threshold --
-    SPaircraft reaches log c = 176 with exponents to 1022.7. 'auto' picks from
-    the row magnitudes and retries with 'lse' if 'sum' fails.
-    """
+    """The GP backend writes posynomials two ways: 'sum' is better
+    conditioned at ordinary magnitudes (JHO fails under 'lse'); 'lse' is
+    required near exp() overflow (SPaircraft: log c = 176). 'auto' picks and retries."""
 
     def _box(self):
         from lcsolver import Formulation
@@ -711,11 +658,9 @@ class TestConstantOnlyConstraints(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(f.x), 2.0, places=4)
 
     def test_a_false_one_is_reported_as_infeasible_before_solving(self):
-        """It is a proof, and the cheapest one available -- no solve needed.
-
-        Falling through to a general NLP solver replaces "constraint X is false
-        as written" with a bare termination_condition=infeasible.
-        """
+        """It is a proof, and the cheapest one available -- falling through
+        to an NLP solver replaces "constraint X is false as written" with a
+        bare termination_condition=infeasible."""
         from lcsolver.presolve.reductions import InfeasibleProblem
         from lcsolver.solvers import solver as solver_module
 
@@ -731,14 +676,9 @@ class TestConstantOnlyConstraints(unittest.TestCase):
 @unittest.skipIf(not _ipopt_available(),
                  'counts detector walks on the IPOPT route; the cvxopt fallback walks again')
 class TestSolveDetectsOnce(unittest.TestCase):
-    """`solve` walks the model once, not once per consumer.
-
-    The checks and the structured backends used to each detect for themselves,
-    because `optimization_check` wants bounds separated from the rows and the backends
-    read them out of the rows. `optimization_check` folds single-variable rows into
-    bounds itself, so it reads either form -- and the walk is the expensive
-    part of a solve on a large model, seconds against seconds.
-    """
+    """`solve` walks the model once, not once per consumer. The checks and
+    the structured backends used to each detect for themselves; the walk is
+    the expensive part of a solve on a large model."""
 
     def _count_detections(self, **kwargs):
         import lcsolver.solvers.solver as solver_mod
@@ -773,17 +713,10 @@ class TestSolveDetectsOnce(unittest.TestCase):
 
 
 class TestIpoptUnavailableFallback:
-    """What `solve()` does when there is no IPOPT to be had.
-
-    IPOPT is the default convex backend, so a machine without it used to fail
-    on models cvxopt could solve perfectly well: the structured path raised,
-    and the fallback was *plain IPOPT on the raw model*, which raised for the
-    same reason. A detected LP/QP/GP/SP does not need IPOPT at all.
-
-    Availability is faked by monkeypatching `_ipopt_available` rather than by
-    editing PATH, so the test is unaffected by what the machine has installed
-    and cannot leak a broken PATH into later tests.
-    """
+    """What `solve()` does when there is no IPOPT to be had: a machine
+    without it used to fail on models cvxopt could solve perfectly well.
+    Availability is faked by monkeypatching `_ipopt_available`, so nothing
+    leaks a broken PATH into later tests."""
 
     @staticmethod
     def _gp():
@@ -826,13 +759,9 @@ class TestIpoptUnavailableFallback:
 
 
 class TestSuppliedStructures:
-    """`solve(f, structures=...)` -- run the chain yourself and hand it back.
-
-    The chain a plain solve runs is unit_corrector -> structure_detector ->
-    optimization_check -> backend -> sensitivities. Detecting is the expensive step (four
-    to six seconds on SPaircraft against an eleven-second solve), so a caller
-    who has already done it for a optimization_check should not pay twice.
-    """
+    """`solve(f, structures=...)` -- run the chain yourself and hand it
+    back. Detecting is the expensive step (4-6 s on SPaircraft against an
+    11 s solve), so a caller who has already done it should not pay twice."""
 
     @staticmethod
     def _gp():
@@ -877,11 +806,9 @@ class TestSuppliedStructures:
                                                             rel=1e-6)
 
     def test_the_split_bounds_form_is_refused(self):
-        """The dangerous one: bounds in structures['bounds'], not in the rows.
-
-        A backend reading only rows would solve an unbounded relaxation and
-        return a perfectly reasonable-looking answer to a different question.
-        """
+        """The dangerous one: bounds in structures['bounds'], not the rows.
+        A rows-only backend would solve an unbounded relaxation and return a
+        reasonable-looking answer to a different question."""
         from lcsolver.solvers.solver import solve
         from lcsolver.presolve.structureDetector import structure_detector
         from lcsolver.presolve.unitCorrector import unit_corrector

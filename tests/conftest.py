@@ -6,26 +6,11 @@
 
 """Test-suite policy for a machine with no IPOPT.
 
-IPOPT cannot be installed by pip (see ``lcsolver/install.py``), so a reviewer,
-a contributor, or a CI runner may reasonably not have one. Without the hook
-below, that machine reports around fifty failures, none of which say anything
-about the code --- they all say "no usable IPOPT installation was found". A
-wall of red that means "your machine is missing an optional system package" is
-worse than useless: it buries whatever is genuinely broken.
-
-So a solve that fails *because this machine has nothing to solve with* is
-reported as a skip. Two things keep that from becoming a way to hide bugs:
-
-* Only :class:`~lcsolver.core.errors.SolverUnavailable` is converted, and it is
-  raised in exactly the handful of places that check for a missing install. A
-  solver that is present and fails raises something else and still fails.
-* The conversion happens **only when IPOPT really is absent**. If IPOPT is
-  installed and the code claims otherwise, that is a bug in the detection
-  logic, and it fails as loudly as any other bug.
-
-CI installs IPOPT in a dedicated job precisely so these tests do not sit
-skipped forever; the bare-install job is what proves a fresh `pip install`
-still gives a green suite.
+IPOPT isn't pip-installable, so without this hook a bare machine shows ~50
+failures that all mean "missing optional system package". Convert those to
+skips -- but only SolverUnavailable, and only when IPOPT really is absent, so
+a present-but-broken solver still fails. CI installs IPOPT in a dedicated job
+so these don't sit skipped forever.
 """
 
 import pytest
@@ -51,13 +36,9 @@ _ASL_PRESENT = None
 
 
 def _asl_present():
-    """Is Pyomo's compiled PyNumero ASL library available?
-
-    A second environment gap of the same kind as a missing IPOPT: cyipopt
-    cannot build an NLP without it, so the in-process route -- and therefore
-    every black-box model -- cannot run. It is not installable by pip and not
-    installable by conda on a current Python; it has to be compiled.
-    """
+    """Is Pyomo's compiled PyNumero ASL library available? Same environment
+    gap as a missing IPOPT: without it cyipopt cannot build an NLP, so no
+    black-box model can run. Not pip/conda installable; must be compiled."""
     global _ASL_PRESENT
     if _ASL_PRESENT is None:
         try:

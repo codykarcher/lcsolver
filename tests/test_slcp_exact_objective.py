@@ -1,16 +1,10 @@
 """Imposing a posynomial objective exactly collapses the iteration count.
 
-SLCP keeps posynomial *constraints* exact in log space -- that is the idea the
-method is built on -- but linearizes the *objective* and leans on BFGS for its
-curvature. So on a problem that is convex end to end it still marches like a
-quasi-Newton scheme: the wind turbine takes 72 sub-problems, where the GP path
-solves the identical model in one.
-
-``Options.exact_objective`` applies the same argument to the objective. When
-every constraint is exact too, the sub-problem then *is* the original problem,
-so the BFGS term is dropped as well and one solve suffices.
-
-Off by default.
+SLCP keeps posynomial constraints exact but linearizes the objective, so a
+fully convex problem still marches like quasi-Newton (the wind turbine takes
+72 sub-problems where the GP path takes one). ``Options.exact_objective``
+makes the sub-problem the original problem, so one solve suffices. Off by
+default.
 """
 import pyomo.environ as pyo
 import pytest
@@ -76,11 +70,9 @@ def test_multi_term_objective_needs_far_fewer_subproblems():
 
 
 def test_monomial_objective_still_benefits_from_dropping_the_quadratic():
-    """A monomial objective is already exact when linearized in log space, so
-    the *objective* change is a no-op here -- but the problem is then fully
-    log-convex, the BFGS term is dropped, and the sub-problem becomes the
-    original problem outright. One solve instead of two.
-    """
+    """A monomial objective is already exact when linearized, so the change
+    is a no-op here -- but the BFGS term is dropped and the sub-problem
+    becomes the original problem outright. One solve instead of two."""
     n_lin, r_lin = _count(_monomial_objective)
     n_exact, r_exact = _count(_monomial_objective, exact_objective=True)
     assert n_exact <= n_lin, (n_exact, n_lin)

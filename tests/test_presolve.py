@@ -1,18 +1,10 @@
 """Structural checks, and the bounds-as-bounds path through the detector.
 
-Two things are under test here and they fail in opposite ways.
-
-:mod:`lcsolver.presolve.reductions` is diagnostic -- it never changes the problem, so the way
-it goes wrong is by reporting nothing useful. The check that matters is that
-it *finds* the defect it is looking for and stays quiet on a clean model.
-
-``bounds_as_rows=False`` does change how the problem is carried, and there the
-failure mode is severe and silent: bounds that go into
-``structures['bounds']`` and are then read by nobody simply vanish, and the
-solver happily returns the optimum of an unbounded relaxation. So the central
-test uses an **active** bound -- one holding the optimum away from where the
-objective wants to go -- because a bound that is slack at the solution proves
-nothing when it is dropped.
+The reductions module is diagnostic -- it fails by reporting nothing useful,
+so check it finds each defect and stays quiet on a clean model.
+``bounds_as_rows=False`` fails silently: a dropped bound solves an unbounded
+relaxation. So the central test uses an ACTIVE bound -- one holding the
+optimum away from where the objective wants to go.
 """
 import numpy as np
 import pytest
@@ -55,12 +47,8 @@ def _detect(f, bounds_as_rows=True):
 
 
 def _active_bound_model():
-    """min 1/x  s.t.  x*y >= 1,  with x declared in [0.1, 3].
-
-    Minimising 1/x pushes x up, and nothing in the constraints stops it -- the
-    only thing holding x at 3 is its declared upper bound. So the optimum is
-    1/3 with the bound and 0 without it, and losing the bound is unmissable.
-    """
+    """min 1/x s.t. x*y >= 1, x in [0.1, 3]. Only the declared upper bound
+    holds x at 3: optimum 1/3 with it, 0 without, so losing it is unmissable."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 3.0])
     y = f.Variable('y', 1.0, '', 'y', bounds=[0.1, 10.0])
@@ -93,11 +81,8 @@ def test_bounds_are_published_and_rows_drop():
 
 
 def test_active_bound_survives_the_split():
-    """The optimum is the same either way -- the bound is not lost.
-
-    This is the whole point. The bound is active, so if the split dropped it
-    the objective would fall to 0 and read as a better answer.
-    """
+    """The optimum is the same either way -- the bound is active, so if the
+    split dropped it the objective would fall to 0 and read as better."""
     a = solve_sia(_detect(_active_bound_model(), bounds_as_rows=True),
                   x0=np.array([1.0, 1.0]))
     b = solve_sia(_detect(_active_bound_model(), bounds_as_rows=False),
@@ -121,17 +106,10 @@ def test_backends_that_ignore_bounds_refuse_them():
 
 
 def test_bound_rows_fold_even_without_presolve():
-    """``presolve=False`` must not mean "carry bounds as rows".
-
-    The sequential solvers take bounds natively, and hauling declared bounds
-    through as constraint rows is pure cost (on the spcomparisons b737 case:
-    2,596 bound rows, 1,338 s vs 188 s for the identical 38-iteration solve).
-    ``presolve=False`` opts out of the column reductions -- which can change
-    the SIA trajectory -- not out of the exact singleton fold. Both failure
-    directions are checked: if the fold silently dropped a bound, the active
-    bound would stop holding and the objective would fall below 1/3; if the
-    fold silently stopped happening, the bound rows would reappear as rows.
-    """
+    """``presolve=False`` must not mean "carry bounds as rows": it opts out
+    of the column reductions, not the exact singleton fold. Hauling declared
+    bounds as rows is pure cost (b737: 1,338 s vs 188 s, same 38 iterations).
+    Both failure directions are checked here."""
     from lcsolver.solvers.sequential.bridge import _fold_bound_rows
 
     st = _detect(_active_bound_model(), bounds_as_rows=True)
@@ -154,14 +132,10 @@ def test_fold_is_a_noop_on_already_split_structures():
 
 
 def test_singleton_model_rows_are_not_folded():
-    """A single-variable MODEL constraint must stay a row.
-
-    The distinction is operational: the elastic relaxation can put slack on
-    a row but not on a hard bound, and an active gate (here ``x <= 2``, which
-    holds the optimum) is exactly the constraint that needs slack
-    mid-trajectory. Folding all singletons stalled the spcomparisons b737
-    case at the 200-iteration cap; only declared-bound rows may fold.
-    """
+    """A single-variable MODEL constraint must stay a row: the elastic
+    relaxation can put slack on a row but not on a hard bound. Folding all
+    singletons stalled the b737 case at the 200-iteration cap; only
+    declared-bound rows may fold."""
     from lcsolver.solvers.sequential.bridge import _fold_bound_rows
 
     f = Formulation()
@@ -187,12 +161,8 @@ def test_singleton_model_rows_are_not_folded():
 # structural checks
 # ---------------------------------------------------------------------------
 def test_unbounded_above_is_reported():
-    """max-like variable with nothing holding it down.
-
-    ``w`` appears only as ``w >= 1``, which is a floor. Nothing bounds it
-    above, and the objective does not mention it. That is exactly gpkit's
-    "w is not upper bounded".
-    """
+    """``w`` appears only as ``w >= 1``: floored, unbounded above, unused by
+    the objective -- exactly gpkit's "w is not upper bounded"."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x')
     w = f.Variable('w', 1.0, '', 'w')
@@ -207,13 +177,9 @@ def test_unbounded_above_is_reported():
 
 
 def test_the_default_box_does_not_rescue_an_unbounded_variable():
-    """1e-30..1e30 is not a bound, but a real box is.
-
-    Every LCsolver variable carries a box, so counting it would make the check
-    vacuous -- that is the mistake this test exists to prevent. The same model
-    with a meaningful upper bound must come back clean, which is what
-    distinguishes "ignore the value" from "ignore the default".
-    """
+    """1e-30..1e30 is not a bound, but a real box is. Every variable carries
+    a box, so counting the default would make the check vacuous; the same
+    model with a meaningful upper bound must come back clean."""
     def model(hi):
         f = Formulation()
         x = f.Variable('x', 1.0, '', 'x', bounds=[1e-30, 1e30])
@@ -269,12 +235,8 @@ def test_report_is_printable():
 # folding singleton rows into bounds
 # ---------------------------------------------------------------------------
 def _singleton_row_model():
-    """min 1/x  s.t.  x*y >= 1,  x <= 3  -- the cap written as a constraint.
-
-    Same problem as `_active_bound_model`, except the binding limit is a
-    hand-written row rather than a declared bound. Folding it must not lose
-    it: the optimum is 1/3 with the row and 0 without.
-    """
+    """Same as `_active_bound_model` but the binding cap is a hand-written
+    row (x <= 3). Folding must not lose it: 1/3 with the row, 0 without."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x')
     y = f.Variable('y', 1.0, '', 'y')
@@ -339,12 +301,8 @@ def test_folding_needs_split_bounds():
 # removing disconnected and fixed columns
 # ---------------------------------------------------------------------------
 def _disconnected_model():
-    """min x + 1/x  s.t.  x >= 1,  y >= 4.
-
-    `y` appears in no real constraint and in no objective term. Nothing
-    determines it and nothing depends on it, so it can be fixed at 4 and
-    dropped without touching the answer.
-    """
+    """min x + 1/x s.t. x >= 1, y >= 4. Nothing determines y and nothing
+    depends on it, so it can be fixed at 4 and dropped."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
     y = f.Variable('y', 5.0, '', 'y', bounds=[1e-30, 1e30])
@@ -414,12 +372,9 @@ def test_a_fixed_variable_is_folded_into_the_coefficients():
 
 
 def test_a_variable_in_a_real_constraint_is_never_removed():
-    """Even when it is slack, and even when the objective ignores it.
-
-    This is the boundary: `y` here is degenerate at the optimum, but it sits
-    in a genuine constraint that would bind at a different design point.
-    Removing it would delete that constraint too.
-    """
+    """Even when it is slack, and even when the objective ignores it: `y`
+    sits in a genuine constraint that would bind at a different design
+    point, and removing it would delete that constraint too."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
     y = f.Variable('y', 5.0, '', 'y', bounds=[0.1, 10.0])
@@ -433,12 +388,9 @@ def test_a_variable_in_a_real_constraint_is_never_removed():
 
 
 def test_presolve_is_on_by_default_and_is_invisible_to_the_caller():
-    """The default path reduces, solves, and hands back the original layout.
-
-    Both the reduced and unreduced solves must agree, and `result.x` must
-    still be indexed by the original variable ordering -- a caller should not
-    have to know whether anything was removed.
-    """
+    """The default path reduces, solves, and hands back the original layout:
+    `result.x` stays indexed by the original ordering, so a caller need not
+    know whether anything was removed."""
     st = _detect(_disconnected_model())
     names = [str(v) for v in st['variables']]
 
@@ -472,13 +424,9 @@ def test_reduction_needs_split_bounds():
 # signomial cancellation
 # ---------------------------------------------------------------------------
 def test_cancellation_finds_the_term_that_does_nothing():
-    """A subtraction large enough to satisfy the constraint by itself.
-
-    This is the pi-tail failure in miniature: `m >= a - c` with `c` far bigger
-    than `a` holds for any `m`, so `m` is disconnected. LCsolver writes it as
-    `a / (m + c) <= 1`, and the check is that `m`'s share of that denominator
-    is negligible.
-    """
+    """A subtraction large enough to satisfy the constraint by itself -- the
+    pi-tail failure in miniature: `m >= a - c` with c >> a holds for any m,
+    so m is disconnected; the check is that m's denominator share is tiny."""
     f = Formulation()
     m = f.Variable('m', 1.0, '', 'm', bounds=[1e-30, 1e30])
     a = f.Variable('a', 1.0, '', 'a', bounds=[0.5, 2.0])
@@ -530,12 +478,8 @@ def test_cancellation_ignores_plain_posynomials():
 # output-only variables
 # ---------------------------------------------------------------------------
 def _output_model():
-    """min x + 1/x  s.t.  x >= 0.5,  A == 3*x,  T >= 2*A.
-
-    `A` and `T` are reporting quantities: computed from the design, read by
-    nothing. `T` sits behind `A`, so peeling `A` is what exposes it -- the
-    second round of the scan.
-    """
+    """min x + 1/x s.t. x >= 0.5, A == 3*x, T >= 2*A. A and T are reporting
+    quantities; T sits behind A, so peeling A exposes it (round two)."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 10.0])
     A = f.Variable('A', 1.0, '', 'A', bounds=[1e-30, 1e30])
@@ -590,11 +534,8 @@ def test_eliminating_outputs_shrinks_the_solved_problem():
 
 
 def test_a_bounded_output_is_not_eliminated():
-    """A real bound turns the defining constraint into a genuine restriction.
-
-    With `A` capped at 4, `A >= 3*x` forces `x <= 4/3` -- a restriction on a
-    variable that IS in the objective. Eliminating `A` would silently drop it.
-    """
+    """A real bound turns the defining constraint into a genuine restriction:
+    A capped at 4 forces x <= 4/3, which eliminating A would silently drop."""
     def model(hi):
         f = Formulation()
         x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
@@ -630,12 +571,8 @@ def test_a_variable_the_objective_uses_is_never_an_output():
 # ---------------------------------------------------------------------------
 def test_cached_and_rebuilt_subproblems_agree():
     """Caching is a performance change and must not be a numerical one.
-
-    The objective and every constraint value must match. Individual variables
-    are checked only where the problem determines them -- a flat direction can
-    land anywhere without either answer being wrong, which is exactly what a
-    degenerate variable is.
-    """
+    Individual variables are checked only where the problem determines them:
+    a degenerate direction can land anywhere without either being wrong."""
     from lcsolver.solvers.sequential.sia import SIAOptions
 
     def model():
@@ -703,11 +640,8 @@ def test_a_black_box_body_is_not_cacheable():
 # post-solve degeneracy
 # ---------------------------------------------------------------------------
 def test_degeneracy_finds_a_variable_the_optimum_does_not_determine():
-    """`u` is real, constrained, and completely free at the optimum.
-
-    It sits in a constraint that is slack there, so no structural check sees
-    anything wrong -- which is why the post-solve test has to exist.
-    """
+    """`u` is real, constrained, and completely free at the optimum: its
+    constraint is slack there, so no structural check sees anything wrong."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x', bounds=[0.1, 10.0])
     u = f.Variable('u', 1.0, '', 'u', bounds=[0.5, 2.0])
@@ -728,14 +662,9 @@ def test_degeneracy_finds_a_variable_the_optimum_does_not_determine():
 # signomial equalities: split pair vs single condensed equality
 # ---------------------------------------------------------------------------
 def _sig_equality_model():
-    """min z  s.t.  z == x - y,  x >= 4,  1 <= y <= 2.
-
-    Normalizes to `(z + y)/x == 1`: a multi-term POSYNOMIAL equality, which the
-    bridge splits into `p <= 1` plus a condensed `1/p <= 1`. That pair is
-    dual-degenerate exactly as the ratio pair is -- on SPaircraft the two
-    halves came back as 910.8 and 910.9. Minimising z drives x down and y up,
-    so the optimum is x=4, y=2, z=2.
-    """
+    """min z s.t. z == x - y, x >= 4, 1 <= y <= 2. Normalizes to a multi-term
+    posynomial equality the bridge splits into a dual-degenerate pair (on
+    SPaircraft the halves came back 910.8 / 910.9). Optimum x=4, y=2, z=2."""
     f = Formulation()
     x = f.Variable('x', 5.0, '', 'x', bounds=[0.1, 100.0])
     y = f.Variable('y', 1.5, '', 'y', bounds=[1.0, 2.0])
@@ -764,12 +693,9 @@ def test_signomial_equality_is_a_ratio_with_an_equality_operator():
 
 
 def test_the_single_equality_reaches_the_optimum_and_the_pair_does_not():
-    """The bug and its fix, on three variables.
-
-    Split into a pair, the step is confined to the null space of the summed
-    log-Hessians and the run stalls 31% high with `y` nowhere near its bound.
-    As one condensed equality the same problem solves exactly.
-    """
+    """The bug and its fix, on three variables: split into a pair the run
+    stalls 31% high with y nowhere near its bound; as one condensed equality
+    the same problem solves exactly."""
     a = solve_sia(_detect(_sig_equality_model()), split_equalities=True)
     b = solve_sia(_detect(_sig_equality_model()), split_equalities=False)
 
@@ -779,13 +705,9 @@ def test_the_single_equality_reaches_the_optimum_and_the_pair_does_not():
 
 
 def test_single_equality_keeps_the_multipliers_well_conditioned():
-    """The point of the change: no huge cancelling multiplier pair.
-
-    Split into two condensed inequalities the pair is dual-degenerate, so the
-    solver may return arbitrarily large multipliers whose DIFFERENCE is the
-    only meaningful quantity. As one equality there is a single signed
-    multiplier and nothing to cancel.
-    """
+    """The point of the change: no huge cancelling multiplier pair. Split,
+    the pair is dual-degenerate and only the multiplier DIFFERENCE means
+    anything; as one equality there is a single signed multiplier."""
     a = solve_sia(_detect(_sig_equality_model()), split_equalities=True)
     b = solve_sia(_detect(_sig_equality_model()), split_equalities=False)
 
@@ -849,12 +771,9 @@ def test_an_ordinary_range_is_left_alone():
 
 
 def test_crossed_bounds_are_reported_as_infeasible():
-    """`x >= 2` with `x <= 1` has no solution, and must say so.
-
-    Folding them naively gives "x is fixed at 2", and the solver then answers a
-    different question than the one that was asked -- the same class of silent
-    substitution as relaxing an equality.
-    """
+    """`x >= 2` with `x <= 1` has no solution, and must say so: folding them
+    naively gives "x is fixed at 2" and the solver answers a different
+    question than the one asked."""
     with pytest.raises(InfeasibleProblem, match='no feasible point'):
         fold_singleton_rows(_detect(_two_sided(2.0, 1.0),
                                     bounds_as_rows=False))
@@ -891,13 +810,9 @@ def test_propagation_derives_a_bound_in_log_space():
 
 
 def test_an_equality_uses_both_endpoints_not_just_the_minimum():
-    """The regression for the bug that called SPaircraft infeasible.
-
-    An equality bounds `v_k` above using the MINIMUM of the other terms and
-    below using their MAXIMUM -- different sums. Reusing the minimum for both
-    manufactures contradictions between unrelated equalities and "proves" a
-    perfectly feasible model infeasible.
-    """
+    """Regression for the bug that called SPaircraft infeasible: an equality
+    bounds v_k above by the other terms' MINIMUM and below by their MAXIMUM;
+    reusing the minimum for both manufactures contradictions."""
     f = Formulation()
     a = f.Variable('a', 1.0, '', 'a', bounds=[1e-30, 1e30])
     b = f.Variable('b', 1.0, '', 'b', bounds=[1.0, 100.0])
@@ -982,14 +897,9 @@ def test_a_monomial_equality_substitutes_a_variable_out():
 
 
 def test_chained_eliminations_recover_in_the_right_order():
-    """A pivot's formula may name a variable eliminated in a LATER round.
-
-    `w == 2z` and `z == 3x`: whichever is eliminated first, its stored formula
-    can reference the other, so recovery has to run backwards. Forwards it
-    silently returns values off by orders of magnitude while the reduced
-    problem stays exactly right -- measured on SPaircraft at 4.3e+03 relative
-    error with the objective still correct to 12 figures.
-    """
+    """A pivot's formula may name a variable eliminated in a LATER round, so
+    recovery has to run backwards. Forwards it silently returned SPaircraft
+    values at 4.3e+03 relative error with the objective correct to 12 figures."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
     z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
@@ -1029,13 +939,9 @@ def test_a_variable_with_a_real_bound_is_not_substituted_out():
 # sensitivities across a structural reduction
 # ---------------------------------------------------------------------------
 def _constant_model(k=3.0):
-    """min x  s.t.  z == K*x,  x*z >= 12.   So x* = sqrt(12/K).
-
-    `K` appears ONLY in the monomial equality that elimination consumes, which
-    is the hardest case for sensitivity recovery: after the reduction that
-    constraint is gone and `K` survives only inside the coefficients it was
-    folded into.
-    """
+    """min x s.t. z == K*x, x*z >= 12, so x* = sqrt(12/K). K appears ONLY in
+    the equality elimination consumes -- the hardest case for sensitivity
+    recovery, since K survives only inside the folded coefficients."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
     z = f.Variable('z', 1.0, '', 'z', bounds=[1e-30, 1e30])
@@ -1047,13 +953,9 @@ def _constant_model(k=3.0):
 
 
 def test_sensitivities_survive_monomial_elimination():
-    """d log f* / d log K is -1/2 analytically, with or without the reduction.
-
-    This works because presolve transforms the detected *structure*, never the
-    model, and `sensitivities` recovers duals from the primal solution on the
-    original model. So long as the full primal vector is restored, the
-    reduction is invisible to it.
-    """
+    """d log f* / d log K is -1/2 analytically, with or without the
+    reduction: presolve transforms the detected structure, never the model,
+    so a restored primal vector makes the reduction invisible to duals."""
     from lcsolver.postsolve.sensitivity import sensitivities
     from lcsolver.postsolve.writeback import write_solution
 
@@ -1181,12 +1083,9 @@ def _solved_point(f):
 @pytest.mark.parametrize('transform', ['fold', 'reduce', 'eliminate',
                                        'propagate', 'pipeline'])
 def test_each_transform_preserves_the_problem(transform):
-    """The claim every pass makes, checked at a solved point.
-
-    This is the generic form of the check that caught the elimination bug --
-    a reduced problem exact to twelve figures whose recovered values were out
-    by 4.3e+03 -- and that would have caught the propagation bug on sight.
-    """
+    """The claim every pass makes, checked at a solved point -- the generic
+    form of the check that caught the elimination bug and would have caught
+    the propagation bug on sight."""
     _st_full, x = _solved_point(_rich_model())
     before = _detect(_rich_model(), bounds_as_rows=False)
 
@@ -1250,12 +1149,9 @@ def test_a_backend_refuses_a_structure_it_cannot_read():
 
 
 def test_an_unknown_consumer_is_not_second_guessed():
-    """A consumer `require` has never heard of is allowed, not rejected.
-
-    The check is that it returns rather than raising: guessing at the needs of
-    an unknown backend would block one that is perfectly able to read the
-    structure it was handed.
-    """
+    """A consumer `require` has never heard of is allowed, not rejected:
+    guessing at an unknown backend's needs would block one that can read the
+    structure fine."""
     from lcsolver.presolve.structureDetector import require
     st = _detect(_active_bound_model(), bounds_as_rows=False)
     assert require(st, 'something_new') is None
@@ -1285,15 +1181,9 @@ def test_detected_names_what_the_dict_only_implied():
 
 
 def test_kind_and_dispatch_kind_answer_different_questions():
-    """A model can be several kinds at once, and the two must not be conflated.
-
-    `z == x - y` with `x >= 4` is a linear program AND a valid signomial
-    program: the detector sets both flags, carrying two different encodings of
-    the same problem. `dispatch_kind` picks the narrowest (cheapest to solve);
-    `key`/`space` name the encoding the terms actually live in, which is what
-    a row reader needs. Conflating them made the SLCP bridge parse the wrong
-    row list.
-    """
+    """A model can be several kinds at once: `dispatch_kind` picks the
+    narrowest (cheapest to solve); `key`/`space` name the encoding the terms
+    live in. Conflating them made the SLCP bridge parse the wrong row list."""
     f = Formulation()
     x = f.Variable('x', 5.0, '', 'x', bounds=[0.1, 100.0])
     y = f.Variable('y', 1.5, '', 'y', bounds=[1.0, 2.0])
@@ -1332,15 +1222,9 @@ def test_terms_reproduce_the_positional_row_format():
 
 def test_diagnose_reads_either_bound_form_the_same_way():
     """The report must not depend on how the detector carried the bounds.
-
-    `optimization_check` folds single-variable rows into bounds so it can read the
-    rows form. It used to skip that fold when the detector had already split
-    the bounds out -- but folding also takes single-variable rows OUT of the
-    row set, and a model writes plenty of those itself. Left in, they count
-    against every variable they touch, so a quantity computed by one equality
-    and bounded by one row looks like it appears twice and never registers as
-    output-only. The form the feature exists for was the one that missed them.
-    """
+    `optimization_check` used to skip the singleton-row fold on the split
+    form, so single-variable rows counted as second appearances and
+    output-only variables never registered."""
     fields = ('empty_columns', 'unbounded_above', 'unbounded_below',
               'singleton_columns', 'fixed_columns', 'output_columns',
               'bound_only_columns')
@@ -1356,15 +1240,8 @@ def test_diagnose_reads_either_bound_form_the_same_way():
 
 def test_a_vacuous_singleton_row_does_not_hide_an_output_variable():
     """x is computed by an equality and read by nobody, so it is output-only.
-
-    The extra row is a bound the model states rather than one declared on the
-    variable, and at 1e30 it restricts nothing. Before the fold ran on the
-    split form, that row still counted as a second appearance of x and the
-    scan skipped it.
-
-    A *tight* singleton row would be a different matter: `x <= 100` against
-    `x == 3y` really does force `y <= 33`, and x is then not free at all.
-    """
+    The x <= 1e30 row restricts nothing, but before the fold ran on the split
+    form it counted as a second appearance and the scan skipped x."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'a reported quantity')
     y = f.Variable('y', 1.0, '', 'a real unknown')
@@ -1396,15 +1273,9 @@ def test_a_tight_singleton_row_does_keep_a_variable_from_being_output_only():
 
 
 def test_terms_parses_each_row_once_however_often_it_is_asked():
-    """The natural caller is `[st.terms(i) for i in keep]`.
-
-    `terms(i)` returns one constraint out of a structure that describes the
-    whole problem, so parsing on every call is quadratic in the constraint
-    count -- and the rows are as wide as the model has variables, so the
-    constant is large. It is a silent failure: the answers stay correct and
-    the solve just stops finishing. On SPaircraft it cost four minutes inside
-    `fold_singleton_rows` against an eleven-second solve.
-    """
+    """Parsing on every terms(i) call is quadratic in the constraint count --
+    answers stay correct, the solve just stops finishing. On SPaircraft it
+    cost four minutes inside fold_singleton_rows against an 11 s solve."""
     import lcsolver.presolve.detected as detected
 
     st = _detect(_rich_model(), bounds_as_rows=False)
@@ -1478,13 +1349,9 @@ def _lp_with_negatives():
 
 
 def test_evaluate_reads_a_linear_program_correctly():
-    """The LP branch had no test, and was wrong in two ways because of it.
-
-    The objective coefficients sit one level deeper than the rest of the
-    payload (solve_LP reads `[1][0][0]`), so unpacking positionally yielded a
-    wrapper whose elements would not convert; and `AG or []` raises outright on
-    a numpy array. Both survived because nothing exercised the path.
-    """
+    """The LP branch had no test, and was wrong in two ways because of it:
+    the objective coefficients sit one level deeper than the rest of the
+    payload, and `AG or []` raises outright on a numpy array."""
     st = _detect(_lp_with_negatives(), bounds_as_rows=False)
 
     obj, viol = evaluate(st, [3.0, -1.0])         # x-y = 4 >= 2
@@ -1525,13 +1392,9 @@ def test_equivalence_check_works_on_a_linear_program():
 
 
 def test_presolve_report_lists_output_only_variables():
-    """`output_columns` had no test, so it broke silently during migration.
-
-    `_output_only` was called inside a bare `except Exception: pass`. When the
-    migration removed the names it read, it raised NameError on every call, the
-    except swallowed it, and the field went quietly empty while 270 tests
-    passed. The bare except is gone; this makes sure the field is populated.
-    """
+    """`output_columns` had no test, so it broke silently during migration:
+    a bare except swallowed the NameError and the field went quietly empty
+    while 270 tests passed. This makes sure the field is populated."""
     st = fold_singleton_rows(_detect(_output_model(), bounds_as_rows=False))
     rep = presolve_report(st)
     assert set(rep.output_columns) == {'A', 'T'}
@@ -1548,12 +1411,8 @@ def test_presolve_report_agrees_with_reduce_columns():
 
 
 def test_a_disconnected_variable_keeps_the_guess_it_was_given():
-    """Nothing constrains it, so the author's guess is the only information.
-
-    LCsolver requires a guess so that it means something. A variable in no
-    constraint is where it means the most -- there is nothing else to go on --
-    and reporting a default of 1.0 instead throws away the one number supplied.
-    """
+    """Nothing constrains it, so the author's guess is the only information;
+    reporting a default of 1.0 instead throws away the one number supplied."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x', bounds=[0.1, 100.0])
     orphan = f.Variable('orphan', 5.0, '', 'in no constraint',
@@ -1576,11 +1435,9 @@ def test_a_disconnected_variable_keeps_the_guess_it_was_given():
 # ---------------------------------------------------------------------------
 
 def _annihilated_model(nu_value):
-    """m >= (nu^2 - 1) x -- the right side vanishes at nu = 1.
-
-    The shape is real: it is a rotor blade's root bending moment, relieved by
-    the rotating flap frequency, which a teetering hub drives to exactly zero.
-    """
+    """m >= (nu^2 - 1) x -- the right side vanishes at nu = 1. The shape is
+    real: a rotor blade's root bending moment, driven to zero by a teetering
+    hub's flap frequency."""
     from lcsolver import units
     f = Formulation()
     f.Variable('x', 1.0, '-', 'x')
@@ -1634,11 +1491,9 @@ def test_it_survives_the_unclassified_gate():
 
 
 def test_a_steep_output_only_row_is_still_recovered():
-    """An output-only variable defined by P**20 == posynomial(x): at the
-    recovery bracket's ends the row saturates to -inf and +inf, which is a
-    sign change, not a failure.  Refusing it left P at the 1.0 placeholder
-    with no error -- measured on the ISA block's difference-of-softmax
-    pressure fit, whose pressure then came back at 129 Pa for 70 kPa."""
+    """P**20 == posynomial(x) saturates the recovery bracket to -inf/+inf --
+    a sign change, not a failure. Refusing it left P at the 1.0 placeholder
+    (ISA pressure fit came back 129 Pa for 70 kPa)."""
     import warnings
     import numpy as np
     from lcsolver import Formulation

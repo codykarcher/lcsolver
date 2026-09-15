@@ -74,12 +74,8 @@ EXAMPLES_DIR = os.path.join(
 
 
 def discover_examples():
-    """Every example in the directory, rather than a list kept by hand.
-
-    A hand-maintained registry is a registry that goes stale: an example lands,
-    nobody adds the line, and it is never run again until it breaks in front of
-    somebody reading the docs. The directory listing cannot go stale.
-    """
+    """Every example in the directory, rather than a list kept by hand --
+    a hand-maintained registry goes stale; the directory listing cannot."""
     if not os.path.isdir(EXAMPLES_DIR):
         return []
     return sorted(
@@ -103,13 +99,9 @@ def example_test_name(filename):
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class EDIExamples(unittest.TestCase):
     def test_every_example_has_a_test(self):
-        """Discovery is the whole registry, so guard discovery itself.
-
-        If the glob ever came back empty -- a renamed directory, a packaging
-        change that moves examples/ -- every example test would silently stop
-        existing and the suite would still be green. That failure mode is worse
-        than a broken example, so it gets its own assertion.
-        """
+        """Discovery is the whole registry, so guard discovery itself: an
+        empty glob would silently drop every example test and the suite
+        would still be green."""
         found = discover_examples()
         self.assertTrue(found, 'no examples discovered in %s' % (EXAMPLES_DIR,))
         for filename in found:
@@ -119,30 +111,16 @@ class EDIExamples(unittest.TestCase):
             )
 
 
-#: How far a written-back solution may miss a constraint, relative to the size
-#: of the body. These are geometric programs solved in log space, so a converged
-#: answer lands within about 1e-4 of its equalities in natural space --
-#: aircraft_gp sits at 7e-5 and cooling_loop_gp at 3e-4. The number is chosen to
-#: sit above that and far below a real failure: the violations this is here to
-#: catch are of order 1, a constraint missed by its whole magnitude.
+# How far a written-back solution may miss a constraint, relative to the size
+# of the body. Converged log-space answers land within ~1e-4 of equalities
+# (aircraft_gp 7e-5, cooling_loop_gp 3e-4); real failures are of order 1.
 FEASIBLE_RTOL = 1e-3
 
 
 def worst_violation(f):
-    """How badly the model's current point breaks its own constraints.
-
-    Relative to the size of the body, because these models span many orders of
-    magnitude and an absolute slack means nothing next to a weight in newtons.
-    Only algebraic constraints are walked: a black box is an
-    ExternalGreyBoxBlock rather than a Constraint, so it is not visited here.
-
-    Evaluated on the unit-corrected clone, never on the model as written.
-    ``pyo.value`` multiplies magnitudes and ignores units, so a model that
-    declares TSFC in 1/hr against a time in seconds evaluates 3600x off and
-    reads as violated by its whole magnitude -- kirschen_ozturk scores 1.0 as
-    written and 1.8e-08 corrected. Cloning also keeps the solved values, so
-    the corrected model is at the same point.
-    """
+    """Worst relative constraint violation at the model's current point.
+    Walks only algebraic constraints, on the unit-corrected clone: pyo.value
+    ignores units, so kirschen_ozturk reads 1.0 as written, 1.8e-08 corrected."""
     from lcsolver.presolve.unitCorrector import unit_corrector
 
     corrected = unit_corrector(f)

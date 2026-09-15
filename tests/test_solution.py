@@ -149,12 +149,9 @@ class TestSolution(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestEmptyPrefixGroup(unittest.TestCase):
-    """A group that namespaces nothing must not claim the whole model.
-
-    A builder shared between a standalone model and a larger one that mounts
-    it under a prefix gets prefix='' in the standalone case. Every name starts
-    with the empty string.
-    """
+    """A group that namespaces nothing must not claim the whole model: a
+    shared builder gets prefix='' in the standalone case, and every name
+    starts with the empty string."""
 
     def test_an_empty_prefix_does_not_swallow_every_name(self):
         from lcsolver.objects.solution import Solution, Entry

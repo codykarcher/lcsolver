@@ -1,25 +1,10 @@
 """One model, every path, the same answer.
 
-The property this file asserts is the one no unit test here can: that the
-several routes from a Formulation to a number agree. LCsolver carries four
-representations of a problem -- the Pyomo model, the detected structure, the
-cvxopt backends' own matrices, and the SLCP ``Problem`` -- and every conversion
-between them is somewhere a transformation can quietly change the problem while
-still returning a plausible answer.
-
-That failure mode is this repository's characteristic bug, and it is invisible
-to a test built from imagination: the shapes that expose it are an equality
-sharing variables, a chain of eliminations, a variable sitting at a bound, a
-model that is simultaneously linear and signomial. None of those occur in a
-three-variable model written to check one function.
-
-So this file is deliberately about *agreement between paths* rather than about
-any particular number. A backend that silently drops a bound, a presolve pass
-that relaxes an equality, or a reader that parses the wrong encoding all show
-up the same way: two paths that should agree, disagreeing.
-
-Marked ``slow``. Run with ``pytest -m slow`` or ``pytest tests/test_integration.py``;
-excluded from a plain ``pytest`` run by the marker configuration.
+LCsolver carries four representations of a problem, and every conversion
+between them is somewhere a transformation can quietly change the problem
+while still returning a plausible answer. So this file asserts *agreement
+between paths* on real models rather than any particular number.
+Marked ``slow``: run with ``pytest -m slow`` or by naming this file.
 """
 import importlib
 import sys
@@ -230,13 +215,9 @@ def _example_names():
 
 
 def _build_example(name):
-    """Execute an example in a private namespace and hand back its Formulation.
-
-    The examples are scripts -- they declare a model and solve it at module
-    level -- so this runs one and takes the `f` it leaves behind. Executed
-    rather than imported because a presolve comparison needs to build the
-    model twice, and an imported module is built once and cached.
-    """
+    """Execute an example in a private namespace and hand back its `f`.
+    Executed rather than imported because the presolve comparison builds the
+    model twice, and an imported module is built once and cached."""
     path = _EXAMPLES / f'{name}.py'
     if str(_EXAMPLES) not in sys.path:
         sys.path.insert(0, str(_EXAMPLES))
@@ -251,12 +232,8 @@ def _build_example(name):
 
 
 def _sia_can_read(f):
-    """Whether SIA is the right route for this model.
-
-    SIA iterates on GP sub-problems, so a model detected as an LP or a QP goes
-    to its own backend instead and is not this test's business. A black box
-    has no algebraic structure to fold at all.
-    """
+    """Whether SIA is the right route for this model: LPs/QPs go to their own
+    backend, and a black box has no algebraic structure to fold."""
     if f.get_runtimeConstraints():
         return False, 'carries a black box; no algebraic structure to fold'
     st = structure_detector(unit_corrector(f))
@@ -265,10 +242,9 @@ def _sia_can_read(f):
     return True, ''
 
 
-#: Which examples the presolve comparison actually applies to. Computed once so
-#: that `test_the_presolve_comparison_is_not_vacuous` can assert on it: skipping
-#: is how the previous version of this file came to test nothing at all, so the
-#: count of models that really run is itself checked.
+# Which examples the presolve comparison actually applies to. Computed so
+# test_the_presolve_comparison_is_not_vacuous can assert on the count:
+# skipping is how the previous version came to test nothing at all.
 def _sia_examples():
     names = []
     for name in _example_names():
@@ -281,11 +257,8 @@ def _sia_examples():
 @pytest.mark.parametrize('name', _example_names())
 def test_examples_are_unchanged_by_presolve(name):
     """Each presolve pass must leave each real model's problem unchanged.
-
-    `assert_equivalent` checks the property directly -- same objective, same
-    worst violation, at a solved point -- rather than a remembered number, so
-    it applies to any model without knowing anything about it.
-    """
+    `assert_equivalent` checks the property at a solved point rather than a
+    remembered number, so it applies to any model."""
     from lcsolver.presolve.reductions import (assert_equivalent,
                                               fold_singleton_rows, presolve)
     from lcsolver.solvers.sequential.bridge import solve_sia
@@ -312,21 +285,16 @@ def test_examples_are_unchanged_by_presolve(name):
 
 
 def test_there_are_real_models_to_test():
-    """The list is a directory listing, so an empty one must fail loudly.
-
-    This is the lesson of what it replaced: coverage that silently becomes
-    zero looks exactly like coverage that passes.
-    """
+    """The list is a directory listing, so an empty one must fail loudly:
+    coverage that silently becomes zero looks exactly like coverage that
+    passes."""
     assert _example_names(), f'no examples found in {_EXAMPLES}'
 
 
 def test_the_presolve_comparison_is_not_vacuous():
-    """Several real models must actually reach the comparison above.
-
-    The test it replaced skipped on any problem and so skipped on all eleven
-    of its models for however long the directory had been gone. A skip guard
-    is only safe if something asserts that it is not skipping everything.
-    """
+    """Several real models must actually reach the comparison above: the test
+    this replaced skipped all eleven of its models for however long the
+    directory had been gone."""
     reaching = _sia_examples()
     assert len(reaching) >= 3, (
         f'only {reaching} reach the presolve comparison; the rest are skipped')
@@ -336,11 +304,8 @@ def test_the_presolve_comparison_is_not_vacuous():
 # the linear payload, whose two layouts are easy to confuse
 # ---------------------------------------------------------------------------
 def _lp():
-    """min x + y  s.t.  x - y >= 2, x >= 1, both in [-10, 10].
-
-    `x - y >= 2` gives `y <= x - 2`, so both want to be as small as allowed:
-    x = 1 at its constraint, y = -10 at its bound, objective -9.
-    """
+    """min x + y  s.t.  x - y >= 2, x >= 1, both in [-10, 10]. Both want to
+    be small: x = 1 at its constraint, y = -10 at its bound, objective -9."""
     f = Formulation()
     x = f.Variable('x', 1.0, '', 'x', bounds=[-10.0, 10.0])
     y = f.Variable('y', 1.0, '', 'y', bounds=[-10.0, 10.0])
@@ -362,15 +327,9 @@ def _qp():
 
 @pytest.mark.parametrize('name,make', [('lp', _lp), ('qp', _qp)])
 def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
-    """LP and QP store their payload in DIFFERENT layouts.
-
-        LP   [[c], shift, A, b]      the objective nested one deeper
-        QP   [P, q, shift, A, b]
-
-    Reading a QP with the LP layout yields the Hessian where the objective
-    belongs and the constraint matrix where the right-hand side does -- which
-    both `evaluate` and `propagate_bounds` did until `linear_parts` existed.
-    """
+    """LP ([[c], shift, A, b]) and QP ([P, q, shift, A, b]) store their
+    payload in DIFFERENT layouts; both `evaluate` and `propagate_bounds` read
+    QPs with the LP layout until `linear_parts` existed."""
     from lcsolver.presolve.reductions import evaluate, propagate_bounds
 
     f, expected = make()
@@ -403,14 +362,9 @@ def test_linear_and_quadratic_payloads_are_read_correctly(name, make):
 
 
 def test_quadratic_objective_convention_is_consistent():
-    """A QP with a LINEAR term, where a stray factor of two moves the optimum.
-
-    LCsolver stores the quadratic COEFFICIENT matrix, so the objective is
-    x'Px + q'x. cvxopt.solvers.qp minimises (1/2) x'Px + q'x, and solve_QP
-    passes 2*P to compensate. With q = 0 a missing factor would be invisible --
-    a positive scaling leaves the argmin alone -- so this uses q != 0, where
-    minimising (1/2)(x^2+y^2) - 4x lands at x=4 instead of x=2.
-    """
+    """A QP with a LINEAR term, where a stray factor of two moves the
+    optimum. cvxopt minimises (1/2)x'Px + q'x so solve_QP passes 2*P; with
+    q = 0 a missing factor would be invisible, so this uses q != 0."""
     from lcsolver.presolve.reductions import evaluate
 
     def make():

@@ -31,24 +31,15 @@ else:
     raise ImportError('The stucture detector requires numpy')
 
 def _splitFraction(gr):
-    """Separate a row list into its numerator and denominator rows.
-
-    A fraction is carried as a single list: numerator rows keep the
-    constraint index ``n`` and denominator rows are tagged ``-n-1`` (see
-    :func:`gpRow_divide`). A plain posynomial has no negative-index rows.
-    """
+    """Split a row list into numerator and denominator rows. Denominator rows are tagged -n-1 (see gpRow_divide)."""
     numerator = [r for r in gr if r[0] >= 0]
     denominator = [r for r in gr if r[0] < 0]
     return numerator, denominator
 
 
 def _posyMultiply(rowsA, rowsB, outIndex):
-    """Multiply two posynomials term by term, tagging the result ``outIndex``.
-
-    ``gpRow_multiply`` only handles the monomial case, which is all the
-    expression walker needs; combining two fractions needs the general
-    product, so it lives here.
-    """
+    """Multiply two posynomials term by term, tagging the result outIndex.
+    gpRow_multiply only handles the monomial case, so the general product lives here."""
     out = []
     for ra in rowsA:
         for rb in rowsB:
@@ -66,19 +57,9 @@ def _retag(rows, index):
 def gpRow_add(gr1, gr2):
     """Add two row lists, either of which may be a signomial fraction.
 
-    Dividing by a multi-term expression produces a fraction rather than a
-    plain posynomial, and such a fraction may then be added to something --
-    ``lsfac == 1 - a*(1-lam)/(1+lam)`` in TASOPT's spanwise drag integral is a
-    typical case. This used to raise outright, which forced callers to clear
-    every denominator by hand before writing the constraint.
-
-    The fractions are combined over a common denominator:
-
-        A/B + C     = (A + C*B) / B
-        A/B + C/D   = (A*D + C*B) / (B*D)
-
-    Term count grows as the product of the operands' lengths, which is
-    inherent to putting them over a common denominator, not an artefact here.
+    Combines over a common denominator: A/B + C = (A + C*B)/B and
+    A/B + C/D = (A*D + C*B)/(B*D). Used to raise on fractions, which broke
+    e.g. TASOPT's lsfac == 1 - a*(1-lam)/(1+lam).
     """
     num1, den1 = _splitFraction(gr1)
     num2, den2 = _splitFraction(gr2)
@@ -86,7 +67,7 @@ def gpRow_add(gr1, gr2):
     if not den1 and not den2:
         return collapseGProws(gr1 + gr2)
 
-    # Numerator index to carry forward, and the matching denominator tag.
+    # numerator index to carry forward, and the matching denominator tag
     if num1:
         nix = num1[0][0]
     elif num2:
@@ -95,8 +76,7 @@ def gpRow_add(gr1, gr2):
         raise RuntimeError('gpRow_add received a fraction with no numerator')
     dix = -1 * nix - 1
 
-    # Denominator rows are stored with a negative tag; treat them as ordinary
-    # monomials while multiplying, then re-tag at the end.
+    # strip the negative denominator tags while multiplying, re-tag at the end
     d1 = _retag(den1, nix) if den1 else None
     d2 = _retag(den2, nix) if den2 else None
 
@@ -113,9 +93,7 @@ def gpRow_add(gr1, gr2):
                                    + _posyMultiply(num1, d2, nix))
         denominator = d2
 
-    # A denominator that collapsed to a single monomial is no longer a
-    # fraction: fold it into the numerator so downstream code sees a plain
-    # posynomial wherever possible.
+    # denominator collapsed to a single monomial: fold it into the numerator
     if len(denominator) == 1:
         inverse = [[nix, 1.0 / denominator[0][1]]
                    + [-v for v in denominator[0][2:]]]
@@ -255,17 +233,9 @@ def parseDict_GP(ix,rv,N_vars_unwrapped,variableMap):
             gpRows.append(gpRow)
         return collapseGProws(gpRows)
 
-    # Neither monomial nor signomial. That leaves signomial fraction --- but
-    # only if the walker actually flagged one. An expression built from an
-    # operation outside the GP algebra (a transcendental such as cos(x), say)
-    # satisfies none of the four categories, and the walker leaves every
-    # signomial_fraction field as None. Indexing them raised
-    # "TypeError: object of type 'NoneType' has no len()" out of the loop
-    # below, so a model the detector simply cannot classify crashed instead
-    # of being reported as unstructured.
-    #
-    # Return None to say "not representable"; callers translate that into
-    # unstructured_dict().
+    # not monomial or signomial; if the walker also didn't flag a signomial
+    # fraction (cos(x) etc.), the fields are None and indexing them used to
+    # crash. Return None so callers report unstructured instead.
     if rv['signomial_fraction']['status'] != 'yes':
         return None
 
@@ -289,24 +259,13 @@ def parseDict_GP(ix,rv,N_vars_unwrapped,variableMap):
 
 
 def checkObjectiveHessian_PSD(gpRows):
-    """Is the objective a convex quadratic? Returns ``[bool, P, q, r]``.
+    """Is the objective a convex quadratic? Returns [bool, P, q, r].
 
-    Convexity of a quadratic objective is positive SEMI-definiteness of its
-    Hessian, and that is what is tested here. It used to test for positive
-    definiteness, which rejected the commonest engineering QP there is: any
-    model where some variable does not appear in the objective has a singular
-    Hessian, so a control or tracking problem that penalizes the inputs and
-    leaves the states to the dynamics rows was never detected as a QP. It
-    still solved -- as a general NLP, giving up the convexity guarantee and
-    the exact duals, with the Report and ``structure_report`` both saying so
-    only in the sense of not mentioning a QP at all.
-
-    A semi-definite Hessian can leave the problem unbounded along its null
-    space, but so can a linear objective, and an LP is detected without
-    complaint; the pre-solve bound checks are what catch that, for both.
-
-    An all-zero Hessian is affine, not quadratic, and is left to
-    :func:`checkLinear` -- otherwise every LP would be reported as a QP.
+    Tests positive SEMI-definiteness: requiring PD rejected any objective
+    that skips a variable (singular Hessian), so common control/tracking QPs
+    fell through to the general NLP path. Null-space unboundedness is caught
+    by the pre-solve bound checks, same as for an LP. An all-zero Hessian is
+    affine and left to checkLinear.
     """
     N_vars = len(gpRows[0])-2
     hessian = np.zeros([N_vars,N_vars])
@@ -347,13 +306,9 @@ def checkObjectiveHessian_PSD(gpRows):
     if onlyZeros:
         return [False,None,None,None]
 
-    # eigvalsh rather than eig: the Hessian is symmetric by construction
-    # above, and the symmetric routine is what guarantees real eigenvalues.
-    # `eig` can hand back a complex array on a symmetric matrix, and `min` of
-    # that raises rather than answering.
+    # eigvalsh not eig: guarantees real eigenvalues (eig can return complex, min then raises)
     eigenvalues = np.linalg.eigvalsh(hessian)
-    # Scaled, because "zero" for a Hessian built from stiffnesses of 1e5 is
-    # not the same number as for one built from drag coefficients.
+    # scale tol to the problem magnitude
     tol = 1e-10 * max(1.0, float(np.max(np.abs(eigenvalues))))
     if min(eigenvalues) >= -tol:
         return [True,P,q,r]
@@ -361,9 +316,7 @@ def checkObjectiveHessian_PSD(gpRows):
         return [False,None,None,None]
 
 
-#: The old name. Kept because it appears in commented-out import lists around
-#: the package, and because what it tested is the thing this docstring is
-#: about.
+# old name, kept for compatibility
 checkObjectiveHessian_PD = checkObjectiveHessian_PSD
 
 def checkLinear(gpRows):

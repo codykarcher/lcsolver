@@ -6,12 +6,10 @@
 
 """Constraints that must hold but must not bind.
 
-A holographic constraint keeps the problem well posed -- a 1e-30..1e30 box, the
-edges of the data a fit was made from -- rather than shaping the answer. An
-ACTIVE one silently invalidates the result: the solve converges, the duals are
-finite, the table prints, and the optimum is sitting on a boundary of the
-model's validity instead of the design's. The only defence is to declare them
-in advance and check every time.
+A holographic constraint keeps the problem well posed (a 1e-30..1e30 box,
+the edges of a fit's data) rather than shaping the answer. An ACTIVE one
+silently invalidates the result -- the optimum sits on the model's validity
+boundary, not the design's -- so declare them in advance and check each time.
 """
 import warnings
 
@@ -24,11 +22,8 @@ from lcsolver.solvers.solver import solve
 
 
 def _model(cap):
-    """min A/(x*y) s.t. x*y >= A -- x and y want to grow without bound.
-
-    The objective falls monotonically in x and y, so the caps bind wherever
-    they are put: this is the model for the ACTIVE case, at any cap.
-    """
+    """min A/(x*y) s.t. x*y >= A -- x and y want to grow without bound, so
+    the caps bind wherever they are put: the model for the ACTIVE case."""
     f = Formulation()
     x = f.Variable(name='x', guess=2.0, units='m', description='x')
     y = f.Variable(name='y', guess=2.0, units='m', description='y')
@@ -41,13 +36,8 @@ def _model(cap):
 
 
 def _interior_model():
-    """min x + A/x -- the optimum is at sqrt(A), far inside the caps.
-
-    The inactive case needs an objective with an interior minimum. Merely
-    putting the caps far away does not make them inactive if the objective
-    still runs at them, which is what makes this a different model rather
-    than _model() with a bigger number.
-    """
+    """min x + A/x -- optimum at sqrt(A), far inside the caps. The inactive
+    case needs a genuine interior minimum, not _model() with a bigger cap."""
     f = Formulation()
     x = f.Variable(name='x', guess=2.0, units='m', description='x')
     A = f.Constant(name='A', value=2.0, units='m^2', description='A')

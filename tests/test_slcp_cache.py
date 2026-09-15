@@ -1,19 +1,10 @@
 """The cached sub-problem must give the same answers as rebuilding it.
 
-``Options.cache_subproblem`` builds the sub-problem's Pyomo model once and
-re-points it at each new iterate through mutable Params, instead of rebuilding
-every constraint symbolically every iteration. On SPaircraft the rebuild path
-constructs 6077 log-sum-exp expressions over 1173 variables ~50 times, and
-that -- not the Hessian -- is what dominates the run.
-
-The caching is only possible because everything that varies turns out to be a
-weighted sum of *fixed* projections: each exact term is
-``exp([log c + a.log x_k] + [a.d])`` with ``a.d`` constant, and the AGM
-condensation's exponent vector is ``sum_i w_i a_i``, so ``aq.d`` reuses the
-same projections with scalar weights.
-
-Off by default; anything the bridge cannot express (a Signomial body, or the
-lsqp/sqp methods) silently keeps the rebuild path.
+``Options.cache_subproblem`` builds the Pyomo model once and re-points it at
+each iterate through mutable Params; on SPaircraft the symbolic rebuild --
+not the Hessian -- dominates the run. Possible because everything that
+varies is a weighted sum of fixed projections. Off by default; anything the
+bridge cannot express silently keeps the rebuild path.
 """
 import pyomo.environ as pyo
 import pytest

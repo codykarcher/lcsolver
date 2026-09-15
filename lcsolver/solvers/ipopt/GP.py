@@ -6,43 +6,21 @@
 
 """Solve structured (LP / QP / GP) formulations with IPOPT instead of cvxopt.
 
-This is an *option*, not a replacement: ``cvxopt`` remains the default backend for
-structured problems. IPOPT is offered because it is an interior-point code with a
-sparse linear-algebra backend (MA27/MA57/MUMPS) and generally scales better on
-larger problems than the dense cvxopt path.
+An option, not a replacement: cvxopt stays the default backend. IPOPT is
+interior-point with sparse linear algebra (MA27/MA57/MUMPS) and scales better
+on larger problems. LP/QP are convex as-is and go to IPOPT unchanged.
 
-Linear and quadratic programs are already convex in their natural variables, so
-they are handed to IPOPT unchanged.
+A GP is not convex in its natural variables, so the standard log change of
+variables is applied: with x_j = exp(t_j) a monomial c_k prod_j x_j^a_kj
+becomes exp(b_k + a_k.t) with b_k = log c_k, a posynomial becomes a sum of
+exponentials of affine functions (convex), and posy <= 1 becomes
+sum_k exp(b_k + a_k.t) <= 1 -- so IPOPT gets the global optimum.
 
-Geometric programs are *not* convex in their natural variables, and handing the
-raw model to a general NLP solver would forfeit the global-optimality guarantee
-that motivates using a GP at all. Instead the standard logarithmic change of
-variables is applied here. With :math:`x_j = e^{t_j}`, a monomial
-
-.. math::  c_k \\prod_j x_j^{a_{kj}}  \\;=\\;  e^{\\,b_k + a_k^\\top t},
-           \\qquad b_k = \\log c_k,
-
-so a posynomial becomes a sum of exponentials of affine functions, which is
-convex. The GP standard form ``posynomial <= 1`` therefore becomes
-
-.. math::  \\sum_k e^{\\,b_k + a_k^\\top t} \\;\\le\\; 1,
-
-and the objective is the same sum, minimized. Both are convex in :math:`t`, so
-IPOPT converges to the global optimum.
-
-Both are formed under the outer logarithm -- ``log sum_k exp(...) <= 0`` -- as
-in the textbook presentation. Dropping it, as an earlier version of this
-module did, leaves IPOPT evaluating the posynomial itself; on a model with
-large coefficients or exponents that value is ``e`` raised to several hundred
-and overflows during a line search, which surfaces as "Invalid number in NLP
-function or derivative" rather than as the arithmetic problem it is. The
-concern that motivated dropping it -- ``log`` of something driven toward zero
--- is handled by the log-space box below, which stops ``t`` running to minus
-infinity. Single-term groups are monomials and are emitted as affine
-constraints directly, so they never form ``exp`` at all.
-
-Monomial equality constraints are affine in :math:`t` and are passed through as
-such. A multi-term equality is not a valid geometric program and is rejected.
+Both objective and constraints go in under the outer logarithm
+(log sum exp <= 0); dropping it overflows on large coefficients/exponents
+("Invalid number in NLP function or derivative"), and the log-space box below
+stops t running to -inf. Monomials stay affine; multi-term equalities are
+rejected (not a valid GP).
 """
 
 import math
@@ -61,30 +39,12 @@ def _group_rows(rows):
     return groups
 
 
-# Box on the log-space variables.
-#
-# In log space a GP is a sum of exp(log c + a.t), and nothing bounds t unless
-# the model says so. Where a model carries large exponents -- SPaircraft's
-# vertical tail drag fit has tau**133.8 and M**1022.7 -- a line search can
-# walk a.t past 709, exp() overflows to inf, and IPOPT aborts with "Invalid
-# number in NLP function or derivative". That reads like an infeasible model
-# rather than an arithmetic overflow, which makes it expensive to optimization_check.
-#
-# A single box cannot serve: the variable carrying the 1022.7 exponent needs
-# one three hundred times tighter than a variable appearing linearly. So the
-# bound is derived per column from that column's own largest exponent, as the
-# widest interval over which every monomial containing it stays evaluable:
-#
-#     |t_j| <= EXP_LIMIT / max_k |a_kj|
-#
-# clamped to [MIN_BOX, MAX_BOX] so that a variable appearing only with small
-# exponents is not left effectively unbounded, and one with a huge exponent
-# still gets room to move. For SPaircraft this puts Mach in [0.5, 2.0] and
-# tail thickness in [0.005, 180] -- both far wider than any physical answer.
-#
-# This bounds the *iterates*, which is the part a constraint cannot do:
-# IPOPT satisfies constraints only in the limit, so a monomial constraint on
-# the same variable does not stop an intermediate point from overflowing.
+# Box on the log-space variables. Large exponents (SPaircraft's tail drag
+# fit has tau**133.8 and M**1022.7) let a line search walk a.t past 709 and
+# exp() overflows, so bound each column by its own largest exponent:
+# |t_j| <= EXP_LIMIT / max_k |a_kj|, clamped to [MIN_BOX, MAX_BOX]. This
+# bounds the ITERATES, which a constraint cannot do -- IPOPT satisfies
+# constraints only in the limit.
 EXP_LIMIT = 500.0
 MIN_BOX = 0.5
 MAX_BOX = 200.0
@@ -108,22 +68,14 @@ def _log_box(n, groups):
 def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
                         method='auto', executable=None, form='auto',
                         linear_solver=None, linear_solver_library=None):
-    """Solve a geometric program given only its monomial rows, with IPOPT.
+    """Solve a GP given only its monomial rows, with IPOPT.
 
-    This is the row-level core of :func:`solve_gp_ipopt`, split out so that it
-    can also serve as the inner solve of the signomial (PCCP) loop. That loop
-    linearizes about a moving point and *adds slack columns*, so its
-    subproblems have more variables than the original model and no
-    ``structures['variables']`` list to size them by — the width comes from
-    the rows themselves and the warm start from the current iterate.
-
-    Parameters
-    ----------
-    rows : list of ``[constraint_index, coefficient, *exponents]``
-    relations : operator per constraint index 1..N
-    x0 : optional warm start in the ORIGINAL (not log) variables
-
-    Returns a dict with ``status``, ``primal objective``, ``x``.
+    Row-level core of solve_gp_ipopt, split out to serve as the PCCP inner
+    solve -- those subproblems add slack columns and have no
+    structures['variables'] list, so width comes from the rows and the warm
+    start from the iterate. rows = [constraint_index, coeff, *exponents],
+    relations = operator per constraint 1..N, x0 in the original (not log)
+    variables. Returns a dict with status, primal objective, x.
     """
     if linear_solver is not None:
         # Resolve here, at the top of the chain, against the same route
@@ -181,28 +133,16 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
 #   'sum'  ->  sum_k exp(b_k + a_k.t)        <= 1     (the original form)
 #   'lse'  ->  log sum_k exp(b_k + a_k.t)    <= 0
 #
-# Neither is right for every model, which is why this is a choice rather than
-# a rewrite.
-#
-# 'sum' hands IPOPT the posynomial itself. That is better conditioned for the
-# common case, where every log c + a.t is O(1..30): residuals stay near 1 and
-# IPOPT's restoration phase behaves. The JHO sailplane is such a model
-# (max |log c| = 30, max |a| = 19) and it solves with 'sum' and fails under
-# 'lse'.
-#
-# 'lse' is needed once the arguments get large. SPaircraft reaches
-# log c = 176 with exponents to 1022.7, so log c + a.t lands near 676 against
-# an overflow threshold of 709; one line-search step under 'sum' produces inf
-# and IPOPT aborts with "Invalid number in NLP function or derivative". Under
-# the logarithm the same quantity is ~676 and stays finite.
-#
-# 'auto' picks 'lse' only when the row data says the plain sum is at risk,
-# falls back to 'lse' if 'sum' fails outright, and VERIFIES a claimed 'sum'
-# success with a warm-started 'lse' polish -- because 'sum' can also fail
-# silently: on a model whose optimum sits at small absolute scale (the wind
-# turbine COE model, objective ~1e-7 in corrected units) the sum-form KKT
-# residuals deflate below IPOPT's tolerances and it certifies a point 7x off
-# the optimum.  See _build_and_solve_gp.
+# Neither fits every model. 'sum' is better conditioned when log c + a.t is
+# O(1..30): the JHO sailplane solves with 'sum' and fails under 'lse'.
+# 'lse' is needed once arguments get large: SPaircraft hits log c = 176 with
+# exponents to 1022.7, and one 'sum' line-search step overflows ("Invalid
+# number in NLP function or derivative"). 'auto' picks 'lse' when the row
+# data says 'sum' is at risk, falls back to 'lse' on failure, and verifies a
+# claimed 'sum' success with a warm-started 'lse' polish -- 'sum' can fail
+# SILENTLY when the optimum sits at small scale (wind turbine COE, ~1e-7:
+# KKT residuals deflate below tolerance at a point 7x off the optimum).
+# See _build_and_solve_gp.
 GP_FORM_AUTO_LOGC = 100.0     # |log c| above which 'auto' switches to 'lse'
 GP_FORM_AUTO_EXPONENT = 100.0  # |exponent| likewise
 
@@ -223,11 +163,9 @@ def _auto_form(groups):
     return 'sum'
 
 
-# Relative objective improvement above which the 'lse' verification solve is
-# taken to have caught a false 'sum' optimum (see _build_and_solve_gp).  The
-# wind-turbine GP that motivated the check shows a factor of ~7; genuine
-# agreement between the forms is within solver tolerance, so anything beyond
-# this is a 'sum' failure, and a warning names it.
+# Relative improvement above which the 'lse' verification caught a false
+# 'sum' optimum. The motivating wind-turbine GP shows ~7x; genuine agreement
+# is within solver tolerance, so anything beyond this warns.
 GP_SUM_VERIFY_RTOL = 1e-4
 
 
@@ -243,8 +181,8 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
     except Exception:
         if form != 'auto' or chosen == 'lse':
             raise
-        # 'sum' failed and we had not already tried the logarithm; the usual
-        # cause is an overflow the magnitude test did not predict.
+        # 'sum' failed before trying the log form; usually an overflow the
+        # magnitude test did not predict.
         m.del_component(m.obj)
         m.del_component(m.cons)
         return _assemble_and_solve(m, n, groups, relations, tee, options,
@@ -253,22 +191,13 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
     if form != 'auto' or chosen != 'sum':
         return res
 
-    # 'sum' CLAIMED success; verify it, because 'sum' can also fail
-    # SILENTLY.  Without the outer logarithm every quantity IPOPT sees is
-    # the posynomial itself, and on a model whose optimum lives at small
-    # absolute scale the whole KKT system deflates with it: the wind
-    # turbine COE model (objective ~1e-7 in corrected base units) returns
-    # "EXIT: Optimal Solution Found" with every residual below tolerance
-    # at a point 7x above the true optimum -- the tolerances are simply
-    # larger than the numbers that would have to move.  No property of the
-    # returned point distinguishes this (the constraints are feasible and
-    # nothing is overflowed), so the check is a second solve in 'lse'
-    # form, warm-started at the 'sum' answer: log-space values are O(1-30)
-    # where IPOPT's tolerances mean something.  If 'sum' was right the
-    # polish converges in a handful of iterations to the same point; if
-    # not, it walks to the real optimum.  If 'lse' itself fails -- the JHO
-    # sailplane does, which is why 'sum' exists -- the 'sum' answer is
-    # kept, so models that only 'sum' can solve behave exactly as before.
+    # 'sum' claimed success; verify, because 'sum' can fail SILENTLY: at
+    # small absolute scale the whole KKT system deflates below tolerance
+    # (wind turbine COE, ~1e-7, certified 7x off the optimum) and nothing
+    # about the returned point distinguishes it. So re-solve in 'lse' form
+    # warm-started at the 'sum' answer -- if 'sum' was right the polish
+    # converges to the same point in a few iterations; if 'lse' itself
+    # fails (JHO sailplane), keep the 'sum' answer as before.
     m.del_component(m.obj)
     m.del_component(m.cons)
     try:
@@ -296,24 +225,11 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
         return math.log(c) + sum(a[j] * t[j] for j in range(n) if a[j])
 
     def _lse(t, terms):
-        """log sum_k exp(b_k + a_k . t) for one constraint/objective group.
-
-        The outer logarithm matters numerically. Without it the value handed
-        to IPOPT is the posynomial itself, which for a model carrying large
-        coefficients or exponents is e raised to several hundred: SPaircraft
-        reaches log c = 176 with exponents to 1022.7, so log c + a.t lands
-        around 676 against an overflow threshold of 709. One line-search step
-        tips it to inf and IPOPT aborts with "Invalid number in NLP function
-        or derivative". Under the logarithm the same quantity is ~676, and
-        every residual IPOPT sees stays within a couple of orders of 1.
-
-        Taking the log is free mathematically -- log is monotone, so
-        minimizing a positive sum and minimizing its logarithm have the same
-        minimizer, and `posy <= 1` is exactly `log(posy) <= 0`.
-
-        A single-term group is a monomial, whose log is already affine; it is
-        returned as such rather than round-tripped through exp/log, which
-        keeps roughly half the constraints of a typical GP linear.
+        """log sum_k exp(b_k + a_k . t) for one group. The outer log keeps
+        large arguments finite (see the form comment above) and is free
+        mathematically -- log is monotone, posy <= 1 is log(posy) <= 0.
+        A single-term group is a monomial: returned affine, not
+        round-tripped through exp/log, keeping ~half a typical GP linear.
         """
         if len(terms) == 1:
             c, a = terms[0]
@@ -373,11 +289,10 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
             'no usable IPOPT installation found for the convex backend; run '
             '`lcsolver-install-solvers`')
 
-    # The two routes take options by different mechanisms, and only the AMPL
-    # one has an `options` mapping: PyomoCyIpoptSolver takes them as a solve()
-    # argument and raises AttributeError on `opt.options[...]`. Setting
-    # linear_solver on the cyipopt route is exactly what an MA27 user needs to
-    # do, so this has to be right on both.
+    # The two routes take options differently: only the AMPL one has an
+    # `options` mapping; PyomoCyIpoptSolver takes them as a solve() argument
+    # and raises AttributeError on `opt.options[...]`. An MA27 user sets
+    # linear_solver on the cyipopt route, so this has to be right on both.
     if route == 'cyipopt':
         results = opt.solve(m, tee=tee, options=dict(options or {}))
     else:
@@ -421,12 +336,9 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
 def solve_gp_ipopt(structures, model=None, tee=False, options=None,
                    method='auto', executable=None, form='auto',
                    linear_solver=None, linear_solver_library=None):
-    """Solve a detected geometric program with IPOPT in log space.
-
-    Returns a dict shaped like the other LCsolver backends: ``status``,
-    ``primal objective`` (in the ORIGINAL variables), ``x`` (original
-    variables, in ``structures['variables']`` order), and ``solution``.
-    """
+    """Solve a detected GP with IPOPT in log space. Returns a dict shaped
+    like the other backends: status, primal objective (original variables),
+    x (in structures['variables'] order), solution."""
     gp = structures['Geometric_Program']
     if not gp[0]:
         raise ValueError('the formulation was not detected as a geometric program')
@@ -452,18 +364,10 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
 
 # ---------------------------------------------------------------------------
 def solve_lp_qp_ipopt(m, structure='linear_program', **kwargs):
-    """LP/QP with IPOPT.
-
-    These are already convex in their natural variables, so no transformation is
-    needed: the model goes to IPOPT unchanged and the solution is loaded back by
-    Pyomo in the usual way.
-
-    ``structure`` is what the detector found, and is stamped onto the result so
-    the solution's Report says so. Without it the model goes through
-    ``ipopt_solve``, which labels everything it is handed a
-    ``nonlinear_program`` -- and a detected LP came back reporting itself as a
-    general NLP, contradicting ``f.structure_report()`` on the same model.
-    """
+    """LP/QP with IPOPT. Already convex in the natural variables, so the
+    model goes in unchanged. structure (what the detector found) is stamped
+    onto the result -- ipopt_solve labels everything nonlinear_program,
+    which contradicted structure_report() on a detected LP."""
     from lcsolver.solvers.ipopt import ipopt_solve
 
     res = ipopt_solve(m, **kwargs)

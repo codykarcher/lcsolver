@@ -1,11 +1,9 @@
 """Values-only black boxes: refuse silently missing derivatives, allow FD.
 
-A box that declares ``availableDerivative = 0`` returns values with no
-jacobian. The optimizer needs one, so the solve must ERROR -- naming the
-box and the fix -- unless the modeller explicitly grants
-``solve(f, allow_blackbox_finite_difference=True)``, in which case a
-central-difference jacobian is built from extra BlackBox calls, shaped
-exactly as packOutputs would have shaped an author-supplied one.
+A box with ``availableDerivative = 0`` gives no jacobian, so the solve must
+ERROR naming the box and the fix -- unless the modeller explicitly grants
+``allow_blackbox_finite_difference=True``, which builds a central-difference
+jacobian shaped exactly as packOutputs would shape an author-supplied one.
 """
 import numpy as np
 import pytest

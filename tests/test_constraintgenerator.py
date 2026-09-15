@@ -6,14 +6,10 @@
 
 """Rows without a namespace.
 
-A `ConstraintGenerator` relates quantities its caller already declared and owns
-nothing itself -- which is what separates it from a `SubModel`, and what lets a
-posynomial fit and a black box sit behind the same call.
-
-The load-bearing part is that its return goes into `ConstraintList` WHOLE. A
-generator that needs five rows must read at the call site exactly like one that
-needs one, or the caller is coupled to the very thing the type exists to let it
-ignore.
+A `ConstraintGenerator` relates quantities its caller declared and owns
+nothing itself -- unlike a `SubModel`. Its return goes into `ConstraintList`
+WHOLE: a generator that needs five rows must read at the call site exactly
+like one that needs one.
 """
 import pyomo.environ as pyo
 import pytest
@@ -46,13 +42,9 @@ def test_a_generator_declares_nothing_and_posts_through_its_caller():
 
 @pytest.mark.parametrize('n', [1, 2, 3, 4, 5])
 def test_however_many_rows_it_returns_read_the_same(n):
-    """Four is the case that used to break.
-
-    A bare list was dispatched to RuntimeConstraint, so a four-row generator
-    was read as [outputs, operators, inputs, box] and every other count raised
-    on arity. Rows are told from a black box by what the entry IS now, so no
-    count is special.
-    """
+    """Four used to break: a bare list was dispatched to RuntimeConstraint as
+    [outputs, operators, inputs, box]. Rows are told from a black box by what
+    the entry IS now, so no count is special."""
     class NRows(ConstraintGenerator):
         def generate_rows(self, x):
             return [x >= float(i + 1) * units.m for i in range(n)]

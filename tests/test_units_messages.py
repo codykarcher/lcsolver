@@ -119,15 +119,9 @@ class TestUnitMessages(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestUnitMismatchIsFatal(unittest.TestCase):
-    """A dimensional error is a modelling error, not a routing decision.
-
-    `solve` falls back to plain IPOPT when structure detection fails, which is
-    right for a model it cannot classify and wrong for one that does not
-    balance dimensionally: IPOPT returns numbers for it either way. Observed on
-    an example whose coordinate arrays were bare floats standing for metres --
-    the fallback reported lengths of 1e5 m with nothing to say anything was
-    amiss.
-    """
+    """A dimensional error is a modelling error, not a routing decision:
+    the raw-IPOPT fallback returns numbers for an unbalanced model either
+    way (observed as lengths of 1e5 m with nothing amiss reported)."""
 
     def test_solve_raises_rather_than_falling_back(self):
         from lcsolver.solvers.solver import solve
@@ -156,14 +150,10 @@ class TestUnitMismatchIsFatal(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestNegatedUnitLeaf(unittest.TestCase):
-    """Subtracting a quantity whose coefficient is exactly 1.
-
-    Pyomo folds `1.0*units.m` down to the bare unit, so `a*m - 1.0*m` negates
-    a `_PyomoUnit` while `a*m - 1.5*m` negates a product. The walker's branch
-    for the first case read `node.expr`, which a negation node does not have,
-    and raised AttributeError -- so the failure appeared to depend on the
-    numbers in the model rather than on their form.
-    """
+    """Subtracting a quantity whose coefficient is exactly 1: Pyomo folds
+    `1.0*units.m` to the bare unit, and the walker's branch for that case
+    raised AttributeError -- so the failure appeared to depend on the
+    numbers in the model rather than on their form."""
 
     def _rebuilt(self, expr):
         f = Formulation()
@@ -195,13 +185,9 @@ class TestNegatedUnitLeaf(unittest.TestCase):
 
 @unittest.skipIf(not available, 'LCsolver import failed')
 class TestUnitCheck(unittest.TestCase):
-    """`unit_check` is exported from the package and had no test at all.
-
-    It is the diagnostic form of `unit_corrector`: same work, but it reports
-    a mismatch instead of raising, which is what a caller asking "what is
-    wrong with my model" needs -- that is exactly when the model is most
-    likely to be wrong, and an exception is the least useful answer.
-    """
+    """`unit_check` is the diagnostic form of `unit_corrector`: same work,
+    but it reports a mismatch instead of raising -- what a caller asking
+    "what is wrong with my model" needs. It had no test at all."""
 
     @staticmethod
     def _balanced():

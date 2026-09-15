@@ -6,38 +6,19 @@
 
 """Vector and matrix quantities that behave the way the maths is written.
 
-Pyomo's indexed components are dictionaries keyed by index, which is the right
-model for the solver and the wrong one for an author. Writing ``x >= y`` over a
-vector raised ``TypeError``, ``x[-1]`` raised ``KeyError``, ``x * 2`` raised,
-and -- worst -- ``sum(x)`` returned ``0 + 1 + 2`` because iterating a
-dictionary yields its keys. That last one is not an inconvenience but a silent
-wrong answer, and it is how a real model came to assert ``L_dist_sum == 10``
-while looking entirely reasonable.
-
-Three things live here.
-
-:class:`Index` and :class:`IndexTuple` are the keys iteration yields. They are
-an ``int`` (or ``tuple``) in every respect except that they refuse *reflected*
-addition, which is what ``sum()`` performs on its first step. Forward
-arithmetic -- ``i + 1``, ``i - 1`` -- is untouched, so ``for i in x: x[i-1]``
-keeps working exactly as it does in Pyomo. The guard fires on the accident and
-leaves the idiom alone. The language rule that makes this split possible is
-pinned by ``tests/test_vector_language_guarantee.py``.
-
-:class:`VectorArray` is a numpy array whose elements are the component's own
-``VarData``/``ParamData`` objects -- the same objects, not copies -- with the
-comparison operators overridden to build constraints elementwise rather than
-collapse to a boolean.
-
-:class:`VectorComponent` is mixed into the Pyomo component so that slicing,
-negative indexing and comparisons work on the declared quantity directly.
-
-Shapes are never broadcast silently. A one-dimensional quantity is a column,
-and anything that does not line up raises and names
-:func:`~lcsolver.objects.formulation.Formulation.broadcast_rows` /
-``broadcast_cols``. Numpy would happily expand a length-3 vector across the
-rows of a 2x3 matrix, which is a wrong answer whenever the author meant
-columns, and nothing downstream could tell the difference.
+Pyomo's indexed components are dicts keyed by index, so x >= y, x[-1] and
+x * 2 all raised, and sum(x) silently summed the KEYS (0 + 1 + 2 ...) --
+a real model asserted L_dist_sum == 10 that way. Three things live here:
+Index/IndexTuple are the keys iteration yields, ints/tuples that refuse
+REFLECTED addition (sum()'s first step) while forward i + 1 / i - 1 stay
+untouched (pinned by tests/test_vector_language_guarantee.py);
+VectorArray is a numpy array of the component's own VarData/ParamData
+objects with comparisons building constraints elementwise; VectorComponent
+is mixed into the Pyomo component so slicing, negative indexing and
+comparisons work directly. Shapes never broadcast silently -- a mismatch
+raises and names broadcast_rows / broadcast_cols, because numpy expanding
+a length-3 vector across the rows of a 2x3 matrix is a wrong answer
+whenever the author meant columns.
 """
 from __future__ import annotations
 
@@ -55,14 +36,10 @@ _SUM_MESSAGE = (
 
 
 class Index(int):
-    """An index key that refuses to be summed.
-
-    ``sum()`` starts from ``0`` and so performs ``0 + key``, a *reflected*
-    addition. Because this is a subclass of ``int`` that overrides
-    ``__radd__``, Python calls it in preference to ``int.__add__`` and the
-    guard fires. ``key + 1`` and ``key - 1`` are forward operations and use
-    ``int``'s own implementations, so index arithmetic is unaffected.
-    """
+    """An index key that refuses to be summed. sum() starts from 0, so
+    0 + key is a reflected add and __radd__ fires; key + 1 / key - 1 are
+    forward ops on int's own implementations, so index arithmetic is
+    unaffected."""
 
     __slots__ = ()
 
@@ -71,11 +48,8 @@ class Index(int):
 
 
 class IndexTuple(tuple):
-    """The same guard for a multi-dimensional key.
-
-    ``sum()`` over these already failed, but with ``unsupported operand
-    type(s) for +: 'int' and 'tuple'``, which says nothing about what to do.
-    """
+    """Same guard for a multi-dimensional key. sum() over these already
+    failed, but with an unhelpful 'int' + 'tuple' TypeError."""
 
     __slots__ = ()
 
@@ -109,13 +83,10 @@ def _is_scalarish(obj):
 
 
 class VectorArray(np.ndarray):
-    """A numpy array of Pyomo objects that compares elementwise.
-
-    Numpy's own comparison ufuncs coerce each result to ``bool``, and a Pyomo
-    relational expression refuses that -- correctly, since its truth value is
-    not known until the model is solved. So the operators are overridden to
-    collect the expressions instead.
-    """
+    """A numpy array of Pyomo objects that compares elementwise. Numpy's
+    comparison ufuncs coerce to bool, which a Pyomo relational expression
+    refuses (its truth isn't known until solve), so the operators collect
+    the expressions instead."""
 
     def __array_finalize__(self, obj):
         pass
@@ -189,9 +160,8 @@ def broadcast_rows(vector, n):
         M  is (n, m)      cap is (m,)
         M <= f.broadcast_rows(cap, n)     # every row obeys the same caps
 
-    A scalar is accepted as a length-1 vector: it is unambiguous as "the same
-    value everywhere", so lifting it is not the vector-shape guessing the
-    strictness below exists to prevent.
+    A scalar is accepted as a length-1 vector: "the same value everywhere"
+    is unambiguous, unlike the vector-shape guessing refused below.
     """
     arr = np.atleast_1d(as_array(vector)).view(VectorArray)
     if arr.ndim != 1:
@@ -211,9 +181,8 @@ def broadcast_cols(vector, n):
         M  is (n, m)      cap is (n,)
         M <= f.broadcast_cols(cap, m)     # every column obeys the same caps
 
-    A scalar is accepted as a length-1 vector: it is unambiguous as "the same
-    value everywhere", so lifting it is not the vector-shape guessing the
-    strictness below exists to prevent.
+    A scalar is accepted as a length-1 vector: "the same value everywhere"
+    is unambiguous, unlike the vector-shape guessing refused below.
     """
     arr = np.atleast_1d(as_array(vector)).view(VectorArray)
     if arr.ndim != 1:
@@ -226,13 +195,10 @@ def broadcast_cols(vector, n):
 
 
 def _checked(left, right, op):
-    """Apply ``op`` elementwise, refusing to broadcast between shapes.
-
-    numpy would report `operands could not be broadcast together with shapes
-    (5,) (4,)`, which says nothing about the model. Worse, when the lengths do
-    line up it would broadcast happily and quietly answer a different
-    question -- the same reason the comparisons refuse it.
-    """
+    """Apply op elementwise, refusing to broadcast between shapes. numpy's
+    error says nothing about the model, and when lengths do line up it
+    quietly answers a different question -- same reason the comparisons
+    refuse it."""
     ls = left.shape if isinstance(left, np.ndarray) else ()
     rs = right.shape if isinstance(right, np.ndarray) else ()
     if ls and rs and ls != rs:
@@ -245,11 +211,8 @@ def _checked(left, right, op):
 
 
 def _rhs(other):
-    """The other operand of an arithmetic expression, as numpy can use it.
-
-    A vector becomes its array; a single quantity is left alone so numpy
-    applies it to every element.
-    """
+    """The other operand as numpy can use it: a vector becomes its array,
+    a single quantity is left alone so numpy applies it everywhere."""
     if isinstance(other, VectorComponent):
         return other.as_array()
     return other
@@ -257,15 +220,11 @@ def _rhs(other):
 
 class VectorComponent:
     """Mixed into an indexed Pyomo component to make it read like a vector.
+    Only __iter__, __getitem__ and the comparisons are touched; everything
+    Pyomo does goes through keys/values/items and is untouched, which is
+    why a model carrying these still solves identically."""
 
-    Only ``__iter__``, ``__getitem__`` and the comparisons are touched.
-    Everything Pyomo does with the component -- construction, writing, solving,
-    ``component_data_objects`` -- goes through ``keys``/``values``/``items``
-    and is untouched, which is why a model carrying these still solves
-    identically.
-    """
-
-    #: Set when the component is declared; ``(n,)`` or ``(n, m)`` and so on.
+    # set when the component is declared; (n,) or (n, m) and so on
     _edi_shape = None
 
     @property
@@ -278,11 +237,9 @@ class VectorComponent:
         return iter(_wrap_key(k) for k in self.keys())
 
     def as_array(self):
-        """The elements, in index order, as a :class:`VectorArray`.
-
-        The elements are the component's own data objects, so a constraint
-        built from the array is a constraint on the declared variables.
-        """
+        """The elements, in index order, as a VectorArray. They are the
+        component's own data objects, so a constraint built from the array
+        is a constraint on the declared variables."""
         shape = self.shape
         out = np.empty(shape, dtype=object)
         if len(shape) == 1:
@@ -304,9 +261,8 @@ class VectorComponent:
         return False
 
     def __getitem__(self, key):
-        # Indexing with a variable means the caller iterated the component and
-        # used the result as a key. Iteration yields keys here as it does in
-        # Pyomo, so this is a genuine mistake rather than a convention clash.
+        # slices, lists and negative ints go through the array; plain keys
+        # go to Pyomo as always
         if self._is_array_style(key):
             return self.as_array()[key]
         return super().__getitem__(key)
@@ -336,10 +292,8 @@ class VectorComponent:
             "Use '>='.")
 
     # -- arithmetic -------------------------------------------------------
-    # Elementwise, by handing the work to the array. Without these a vector
-    # could be compared but not used: `V == M * a` failed, so a model still
-    # had to spell out `for i in range(N)` to write the very expressions the
-    # comparisons were meant to free it from.
+    # Elementwise, via the array. Without these a vector could be compared
+    # but not used: `V == M * a` failed, forcing `for i in range(N)` loops.
     def _arith(self, other, op):
         return _checked(self.as_array(), _rhs(other), op)
 

@@ -1,16 +1,9 @@
 """The adapter from LCsolver's detected structure to the SLCP/SIA Problem object.
 
-``lcsolver.solvers.sequential.slcp`` works on its own ``Problem`` type, which nothing
-else in LCsolver builds. This bridge is the only path from a ``Formulation`` to
-SLCP or SIA, so a defect here is invisible in the solver tests -- the paper's
-problems in ``examples/slcp_cases.py`` construct ``Problem`` objects directly
-and never touch it.
-
-The test that matters here is the one that was missing: **an equality must not
-become a one-sided inequality.** Writing only ``p <= 1`` for ``p == 1`` leaves
-the solver free to drive ``p`` below 1, which relaxes the problem -- and a
-relaxed problem yields an objective BETTER than the true optimum, which reads
-as success rather than as a bug.
+The bridge is the only path from a Formulation to SLCP or SIA, so a defect
+here is invisible in the solver tests. The test that matters: an equality
+must not become a one-sided inequality -- the relaxed problem yields an
+objective BETTER than the true optimum, which reads as success, not a bug.
 """
 import numpy as np
 import pytest
@@ -28,12 +21,8 @@ from lcsolver.presolve.unitCorrector import unit_corrector
 
 
 def _equality_model():
-    """min z  s.t.  z >= x + y,  x*y >= 1,  x + y == 4.
-
-    The equality forces x + y = 4, so z = 4. Drop its lower direction and
-    x + y is free to fall to 2 (from x*y >= 1), giving z = 2 -- a 'better'
-    objective that is not feasible for the real problem.
-    """
+    """min z s.t. z >= x + y, x*y >= 1, x + y == 4, so z = 4. Drop the
+    equality's lower direction and z falls to 2 -- 'better' but infeasible."""
     f = Formulation()
     x = f.Variable('x', 2.0, '', 'x')
     y = f.Variable('y', 2.0, '', 'y')
@@ -66,11 +55,9 @@ def test_multi_term_equality_is_not_relaxed():
 
 
 def test_every_equality_gets_both_directions():
-    """Structural check: no '==' may leave the bridge as a lone '<='.
-
-    A monomial equality is affine in log space and stays an '=='. Anything
-    else must appear twice -- forward, and reverse as a ratio.
-    """
+    """Structural check: no '==' may leave the bridge as a lone '<='. A
+    monomial equality stays '=='; anything else appears twice, forward and
+    reverse as a ratio."""
     st = structure_detector(unit_corrector(_equality_model()))
     key = ('Signomial_Program' if st['Signomial_Program'][0]
            else 'Geometric_Program')

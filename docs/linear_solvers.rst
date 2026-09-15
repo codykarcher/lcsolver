@@ -69,7 +69,11 @@ All runs: Ipopt 3.14.20, one triple-solver source build (MA27 + MUMPS 5.9.1
   size -- OpenMP overhead, not arithmetic).
 * **The D8 sentinel sub-problem** (``examples/data/d8_sia_subproblem.nl``,
   SIA tolerances): MA27 optimal in 0.13 s, SPRAL optimal in 0.40 s,
-  **MUMPS falsely declares it infeasible**.
+  **MUMPS falsely declares it infeasible**. Build-specific: the linux
+  conda-forge MUMPS solves this capture, so the failure belongs to the
+  macOS arm64 MUMPS 5.9.1 + openblas build -- which sharpens the lesson
+  (the same named solver is only as good as its build) rather than
+  blunting it.
 * **SPaircraft D8.2 full deck** (York et al., AIAA J.; 1172 variables,
   SIA): MA27 certifies at 179 iterations / 35 s / 21,384.0 lbf; **SPRAL
   certifies the same optimum at 149 iterations / 103 s**; MUMPS stops

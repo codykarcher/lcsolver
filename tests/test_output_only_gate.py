@@ -6,27 +6,11 @@
 
 """Output-only variables must not gate the solve -- and must be peeled right.
 
-The motivating defect: a demo's objective changed from ``CD/CL`` to ``W``,
-leaving ``CD >= CD0 + CL**2/(pi*AR*e)`` as the only place ``CD`` appears.
-The pre-solve gate refused the model as ill-posed ("CD is not upper
-bounded") even though CD cannot affect the optimum; demoting the gate to a
-warning then let CD ride through the solve as a genuinely free variable,
-which IPOPT parked at ~9e3.
-
-The contract under test:
-
-1. An output-only variable (one constraint computes it, nothing uses it)
-   does NOT raise; the solve proceeds, notes it as LC-W104, and the
-   sequential presolve peels the variable and its defining constraint,
-   recovering the value from that constraint afterwards.
-2. A variable that is unbounded but NOT output-only still raises -- the
-   gate was narrowed, not removed.
-3. A grey-box-fed variable is never classified peelable, however
-   output-only it looks to the algebraic rows: its single algebraic row is
-   a live constraint, not a definition.
-4. The peel runs on grey-box models (previously presolve was skipped
-   outright), with every grey-box-referenced column protected -- including
-   surviving the column renumbering that removal causes.
+Contract: an output-only variable (one constraint computes it, nothing uses
+it) does not raise; the solve notes LC-W104, peels it plus its defining row,
+and recovers the value afterwards. Unbounded-but-not-output-only still
+raises. A grey-box-fed variable is never peelable, and the peel runs on
+grey-box models with every grey-box-referenced column protected.
 """
 
 import numpy as np
@@ -65,11 +49,8 @@ class Square(BlackBoxFunctionModel):
 
 
 def _dangling_model():
-    """min w  s.t.  w >= x + 1/x,  x >= 2 - w,  cd >= 0.1 + x**2.
-
-    Optimum w = 2 at x = 1; the signomial row keeps it on the SP/SIA path.
-    ``cd`` is output-only: computed, used by nothing, unbounded above.
-    """
+    """min w s.t. w >= x + 1/x, x >= 2 - w, cd >= 0.1 + x**2. Optimum w = 2
+    at x = 1; the signomial row keeps it on SIA; ``cd`` is output-only."""
     f = Formulation()
     w = f.Variable('w', 2.0, '', 'w')
     x = f.Variable('x', 1.5, '', 'x')
@@ -84,12 +65,9 @@ def _dangling_model():
 
 
 def _greybox_dangling_model():
-    """min w  s.t.  w >= 1 + z,  z == bb(x) = x**2,  x >= 2,  cd dangling.
-
-    ``cd`` is declared FIRST so that peeling it renumbers every column a
-    grey-box block references -- the identity-keyed column map must survive.
-    Optimum: x = 2, z = 4, w = 5, and cd recovers to 0.1 + x**2 = 4.1.
-    """
+    """min w s.t. w >= 1 + z, z == bb(x) = x**2, x >= 2, cd dangling.
+    ``cd`` is declared FIRST so peeling renumbers every grey-box column.
+    Optimum x = 2, z = 4, w = 5; cd recovers to 4.1."""
     f = Formulation()
     cd = f.Variable('cd', 1.0, '', 'dangling output')
     x = f.Variable('x', 3.0, '', 'x')
@@ -117,13 +95,9 @@ def test_dangling_output_variable_does_not_gate():
 
 
 def _gp_dangling_model():
-    """min w  s.t.  w >= x + 1/x,  cd >= 0.1 + x**2 -- a pure GP.
-
-    Exercises the CENTRAL peel: the GP-IPOPT and cvxopt routes have no
-    reduction pipeline of their own, so before the peel moved into
-    _solve_impl the dangling variable rode through these solves as a free
-    column and was parked at an arbitrary value.
-    """
+    """min w s.t. w >= x + 1/x, cd >= 0.1 + x**2 -- a pure GP. Exercises the
+    CENTRAL peel: the GP-IPOPT/cvxopt routes have no reduction pipeline, so
+    the dangling variable used to ride through as a free column."""
     f = Formulation()
     w = f.Variable('w', 2.0, '', 'w')
     x = f.Variable('x', 1.5, '', 'x')
@@ -217,15 +191,8 @@ def test_protected_columns_survive_reduce():
 
 def test_middle_position_peel_does_not_shift_writeback():
     """FALSIFICATION of the restore path: a peeled column that is NOT last.
-
-    The GP-IPOPT backend solves in the full frame and parks the peeled
-    column at garbage; restore_columns must recognize the full-length
-    vector and overwrite in place.  Before the length-aware branch it
-    slotted the full vector through the reduced-frame logic, shifting
-    every value after the peeled index by one -- the written-back point
-    then VIOLATED constraints of the original model (found as scrambled
-    masses on the lcspacecraft FireSat model, wet < dry).
-    """
+    Before the length-aware branch, restore_columns shifted every value after
+    the peeled index by one (found as wet < dry on the FireSat model)."""
     f = Formulation()
     a = f.Variable('a', 1.0, '', 'design var')
     p = f.Variable('p', 1.0, '', 'output-only, deliberately mid-list')

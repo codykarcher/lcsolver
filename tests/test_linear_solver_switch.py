@@ -1,13 +1,9 @@
 """The linear_solver switch: solve(f, linear_solver='ma27'|'mumps'|...).
 
-IPOPT's inner linear solver decides robustness on our models (MA27 vs the
-shipped MUMPS most visibly), and selecting one used to mean hand-editing
-backend options per route. The switch validates the NAME before any backend
-runs, probes AVAILABILITY against the build the chosen route actually uses,
-and threads the choice through every IPOPT call site: the raw NLP route,
-the log-space GP route, the SIA sub-problem loop, and PCCP's inner solves.
-cvxopt has no such option, so pairing them is refused as a mistake in the
-call.
+The switch validates the NAME before any backend runs, probes AVAILABILITY
+against the build the chosen route actually uses, and threads the choice
+through every IPOPT call site (raw NLP, log-space GP, SIA sub-problems,
+PCCP inner solves). cvxopt has no such option, so pairing them is refused.
 """
 import pytest
 

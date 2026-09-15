@@ -1,13 +1,9 @@
 """The limited-memory Hessian option must match the dense one.
 
-``Options.hessian_memory`` swaps the dense n-by-n BFGS matrix for a
-limited-memory representation. It is a toggle: the default (``None``) leaves
-the dense path exactly as it was.
-
-The motivation is the sub-problem, not the update. The dense path builds
-``0.5 * sum_ij B[i][j] d_i d_j`` as an n^2-term Pyomo expression every
-iteration -- 1.4 million terms at n = 1173. Limited memory makes that
-``O(n * memory)``.
+``Options.hessian_memory`` swaps the dense BFGS matrix for a limited-memory
+form; the default (``None``) leaves the dense path as it was. The motivation
+is the sub-problem: the dense path builds an n^2-term Pyomo expression every
+iteration (1.4 million terms at n = 1173); limited memory is O(n * memory).
 """
 import numpy as np
 import pyomo.environ as pyo

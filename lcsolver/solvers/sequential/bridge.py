@@ -4,32 +4,15 @@
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
-"""Run a detected GP/SP through the SLCP solver.
+"""Adapter: detected GP/SP row form -> SLCP Problem.
 
-``lcsolver.solvers.sequential.slcp`` implements sequential log-convex programming over
-its own :class:`~lcsolver.solvers.sequential.slcp.Problem` object, which nothing in LCsolver
-built. This module is the missing adapter: it turns the row form produced by
-:func:`~lcsolver.presolve.structureDetector.structure_detector` into that object,
-so the same formulation can be solved either way and the two compared.
-
-The row form is already close to what SLCP wants. Rows carry
-``[constraint_index, coefficient, *exponents]``; index ``i >= 1`` is
-constraint *i*'s numerator, index ``-i-1`` its denominator, and index 0 is the
-objective. Each group maps as:
-
-* numerator only, all coefficients positive -> ``Posynomial``, imposed exactly
-  in log space;
-* numerator and denominator -> ``PosynomialRatio``, which keeps the numerator
-  exact and condenses only the denominator by the arithmetic-geometric-mean
-  inequality. This is the classical signomial-program treatment and is
-  strictly less lossy than linearizing the whole body;
-* a single-term numerator with ``==`` -> a monomial equality, which is affine
-  in log space and imposed exactly.
-
-A group with a negative coefficient cannot be represented: SLCP's
-``Posynomial`` requires positive coefficients, and the detector should already
-have moved negative terms into a denominator. Such a group is reported rather
-than silently dropped.
+Rows are [constraint_index, coefficient, *exponents]; index i >= 1 is
+constraint i's numerator, -i-1 its denominator, 0 the objective. Mapping:
+numerator only -> Posynomial (exact in log space); numerator + denominator
+-> PosynomialRatio (numerator exact, denominator AGM-condensed -- the
+classical SP treatment); single-term == -> monomial equality (affine, exact).
+A group with a negative coefficient can't be represented (the detector
+should have moved it into a denominator) and is reported, not dropped.
 """
 
 import numpy as np
@@ -43,11 +26,8 @@ from lcsolver.solvers.sequential.slcp import (CondensedEquality, Constraint,
 
 
 def greybox_blocks(structures):
-    """The active grey-box (black-box constraint) blocks of the detected model.
-
-    The model is reached through ``structures['variables']``, so this sees the
-    same (unit-corrected) model the rest of the structure describes.
-    """
+    """Active grey-box blocks, reached via structures['variables'] so we see
+    the same unit-corrected model the rest of the structure describes."""
     variables = structures.get('variables') or []
     if not variables:
         return []
@@ -77,27 +57,17 @@ def _unwrap_vars(vars_):
 
 
 def _greybox_rows(blocks, structures, n):
-    """Opaque ``Signomial`` equality rows for every grey-box block.
-
-    Each block's output variable is tied to its black box as
-    ``bb(inputs) / output == 1`` -- the ratio form every other opaque row in
-    this file uses, affine-friendly in log space. Values and jacobians come
-    from the block model's own ``set_input_values`` / ``evaluate_outputs`` /
-    ``evaluate_jacobian_outputs``, the same standardized path (units,
-    caching) the native cyipopt grey-box route evaluates through.
-    """
+    """Opaque Signomial rows per grey-box block: bb(inputs)/output == 1,
+    evaluated through the same block-model path (units, caching) as the
+    native cyipopt grey-box route."""
     col = {id(v): j for j, v in enumerate(structures.get('variables') or [])}
     rows = []
 
     # ---- batch prefetch: give the boxes ONE look at each new iterate ----
-    # A black box that can evaluate many queries in one shot (e.g.
-    # lcwindturbine's airfoil_bb, whose torch surrogate batches trivially)
-    # exposes a `batch_prefetch(items)` attribute on its CLASS; items is
-    # [(box, x[in_idx]), ...] for every registered box sharing that hook.
-    # The hook warms the box's own cache, so the per-row evaluations below
-    # become cache hits.  Boxes without the attribute are untouched, and a
-    # failing hook is ignored -- the scalar path computes as before, so
-    # this is a pure optimization with no correctness surface.
+    # A box exposing batch_prefetch(items) on its CLASS (e.g. lcwindturbine's
+    # airfoil_bb) gets [(box, x[in_idx]), ...] to warm its own cache; the
+    # per-row evaluations below then hit that cache. No hook or a failing
+    # hook falls back to the scalar path, so this is a pure optimization.
     pairs = []                                  # (bb, in_idx), ALL blocks
     _pf_state = {'x': None}
 
@@ -165,11 +135,10 @@ def _greybox_rows(blocks, structures, n):
                 return val, g
             return fn
 
-        # Directional rows per the declared operator (Formulation records
-        # them as _lc_operators; absent = all '==', the historical form).
-        # 'out >= bb' -> bb/out <= 1;  'out <= bb' -> out/bb <= 1; both
-        # one-sided, so no black-box equality manifold exists for those
-        # rows --- the model's own pressure binds them at the optimum.
+        # Directional rows per the declared operator (_lc_operators; absent
+        # = all '==', the historical form). 'out >= bb' -> bb/out <= 1,
+        # 'out <= bb' -> out/bb <= 1; one-sided, so no black-box equality
+        # manifold -- the model's own pressure binds them at the optimum.
         ops = getattr(block, '_lc_operators', None)
         if not ops or len(ops) != len(out_idx):
             ops = ['=='] * len(out_idx)
@@ -191,51 +160,24 @@ def _greybox_rows(blocks, structures, n):
 
 def build_problem(structures, sp_form=True, split_equalities=False,
                   pair_equalities=True):
-    """Translate a detected structure into an SLCP :class:`Problem`.
+    """Translate a detected structure into an SLCP Problem.
 
-    ``pair_equalities`` (default True) repairs TWO-SIDED PINS written as
-    separate rows -- ``p <= q`` and ``q <= p`` appended independently,
-    which is how EDI models express signomial equalities (survival/gamma
-    series, exact-G, BEM operating-point pins) -- merging each
-    mutual-reverse pair into ONE ``==`` row.  An equality must reach the
-    solver AS an equality: without the merge SIA counts ``n_eq == 0``,
-    the composite Phase I (Gauss-Newton restore onto the manifold +
-    tangential steps) never engages, and the elastic L1 it degrades to
-    slacks both pair sides independently and stalls on the interior-less
-    pinned manifold (observed: 30+ identical phase1-L1 iterations per
-    restoration cycle, the dominant cost of an 11-minute wind-turbine
-    solve).
+    pair_equalities (default True) merges mutual-reverse row pairs (p <= q
+    and q <= p, how EDI models write signomial equalities) into one == row.
+    SIA needs real equalities: without the merge n_eq == 0, Phase I never
+    engages, and the elastic L1 slacks both sides and stalls (30+ identical
+    phase1-L1 iterations per restoration cycle on the wind-turbine solve).
+    Matching folds any single-monomial side into the other first, rounds to
+    11 sig figs, and has a dedicated rule for reciprocal monomial pins;
+    pairs 389/397 two-sided rows on the wind missions SP, and an unmatched
+    pair just stays split. Relies on sia.py: tau escalation ignores
+    equality slacks, Phase-I proximity is seed-anchored, accepted steps are
+    restored onto the manifold first.
 
-    Matching runs in a CANONICAL FRAME: any single-monomial side is
-    folded into the other side first (the detector normalizes the two
-    directions of a pin differently), signatures are rounded to 11
-    significant figures, and reciprocal single-monomial rows (mono ==
-    mono pins fold to C x^A <= 1 and (1/C) x^-A <= 1) are matched by a
-    dedicated rule.  On the wind missions SP this pairs 389 of 397
-    two-sided rows; the survivors are the model's GENUINE one-sided
-    signomial rows (AEP, bin balances, the 3P edge).  A pair that fails
-    to match merely stays split -- the previous behavior.
-
-    The downstream requirements this relies on (all in sia.py): tau
-    escalation ignores equality-row slacks/duals, Phase-I proximity is
-    seed-anchored, and accepted steps are restored onto the manifold
-    before the acceptance tests.
-
-    ``sp_form`` selects how a signomial constraint ``p/q <= 1`` is handled:
-
-    ``True`` (default)
-        Build a :class:`~lcsolver.solvers.sequential.slcp.PosynomialRatio`, which keeps
-        ``p`` exact in log space and condenses only ``q`` by the AGM
-        inequality. Less approximation, and conservative.
-    ``False``
-        Build a plain :class:`~lcsolver.solvers.sequential.slcp.Signomial` -- a
-        value/gradient callback over the same ratio -- which SLCP then
-        linearizes whole, discarding ``p``'s log-convexity along with ``q``'s
-        curvature. This is stock SLCP as the paper describes it, and is the
-        setting to use when comparing against it.
-
-    Turning it off also loses sub-problem caching for those constraints: a
-    linearization moves every iteration, so there is nothing to cache.
+    sp_form=True (default): p/q <= 1 becomes a PosynomialRatio (p exact,
+    q AGM-condensed; conservative). False: a plain Signomial callback that
+    SLCP linearizes whole -- stock SLCP for paper comparisons; also loses
+    sub-problem caching since a linearization moves every iteration.
     """
     st = as_detected(structures)
     if st.log_key is None:
@@ -244,8 +186,8 @@ def build_problem(structures, sp_form=True, split_equalities=False,
     obj_terms = [t for t in st.terms(0) if not t.denominator]
     if not obj_terms:
         raise ValueError('no objective rows found in the detected structure')
-    # The DENSE row width, not the sparsity pattern: an all-zero column still
-    # occupies its place, and narrowing would renumber every variable after it.
+    # Dense row width, not the sparsity pattern: an all-zero column still
+    # occupies its place, narrowing would renumber every variable after it.
     n = max(len(r) - 2 for r in st[st.log_key][1])
     gb = greybox_blocks(structures)
     if gb:
@@ -285,14 +227,9 @@ def build_problem(structures, sp_form=True, split_equalities=False,
             return round(e, 11)
 
         def _canon(num, den):
-            """Canonical (num, den) term-tuples for matching.
-
-            The detector normalizes the two directions of a pin
-            DIFFERENTLY: `p <= m` (m a monomial) often arrives with m
-            folded into p's coefficients/exponents, while its reverse
-            `m <= p` keeps the ratio form.  Matching therefore folds any
-            SINGLE-MONOMIAL side into the other side first, so both
-            directions land in the same canonical frame; signatures are
+            """Canonical (num, den) term-tuples for matching. The detector
+            normalizes a pin's two directions differently, so fold any
+            single-monomial side into the other side first; signatures are
             rounded so the two fold arithmetics agree."""
             def fold(terms, mono, into_num):
                 cM = float(mono.coeff)
@@ -329,8 +266,8 @@ def build_problem(structures, sp_form=True, split_equalities=False,
             return out if out else ((1.0, ()),)     # empty side = the unit
 
         def _mono_fold(num, den):
-            """A row that is one monomial vs one (or no) monomial folds to
-            C * x^A <= 1.  Returns (A_sparse, C) or None."""
+            """Fold a mono-vs-mono (or mono-only) row to C x^A <= 1.
+            Returns (A_sparse, C) or None."""
             if len(num) != 1 or len(den) > 1:
                 return None
             cN, tN = float(num[0].coeff), num[0].exponents
@@ -374,12 +311,10 @@ def build_problem(structures, sp_form=True, split_equalities=False,
                     continue
                 seen.setdefault(key, idx)
 
-            # (b) MONOMIAL pins: the detector folds `m1 <= m2` and its
-            # reverse into single rows C x^A <= 1 and C' x^-A <= 1 with
-            # C C' = 1 -- reciprocal forms the (num, den) swap above can
-            # never see.  These are the sin/Re/flow-angle pins of the wind
-            # models: 151 of 287 pin rows on the missions SP fell through
-            # the posynomial matcher for exactly this reason.
+            # (b) monomial pins: m1 <= m2 and its reverse fold to reciprocal
+            # rows C x^A <= 1 and (1/C) x^-A <= 1, which the (num, den) swap
+            # above can never see. 151 of 287 pin rows on the wind missions
+            # SP fell through the posynomial matcher for this reason.
             fold = _mono_fold(num, den)
             if fold is not None:
                 A, C = fold
@@ -413,21 +348,18 @@ def build_problem(structures, sp_form=True, split_equalities=False,
             p_ = posynomial(num, f'constraint {idx} numerator')
             q_ = posynomial(den, f'constraint {idx} denominator')
             if op == '==' and split_equalities is False:
-                # One constraint, both sides condensed. See CondensedEquality
-                # for why the split pair is bad on both counts -- it pins the
-                # step to a null space and makes the multipliers degenerate.
+                # One constraint, both sides condensed. The split pair pins
+                # the step to a null space and makes the multipliers
+                # degenerate; see CondensedEquality.
                 constraints.append(
                     Constraint(CondensedEquality(p_, q_, n), '=='))
                 n_split += 1
                 continue
             constraints.append(Constraint(wrap(PosynomialRatio(p_, q_, n)), '<='))
             if op == '==':
-                # An equality is TWO inequalities. Writing only p/q <= 1
-                # RELAXES the problem -- the solver is then free to drive
-                # p/q below 1, which the equality forbids. The AGM
-                # condensation is one-sided so it cannot represent an
-                # equality directly, but the reverse direction q/p <= 1 is
-                # another ratio and condenses just as well.
+                # An equality is two inequalities: p/q <= 1 alone relaxes
+                # the problem. AGM condensation is one-sided, but the
+                # reverse q/p <= 1 is another ratio and condenses fine.
                 constraints.append(
                     Constraint(wrap(PosynomialRatio(q_, p_, n)), '<='))
                 n_split += 1
@@ -437,21 +369,17 @@ def build_problem(structures, sp_form=True, split_equalities=False,
                 # A monomial equality is affine in log space: exact as is.
                 constraints.append(Constraint(body, '=='))
             elif op == '==' and split_equalities is False:
-                # One condensed equality, p_hat == 1, instead of the pair.
-                # This branch matters as much as the ratio one above: the pair
-                # it replaces is `p <= 1` plus `1/p <= 1`, whose multipliers
-                # are just as degenerate -- measured at 910.8 against 910.9 on
-                # SPaircraft, differing only in the fourth figure.
+                # One condensed equality, p_hat == 1, instead of the pair
+                # p <= 1 plus 1/p <= 1, whose multipliers are just as
+                # degenerate (910.8 vs 910.9 on SPaircraft).
                 constraints.append(
                     Constraint(CondensedEquality(body, unit(), n), '=='))
                 n_split += 1
             elif op == '==':
-                # A multi-term posynomial equality. p <= 1 is log-convex and
-                # goes in as it stands; the reverse 1/p <= 1 is NOT a
-                # posynomial, so it goes in as a ratio with p underneath and
-                # is condensed. Dropping it -- which is what writing only
-                # p <= 1 does -- relaxes the problem. This is the same device
-                # PCCP uses in cvxopt/SP.py for the identical case.
+                # Multi-term posynomial equality: p <= 1 goes in as is; the
+                # reverse 1/p <= 1 is not a posynomial, so it goes in as a
+                # condensed ratio. Dropping it relaxes the problem. Same
+                # device PCCP uses in cvxopt/SP.py.
                 constraints.append(Constraint(body, '<='))
                 constraints.append(
                     Constraint(wrap(PosynomialRatio(unit(), body, n)), '<='))
@@ -459,10 +387,10 @@ def build_problem(structures, sp_form=True, split_equalities=False,
             else:
                 constraints.append(Constraint(body, '<='))
 
-    # Carry variable bounds as bounds when the detector split them out. They
-    # are padded rather than trusted blindly: `bounds` is aligned with
-    # structures['variables'], and `n` comes from the widest exponent row, so
-    # the two can disagree if a trailing variable appears in no row at all.
+    # Carry variable bounds as bounds when the detector split them out.
+    # Padded, not trusted blindly: bounds aligns with structures['variables']
+    # but n comes from the widest exponent row, and the two disagree when a
+    # trailing variable appears in no row at all.
     bounds = structures.get('bounds')
     if bounds is not None:
         bounds = list(bounds[:n]) + [(None, None)] * max(0, n - len(bounds))
@@ -476,14 +404,10 @@ def build_problem(structures, sp_form=True, split_equalities=False,
 
 
 def _bound_row_block(structures):
-    """Constraint indices of the detector's declared-bound rows.
-
-    The detector emits them during its variable walk, after the model's own
-    constraints were declared, so they are always the trailing
-    ``N_cons_bounds`` block of the numbering. Empty when bounds already came
-    split out -- then no declared bound rides as a row, and every remaining
-    singleton is a MODEL row that must stay one.
-    """
+    """Constraint indices of the declared-bound rows: the detector emits them
+    after the model's own constraints, so they're the trailing N_cons_bounds
+    block. Empty when bounds came split out -- then every remaining singleton
+    is a model row that must stay one."""
     if structures.get('bounds') is not None:
         return frozenset()
     info = structures.get('info') or {}
@@ -494,16 +418,10 @@ def _bound_row_block(structures):
 
 def _greybox_protected(structures):
     """Column indices any grey-box block references, or None if unmappable.
-
-    The grey-box rows are built by keying the CURRENT ``structures
-    ['variables']`` list on variable identity (see :func:`_greybox_rows`), so
-    column removal is safe exactly when the removed columns are ones no block
-    references and ``variables`` is kept in sync -- which
-    :func:`~lcsolver.presolve.reductions.reduce_columns` does. A block that
-    cannot be mapped (no external model, or a variable the detector did not
-    record) returns None: the caller must then skip presolve entirely, since
-    there is no way to know which columns are safe.
-    """
+    Column removal is safe only for columns no block references (grey-box
+    rows key structures['variables'] on identity, and reduce_columns keeps
+    it in sync). None means a block couldn't be mapped -- the caller must
+    skip presolve, since no column is provably safe."""
     blocks = greybox_blocks(structures)
     if not blocks:
         return frozenset()
@@ -526,22 +444,12 @@ def presolve_structures(structures, verbose=False, fold_only=None,
                         eliminate=True, fold=True, protect=None):
     """Shrink a detected structure before handing it to a solver.
 
-    Folds rows that are really bounds into the bounds, then drops columns
-    nothing refers to -- variables fixed by equal bounds, and variables that
-    appear in no real constraint and no objective term. Both reductions are
-    exact: the optimal objective is unchanged and every removed variable gets
-    a value that is feasible for the original problem.
-
-    Returns ``(reduced, removed)``. ``removed`` is in
-    :func:`~lcsolver.presolve.reductions.reduce_columns` form and is what
-    :func:`~lcsolver.presolve.reductions.restore_columns` needs to rebuild a full solution.
-
-    Unlike ``structure_detector(bounds_as_rows=False)``, this works on a
-    structure whose bounds are still rows: it synthesizes the empty bounds
-    array to fold them into. That is a deliberate choice made here rather than
-    in ``lcsolver.presolve.reductions``, because this is the point that knows the consumer --
-    SLCP and SIA both read variable bounds -- whereas the cvxopt backends do
-    not, and ``lcsolver.presolve.reductions`` refuses the conversion for exactly that reason.
+    Folds bound-like rows into the bounds, then drops columns nothing refers
+    to. Both reductions are exact. Returns (reduced, removed); removed is in
+    reduce_columns form, what restore_columns needs to rebuild a solution.
+    Works on structures whose bounds are still rows by synthesizing an empty
+    bounds array -- done here because SLCP/SIA read bounds and the cvxopt
+    backends don't, which is why lcsolver.presolve.reductions refuses it.
     """
     from lcsolver.presolve.reductions import presolve as _presolve_pipeline
 
@@ -558,40 +466,26 @@ def presolve_structures(structures, verbose=False, fold_only=None,
 
 
 def _apply_presolve(structures, x0):
-    """``(reduced_structures, reduced_x0, log, n_original)``.
+    """Returns (reduced_structures, reduced_x0, log, n_original).
 
-    On a grey-box model, presolve narrows to the column peel with the
-    grey-box-referenced columns protected (see :func:`_greybox_protected`):
-    the peel is what removes an output-only variable and its defining
-    constraint -- a dangling ``CD >= drag buildup`` after the objective
-    stopped using ``CD`` -- instead of letting IPOPT park the free variable
-    at an arbitrary value.
-
-    Two of the pipeline's passes are tuned down here, both on measured
-    evidence from the spcomparisons b737 case (1,298 vars, 4,160 rows):
-
-    * The fold is restricted to the declared-bound rows: a singleton MODEL
-      row folded into a hard bound leaves the elastic relaxation nothing to
-      put slack on, and folding them all stalled the case at the iteration
-      cap (see :func:`_fold_bound_rows`).
-    * Monomial-equality elimination is OFF. Substituting away 706 variables
-      shrank the problem (592 vars, 3,454 rows) yet took the same solve from
-      39 iterations / 136 s to 62 iterations / 2,504 s -- the early
-      iterations stay cheap and the trajectory then enters an expensive
-      restoration phase the unsubstituted problem never visits. Smaller is
-      not faster for the sequential solvers; the pass remains available and
-      default-on in :func:`lcsolver.presolve.reductions.presolve`.
+    On a grey-box model only the column peel runs, with grey-box-referenced
+    columns protected -- the peel removes output-only variables and their
+    defining constraints instead of letting IPOPT park them arbitrarily.
+    Two passes are tuned down on b737 evidence: the fold is restricted to
+    declared-bound rows (folding singleton model rows stalled the case at
+    the iteration cap; see _fold_bound_rows), and monomial-equality
+    elimination is off (shrinking 1,298 -> 592 vars took the solve from
+    39 iters / 136 s to 62 iters / 2,504 s -- smaller is not faster here).
     """
     n_original = len(structures.get('variables') or [])
     protect = _greybox_protected(structures)
     if protect is None:
-        # A grey-box block could not be mapped to columns, so no removal is
-        # provably safe. The fold is barred too (see _fold_bound_rows).
+        # Unmappable grey-box block: no removal is provably safe, and the
+        # fold is barred too (see _fold_bound_rows).
         return structures, x0, None, n_original
     if protect:
-        # Grey-box present: only the column peel runs, with every
-        # grey-box-referenced column protected. No fold -- folding renumbers
-        # rows, and a grey-box row may reference one.
+        # Grey-box present: column peel only, referenced columns protected.
+        # No fold -- folding renumbers rows a grey-box row may reference.
         reduced, log = presolve_structures(structures, fold=False,
                                            eliminate=False, protect=protect)
     else:
@@ -599,9 +493,8 @@ def _apply_presolve(structures, x0):
             structures, fold_only=_bound_row_block(structures),
             eliminate=False)
     if x0 is not None:
-        # Drop what each pass removed, in the space that pass ran in. The log
-        # unwinds them in reverse afterwards, so no index remapping is needed
-        # in either direction.
+        # Drop what each pass removed, in the space that pass ran in; the
+        # log unwinds in reverse afterwards, so no index remapping needed.
         x = list(x0)
         for _label, removed, _counts in log.steps:
             if removed:
@@ -622,30 +515,15 @@ def _restore(result, log, n_original):
 def _fold_bound_rows(structures):
     """Declared-bound rows -> native bounds, and nothing else.
 
-    ``structure_detector`` defaults to ``bounds_as_rows=True`` because the
-    cvxopt backends can only read bounds from rows -- but this solver family
-    takes bounds natively, and carrying them as rows is pure cost: on the
-    spcomparisons b737 case (1,298 vars, 4,160 real rows, 2,596 bound rows)
-    the identical 38-iteration solve runs 1,338 s with bound rows and 188 s
-    without, same optimum to the tenth of a pound.
-
-    Only the DECLARED-bound rows fold -- singleton model rows (span gates and
-    the like) stay as rows, because the elastic relaxation must be able to
-    put slack on an active constraint mid-trajectory and a hard bound cannot
-    take slack. Folding everything singleton (which the full presolve does)
-    turned that same b737 case into a 200-iteration stall; folding only the
-    declared bounds reproduces ``bounds_as_rows=False`` exactly, which
-    converges in the same 38-39 iterations as the unfolded problem with the
-    bit-equal optimum.
-
-    The declared-bound rows are identified positionally: the detector emits
-    them during its variable walk, AFTER the model's own constraints were
-    declared, so they are always the trailing ``N_cons_bounds`` block of the
-    constraint numbering (the constant-row drop upstream preserves order).
-
-    No-op when bounds are already split out, none were declared, or a
-    grey-box block is present (folding renumbers rows, which a grey-box row
-    may reference).
+    This solver family takes bounds natively; carrying them as rows is pure
+    cost (b737: 1,338 s with bound rows vs 188 s without, same optimum).
+    Only declared-bound rows fold -- singleton model rows stay rows so the
+    elastic relaxation can put slack on them; folding everything singleton
+    turned b737 into a 200-iteration stall. Declared-bound rows are the
+    trailing N_cons_bounds block (the detector emits them after the model's
+    own constraints). No-op when bounds are already split out, none were
+    declared, or a grey-box block is present (folding renumbers rows a
+    grey-box row may reference).
     """
     if structures.get('bounds') is not None or greybox_blocks(structures):
         return structures
@@ -668,19 +546,13 @@ def _fold_bound_rows(structures):
 
 def solve_slcp(structures, x0=None, method='slcp', options=None,
                sp_form=True, presolve=True):
-    """Solve a detected GP/SP with SLCP.
+    """Solve a detected GP/SP with SLCP. Returns the SLCP Result.
 
-    ``x0`` is in the natural (not log) variables and must be strictly
-    positive; it defaults to the current values of ``structures['variables']``.
-    Returns the SLCP :class:`~lcsolver.solvers.sequential.slcp.Result`.
-
-    ``presolve`` (default True) shrinks the problem first via
-    :func:`presolve_structures` and puts the removed variables back into
-    ``result.x`` afterwards, so the result is indexed by the original variable
-    ordering either way. ``result.removed`` records what was taken out.
-    Either way, bound rows are folded into native variable bounds first
-    (see :func:`_fold_bound_rows`); ``presolve=False`` disables the column
-    reductions, not the fold.
+    x0 is in natural (not log) variables, strictly positive; defaults to the
+    current variable values. presolve=True shrinks the problem and restores
+    removed variables into result.x afterwards (result.removed records what
+    was taken out). Bound rows fold into native bounds either way;
+    presolve=False disables only the column reductions, not the fold.
     """
     import pyomo.environ as pyo
 
@@ -707,15 +579,10 @@ def solve_sia(structures, x0=None, options=None, sp_form=True,
               presolve=True, split_equalities=False, pair_equalities=True):
     """Solve a detected GP/SP by sequential inner approximation.
 
-    Same adapter as :func:`solve_slcp`, pointed at
-    :func:`lcsolver.solvers.sequential.sia.solve_sia`. ``sp_form`` defaults to True here
-    and should stay that way -- the conservative condensation is the whole
-    basis of the method, and turning it off downgrades every signomial
-    constraint to a linearization that then has to be globalized.
-
-    Bound rows are folded into native variable bounds whether or not
-    ``presolve`` is on (see :func:`_fold_bound_rows`); ``presolve=False``
-    disables the column reductions, not the fold.
+    Same adapter as solve_slcp, pointed at sia.solve_sia. Keep sp_form=True:
+    the conservative condensation is the basis of the method. Bound rows
+    fold into native bounds either way; presolve=False disables only the
+    column reductions, not the fold.
     """
     import pyomo.environ as pyo
 

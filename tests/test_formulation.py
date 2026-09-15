@@ -1061,13 +1061,9 @@ class TestGroupsAndGuesses(unittest.TestCase):
 @unittest.skipIf(not numpy_available, 'Testing lcsolver requires numpy')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
 class TestArrayInitialization(unittest.TestCase):
-    """Initial values given as an array, laid out onto the index set.
-
-    Pyomo wants a dict keyed by the index tuple, and a nested list handed to it
-    raises `KeyError: "Index '0' is not valid for indexed component 'e'"`,
-    which names neither the shape it wanted nor the shape it got. The
-    comprehension that works is noise in a model file.
-    """
+    """Initial values given as an array, laid out onto the index set. Pyomo
+    wants a dict keyed by index tuple; a nested list raises an unhelpful
+    KeyError and the comprehension that works is noise in a model file."""
 
     def test_a_matrix_constant_from_a_nested_list(self):
         f = Formulation()

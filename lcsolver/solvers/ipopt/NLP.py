@@ -6,28 +6,12 @@
 
 """IPOPT interface for LCsolver formulations.
 
-Unlike the cvxopt backends, which require the formulation to fall into a
-recognized structure (LP, QP, GP, SP) and solve a transformed problem, IPOPT
-solves the general nonlinear program directly. That makes it the natural default
-for a formulation that is not in one of those classes, and the only option for a
-formulation containing black-box (grey-box) constraints.
-
-Two routes to IPOPT are supported, in this order of preference:
-
-``pyomo``
-    ``pyo.SolverFactory('ipopt')``, Pyomo's own AMPL-based interface, driving the
-    ``ipopt`` executable. This is the preferred route: it is pure Pyomo, it
-    handles the whole modeling language, and it loads the solution back onto the
-    model itself. It requires the ``ipopt`` binary on PATH (or an explicit path).
-
-``cyipopt``
-    ``pyo.SolverFactory('cyipopt')``, backed by ``pyomo.contrib.pynumero``. Used
-    automatically when the ``ipopt`` executable is unavailable, and used
-    *preferentially* when the model contains ``ExternalGreyBoxBlock`` components,
-    because the AMPL route cannot evaluate a Python black box.
-
-In both cases the solution is written back onto the model, so after a successful
-solve ``pyo.value(f.x)`` returns the optimum rather than the initial guess.
+IPOPT solves the general NLP directly (no structure required), so it's the
+default for unstructured formulations and the only option for grey-box ones.
+Two routes: 'pyomo' (AMPL interface driving the ipopt executable; preferred)
+and 'cyipopt' (in-process via pynumero; used when the executable is missing,
+and required for ExternalGreyBoxBlock models -- the AMPL route can't evaluate
+a Python black box). Either way the solution is written back onto the model.
 """
 
 import pyomo.environ as pyo
@@ -38,15 +22,10 @@ from lcsolver.core.errors import SolverUnavailable
 
 # ---------------------------------------------------------------------------
 def _resolve_executable(executable=None):
-    """Which ipopt binary to drive.
-
-    An explicit argument wins; otherwise ``LCSOLVER_IPOPT_EXECUTABLE`` if set,
-    otherwise whatever ``PATH`` produces. The environment variable exists
-    because ``conda activate`` prepends ``$CONDA_PREFIX/bin`` to ``PATH`` on
-    every new shell, so a source build of IPOPT made specifically to get MA27
-    loses to the conda MUMPS one silently and permanently. Pinning the path is
-    the only advice that survives the next terminal window.
-    """
+    """Which ipopt binary: explicit arg, else LCSOLVER_IPOPT_EXECUTABLE,
+    else PATH. The env var exists because conda activate prepends to PATH
+    every shell, so a source-built MA27 ipopt silently loses to the conda
+    MUMPS one; pinning the path survives the next terminal window."""
     if executable:
         return executable
     from lcsolver.environment import ipopt_executable
@@ -54,13 +33,9 @@ def _resolve_executable(executable=None):
 
 
 def _ma27_available(executable=None):
-    """Does the ipopt executable carry the HSL MA27 linear solver?
-
-    Probed by solving a one-variable problem with ``linear_solver ma27`` --
-    a build without MA27 rejects the option and fails. Cached for the
-    session; only consulted on a FAILED solve to sharpen the error message,
-    so the probe cost is never on the success path.
-    """
+    """Does the ipopt executable carry HSL MA27? Probed with a one-variable
+    solve, cached for the session; only consulted on a FAILED solve to
+    sharpen the error, so the probe never costs the success path."""
     from lcsolver.environment import linear_solver_available
     return linear_solver_available('ma27', _resolve_executable(executable))
 
@@ -108,43 +83,15 @@ def _summarize(results):
 def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 load_solutions=True, linear_solver=None,
                 linear_solver_library=None):
-    """Solve an LCsolver ``Formulation`` with IPOPT.
+    """Solve an LCsolver Formulation with IPOPT.
 
-    Parameters
-    ----------
-    m : Formulation
-        The model. Because ``Formulation`` subclasses ``ConcreteModel`` it is
-        passed straight to Pyomo.
-    method : {'auto', 'pyomo', 'cyipopt'}
-        Which route to IPOPT to use. ``'auto'`` (the default) selects
-        ``cyipopt`` when the model contains black-box constraints or when the
-        ``ipopt`` executable is not available, and ``pyomo`` otherwise.
-    tee : bool
-        Stream solver output.
-    executable : str, optional
-        Explicit path to the ``ipopt`` binary (``'pyomo'`` route only).
-    options : dict, optional
-        IPOPT options, e.g. ``{'tol': 1e-8, 'max_iter': 500}``.
-    load_solutions : bool
-        Load the solution onto the model. Left at ``True`` in normal use.
-    linear_solver : str, optional
-        IPOPT's inner linear solver -- ``'mumps'``, ``'ma27'``,
-        ``'pardiso'``, or any other name IPOPT knows. Validated and probed
-        against the build actually being used, so an absent solver raises
-        ``SolverUnavailable`` naming what is available instead of IPOPT
-        dying on an option error. Overrides ``options['linear_solver']``.
-
-    Returns
-    -------
-    dict
-        Summary containing the route used, solver status, termination condition,
-        objective value, and a ``{variable_name: value}`` mapping.
-
-    Raises
-    ------
-    RuntimeError
-        If no usable IPOPT installation can be found, or if the solve does not
-        reach an optimal termination condition.
+    method: 'auto' picks cyipopt for grey-box models or a missing ipopt
+    executable, 'pyomo' otherwise. options are IPOPT options; linear_solver
+    ('mumps', 'ma27', ...) is validated against the actual build so an
+    absent solver raises SolverUnavailable naming what IS available, and
+    overrides options['linear_solver']. Returns a summary dict (route,
+    status, termination condition, objective, {name: value} solution);
+    raises RuntimeError when no IPOPT is usable or the solve fails.
     """
     options = dict(options or {})
     greybox = _has_greybox(m)
@@ -183,10 +130,8 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             options[linear_solver_library_option(
                 options['linear_solver'])] = str(linear_solver_library)
 
-    # Ask the solver for constraint duals. They cost nothing extra and are what
-    # `lcsolver.postsolve.sensitivity` uses to report how the optimum responds to each
-    # Constant; without the Suffix those duals would have to be reconstructed
-    # from the primal solution.
+    # Ask for constraint duals: free, and what postsolve.sensitivity uses;
+    # without the Suffix they'd have to be reconstructed from the primal.
     if not hasattr(m, 'dual'):
         m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
@@ -208,10 +153,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         results = opt.solve(m, tee=tee, load_solutions=False)
     else:
         opt = pyo.SolverFactory('cyipopt')
-        # cyipopt being importable is not enough. PyNumero builds the NLP
-        # through a compiled ASL library that ships with neither pyomo nor
-        # cyipopt, and pyomo's own error for its absence names a component
-        # most users have never heard of and no way to get it.
+        # cyipopt importable is not enough: PyNumero needs a compiled ASL
+        # library that ships with neither pyomo nor cyipopt, and pyomo's
+        # own error for its absence is unhelpful.
         from lcsolver.environment import _pynumero_asl_available
         if opt.available(exception_flag=False) and not _pynumero_asl_available():
             raise SolverUnavailable(
@@ -224,10 +168,10 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 "Run `lcsolver-install-solvers` to install both; note that "
                 "`pip install cyipopt` on its own compiles against an IPOPT "
                 "that has to exist already.")
-        # PyomoCyIpoptSolver has no `options` mapping -- it takes them as a
-        # solve() argument, and `opt.options[k] = v` raises AttributeError.
-        # This is the route black-box models are forced onto, and
-        # linear_solver is the option most worth setting on it.
+        # PyomoCyIpoptSolver has no `options` mapping (opt.options[k] raises
+        # AttributeError) -- options go as a solve() argument. Black-box
+        # models are forced onto this route, so it has to accept
+        # linear_solver.
         results = opt.solve(m, tee=tee, options=dict(options))
 
     # ---- interpret --------------------------------------------------------

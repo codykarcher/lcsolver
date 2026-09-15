@@ -6,26 +6,11 @@
 
 """The Python behaviour LCsolver's vector guard depends on.
 
-Iterating an indexed component yields its index KEYS, so ``sum(x)`` adds
-``0 + 1 + 2`` and returns a plausible number instead of the sum of the
-variables. That is not a nuisance, it is a silent wrong answer: it is how
-``L_dist_sum == sum(L_dist)`` became ``L_dist_sum == 10`` in a real model, and
-only a unit mismatch further down caught it.
-
-LCsolver closes that by yielding keys as an ``int`` subclass whose ``__radd__``
-refuses. ``sum()`` begins with ``0 + first_item``, which is a *reflected*
-addition, while index arithmetic like ``i + 1`` and ``i - 1`` is a *forward*
-one -- so the guard fires on the accident and leaves the legitimate idiom
-alone.
-
-That split only works because of one rule in the language: when the right
-operand's type is a proper subclass of the left operand's type and overrides
-the reflected method, Python tries the reflected method FIRST. If that rule
-ever changed, ``sum(x)`` would quietly go back to returning the index sum with
-no test failing anywhere near the vector code. This file pins the rule itself,
-so the failure would be immediate and would say why.
-
-See https://docs.python.org/3/reference/datamodel.html#object.__radd__
+The guard yields index keys as an int subclass whose ``__radd__`` refuses,
+so ``sum(x)`` (a reflected add) fails while ``i + 1`` (forward) works. That
+split relies on Python trying a proper subclass's reflected method FIRST;
+if the rule ever changed, ``sum(x)`` would quietly return the index sum
+again. This file pins the rule itself, so the failure would say why.
 """
 
 import pyomo.common.unittest as unittest
@@ -84,12 +69,9 @@ class TestReflectedOperatorPriority(unittest.TestCase):
         self.assertEqual(sorted([_Refuses(2), _Refuses(0)]), [0, 2])
 
     def test_the_rule_does_not_apply_between_unrelated_types(self):
-        """Stated for contrast: priority comes from the subclass relationship.
-
-        A plain object gets the reflected call only after int's __add__ has
-        returned NotImplemented, which is the ordinary rule rather than the
-        one this depends on.
-        """
+        """Stated for contrast: priority comes from the subclass
+        relationship; a plain object gets the reflected call only after
+        int's __add__ returns NotImplemented."""
 
         class Unrelated:
             def __radd__(self, other):

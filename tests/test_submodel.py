@@ -6,16 +6,11 @@
 
 """Blocks that assemble themselves, and refuse to be half-assembled.
 
-A `SubModel` is attached by assignment, and that assignment is what gives it
-both a formulation and a name -- so the attribute path, the component prefix,
-and the deck key are one string with one spelling. Its inputs then arrive one
-per line, and the LAST one builds it.
-
-The failure that syntax makes possible is the one worth testing: a block whose
-last input never arrives posts no variables and no constraints, which is not a
-solver error. The formulation stays solvable and answers an easier question.
-So `solve` refuses to run while one is attached, and it lists every block and
-every missing input at once rather than one per attempt.
+A `SubModel` is attached by assignment (one string, one spelling) and its
+LAST input builds it. The failure worth testing: a block whose last input
+never arrives posts nothing, and the formulation stays solvable answering
+an easier question. So `solve` refuses while one is attached, listing every
+block and every missing input at once.
 """
 import pytest
 

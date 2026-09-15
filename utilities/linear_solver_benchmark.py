@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """Benchmark IPOPT linear solvers (ma27 / mumps / ...) on LCsolver models.
 
-Runs every model it can build -- the repo's examples/ scripts, plus a
-synthetic ill-conditioned GP family -- against each requested linear solver
-on each requested IPOPT executable, and prints one row per (model, solver):
-status, wall time, and objective. The disagreements are the payload: a row
-where MUMPS fails and MA27 succeeds is the concrete argument for building
-IPOPT with HSL, and a row where both succeed at different speeds prices the
-choice.
+Runs the repo's examples plus a synthetic ill-conditioned GP family against
+each requested linear solver, one row per (model, solver): status, wall
+time, objective. Disagreements are the payload (MUMPS fails where MA27
+succeeds is the argument for building IPOPT with HSL).
 
     python utilities/linear_solver_benchmark.py
     python utilities/linear_solver_benchmark.py --linear-solvers ma27,mumps \
         --executable ~/software/ipopt/build-mumps/bin/ipopt
     python utilities/linear_solver_benchmark.py --csv out.csv
 
-The examples declare and solve their models at import; importing them with
-``lcsolver.solve`` stubbed out harvests the Formulation without solving, so
-each model is then solved only under this script's control.
+The examples solve at import; harvesting stubs out lcsolver.solve so each
+model is solved only under this script's control.
 """
 import argparse
 import csv
@@ -29,10 +25,8 @@ import types
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(REPO, 'examples')
 
-#: examples/ scripts that build ONE formulation and call lcsolver.solve on
-#: it at module level. hoburg_blackbox and unit_circle_blackbox need
-#: derivative machinery irrelevant to a linear-algebra benchmark and are
-#: left out.
+# examples that build ONE formulation and call lcsolver.solve at module level;
+# hoburg_blackbox and unit_circle_blackbox need derivative machinery irrelevant here
 EXAMPLE_MODULES = (
     'aircraft_gp',
     'boyd',
@@ -47,13 +41,8 @@ EXAMPLE_MODULES = (
 
 
 def harvest_formulation(module_name):
-    """Import an example with ``lcsolver.solve`` stubbed; return its model.
-
-    The stub records the formulation and returns an object that absorbs the
-    attribute access an example does on its result (``sol.summary()``,
-    ``sol.variables(...)``), so the module finishes importing without a
-    single real solve.
-    """
+    """Import an example with lcsolver.solve stubbed; return its Formulation.
+    The stub's return object absorbs whatever the example does with the result."""
     import lcsolver
 
     captured = []
@@ -68,9 +57,7 @@ def harvest_formulation(module_name):
         def __getitem__(self, key):
             return self
 
-        # Iteration must END: without __iter__, a `for` over this object
-        # walks __getitem__ forever (it never raises IndexError), which is
-        # an infinite loop inside the example being harvested.
+        # without __iter__, a `for` over this object walks __getitem__ forever
         def __iter__(self):
             return iter(())
 
@@ -86,8 +73,7 @@ def harvest_formulation(module_name):
         def __str__(self):
             return ''
 
-        # Post-solve arithmetic in an example (unit conversion, deltas,
-        # percentages) must all absorb too.
+        # post-solve arithmetic in an example must absorb too
         def _binop(self, *a):
             return self
         __add__ = __radd__ = __sub__ = __rsub__ = _binop
@@ -117,12 +103,10 @@ def harvest_formulation(module_name):
 def illconditioned_gp(n=18, spread=8.0):
     """A GP whose log-space KKT system is deliberately badly scaled.
 
-    A chain ``x[i+1] >= c * x[i]**p`` walks the variables across ``spread``
-    orders of magnitude, coupled to a shared-area constraint that touches
-    every variable with exponents alternating in sign. The condition number
-    of the KKT system grows with both ``n`` and ``spread``; this is the
-    shape of system (SPaircraft-like: values from 1e-9 to 1e+9 in one
-    factorization) on which pivoting strategy starts to matter.
+    A chain x[i+1] >= c * x[i]**p walks the variables across `spread` orders
+    of magnitude, coupled to a constraint touching every variable with
+    alternating-sign exponents. Conditioning grows with n and spread
+    (SPaircraft-like: 1e-9 to 1e+9 in one factorization).
     """
     from lcsolver import Formulation
 
@@ -140,10 +124,8 @@ def illconditioned_gp(n=18, spread=8.0):
     prod = 1.0
     for i, x in enumerate(xs):
         prod = prod * x if i % 2 == 0 else prod / x
-    # The chain caps each even/odd ratio at 1/p, so the alternating product
-    # cannot exceed ~10**(-spread/2); the floor must sit BELOW that or the
-    # model is infeasible by construction. One decade of slack keeps it
-    # binding-ish without closing the set.
+    # the alternating product cannot exceed ~10**(-spread/2), so the floor must
+    # sit below that or the model is infeasible; one decade of slack keeps it binding-ish
     rows.append(prod >= 10.0 ** (-spread / 2 - 1.0)
                 * 10.0 ** (-spread / (2.0 * (n - 1))))
     rows.append(xs[0] >= 10.0 ** (-spread / 2))
@@ -165,12 +147,7 @@ def model_battery(include_synthetic=True):
 
 
 def _run_one_inprocess(model_name, linear_solver, library=None):
-    """Build and solve one model here; print a parsable result line.
-
-    This is the child side of `run_one` -- one (model, solver) cell per
-    interpreter, so a divergent solve cannot hold memory for the rest of the
-    battery and a hard timeout can simply kill it.
-    """
+    """Child side of run_one: build and solve one cell, print a parsable RESULT line."""
     import json
 
     import lcsolver
@@ -207,12 +184,7 @@ def _run_one_inprocess(model_name, linear_solver, library=None):
 def run_one(model_name, linear_solver, executable=None, timeout=120.0,
             library=None):
     """One (model, solver) cell in a fresh subprocess with a hard timeout.
-
-    In-process solves proved unkillable in practice: a divergent IPOPT run
-    inside pyomo spins at full CPU holding gigabytes, and Python offers no
-    safe way to interrupt it. A child interpreter per cell caps both -- the
-    memory comes back when the child exits, and the timeout is a kill.
-    """
+    A divergent in-process IPOPT run is unkillable and holds memory; a child per cell can just be killed."""
     import json
     import subprocess
 

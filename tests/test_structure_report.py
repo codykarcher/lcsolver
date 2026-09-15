@@ -129,12 +129,9 @@ def test_blame_does_not_disturb_detection():
 # is handed a GP, and the report has to distinguish the two or it misleads.
 
 def _sp_only_on_paper():
-    """A GP, plus a posynomial equality defining an output-only variable.
-
-    `q == 1 + lam` is not GP-representable, so the model detects as an SP. But
-    nothing reads `lam`, so the presolve drops it and the constraint with it.
-    This is the Hoburg UAV's taper ratio, reduced.
-    """
+    """A GP, plus a posynomial equality defining an output-only variable:
+    `q == 1 + lam` detects as SP, but nothing reads `lam` so the presolve
+    drops it. The Hoburg UAV's taper ratio, reduced."""
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='m', description='x')
     y = f.Variable(name='y', guess=1.0, units='m', description='y')
@@ -189,12 +186,9 @@ def test_structure_report_accepts_a_formulation():
 
 
 def test_bad_units_are_diagnosed_not_raised():
-    """The tool for asking what is wrong must survive the commonest fault.
-
-    A unit mismatch used to propagate out of `optimization_check`, so the one call you
-    would make to find out why a model misbehaves failed with the very error
-    you were looking for, and printed nothing else.
-    """
+    """The tool for asking what is wrong must survive the commonest fault:
+    a unit mismatch used to propagate out of `optimization_check`, failing
+    with the very error you were looking for."""
     from lcsolver import optimization_check
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='m', description='a length')
@@ -230,13 +224,9 @@ def test_str_of_report_carries_the_structure_section():
 # list that did not mention the three constraints preventing exactly that.
 
 def _posynomial_equality():
-    """``x*y + x == A``: a posynomial equality, and not an affine one.
-
-    The distinction matters. ``x + y == A`` is *linear*, so the model is an LP
-    and the GP question never arises -- the report only discusses classes
-    simpler than the one detected. A product term forces it past LP and QP, so
-    GP is the next class up and the equality is what rules it out.
-    """
+    """``x*y + x == A``: a posynomial equality, not an affine one. The
+    product term forces the model past LP/QP, so GP is the next class up
+    and the equality is what rules it out."""
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='-', description='x')
     y = f.Variable(name='y', guess=1.0, units='-', description='y')
@@ -274,12 +264,9 @@ def test_every_offending_equality_is_blamed_not_just_the_first():
 
 
 def test_blame_is_recorded_even_when_gp_was_already_ruled_out():
-    """The decisive one.
-
-    The scan was guarded by `if Geometric_Program[0] != False`, so on a model
-    something else had already made non-GP it never ran -- and the missing
-    blame is what let the report claim a simplification that was not true.
-    """
+    """The decisive one: the scan was guarded by the GP flag, so on a model
+    already non-GP it never ran -- and the missing blame let the report
+    claim a simplification that was not true."""
     f = Formulation()
     x = f.Variable(name='x', guess=1.0, units='-', description='x')
     y = f.Variable(name='y', guess=1.0, units='-', description='y')
@@ -301,18 +288,9 @@ def test_blame_is_recorded_even_when_gp_was_already_ruled_out():
 
 
 def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
-    """Where "as solved" comes from, and where it must NOT come from.
-
-    Two earlier versions decided this by tracking which original row the
-    presolve took away. Both were wrong: fold_singleton_rows,
-    eliminate_monomial_equalities and reduce_columns each RENUMBER, so an
-    index means something different after every pass. It is now answered by
-    inspecting the reduced rows -- no fraction, no multi-term equality, no
-    negative coefficient -- which needs no provenance at all.
-
-    So blanking the blame list must not change the verdict: the two are
-    independent, and that independence is the point.
-    """
+    """Where "as solved" comes from: inspecting the reduced rows, which
+    needs no provenance. Earlier row-tracking versions broke because each
+    pass RENUMBERS. Blanking the blame list must not change the verdict."""
     from lcsolver.presolve.reductions import _gp_after_presolve
     from lcsolver.presolve.reductions import structure_report as report
     st = _detected(_sp_only_on_paper())
@@ -371,13 +349,9 @@ def test_the_degenerate_variable_is_named():
 
 
 def test_structures_are_never_auto_wired():
-    """The guard that matters.
-
-    A detected structure holds the unit-corrected CLONE, which is never
-    solved. Auto-wiring from structures detected before a solve would check
-    the author's initial guesses while reporting in the language of a result,
-    so it is done only for a Formulation.
-    """
+    """The guard that matters: a detected structure holds the unit-corrected
+    CLONE, never solved, so auto-wiring from it would check initial guesses
+    while reporting in the language of a result."""
     from lcsolver import optimization_check
     from lcsolver.solvers.solver import solve
     f = _free_rider()

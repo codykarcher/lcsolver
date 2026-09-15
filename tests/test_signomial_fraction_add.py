@@ -1,15 +1,9 @@
 """Adding a signomial fraction to something must work.
 
-Dividing by a multi-term expression produces a *fraction* in the structure
-detector's row form, and such a fraction may then be added to something.
-``lsfac == 1 - a*(1-lam)/(1+lam)``, TASOPT's asymptotic spanwise drag
-integral, is a typical case. That used to raise
-
-    RuntimeError: Signomial Fraction addition should not be occurring here
-
-forcing every caller to clear denominators by hand before writing the
-constraint. ``gpRow_add`` now puts the operands over a common denominator:
-``A/B + C = (A + C*B)/B`` and ``A/B + C/D = (A*D + C*B)/(B*D)``.
+Dividing by a multi-term expression produces a fraction in the detector's
+row form (TASOPT's ``lsfac == 1 - a*(1-lam)/(1+lam)`` is typical), and
+adding one used to raise, forcing callers to clear denominators by hand.
+``gpRow_add`` now puts the operands over a common denominator.
 """
 import pyomo.environ as pyo
 import pytest
@@ -52,19 +46,10 @@ def test_difference_over_a_sum():
                           "expression still extracts a wrong denominator",
                    strict=True)
 def test_two_fractions_added():
-    """z == x/(1+y) + y/(1+x) still comes out wrong.
-
-    gpRow_add's arithmetic for this is correct -- the row-level check below
-    gets 18/12 = 1.5 -- but the detector never routes this expression through
-    that branch, and the constraint it does build divides by
-    (1+x)(1+y) + y(1+y) rather than x(1+x) + y(1+y), giving 2.0. The defect is
-    upstream of gpRow_add, in how the walker assembles a sum of two
-    DivisionExpressions, and is not yet isolated.
-
-    Adding *one* fraction to a posynomial -- which is what the engineering
-    models need, and what TASOPT's spanwise drag integral is -- works, and is
-    covered by the tests above.
-    """
+    """z == x/(1+y) + y/(1+x) still comes out wrong: gpRow_add's arithmetic
+    is correct (row-level check below gets 1.5) but the walker assembles a
+    sum of two DivisionExpressions with the wrong denominator -- not yet
+    isolated. One fraction plus a posynomial, the case models need, works."""
     got = _solve(lambda x, y, z: [z == x / (1.0 + y) + y / (1.0 + x),
                                   x == 2.0, y == 3.0],
                  lambda x, y, z: z)

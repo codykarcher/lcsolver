@@ -6,24 +6,13 @@
 
 """Constraints that must hold but must not bind, and the check that they didn't.
 
-A holographic constraint is one that is not part of the design problem. It is
-there to keep the problem well posed, or to mark where the model stops being a
-model:
+A holographic constraint is not part of the design problem: the 1e-30..1e30
+box that stops a variable running away, the edges of the data a fit was made
+from, any limit meaning "beyond here I am extrapolating".
 
-* the 1e-30..1e30 box that stops a variable running to zero or to infinity;
-* the edges of the data a fit was made from;
-* any limit that means "beyond here I am extrapolating".
-
-The distinction matters because an *active* one silently invalidates the
-answer. A solve that ends on the edge of a fit's validity has not found an
-optimum; it has told you it wanted to go somewhere you have no data for, and
-the number it returned is whatever the fit happened to extrapolate to out
-there. Nothing about that looks wrong: the solve converges, the duals are
-finite, the table prints. The only way to know is to have said in advance
-which constraints were never supposed to bind, and then to look.
-
-So this check runs on **every** solve rather than only when someone asks for a
-diagnostic. It costs one expression evaluation per declared constraint.
+An active one silently invalidates the answer: the solve converges, the duals
+are finite, but the solver wanted to go where there is no data. So this check
+runs on every solve; it costs one expression evaluation per declared constraint.
 """
 from __future__ import annotations
 
@@ -32,12 +21,7 @@ __all__ = ["holographic_report", "holographic_total", "format_holographic"]
 
 def _datas(con):
     """The constraint data objects behind a declared name.
-
-    A holographic constraint declared over a vector -- ``r <= r_max`` on a
-    length-3 quantity -- is three constraints, and both the count of what was
-    declared and the walk over what is active have to agree on that or the
-    report says "2 of 2 are ACTIVE" about a model with three.
-    """
+    A vector constraint is several datas; the count and the walk must agree."""
     try:
         return list(con.values()) if hasattr(con, 'values') else [con]
     except Exception:
@@ -45,12 +29,8 @@ def _datas(con):
 
 
 def _margin(body, lo, hi):
-    """How much room is left, relative to the scale of the numbers involved.
-
-    Absolute slack is meaningless across a model whose variables span thirty
-    orders of magnitude, so the margin is normalised by the larger of the
-    bound and the body.
-    """
+    """Room left, normalised by the larger of bound and body.
+    Absolute slack is meaningless across 30 orders of magnitude."""
     out = []
     for bound, side in ((lo, '>='), (hi, '<=')):
         if bound is None:
@@ -64,13 +44,9 @@ def _margin(body, lo, hi):
 def holographic_report(model, rtol=1e-6):
     """Which holographic constraints are active at the model's current point.
 
-    Returns ``[{name, operator, bound, value, margin}]`` for the ones that are
-    binding, worst (most negative margin) first. An empty list is the good
-    outcome and the common one.
-
-    Reads the values currently on the model, so it means what it says only
-    after a solve has written them back -- which is why `solve` is what calls
-    it.
+    Returns [{name, operator, bound, value, margin}] for the binding ones,
+    worst first. Reads values off the model, so only meaningful after a
+    solve writes back; solve is what calls it.
     """
     import pyomo.environ as pyo
 
@@ -90,8 +66,7 @@ def holographic_report(model, rtol=1e-6):
                 hi = None if cd.upper is None else float(pyo.value(cd.upper))
             except Exception:
                 continue                      # never fail a solve over a check
-            # The symbolic body, so a report can say WHICH relation binds
-            # rather than only naming a constraint number.
+            # symbolic body so the report can say WHICH relation binds
             try:
                 expr = str(cd.expr)
             except Exception:
@@ -99,9 +74,7 @@ def holographic_report(model, rtol=1e-6):
             if len(expr) > 72:
                 expr = expr[:69] + '...'
             if lo is not None and hi is not None and lo == hi:
-                # An equality is always binding. A holographic equality is a
-                # contradiction in terms, so say so rather than list it every
-                # time as though it were news.
+                # a holographic equality always binds; say so rather than report it as news
                 found.append({'name': getattr(cd, 'name', nm),
                               'operator': '==', 'bound': hi, 'value': body,
                               'margin': 0.0, 'equality': True, 'expr': expr})
@@ -118,10 +91,7 @@ def holographic_report(model, rtol=1e-6):
 
 def holographic_total(model):
     """How many holographic constraints the model declares.
-
-    Counted the same way :func:`holographic_report` walks them, so "n of N"
-    is a true fraction. Zero when none were declared.
-    """
+    Counted the same way holographic_report walks them, so "n of N" is a true fraction."""
     names = getattr(model, '_holographic', None)
     if not names:
         return 0

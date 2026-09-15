@@ -1,17 +1,10 @@
 """The failure chain behind a grey-box model silently landing on raw IPOPT.
 
-Found via an MSES multifidelity model: a single variable declared with
-``bounds=[0.0, 0.1]`` cleared the SP flag with no message (a zero lower bound
-is not representable in log space), which sent the grey-box solve down the
-raw IPOPT route instead of SIA, silently discarding the caller's SIAOptions
--- and the first visible symptom was an AttributeError from deep inside
-Pyomo's unit converter, because the model also packed np.diag matrices where
-scalar-input jacobian blocks belong.
-
-Three defenses, one per link in that chain: the detector BLAMES the
-nonpositive bound, the solver WARNS when a grey-box model falls to the raw
-route, and packOutputs VALIDATES jacobian block shapes in the modeller's own
-stack frame.
+Found via an MSES model: ``bounds=[0.0, 0.1]`` cleared the SP flag silently
+(zero is not representable in log space), rerouting the solve off SIA and
+discarding SIAOptions. Three defenses, one per link: the detector BLAMES the
+nonpositive bound, the solver WARNS on the raw-route fallback, and
+packOutputs VALIDATES jacobian block shapes in the modeller's own frame.
 """
 import numpy as np
 import pytest
@@ -138,12 +131,8 @@ class _PassThrough(BlackBoxFunctionModel):
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
 def test_greybox_fallback_to_raw_route_warns():
     """A grey-box model whose algebra is not GP/SP must say so when it
-    reroutes, and say that the SIAOptions are discarded.
-
-    solve() runs quiet by default -- every warning is captured into
-    ``messages`` rather than emitted -- so the warning is read back from
-    the model, which carries the captured list either way.
-    """
+    reroutes, and say the SIAOptions are discarded. solve() runs quiet by
+    default, so the warning is read back from the model's captured list."""
     from lcsolver.core.errors import SolverUnavailable
 
     f = _gp_with_bound(0.0)            # zero bound: not-SP, with blame
