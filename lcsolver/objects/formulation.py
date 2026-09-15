@@ -811,7 +811,7 @@ class Formulation(ConcreteModel):
         operators_raw = operators
 
         if isinstance(
-            inputs_raw, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar)
+            inputs_raw, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.VarData)
         ):
             inputs_raw = [inputs_raw]
         elif isinstance(inputs_raw, (list, tuple)):
@@ -820,7 +820,7 @@ class Formulation(ConcreteModel):
             raise ValueError("Invalid type for input variables")
 
         if isinstance(
-            outputs_raw, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar)
+            outputs_raw, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.VarData)
         ):
             outputs_raw = [outputs_raw]
         elif isinstance(outputs_raw, (list, tuple)):
@@ -830,7 +830,7 @@ class Formulation(ConcreteModel):
         for lst in [outputs_raw, inputs_raw]:
             for vr in lst:
                 if not isinstance(
-                    vr, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar)
+                    vr, (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.VarData)
                 ):
                     raise ValueError("Invalid type when checking inputs and outputs")
 
@@ -883,21 +883,21 @@ class Formulation(ConcreteModel):
 
         outputs_unwrapped = []
         for ovar in outputs_raw:
-            if isinstance(ovar, pyomo.core.base.var.ScalarVar):
-                outputs_unwrapped.append(ovar)
-            else:  # isinstance(ovar, pyomo.core.base.var.IndexedVar), validated above
+            if isinstance(ovar, pyomo.core.base.var.IndexedVar):
                 validIndices = list(ovar.index_set().data())
                 for vi in validIndices:
                     outputs_unwrapped.append(ovar[vi])
+            else:  # a ScalarVar or a bare VarData element, validated above
+                outputs_unwrapped.append(ovar)
 
         inputs_unwrapped = []
         for ivar in inputs_raw:
-            if isinstance(ivar, pyomo.core.base.var.ScalarVar):
-                inputs_unwrapped.append(ivar)
-            else:  # isinstance(ivar, pyomo.core.base.var.IndexedVar), validated above
+            if isinstance(ivar, pyomo.core.base.var.IndexedVar):
                 validIndices = list(ivar.index_set().data())
                 for vi in validIndices:
                     inputs_unwrapped.append(ivar[vi])
+            else:  # a ScalarVar or a bare VarData element, validated above
+                inputs_unwrapped.append(ivar)
 
         black_box._NunwrappedOutputs = len(outputs_unwrapped)
         black_box._NunwrappedInputs = len(inputs_unwrapped)

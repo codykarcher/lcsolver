@@ -445,12 +445,12 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         solver deals in a flat vector."""
         inputs_unwrapped = []
         for ivar in self.inputVariables_optimization:
-            if isinstance(ivar, pyomo.core.base.var.ScalarVar):
-                inputs_unwrapped.append(ivar)
-            elif isinstance(ivar, pyomo.core.base.var.IndexedVar):
+            if isinstance(ivar, pyomo.core.base.var.IndexedVar):
                 validIndices = list(ivar.index_set().data())
                 for vi in validIndices:
                     inputs_unwrapped.append(ivar[vi])
+            elif isinstance(ivar, pyomo.core.base.var.VarData):
+                inputs_unwrapped.append(ivar)      # ScalarVar or element
             else:
                 raise ValueError("Invalid type for input variable")
 
@@ -460,12 +460,12 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         """The model-side output names, one per scalar. See `input_names`."""
         outputs_unwrapped = []
         for ovar in self.outputVariables_optimization:
-            if isinstance(ovar, pyomo.core.base.var.ScalarVar):
-                outputs_unwrapped.append(ovar)
-            elif isinstance(ovar, pyomo.core.base.var.IndexedVar):
+            if isinstance(ovar, pyomo.core.base.var.IndexedVar):
                 validIndices = list(ovar.index_set().data())
                 for vi in validIndices:
                     outputs_unwrapped.append(ovar[vi])
+            elif isinstance(ovar, pyomo.core.base.var.VarData):
+                outputs_unwrapped.append(ovar)     # ScalarVar or element
             else:
                 raise ValueError("Invalid type for output variable")
 
@@ -645,7 +645,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                 optimizationInput = self.inputVariables_optimization[i]
                 if not isinstance(
                     optimizationInput,
-                    (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar),
+                    (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.VarData),
                 ):
                     raise ValueError(
                         "Invalid input variable type for input %d ('%s'): expected a "
@@ -655,13 +655,15 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
                 ipt = self.inputs[i]
 
-                shape = [len(idx) for idx in optimizationInput.index_set().subsets()]
                 localShape = ipt.size
 
                 optimizationUnits = self.inputVariables_optimization[i].get_units()
                 localUnits = ipt.units
 
                 if isinstance(optimizationInput, pyomo.core.base.var.IndexedVar):
+                    # a bare VarData element has no index_set; only an
+                    # IndexedVar needs the shape
+                    shape = [len(idx) for idx in optimizationInput.index_set().subsets()]
                     value = np.zeros(shape)
                     for vix in list(optimizationInput.index_set().data()):
                         raw_val = float(raw_inputs[ptr]) * optimizationUnits
@@ -712,7 +714,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                 optimizationOutput = self.outputVariables_optimization[i]
                 if not isinstance(
                     optimizationOutput,
-                    (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.ScalarVar),
+                    (pyomo.core.base.var.IndexedVar, pyomo.core.base.var.VarData),
                 ):
                     raise ValueError(
                         "Invalid output variable type for output %d ('%s'): expected a "
@@ -803,12 +805,12 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     ):
                         jshape = jacobianValue_raw.shape
 
-                        if isinstance(oopt, pyomo.core.base.var.ScalarVar):
+                        if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
                             oshape = 0
                         else:  # isinstance(oopt, pyomo.core.base.var.IndexedVar), checked above
                             oshape = [len(idx) for idx in oopt.index_set().subsets()]
 
-                        if isinstance(oipt, pyomo.core.base.var.ScalarVar):
+                        if not isinstance(oipt, pyomo.core.base.var.IndexedVar):
                             ishape = 0
                         else:  # isinstance(oipt, pyomo.core.base.var.IndexedVar), checked above
                             ishape = [len(idx) for idx in oipt.index_set().subsets()]
@@ -900,7 +902,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                         jacobianList[i][len(self.inputs) + k2],
                         lounits / cdecl.units)
                     ocunits = pyomo_units.get_units(cparam)
-                    if isinstance(oopt, pyomo.core.base.var.ScalarVar):
+                    if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
                         vals = [raw]
                     else:
                         vals = [raw[vi]
