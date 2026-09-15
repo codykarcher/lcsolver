@@ -182,6 +182,44 @@ def ipopt_available():
         return False
 
 
+def ensure_own_libs_first(executable):
+    """Make ``executable`` load ITS OWN ``libipopt``, not a shadowed one.
+
+    A dynamic-loader path (``DYLD_LIBRARY_PATH`` on macOS,
+    ``LD_LIBRARY_PATH`` on Linux) pointing at one IPOPT install shadows the
+    shared library of EVERY OTHER install by name: an executable from a
+    MUMPS-capable build then silently runs the shadowing build's
+    ``libipopt.3.dylib``, reporting that build's linear solvers as its own.
+    Observed exactly so: with ``~/.zshenv`` exporting the MA27-only build's
+    lib dir, three different MUMPS-capable binaries (conda-forge, Homebrew,
+    a fresh source build) all probed as "no mumps, has ma27".
+
+    Prepending the executable's own sibling ``lib`` directory wins the
+    search without disturbing the rest of the path, so this is safe to do
+    for whichever executable is currently selected. No-op when the
+    executable has no sibling ``libipopt`` (a static build, or a distro
+    layout the heuristic does not know).
+    """
+    if not executable:
+        return
+    var = 'DYLD_LIBRARY_PATH' if sys.platform == 'darwin' else 'LD_LIBRARY_PATH'
+    try:
+        libdir = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.realpath(executable)),
+                         os.pardir, 'lib'))
+        import glob
+        if not glob.glob(os.path.join(libdir, 'libipopt*')):
+            return
+        current = os.environ.get(var, '')
+        parts = [p for p in current.split(os.pathsep) if p]
+        if parts and os.path.normpath(parts[0]) == libdir:
+            return
+        os.environ[var] = os.pathsep.join(
+            [libdir] + [p for p in parts if os.path.normpath(p) != libdir])
+    except Exception:
+        pass
+
+
 def ipopt_solver_factory(executable=None):
     """``SolverFactory('ipopt')`` that honours the executable pin.
 
@@ -195,6 +233,7 @@ def ipopt_solver_factory(executable=None):
     import pyomo.environ as pyo
 
     exe = executable or ipopt_executable()
+    ensure_own_libs_first(exe)
     return (pyo.SolverFactory('ipopt', executable=exe) if exe
             else pyo.SolverFactory('ipopt'))
 
@@ -351,6 +390,9 @@ def linear_solver_available(name, executable=None):
         probe = pyo.ConcreteModel()
         probe.x = pyo.Var(initialize=1.0, bounds=(0.5, None))
         probe.o = pyo.Objective(expr=probe.x)
+        # Probe the binary's OWN library, not whatever a loader path
+        # shadows it with -- see ensure_own_libs_first.
+        ensure_own_libs_first(executable)
         opt = (pyo.SolverFactory('ipopt', executable=executable)
                if executable else pyo.SolverFactory('ipopt'))
         opt.options['linear_solver'] = name
