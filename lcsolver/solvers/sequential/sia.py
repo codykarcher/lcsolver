@@ -1918,15 +1918,20 @@ def _relative_change_converged(problem, res, options, k):
     if prev is None:
         return False
     x_prev, f_prev = prev
+    df = abs(f / f_prev - 1.0) if f_prev != 0 else abs(f - f_prev)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dx = np.max(np.abs(np.asarray(x) / np.asarray(x_prev) - 1.0))
+    if options.verbose:
+        # progress toward THIS stopping rule, same quantities it tests
+        print("       rel: |df/f|=%.2e%s  max|dx/x|=%.2e%s" % (
+            df, '' if o_tol is None else ' (tol %g)' % o_tol,
+            dx, '' if v_tol is None else ' (tol %g)' % v_tol))
     fired = []
     if o_tol is not None:
-        df = abs(f / f_prev - 1.0) if f_prev != 0 else abs(f - f_prev)
         if df > o_tol:
             return False
         fired.append(f"objective {df:.2e} <= {o_tol:g}")
     if v_tol is not None:
-        with np.errstate(divide='ignore', invalid='ignore'):
-            dx = np.max(np.abs(np.asarray(x) / np.asarray(x_prev) - 1.0))
         if not np.isfinite(dx) or dx > v_tol:
             return False
         fired.append(f"variables {dx:.2e} <= {v_tol:g}")
@@ -2005,7 +2010,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _recovering = False
     _recover_budget = 0
     _recover_best = np.inf
-    if options.phase1 and _violation(problem, x) > options.feasibility_tolerance:
+    _v0 = _violation(problem, x)
+    if options.phase1 and _v0 > options.feasibility_tolerance:
+        if options.verbose:
+            print(f"  phase 1: initial point infeasible "
+                  f"(max log g = {_v0:+.3e}); searching")
         _method = getattr(options, 'phase1_method', 'composite')
         if _method == 'composite':
             (x, res.phase1_iterations, feasible,
@@ -2082,8 +2091,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         else:
             # Feasible: slacks off, penalty off -- tau only bought feasibility.
             use_slacks = False
+            if options.verbose:
+                print("  phase 1 complete -> entering phase 2 "
+                      f"(max log g = {_violation(problem, x):+.3e})")
     else:
         use_slacks = not options.phase1
+        if options.verbose:
+            print(f"  phase 1 skipped: initial point feasible "
+                  f"(max log g = {_v0:+.3e}) -> entering phase 2")
 
     # One curvature model per linearized constraint. Nothing is created when
     # there is nothing to linearize, so a structured problem is untouched.
