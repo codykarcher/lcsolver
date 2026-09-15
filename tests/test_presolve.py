@@ -1631,3 +1631,32 @@ def test_it_survives_the_unclassified_gate():
     f = _annihilated_model(1.0)
     rep = f.optimization_check()          # would raise ValueError before
     assert rep.annihilated
+
+
+def test_a_steep_output_only_row_is_still_recovered():
+    """An output-only variable defined by P**20 == posynomial(x): at the
+    recovery bracket's ends the row saturates to -inf and +inf, which is a
+    sign change, not a failure.  Refusing it left P at the 1.0 placeholder
+    with no error -- measured on the ISA block's difference-of-softmax
+    pressure fit, whose pressure then came back at 129 Pa for 70 kPa."""
+    import warnings
+    import numpy as np
+    from lcsolver import Formulation
+    from lcsolver.solvers import solver as solver_module
+
+    conv = [(1.508774143969e+00, -6.4929592823),
+            (7.350977055926e+93, -11.2041869540),
+            (4.914485193779e-02, -1.0428850515)]
+    alpha = 20.085536923187256
+    f = Formulation()
+    x = f.Variable('x', 3000.0, '-', 'altitude-like input')
+    P = f.Variable('P', 1e3, '-', 'steep output, unbounded')
+    y = f.Variable('y', 2.0, '-', 'what the objective sees', bounds=[1.0, 10.0])
+    f.Objective(y)
+    f.ConstraintList([x == 3000.0, y >= 1.5,
+                      P ** alpha == sum(c * x ** e for c, e in conv)])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')          # the LC-W310 fallback must not fire
+        r = solver_module.solve(f, diagnostics='off')
+    expected = sum(c * 3000.0 ** e for c, e in conv) ** (1.0 / alpha)
+    assert abs(float(r.variables('P')) / expected - 1.0) < 1e-6

@@ -701,7 +701,15 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
 
     a, b = math.log(lo), math.log(hi)
     fa, fb = f(a), f(b)
-    if not (math.isfinite(fa) or math.isfinite(fb)):
+    # The bracket ends are deliberately extreme, and _eval_terms saturates
+    # to 0 or +inf out there, so on a steep row -- P**20 == posynomial, a
+    # difference-of-softmax pressure fit -- BOTH ends come back infinite:
+    # -inf at the bottom, +inf at the top.  That is a perfectly good sign
+    # change, and bisection between them is exactly what is wanted; refusing
+    # it left the variable at the 1.0 placeholder with no error (measured:
+    # the ISA block's fitted pressure came back at 129 Pa for 70 kPa).  Only
+    # NaN means the row cannot be evaluated.
+    if math.isnan(fa) or math.isnan(fb):
         return None
     if fa == 0.0:
         return math.exp(a)
@@ -1411,6 +1419,15 @@ def restore_columns(removed, x_reduced, n_original=None):
         if val is not None:
             out[r.index] = val
             r.value = float(val)
+        else:
+            # A silent 1.0 here is a wrong number in the printed solution
+            # that looks like an answer.  Say so.
+            import warnings
+            warnings.warn(
+                f"[LC-W310] presolve could not recover the output-only "
+                f"variable {r.name!r} from its defining constraint after the "
+                f"solve; it is reported as 1.0, which is NOT its value",
+                RuntimeWarning, stacklevel=2)
     return out
 
 
