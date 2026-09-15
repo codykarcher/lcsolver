@@ -6,87 +6,20 @@
 
 """Sequential Inner Approximation (SIA) for signomial programs.
 
-A third way of solving an SP, sitting between PCCP and SLCP and taking the
-useful half of each.
+Sits between PCCP and SLCP. Each constraint gets one of three classes:
+exact (posynomial, imposed as log-sum-exp), conservative (signomial
+p/q <= 1 with the denominator AGM-condensed -- tangent at the iterate,
+harder than the truth), or linearized (black box: value + gradient only).
 
-The idea
---------
-Every constraint is put in one of three classes, and the class decides how the
-sub-problem represents it:
-
-``exact``
-    A posynomial ``p <= 1`` is log-convex as written. Imposed exactly, as a
-    log-sum-exp. No approximation at all.
-``conservative``
-    A signomial ``p/q <= 1`` is condensed by the arithmetic-geometric-mean
-    inequality: ``q_hat(x) <= q(x)`` everywhere, with equality **and matching
-    gradient** at the current iterate. Imposing ``p <= q_hat`` is therefore
-    *harder* than the true constraint.
-``linearized``
-    A black-box constraint, available only as a value and a gradient. There is
-    no way to be conservative with local information alone, so this one is
-    linearized and needs globalizing.
-
-Why the split matters
----------------------
-If every constraint is exact or conservative, the sub-problem's feasible set is
-a **subset** of the true one and contains the current iterate. Two things
-follow with no extra machinery:
-
-* whatever the sub-problem returns is feasible for the *true* problem, so
-  every iterate is a valid design;
-* the current iterate is feasible for the sub-problem, so the objective cannot
-  increase -- descent is structural.
-
-No line search, no merit function, no penalty parameter, no trust region.
-Limit points are KKT points by the standard inner-approximation argument
-(Marks & Wright 1978; the convex-concave procedure of Lipp & Boyd 2016 is the
-same idea).
-
-All of that machinery exists in a general SQP/SLCP to compensate for a model
-that is *not* conservative. Here it is only needed for the black-box block, so
-it is applied only there: the trust region is sized by the linearized
-constraints' model accuracy, and the ratio test looks only at them. A problem
-with no black-box constraints takes full steps and never rejects one.
-
-What this buys over PCCP
-------------------------
-PCCP does the same condensation, and also keeps posynomial constraints exact,
-so the *iterates* are similar. The differences are:
-
-1. **Termination.** PCCP stops when the objective stops changing::
-
-       |prev_obj - obj| / obj <= reltol
-
-   which says "I stopped moving", not "I am optimal", and says nothing about
-   feasibility or stationarity. SIA terminates on a genuine KKT residual for
-   the **original** problem -- stationarity, primal feasibility and
-   complementarity, all evaluated with the *true* constraint functions and
-   gradients, using the sub-problem's duals. Tangency is what licenses that:
-   because the condensed constraint matches the true one to first order at the
-   iterate, its multiplier is the true multiplier.
-
-2. **Black-box constraints.** PCCP needs the monomial/posynomial row
-   structure. SIA takes a value/gradient callback alongside the structured
-   constraints and globalizes only that part.
-
-What this buys over SLCP
-------------------------
-SLCP linearizes the objective and carries a BFGS quadratic to make up for it.
-On a problem that is mostly exact-or-conservative that quadratic is not a
-curvature model -- the curvature condition ``s.z > 0`` fails almost every
-iteration and it degenerates into a fixed proximal penalty that throttles
-steps which were already safe. SIA imposes the objective exactly when it is a
-posynomial and carries no quadratic at all.
-
-Infeasible starts
------------------
-The conservative argument needs a feasible starting point. When one is not
-available, each constraint gets a slack ``s_i >= 0`` and the objective a
-penalty ``tau * sum(s_i)``, with ``tau`` escalating until the slacks vanish --
-Lipp & Boyd's penalty CCP. Once all slacks are zero the iterate is feasible and
-conservatism keeps it there, so the guarantees switch back on. ``Result``
-reports which regime the run finished in.
+With nothing linearized the sub-problem's feasible set is a subset of the
+true one containing the iterate, so every iterate is feasible and descent
+is structural -- no line search, merit function, or trust region (Marks &
+Wright 1978; Lipp & Boyd 2016). The trust region and ratio test apply only
+to the black-box block. Unlike PCCP, termination is a genuine KKT residual
+on the ORIGINAL problem (tangency makes the sub-problem's duals the true
+ones) and black boxes are supported; unlike SLCP, the objective is imposed
+exactly and there is no BFGS quadratic. Infeasible starts get per-row
+slacks and a tau penalty (penalty CCP) until the slacks vanish.
 """
 from __future__ import annotations
 
@@ -110,122 +43,61 @@ class SIAOptions:
 
     def __init__(self, **kw):
         self.max_iterations = 400
-        # 400 rather than 100. SPaircraft converges in 149, so the old default
-        # stopped a converging run three fifths of the way through and reported
-        # it as not converged. The cost of a high cap is nothing when the KKT
-        # test fires -- the run stops on its own -- and the cost of a low one is
-        # a correct answer thrown away.
+        # 400, not 100: SPaircraft converges in 149, and a low cap throws
+        # away a correct answer while a high one costs nothing.
         # --- KKT termination, all on the TRUE problem ---------------------
         self.feasibility_tolerance = 1e-6     # max_i log g_i(x)
         self.stationarity_tolerance = 1e-6    # ||grad log L||_inf in log space
         self.complementarity_tolerance = 1e-6  # max_i |lambda_i log g_i(x)|
         # --- Relative-change termination, OFF by default -------------------
-        # The KKT test above is the right stopping rule for an algebraic
-        # model, where the gradients are exact. A black box that converges an
-        # analysis to its own tolerance -- MSES, a CFD code -- hands back
-        # gradients with noise of order 1e-3 or worse, and a stationarity
-        # residual of 1e-6 is then unreachable: the run sits at the answer,
-        # re-evaluating the box with the seventh digit of a variable
-        # changing, until max_iterations expires and it reports failure.
-        #
-        # These say instead: stop when an ACCEPTED step changed nothing that
-        # matters.  ``objective_reltol`` is |f_k/f_{k-1} - 1| and
-        # ``variable_reltol`` is max_j |x_k,j/x_{k-1,j} - 1|, both between
-        # consecutive accepted iterates.  Every one that is set must be met,
-        # on an iterate that is feasible to feasibility_tolerance, and the
-        # run is then reported CONVERGED with a status saying which test
-        # fired, since there is no KKT certificate behind it.
+        # For black boxes with noisy gradients (~1e-3, e.g. MSES), where a
+        # 1e-6 stationarity is unreachable. Stop when an ACCEPTED step
+        # changed nothing: objective_reltol is |f_k/f_{k-1} - 1|,
+        # variable_reltol is max_j |x_k,j/x_{k-1,j} - 1|, between consecutive
+        # accepted iterates. Every set tolerance must be met at a feasible
+        # iterate; reported CONVERGED with no KKT certificate.
         self.objective_reltol = None
         self.variable_reltol = None
         # --- Phase I: find a feasible point before optimizing --------------
         self.phase1 = True             # False falls back to penalty CCP
-        # 'l1' (default) or 'minmax'.
-        #
-        # min-max solves  min t  s.t.  log g_i <= t  with ONE shared scalar, so
-        # every constraint is driven to the same violation level. That is a bad
-        # fit for a model carrying many signomial EQUALITIES: each becomes
-        # |h_i| <= t, so all of them must be satisfied simultaneously and to
-        # the same tolerance, and an equality already gets a conservative AGM
-        # approximation on BOTH sides (p <= q and q <= p), which can be jointly
-        # infeasible even where the true equality is satisfiable.
-        #
-        # Elastic L1 gives each constraint its OWN slack and minimises the sum.
-        # Its optimum is sparse: constraints that can be satisfied fall to zero
-        # slack and stop competing with the ones that cannot. This is what
-        # SNOPT calls elastic mode and IPOPT calls feasibility restoration, and
-        # it is the standard answer to exactly this problem.
-        #
-        # Measured on the spcomparisons aircraft, which carries ~15 coupled
-        # signomial equalities: min-max fails at 50, 200 AND 500 iterations
-        # alike -- not a budget problem, a formulation one.
         # 'composite' (default) | 'l1' | 'minmax'. See _phase1_composite.
+        # min-max shares one scalar t, so coupled signomial equalities must
+        # all close together -- fails on the spcomparisons aircraft at any
+        # budget. Elastic L1 gives each row its own slack (SNOPT elastic
+        # mode / IPOPT restoration): satisfiable rows drop to zero slack.
         self.phase1_method = 'composite'
         self.phase1_restore_iterations = 12
-        # Cap on the composite trust radius, in log space. Phase I is a
-        # minimum-change REPAIR of the seed, not a search: the seed carries
-        # whatever the engineer knew, and on a non-convex problem the point
-        # Phase I hands over decides which local optimum Phase II descends to.
-        # Left to expand freely the radius reached 8 -- a factor of e^8 per
-        # variable -- and SPaircraft came back 0.46% worse from a feasible
+        # Cap on the composite trust radius, log space. Phase I is a
+        # minimum-change REPAIR of the seed, not a search: left free the
+        # radius reached 8 and SPaircraft came back 0.46% worse from a
         # point nowhere near its seed.
         self.phase1_trust_max = 1.0
         # Proximity weight on the elastic Phase I objective:
         #     min  sum(s_i) + w ||d||^2
-        # Feasibility alone is a badly posed thing to ask for. Any point in
-        # the feasible set answers it, sum(s_i) usually has a whole face of
-        # minimizers, and which one comes back is down to the interior-point
-        # solver. On a non-convex problem that choice is not cosmetic: the
-        # point Phase I hands over decides which local optimum Phase II
-        # descends to. simpleac came back at 4536 or 6485 -- both feasible to
-        # 1e-13 and stationary to 1e-8 -- depending only on whether presolve
-        # had eliminated a variable first.
-        #
-        # The weight makes the answer the SMALLEST repair of the seed, which
-        # is unique, continuous in the data, and the thing an engineer means
-        # by "make my starting design feasible". Small enough not to compete
-        # with the slacks: it breaks ties, it does not trade feasibility away.
+        # sum(s_i) has a whole face of minimizers, and which one comes back
+        # picks the local optimum Phase II finds (simpleac: 4536 vs 6485
+        # depending only on presolve). The weight makes the answer the
+        # SMALLEST repair of the seed -- small enough to break ties without
+        # trading feasibility away.
         self.phase1_proximity = 1e-6
-        # Restore the equalities after each accepted Phase II step.
-        #
-        # Phase II's guarantees -- feasible iterates, monotone descent -- are
-        # stated for a problem whose constraints are exact or CONSERVATIVE. A
-        # signomial equality is neither: condensing both sides gives a monomial
-        # that is tangent at the iterate and on the wrong side of the true
-        # constraint in both directions. So the very first step leaves the
-        # feasible set even from an exactly feasible start -- measured on the
-        # E175, 6e-15 to 2.257 in one step -- and the run then spends its whole
-        # budget crawling back, asymptoting just above tolerance without ever
-        # landing on it. That is not slow convergence, it is convergence to a
-        # point that is not quite feasible, and stationarity measured there
-        # stalls with it (5.93e-06 against a 1e-06 tolerance, falling 0.3% an
-        # iteration).
-        #
-        # The normal step from Phase I fixes it: after each accepted step, pull
-        # back onto the manifold. Cheap, since a step from a nearly-feasible
-        # point converges in one or two Newton iterations.
-        #
-        # ON by default. Measured on the E175 it does what it says -- the
-        # worst violation after the first step drops from 2.257 to 0.271 and
-        # the converged value from 4.2e-08 to 1.7e-08. It does NOT move
-        # stationarity there, and it costs about 50% more wall time, but a
-        # signomial equality is the one row type that can push Phase II off the
-        # feasible set from an exactly feasible start, and every iterate being a
-        # usable design is worth that. Set False to reproduce the drift.
+        # Restore the equalities after each accepted Phase II step. A
+        # condensed signomial equality is tangent, not conservative, so the
+        # first step leaves the feasible set even from an exact start (E175:
+        # 6e-15 -> 2.257 in one step) and the run asymptotes just above
+        # tolerance. The Gauss-Newton normal step pulls back onto the
+        # manifold cheaply. ON by default; ~50% more wall time, but every
+        # iterate is a usable design. Set False to reproduce the drift.
         self.phase2_restore = True
 
 
         self.phase1_max_iterations = 50
-        # When Phase I falls short, continue with the penalty path instead of
-        # abandoning the solve. Penalty CCP tolerates an infeasible start by
-        # construction, so a Phase I that got close has still done useful work.
+        # When Phase I falls short, continue with penalty CCP (which
+        # tolerates an infeasible start) instead of abandoning the solve.
         self.phase1_penalty_fallback = True
         self.phase1_margin = 1e-8      # target interiority for the Phase I
-                                       # sub-problem. NOT an acceptance test:
-                                       # an ACTIVE EQUALITY is feasible at
-                                       # exactly log g = 0 and can never be
-                                       # strictly interior, so demanding it
-                                       # leaves Phase I spinning forever on
-                                       # any problem with equalities.
+                                       # sub-problem; NOT an acceptance test
+                                       # (an active equality can never be
+                                       # strictly interior).
         # --- penalty CCP, used only if phase1 is off or fails --------------
         self.tau0 = 1.0
         self.tau_factor = 5.0
@@ -240,20 +112,14 @@ class SIAOptions:
         self.trust_shrink = 0.25
         self.ratio_accept = 1e-4       # accept the step if ratio exceeds this
         self.ratio_expand = 0.75
-        # A filter cannot break a two-point cycle: if A beats B on violation
-        # and B beats A on objective, neither dominates, both stay acceptable
-        # forever, and every flip is an ACCEPTED step -- so nothing ever
-        # shrinks the radius. Measured on the free coupled 737 case: pi_f
-        # 1.796 <-> 1.672, BPR 4.49 <-> 5.39 (|d| = 0.184 log, right at the
-        # radius), net drift 1e-4/iteration, 100+ iterations burned. Detect
-        # the signature -- two sizeable accepted steps whose SUM is small --
-        # and shrink the radius, forcing the linearization to localize.
+        # A filter cannot break a two-point cycle: neither point dominates,
+        # every flip is ACCEPTED, nothing shrinks the radius (free coupled
+        # 737: pi_f 1.796 <-> 1.672 for 100+ iterations). Detect two
+        # sizeable accepted steps whose SUM is small and shrink.
         self.zigzag_damp = True
-        # net/step below this = a cycle. 0.5 with equal step lengths is a
-        # 151-degree reversal; a healthy curved descent turning 90 degrees
-        # has net/step = 1.41, so this cannot fire on valley-following.
-        # (0.25 was measured too strict: the wide early orbit on the free
-        # coupled case ran at net/step = 0.49 and was never damped.)
+        # net/step below this = a cycle. 0.5 is a 151-degree reversal; a
+        # 90-degree curved descent has net/step = 1.41, so valley-following
+        # cannot fire it. (0.25 missed the free coupled case's orbit at 0.49.)
         self.zigzag_net_frac = 0.5
         self.zigzag_cooldown = 4       # accepted steps with expansion held
                                        # off after a detection, so the radius
@@ -261,219 +127,123 @@ class SIAOptions:
         # --- misc ----------------------------------------------------------
         self.x_min = 1e-9
         self.expand_past_blackbox = False
-        #: Carry a BFGS curvature model for each linearized constraint, so the
-        #: subproblem holds a convex quadratic rather than a plane. See
-        #: :class:`Curvature`. The model stays convex either way; this makes it
-        #: conservative wherever the curvature estimate is good enough.
-        #:
-        #: ON by default. A linearized row is the one place SIA gives up its
-        #: guarantee, and B is what restores it -- leaving this off means the
-        #: black-box block is bounded only by the trust region, which is a step
-        #: limit, not a model. Costs nothing on a problem with no black box:
-        #: the models are only built when ``has_blackbox``, so a pure SP is
-        #: bit-identical either way.
+        # Carry a BFGS curvature model per linearized constraint, so the
+        # subproblem holds a convex quadratic rather than a plane (see
+        # Curvature) -- conservative wherever the estimate is good enough.
+        # ON by default: the linearized row is where SIA gives up its
+        # guarantee and B restores it. Only built when has_blackbox, so a
+        # pure SP is bit-identical either way.
         self.curvature = True
         self.step_expansion = 1.0      # >1 enables the feasibility-verified
         self.step_expansion_max = 1e4  # step extension described in solve_sia.
                                        # Set to 1.0 to take the sub-problem's
                                        # step exactly as returned.
-        # OFF by default (2026-08-30, reversing the 2026-08 flip).  This flag
-        # now governs only plain INEQUALITY ratios -- equalities have owned
-        # their both-sides condensation in CondensedEquality since the
-        # pair-equalities work, and that is where the speed win lived.  On an
-        # inequality the condensed numerator surrenders the conservative
-        # (feasible-iterate) property with NO repair path: restoration closes
-        # equality manifolds, not inequality excursions.  Measured on the
-        # launch-vehicle coupled-losses SP: with True the booster-nozzle
-        # rows drive a limit cycle (eps flipping 10.8 <-> its 60 cap, 208
-        # zigzag detections in 1200 iterations, parked ~3.5e-2 infeasible,
-        # objective UNDER the true optimum); with False the same model
-        # converges in 10 iterations to the certified optimum (eps 31.86,
-        # GLOM 73.650 t, violation 1e-12) that PCCP and a pinned-eps sweep
-        # independently confirm.  Set True only to reproduce the tangent
-        # large-step mode for comparison.
+        # OFF by default (2026-08-30, reversing the 2026-08 flip). Governs
+        # only plain INEQUALITY ratios now -- equalities own their both-sides
+        # condensation in CondensedEquality. A condensed numerator drops the
+        # conservative property with NO repair path (restoration closes
+        # equality manifolds, not inequality excursions): the launch-vehicle
+        # coupled-losses SP limit-cycled ~3.5e-2 infeasible with True, and
+        # converges in 10 iterations to the certified optimum with False.
+        # Set True only to reproduce the tangent large-step mode.
         self.condense_numerator = False
-        # Seed for the black-box curvature model, in units of |d log g / d log x|.
-        # B is built by BFGS from SUCCESSIVE gradients, so it is ZERO on the first
-        # iteration and the linearized rows are then not conservative at all --
-        # see Curvature.observe. A prior of order one restores the property on the
-        # step that has no history to learn from. 0.0 reproduces the old behaviour.
+        # Seed for the black-box curvature model, |d log g / d log x| units.
+        # BFGS B is ZERO on the first iteration, so a zero seed leaves the
+        # first step unconservative -- see Curvature.observe. 0.0 reproduces
+        # the old behaviour.
         self.curvature_prior = 1.0
-        # Iterations of BFGS data per black-box row after which the curvature
-        # model is treated as TRAINED and the trust region is released -- see the
-        # expand path below. The trust region substitutes for a conservative
-        # model; B IS the conservative model once it has data, so keeping a
-        # ratcheting radius past that point only traps the solve.
+        # BFGS iterations per black-box row after which B counts as TRAINED
+        # and the trust region is released -- see the expand path below. The
+        # region only substitutes for a conservative model, and B is one
+        # once it has data.
         self.curvature_warmup = 6
-        # Warm-up step control for the linearized (black-box) rows. Until the
-        # curvature models have data their model is only as conservative as the
-        # prior, so bound the step by what it can actually PREDICT rather than by
-        # a fixed radius: cap |grad . d| <= this for every black-box row. Because
-        # an inf-norm trust region gives |grad . d| <= ||grad||_1 * r, the cap is
-        # r <= target / max_i ||grad_i||_1 -- self-scaling, so a parameterisation
-        # whose gradients are 4x larger automatically gets a 4x smaller first step.
-        # That is the difference between two ROM bases surviving the same radius
-        # or not, and it is not something a user should have to tune per basis.
-        # Applied for the FIRST blackbox_warm_iters iterations only, then released
-        # unconditionally. Gating it on "curvature is trained" instead deadlocks:
-        # the capped steps are too small for the BFGS secant to accept an update,
-        # so training never completes and the cap never lifts -- measured, the
-        # reference case then sat at its warm start for all 300 iterations.
-        # 0 disables either field.
+        # Warm-up step control for the black-box rows: cap |grad . d| <=
+        # this for every row, so r <= target / max_i ||grad_i||_1 --
+        # self-scaling across parameterisations. Applied for the FIRST
+        # blackbox_warm_iters iterations only, then released unconditionally:
+        # gating on "trained" deadlocks (capped steps too small for the BFGS
+        # secant, so training never completes -- measured, 300 iterations
+        # parked at the warm start). 0 disables either field.
         self.blackbox_step_target = 0.15
         self.blackbox_warm_iters = 0
-        # Apply the trust box for the FIRST this-many Phase II iterations only,
-        # then drop it entirely. None keeps it on for the whole solve.
-        #
-        # Growing the radius is not the same as removing it. Measured on the 2t+2c
-        # ROM section: the radius cycles 1.7e-04 .. 1.0e-03 for ~290 iterations with
-        # ||d*||inf/radius = 1.000 EVERY time -- the box, not any constraint, is the
-        # binding row. Six of the nine black-box drag rows then come back with
-        # lambda ~ 1e-12, so the dual that should oppose the structured rows on the
-        # cd variables is carried by the trust region instead. The trust region is
-        # not part of the original problem, so its multiplier cannot appear in the
-        # KKT test, and stationarity froze at 1.7e-02 -- entirely on cdm, P0cr and
-        # the cd_i, all one sign -- while feasibility sat at 1e-08. Shrink beats
-        # growth arithmetically (x0.25 per rejection against x2 / x sqrt(2)), so the
-        # radius can never climb back out on its own.
+        # Apply the trust box for the FIRST this-many Phase II iterations
+        # only, then drop it; None keeps it for the whole solve. Growing is
+        # not removing: shrink beats growth arithmetically, so a collapsed
+        # box can end up carrying the dual that belongs to the black-box
+        # rows and freeze stationarity (2t+2c ROM section: 1.7e-02).
         self.trust_iterations = None
         # Floor, as a multiple of feasibility_tolerance, on the PREDICTED
-        # improvement in the linearized block before a violation ratio is formed
-        # at all. See the gate in the ratio test.
-        #
-        # 0.01 was too low by two orders of magnitude on the ROM section. Measured
-        # there: v0 = -1.7e-09, the model predicted vp ~ -1e-08, the step landed at
-        # va ~ +2.8e-08, and the ratio came out at -3.004 -- from three numbers all
-        # at 1e-08, a hundredth of the feasibility tolerance the run is trying to
-        # meet and squarely inside Ipopt's own interior-point noise. That rejected
-        # 90 of 300 iterations in a period-3 limit cycle, pinned the radius at
-        # ~5e-04, and left cdm 8.3% and cd_4/cd_7 ~11% ABOVE the drag the black box
-        # actually returns -- slack rows the solve could not close at 0.05% per
-        # step. Below the feasibility tolerance a "change in violation" is not a
-        # signal about the model, so no ratio should be formed from it.
+        # improvement in the linearized block before a violation ratio is
+        # formed. 0.01 was two orders too low: the ROM section formed ratios
+        # from numbers at 1e-08 (inside Ipopt noise) and rejected 90 of 300
+        # iterations. Below the tolerance a violation change is not a signal.
         self.ratio_gate_rel = 1.0
-        # How much worse the TRUE violation of the linearized block may get on an
-        # accepted step, as a multiple of max(current violation, feasibility
-        # tolerance). Set 0/None to disable the guard entirely.
-        #
-        # This is a backstop against walking out of the feasible set, not a
-        # feasibility filter, so it should fire rarely. If it is firing on a large
-        # fraction of iterations the threshold is too tight, not the steps too bad:
-        # near a solution the current violation sits far below the tolerance, so
-        # max(v0, tol) pins to the TOLERANCE and the absolute bar becomes
-        # factor*tol -- 1e-05 at the defaults -- which ordinary sub-problem noise
-        # can exceed without the step being remotely unsafe.
+        # How much worse the TRUE violation of the linearized block may get
+        # on an accepted step, as a multiple of max(current violation,
+        # feasibility tolerance). 0/None disables. A backstop, not a filter:
+        # if it fires often the threshold is too tight, not the steps bad
+        # (near a solution the bar pins to factor*tol, inside solver noise).
         self.feasibility_guard = _FEAS_GUARD          # module default, 10.0
-        # ...AND an absolute floor, without which the relative test above is not
-        # relative at all. Measured on the 2t+2c section: at a converged iterate
-        # v0 sits at ~1e-09, so max(v0, tol) pins to the TOLERANCE and the bar
-        # becomes factor*tol = 1e-05. Ordinary sub-problem noise clears that
-        # constantly -- 101 of 192 steps tripped it, 53%, each one quartering the
-        # radius, and the solve went from 192 iterations to 802 for exactly the
-        # same answer (1503.021 either way).
-        #
-        # An absolute floor SOUNDS like the fix for that and is not -- measured,
-        # it breaks the solve outright. At 1e-03 on 2t+2c the guard stops
-        # rejecting the two large early steps (|d| = 2.34, 1.13) that are how the
-        # run reaches its basin at all; the smaller step it takes instead lands at
-        # viol 2.12e-04, above the tolerance but below the floor, and Phase II has
-        # no way back from there -- every later step is rejected and the run dies
-        # at iteration 8 with W 1605 against the 1503.021 it reaches untouched.
-        #
-        # So the floor defaults OFF. The plain relative guard converges both
-        # 2t+2c (802 it) and 3t+3c (911 it); the cost is real -- 192 iterations
-        # without any guard -- but 3t+3c cannot be solved cold without it at all.
+        # Absolute floor for the guard above -- defaults OFF. It sounds like
+        # the fix for noise tripping the pinned relative bar (2t+2c: 101 of
+        # 192 steps, 192 -> 802 iterations for the same answer) and is not:
+        # at 1e-03 it admitted an excursion Phase II could not recover from
+        # and the run died at iteration 8. The plain relative guard converges
+        # both sections, and 3t+3c cannot be solved cold without it.
         self.feasibility_guard_abs = 0.0
         # --- Fletcher-Leyffer filter acceptance (replaces the guard) --------
-        # ON by default; it supersedes feasibility_guard, which is left in place
-        # only so the old behaviour can be reproduced (set filter_acceptance
-        # False). See :class:`Filter` for why a scalar guard cannot work.
+        # ON by default; supersedes feasibility_guard, kept only to reproduce
+        # the old behaviour. See Filter for why a scalar guard cannot work.
         self.filter_acceptance = True
         self.filter_gamma_h = 1e-5
         self.filter_gamma_f = 1e-5
         # --- restoration ----------------------------------------------------
-        # A filter accepts steps that worsen feasibility, which is only sound if
-        # such a step is RECOVERABLE. Phase I already minimises the worst
-        # violation; this re-enters it from inside Phase II when the region is
-        # about to collapse or bracket while the iterate is infeasible, instead
-        # of aborting. Without it Phase II's only response to an excursion is to
-        # reject and shrink forever.
+        # A filter accepts feasibility-worsening steps only because they are
+        # RECOVERABLE; this re-enters Phase I from inside Phase II when the
+        # region collapses or brackets while infeasible, instead of aborting.
         self.restoration = True
         self.restoration_max = 8          # re-entries allowed per solve
-        # Iterations the run may sit infeasible WITHOUT reducing the violation by
-        # at least 10% before restoration is triggered. This, not trust-region
-        # collapse, is the trigger that matters: measured on 3t+3c the filter
-        # accepted an excursion to 2.69e-01 and the run then held that violation
-        # for all 1500 iterations while the region stayed perfectly healthy.
+        # Iterations the run may sit infeasible without a 10% reduction
+        # before restoration triggers. This, not trust-region collapse, is
+        # the trigger that matters (3t+3c: held viol 2.69e-01 for 1500
+        # iterations with a healthy region).
         self.restoration_patience = 5
         # --- min-norm-dual KKT termination (EXPERIMENTAL, off by default) --
-        # Splitting an equality into two always-active one-sided rows makes
-        # the dual set unbounded (any common increment to the pair cancels),
-        # so the sub-problem's returned multipliers can carry arbitrarily
-        # large components in the null direction and the stationarity test
-        # reads garbage at a genuinely optimal point (measured on the
-        # coupled aircraft: duals to 1e13 with the objective stable to
-        # 3e-8). With this flag, whenever the iterate is feasible but the
-        # dual-based stationarity fails, the test is repeated with the
-        # MINIMUM-NORM multipliers over the active rows -- the certificate
-        # the point actually earns -- every `kkt_min_norm_every` iterations
-        # and always on the final one.
+        # Split equalities make the dual set unbounded, so returned
+        # multipliers can read garbage at an optimal point (coupled aircraft:
+        # duals to 1e13). When feasible but stationarity fails, retest with
+        # MINIMUM-NORM multipliers every kkt_min_norm_every iterations and
+        # always on the final one.
         self.kkt_min_norm = False
         self.kkt_min_norm_every = 25
         self.kkt_min_norm_act_tol = 1e-6
         # --- Ipopt polish of the TRUE problem (EXPERIMENTAL, off) --------
-        # The sequential method's conservative first-order steps crawl in
-        # shallow curved valleys (measured on the coupled aircraft: the
-        # design settles to <0.1% and the objective then creeps ~0.06% per
-        # 400 iterations through flat trim blocks). From a settled feasible
-        # point, hand the ORIGINAL problem -- rebuilt symbolically in log
-        # space, every row exact, no condensation -- to Ipopt, whose exact
-        # second-order steps finish shallow valleys in a handful of
-        # iterations. The result is adopted only if it verifies: feasible
-        # on the true rows and objective no worse. polish_box bounds the
-        # excursion in log units so the polish is local to the basin the
-        # sequential phase found.
+        # Conservative first-order steps crawl in shallow valleys; from a
+        # settled feasible point, hand the exact log-space problem to Ipopt
+        # and adopt the result only if it verifies (feasible, no worse).
+        # polish_box bounds the excursion so the polish stays in the basin.
         self.polish_ipopt = False
         self.polish_box = 3.0
         self.polish_max_iter = 3000
         # --- trajectory log (DIAGNOSTIC, off) ----------------------------
-        # Path to a jsonl file; each ACCEPTED iterate appends one line with
-        # iteration, objective, violation, stationarity, |d|, and the
-        # values of every variable whose name contains one of the
-        # substrings in traj_vars. The failure movie, replayable.
+        # jsonl path; one line per ACCEPTED iterate with iteration,
+        # objective, violation, stationarity, |d|, and every variable
+        # matching a traj_vars substring. The failure movie, replayable.
         self.traj_log = None
         self.traj_vars = ()
-        # Condense the NUMERATOR of p/q <= 1 as well, making the constraint a
-        # monomial -- linear in log space. This is what PCCP does for an
-        # equality, and it is the whole reason PCCP takes larger steps: since
-        # p_hat <= p, the condensed constraint is EASIER than the true one, so
-        # the sub-problem's feasible set is no longer a SUBSET of the true one
-        # and an iterate may leave it. The feasible-iterate and monotone-descent
-        # guarantees go with it.
-        #
-        # What survives is tangency: p_hat matches p in value and gradient at
-        # x_k, so the sub-problem's duals still certify the ORIGINAL problem and
-        # the KKT termination test remains honest. That is the trade this flag
-        # offers -- PCCP's step length with SIA's stopping rule.
+        # (condense_numerator trades PCCP's step length for SIA's stopping
+        # rule: tangency keeps the KKT test honest, the guarantees go.)
         self.cache_subproblem = True   # build each phase's Pyomo model once and
                                        # re-point it; see SubproblemCache. Only
                                        # applies when every body is a Posynomial
                                        # or PosynomialRatio.
         self.verbose = False
         self.tee = False
-        # tol tightened from IPOPT's 1e-8 default. The sub-problem's dual
-        # accuracy propagates straight into the KKT residual, and at 1e-8 it
-        # leaves a floor around 2e-3 -- above the stationarity tolerance, so a
-        # converged run cannot report itself converged. Measured on SPaircraft:
-        # 1.96e-03 at 1e-8 against 9.51e-07 at 1e-12, for no change in the
-        # objective and no extra iterations.
-        # constr_viol_tol does NOT follow tol -- it keeps its own 1e-4 default,
-        # which is a floor on how well the sub-problem's rows are satisfied and
-        # therefore a floor on Phase I. It showed up as the composite step
-        # driving the aircraft from 2.2 to 1.6e-04 in two iterations and then
-        # sitting at 1e-04 forever, with the sub-problem reporting every slack
-        # at zero: the model believed it was feasible because 1e-04 is what it
-        # was asked to achieve.
+        # tol tightened from IPOPT's 1e-8: sub-problem dual accuracy feeds
+        # the KKT residual, and 1e-8 leaves a ~2e-3 floor (SPaircraft:
+        # 9.51e-07 at 1e-12, no extra iterations). constr_viol_tol must be
+        # set too -- its own 1e-4 default is a floor on Phase I: the model
+        # reports feasible because 1e-04 is what it was asked to achieve.
         self.ipopt_options = {"print_level": 0, "sb": "yes", "tol": 1e-12,
                               "constr_viol_tol": 1e-12,
                               "acceptable_constr_viol_tol": 1e-10}
@@ -490,7 +260,7 @@ class SIAResult:
         self.iterations = 0
         self.converged = False
         self.status = "not run"
-        #: KKT residuals on the ORIGINAL problem at the returned point
+        # KKT residuals on the ORIGINAL problem at the returned point
         self.max_violation = None
         self.stationarity = None
         self.complementarity = None
@@ -509,12 +279,7 @@ class SIAResult:
 
 
     def __repr__(self):
-        """One line saying what happened, and whether to believe it.
-
-        SLCP's Result prints itself; this printed an object address, which is
-        the least useful thing a result can say when the whole point of the
-        method is what it can certify about the point it returns.
-        """
+        """One line saying what happened and whether to believe it."""
         state = ('converged' if self.converged else
                  'NOT converged' if self.iterations else 'no iterations')
         obj = ('?' if self.objective is None else f'{self.objective:.6g}')
@@ -543,22 +308,12 @@ def _log_g(con, x):
 
 
 def _log_viol(con, x):
-    """How far ``con`` is from being satisfied, in the log, signed so that
-    positive means violated.
+    """Signed violation in the log; positive means violated.
 
-    An inequality ``g <= 1`` is violated only from above, so its violation is
-    ``log g``. An equality ``g == 1`` is violated in **either** direction, so
-    its violation is ``|log g|``.
-
-    Using ``log g`` for both -- which this module did until a black-boxed
-    equality turned up in a helicopter blade model -- has two consequences,
-    and both are quiet. The feasibility half of the KKT test cannot see an
-    equality that has drifted negative, so a point can be certified while
-    violating it. And the trust-region ratio reads that drift as *improvement*,
-    so it keeps rejecting the steps that would fix it: measured, the same
-    constraint produced the same ratio of -3.3 every third iteration for 300
-    iterations, knocking the radius back to 1.9e-6 each time and leaving 93%
-    of the run stepping 1e-5 at a time.
+    An inequality ``g <= 1`` uses ``log g``; an equality uses ``|log g|``.
+    Using ``log g`` for both let the KKT test certify a drifted-negative
+    equality and made the ratio test read the drift as improvement (same
+    -3.3 ratio for 300 iterations, radius knocked to 1.9e-6).
     """
     lg = math.log(max(con.body(x), 1e-300))
     return abs(lg) if con.operator == '==' else lg
@@ -581,9 +336,8 @@ def _agm(posy, x_k, weight_params, n):
     return coeff, expo
 
 
-#: How much worse the violation may get on a step judged only by its objective
-#: ratio before that step is rejected outright. Generous -- this is a backstop
-#: against walking out of the feasible set, not a feasibility filter.
+# How much worse the violation may get on an objective-ratio step before it
+# is rejected outright. Generous -- a backstop, not a feasibility filter.
 _FEAS_GUARD = 10.0
 
 
@@ -605,14 +359,10 @@ def _violation_structured(problem, x):
 def _min_norm_mults(problem, x, act_tol=1e-6):
     """Minimum-norm multipliers over the ACTIVE rows at ``x``.
 
-    Solves ``min ||g0 + A lam||`` with ``lam >= 0`` over the rows whose
-    log-residual is within ``act_tol`` of active (every row is a <= row
-    by the time the problem is built; split equalities appear as two
-    opposed active rows, whose nonnegative pair spans the free-sign
-    equality dual). Column scaling is what makes this work at aircraft
-    size -- gradient columns span ~8 decades and unscaled bounded
-    least-squares stalls. Returns a full-length multiplier vector with
-    zeros on inactive rows, suitable for ``_kkt``.
+    ``min ||g0 + A lam||, lam >= 0`` over rows within ``act_tol`` of active
+    (split equalities span the free-sign dual). Column scaling is what
+    makes this work at aircraft size -- gradient columns span ~8 decades.
+    Returns a full-length vector with zeros on inactive rows, for ``_kkt``.
     """
     from scipy.optimize import lsq_linear
     g0 = np.asarray(problem.objective.log_grad(x), dtype=float)
@@ -644,13 +394,9 @@ def _min_norm_mults(problem, x, act_tol=1e-6):
 def _polish_ipopt(problem, x, options):
     """Solve the TRUE problem locally with Ipopt from ``x``.
 
-    Rebuilds every row symbolically in log space (posynomials as
-    sum-of-exponentials; ratio and condensed-equality rows as p <= q and
-    p == q), so Ipopt sees the exact nonconvex NLP with exact second
-    derivatives -- the ingredient the sequential phase's first-order
-    conservative steps lack in shallow valleys. Returns the polished x,
-    or None if the model contains black-box rows, Ipopt fails, or the
-    result does not verify.
+    Rebuilds every row symbolically in log space so Ipopt gets exact second
+    derivatives. Returns the polished x, or None on black-box rows, Ipopt
+    failure, or a result that does not verify.
     """
     from lcsolver.solvers.sequential.slcp import (Posynomial, PosynomialRatio,
                                         CondensedEquality)
@@ -739,24 +485,11 @@ def _polish_ipopt(problem, x, options):
 def _kkt(problem, x, mults, x_min=None, bound_tol=1e-6):
     """``(stationarity, violation, complementarity)`` on the TRUE problem.
 
-    All gradients are the true ones -- for a condensed constraint that means
-    ``log_grad(p) - log_grad(q)``, not the gradient of the monomial that stood
-    in for ``q`` in the sub-problem. Tangency makes the two equal at the
-    iterate, which is exactly why the sub-problem's duals certify the original
-    problem.
-
-    Stationarity is the **projected** gradient, which matters as soon as a
-    variable reaches a bound. There the Lagrangian gradient is balanced by the
-    bound's own multiplier and need not vanish: at a lower bound only a
-    negative gradient is a violation, at an upper bound only a positive one.
-    Taking the raw norm instead reports a large residual at a point that is
-    perfectly optimal.
-
-    This is not a corner case here. On SPaircraft the variables that reach a
-    bound are exactly the design limits the model exists to express -- wing
-    thickness at ``tau_max``, engine pressure ratio at 35, taper at its floor.
-    Measured, every one of them carried the sign its bound admits, so the whole
-    apparent residual was this.
+    Gradients are the true ones; tangency is why the sub-problem's duals
+    certify the original problem. Stationarity is the PROJECTED gradient:
+    at an active bound the Lagrangian gradient is held by the bound's own
+    multiplier, and the raw norm reports a large residual at an optimal
+    point (on SPaircraft the whole apparent residual was this).
     """
     g = np.asarray(problem.objective.log_grad(x), dtype=float)
     comp = 0.0
@@ -800,16 +533,10 @@ def _restore(problem, x, options, has_blackbox, cache, done, k, why,
              targets=None):
     """Re-enter Phase I from inside Phase II. Returns ``(x, done, ok)``.
 
-    The filter deliberately accepts steps that worsen feasibility, on the
-    understanding that such a step is RECOVERABLE. This is what makes that true.
-    Phase I already solves exactly the right sub-problem -- minimise the worst
-    violation, ignore the objective -- it was simply only ever called once, at
-    the start, so Phase II's only response to an excursion was to reject and
-    shrink until the region died.
-
-    Restoration is accepted only if it actually restores feasibility; a Phase I
-    that comes back still infeasible tells us the problem is infeasible HERE,
-    which is worth reporting rather than papering over.
+    The filter accepts feasibility-worsening steps only because they are
+    recoverable; this is what makes that true. Accepted only if it actually
+    restores feasibility -- coming back infeasible means the problem is
+    infeasible HERE, which is worth reporting.
     """
     if not getattr(options, 'restoration', False):
         return x, done, False
@@ -834,14 +561,9 @@ def _restore(problem, x, options, has_blackbox, cache, done, k, why,
     ok = bool(np.all(np.isfinite(x_r)) and np.all(x_r > 0)
               and v_after < v_before
               and v_after <= options.feasibility_tolerance)
-    # A restoration that returns a point it has ALREADY returned to is a
-    # loop, not a recovery: Phase I is deterministic, so from anywhere in
-    # the same neighbourhood it lands in the same feasible well, the filter
-    # is then cleared, and the descent replays byte-identically. Measured
-    # on the free coupled 737 case: a 7-state cycle (f 472182.4 -> ... ->
-    # 218126.2 -> restore) repeated until all restoration credits burned,
-    # ~56 iterations of deterministic replay. Refusing the repeat costs one
-    # Phase I call and lets Phase II continue from where it is.
+    # Refuse a restoration to an already-returned point: Phase I is
+    # deterministic, so the descent replays byte-identically (free coupled
+    # 737: a 7-state cycle burned all restoration credits).
     if ok and targets is not None:
         lx_r = np.log(x_r)
         for t in targets:
@@ -862,32 +584,12 @@ def _restore(problem, x, options, has_blackbox, cache, done, k, why,
 class Filter:
     """A Fletcher-Leyffer filter over ``(violation, objective)`` pairs.
 
-    Replaces the scalar feasibility guard, which could not be tuned. That guard
-    asked "is the violation more than K times worse than it was", and K is an
-    exchange rate between feasibility and objective -- there is no correct value,
-    because the right trade depends on where you are. Measured on the ROM
-    section, K = 10 rejected 101 of 192 steps (near a solution the comparator
-    pins to the TOLERANCE, so the relative test silently becomes an absolute bar
-    at K*tol), while raising it let a step run from 1e-08 to 2.69e-01.
-
-    A filter asks a different question, with no exchange rate in it: is this
-    trial DOMINATED -- worse in objective AND worse in feasibility than a point
-    already seen? If not, it is acceptable. Formally, for every entry
-    ``(h_j, f_j)``::
-
-        h < (1 - gamma_h) * h_j    OR    f < f_j - gamma_f * h_j
-
-    ``gamma_h`` and ``gamma_f`` are anti-cycling margins, not exchange rates:
-    they only stop the iterates converging onto the filter boundary, and any
-    small value does that. That is the robustness the scalar guard lacked.
-
-    A filter is only sound with a RESTORATION phase, because it deliberately
-    accepts steps that worsen feasibility -- the point being that such a step is
-    recoverable, not that it is harmless. See the restoration hook in
-    ``solve_sia``, which re-enters Phase I.
-
-    ``h`` must be non-negative, so it is ``max(log_violation, 0)``: a row with
-    slack contributes no infeasibility.
+    Replaces the scalar guard, whose factor K is an exchange rate with no
+    correct value (ROM section: K = 10 rejected 101 of 192 steps). The
+    filter asks only whether the trial is DOMINATED by a point seen:
+    ``h < (1 - gamma_h) * h_j  OR  f < f_j - gamma_f * h_j``, the gammas
+    being anti-cycling margins, not exchange rates. Only sound with a
+    restoration phase (see solve_sia). ``h = max(log_violation, 0)``.
     """
 
     def __init__(self, gamma_h=1e-5, gamma_f=1e-5, h_max=None):
@@ -923,32 +625,14 @@ class Filter:
 class Curvature:
     """A convex quadratic model of a black-box constraint's log-curvature.
 
-    The linearized class is the one place SIA gives up its guarantees, and the
-    reason is narrow: in log space a linearization IS a monomial, so the
-    subproblem can hold it exactly -- it is just not *conservative*, because a
-    value and a gradient say nothing about curvature.
-
-    This supplies the missing piece. Carrying a positive semi-definite ``B``
-    approximating the Hessian of ``log g`` in log space, the model
-
-        log g(x_k) + grad^T d + 1/2 d^T B d
-
-    is still convex in ``d`` (so the subproblem stays convex and the constraint
-    is still held exactly), is exact and tangent at the iterate as before, and
-    is an upper bound on the truth wherever ``B`` dominates the true
-    log-Hessian. That is the conservative class's three properties, now
-    conditional on ``B`` rather than free.
-
-    ``B`` is built by damped BFGS from successive gradients, which is what
-    keeps it positive semi-definite -- Powell's damping, as in Nocedal and
-    Wright Procedure 18.2. Curvature that would make it indefinite is damped
-    away rather than accepted, which is the conservative direction: a smaller
-    ``B`` under-penalises the step, and the ratio test still catches that.
-
-    Restricted to the variables the constraint actually depends on. A black box
-    over four of sixty-one variables carries a 4x4 matrix, not 61x61, which is
-    the difference between sixteen extra terms in the row and nearly four
-    thousand.
+    A linearization is a monomial in log space -- exact but not
+    conservative. With PSD ``B``, ``log g + grad.d + 1/2 d.B.d`` stays
+    convex, stays tangent, and is an upper bound wherever B dominates the
+    true log-Hessian: the conservative class's properties, conditional on
+    B. Built by damped BFGS (Powell's damping, Nocedal & Wright Procedure
+    18.2); indefinite curvature is damped away, and the ratio test catches
+    an under-penalising B. Restricted to the variables the constraint
+    touches (4x4, not 61x61).
     """
 
     def __init__(self, n, damping=0.2, cap=1e3, prior=0.0):
@@ -967,23 +651,12 @@ class Curvature:
     def observe(self, grad):
         """Extend the support to cover whatever the gradient touches.
 
-        New directions are seeded with ``prior * |grad_j|`` on the diagonal, not
-        with zero. B is built by BFGS from SUCCESSIVE gradients, so on the first
-        iteration there is no history and a zero seed leaves the model a bare
-        linearization -- the one thing the class exists to avoid. The guarantee
-        is "conservative wherever B dominates the true log-curvature", and B = 0
-        dominates nothing: the first step is then bounded only by the trust
-        region, and on a black box that step can leave the feasible set outright
-        (measured on the helicopter: 9.975e-09 -> 5.070e-01 in one step, after
-        which the sub-problem is unsolvable and the solve aborts).
-
-        |grad_j| is the right scale because in log space a smooth function's
-        second derivative runs with its first: measured on that model's drag
-        black box, |lambda|max / |grad| sits at 2.5-6.6. So a prior of order one
-        is genuinely conservative for a unit log step, and where it is still
-        optimistic ``inflate`` raises it from the next iteration's data. This is
-        the standard quasi-Newton ``B0 = gamma I`` seeding, scaled per variable
-        because the sensitivities here span two orders of magnitude.
+        New directions seed the diagonal with ``prior * |grad_j|``, not
+        zero: B = 0 dominates nothing, and the first step can then leave
+        the feasible set outright (helicopter: 9.975e-09 -> 5.070e-01,
+        solve aborts). |grad_j| is the right scale -- measured
+        |lambda|max / |grad| sits at 2.5-6.6 -- the standard B0 = gamma I
+        seeding, per variable.
         """
         g = np.asarray(grad, dtype=float)
         self.last_grad = g
@@ -1028,9 +701,7 @@ class Curvature:
         sy = float(s @ y)
         if sBs <= 0 and sy <= 0:
             return
-        # Powell damping keeps B positive semi-definite even where the true
-        # log-Hessian is not -- which is exactly the case a signomial
-        # constraint presents.
+        # Powell damping keeps B PSD even where the true log-Hessian is not.
         if sy < self.damping * sBs:
             denom = sBs - sy
             theta = (1.0 - self.damping) * sBs / denom if denom > 1e-300 else 1.0
@@ -1049,10 +720,8 @@ class Curvature:
     def inflate(self, shortfall, s_full):
         """Raise B along the last step when the model under-predicted.
 
-        Validation, using data the next iteration produces anyway: if the true
-        constraint came in above what the model said, the model was optimistic
-        there, and the curvature along that direction was underestimated by at
-        least ``2*shortfall/||s||^2``.
+        Free validation: the curvature along that direction was under-
+        estimated by at least ``2*shortfall/||s||^2``.
         """
         if not self.support or shortfall <= 0:
             return
@@ -1066,19 +735,11 @@ class Curvature:
         self.inflations += 1
 
     def relax(self, factor=0.9):
-        """Ease B back when the model turned out to be pessimistic.
+        """Ease B back when the model turned out pessimistic.
 
-        Without this the model only ever gets more conservative: ``inflate``
-        raises B whenever validation catches an optimistic prediction and
-        nothing ever lowers it again, so B ratchets up for the whole run. On
-        the helicopter that progressively wrecked the sub-problem's
-        conditioning until IPOPT itself stopped converging at iteration 721 --
-        the outer iteration was still descending, and the *inner* solve gave
-        up.
-
-        Conservatism that is no longer earned is not free: it shrinks steps and
-        it curves a constraint that the evidence says is behaving. Easing it
-        back is the same bet the trust region makes when it expands.
+        Otherwise B only ratchets up -- on the helicopter that wrecked the
+        sub-problem's conditioning until IPOPT quit at iteration 721.
+        Easing back is the same bet the trust region makes when it expands.
         """
         if self.B.size:
             self.B = float(factor) * self.B
@@ -1095,41 +756,16 @@ class Curvature:
 class SubproblemCache:
     """Build each phase's Pyomo model once and re-point it every iteration.
 
-    The uncached path rebuilds every constraint symbolically on every
-    iteration. On SPaircraft that is thousands of log-sum-exp expressions over
-    a thousand variables, reconstructed from scratch once per iteration, and it
-    dominates the run -- IPOPT itself is a small fraction of the wall clock.
-
-    Almost none of that structure moves. Each exact term is
-
-        exp( log c_k + a_k . (d + log x_k) )
-            = exp( [log c_k + a_k . log x_k]  +  [a_k . d] )
-
-    where ``a_k . d`` is FIXED and only the bracketed constant follows the
-    iterate. So the projections are built once as Pyomo expressions and the
-    constants become mutable Params.
-
-    The AGM-condensed denominator of a ``PosynomialRatio`` looks like it breaks
-    this, since its exponent vector ``aq`` is recomputed every iteration -- but
-    ``aq = sum_i w_i a_i``, so
-
-        aq . d = sum_i w_i (a_i . d)
-
-    reuses the same fixed projections and needs one mutable weight per term
-    instead of a full-length coefficient vector. That is the difference between
-    a handful of scalars per constraint and an n-term expression per constraint.
-
-    This is the same device as :class:`~lcsolver.solvers.sequential.slcp.SubproblemCache`,
-    but the SIA sub-problem is easier to cache than SLCP's for two reasons.
-    There is no BFGS quadratic, which is the one part SLCP has to rebuild every
-    iteration; and a problem that is cacheable at all has no black-box
-    constraint, hence no trust region -- so nothing but variable bounds and a
-    few scalars changes between iterations.
-
-    A model is built per ``(minimize_violation, use_slacks)`` phase, because the
-    right-hand side differs structurally between them (``t``, ``s_i``, or
-    nothing at all). Each phase builds once and is then reused for all of its
-    iterations.
+    The uncached path rebuilds thousands of log-sum-exp expressions per
+    iteration and dominates the wall clock. Each exact term splits into a
+    FIXED projection ``a_k . d`` plus a constant that follows the iterate,
+    so projections are built once and the constants become mutable Params.
+    The AGM denominator reuses the same projections with one mutable weight
+    per term (``aq . d = sum_i w_i (a_i . d)``). Same device as SLCP's
+    SubproblemCache, but easier: no BFGS quadratic, and a cacheable problem
+    has no black box hence no trust region. One model per
+    ``(minimize_violation, use_slacks)`` phase, since the RHS differs
+    structurally between them.
     """
 
     def __init__(self, problem, options):
@@ -1173,26 +809,14 @@ class SubproblemCache:
         m.params = pyo.Block()
         # Three modes, not two:
         #   False   Phase II -- true objective, no slacks
-        #   True    Phase I MIN-MAX -- one shared t, min t s.t. log g_i <= t
+        #   True    Phase I MIN-MAX -- one shared t
         #   'l1'    Phase I ELASTIC -- a slack PER constraint, min sum(s_i)
-        #
-        # The min-max form drives every constraint to the SAME violation
-        # level, which is why a stalled Phase I reports a dozen rows sitting
-        # at an identical residual and none of them stands out. The elastic
-        # form is what makes an infeasibility diagnosable: at its optimum
-        # nearly every s_i is zero and the few that are not ARE the answer.
-        # 'l1' slacks everything; 'l1_hard' slacks only the INEQUALITIES and
-        # imposes the equalities exactly, so the step is confined to the
-        # linearised equality manifold. That is the TANGENTIAL half of a
-        # composite step, expressed in the sub-problem instead of through a
-        # null-space projection.
-        #
-        # It is only safe from a point already ON the manifold, and then it is
-        # guaranteed safe: the AGM condensation is tight at its expansion
-        # point (w_k = q_k(x_k)/q(x_k) gives qhat(x_k) = q(x_k) exactly), so
-        # d = 0 satisfies the linearised equalities and the sub-problem cannot
-        # be infeasible. From an inconsistent start the same rows are what
-        # made it fail with "sub-problem failed: infeasible" at iteration 1.
+        # Elastic makes infeasibility diagnosable: the rows keeping slack
+        # ARE the answer. 'l1_hard' slacks only the inequalities and imposes
+        # the equalities exactly -- the tangential half of a composite step.
+        # Safe only from a point ON the manifold (the AGM condensation is
+        # tight there, so d = 0 is feasible); from an inconsistent start it
+        # fails with "sub-problem failed: infeasible" at iteration 1.
         elastic = (minimize_violation in ('l1', 'l1_hard'))
         hard_eq = (minimize_violation == 'l1_hard')
         if minimize_violation and not elastic:
@@ -1234,14 +858,10 @@ class SubproblemCache:
                        if slacked else 0.0)
             m.obj = pyo.Objective(expr=obj_expr + penalty, sense=pyo.minimize)
         elif elastic:
-            # Pure feasibility: no true objective at all, so there is no
-            # scaling contest between cost and feasibility to lose. The
-            # proximity term breaks the tie between equally feasible points
-            # -- measured FROM THE PHASE-I ENTRY POINT via the mutable
-            # prox_c offsets (log x_k - log x_seed, re-pointed in update()),
-            # so the tie-break anchors the WHOLE phase to the seed rather
-            # than each step to its own iterate (see the inline builder's
-            # comment for the measured wander this prevents).
+            # Pure feasibility: no scaling contest with the objective. The
+            # proximity tie-break is measured FROM THE PHASE-I ENTRY POINT
+            # via the mutable prox_c offsets, anchoring the whole phase to
+            # the seed rather than each step to its own iterate.
             w = getattr(self.options, 'phase1_proximity', 0.0)
             if w:
                 m.prox_c = pyo.Param(range(n), mutable=True, initialize=0.0,
@@ -1302,15 +922,9 @@ class SubproblemCache:
                     m.cons.add(expr <= m.s[i])
                     m.cons.add(-expr <= m.s[i])
                 elif minimize_violation:
-                    # |residual| <= t, NOT residual == t. The Phase I
-                    # violation variable is a single scalar shared by every
-                    # constraint: `expr == t` therefore forces EVERY
-                    # signomial equality to the SAME residual, and two
-                    # equalities that cannot be driven to a common value
-                    # inside the trust region make the sub-problem
-                    # infeasible -- which surfaces as "phase 1 could not
-                    # find a feasible point after 1 iterations" on a problem
-                    # that is perfectly feasible.
+                    # |residual| <= t, NOT residual == t: a shared t forces
+                    # every equality to the SAME residual, making the
+                    # sub-problem infeasible on a feasible problem.
                     m.cons.add(expr <= m.t)
                     m.cons.add(-expr <= m.t)
                 else:
@@ -1349,14 +963,12 @@ class SubproblemCache:
     def update(self, phase, x_k, tau, radius=None):
         """Re-point a built phase at a new iterate. No symbolic work.
 
-        ``radius`` bounds |d_j| when the caller wants a trust region even
-        though nothing was linearized. Phase II does not: every row there is
-        exact or conservative, so the step is safe at any length. Phase I with
-        hard equalities does, because a CondensedEquality is TANGENT, not
-        conservative -- condensing both sides of an equality is neither an
-        inner nor an outer approximation, so an unbounded step can leave the
-        true manifold far enough that the next restoration has to travel, and
-        travelling is what breaks the inequalities the step just fixed.
+        ``radius`` bounds |d_j| when the caller wants a trust region with
+        nothing linearized: Phase II does not (every row exact or
+        conservative), Phase I with hard equalities does, because a
+        CondensedEquality is TANGENT, not conservative, and an unbounded
+        step leaves the manifold far enough that the restoration's travel
+        breaks the inequalities the step just fixed.
         """
         m, n = phase.model, self.n
         log_xk = np.log(x_k)
@@ -1435,12 +1047,8 @@ class SubproblemCache:
             ub = None if not np.isfinite(hi[j]) else float(hi[j])
             m.d[j].setlb(float(lo[j]))
             m.d[j].setub(ub)
-        # Start from d = 0 (the current iterate), but inside the box: a
-        # variable already at its bound has 0 outside it. The clamp used to be
-        # written inline as `min(max(0, lo), ub if ub is not None else 0.0)`,
-        # which collapses to 0.0 whenever there is no upper bound -- exactly
-        # the unbounded-above case it was meant to catch -- so the warning it
-        # exists to prevent was emitted anyway.
+        # Start from d = 0 but inside the box; the old inline clamp
+        # collapsed to 0.0 whenever there was no upper bound.
         seat_step_in_bounds(m)
         if phase.minimize_violation in ('l1', 'l1_hard'):
             # Elastic: warm-start every slack at this row's own violation,
@@ -1471,29 +1079,19 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 force_trust=False):
     """Assemble and solve the inner-approximation sub-problem in log space.
 
-    ``minimize_violation`` selects PHASE I: the objective becomes the worst
-    constraint violation ``t``, every constraint is written ``... <= t``, and
-    the true objective is ignored. That problem is feasible by construction
-    (raise ``t``), its objective is a single variable so there is no scaling
-    contest between cost and feasibility, and the same conservative
-    representations apply -- so ``t`` decreases monotonically. When it reaches
-    zero the iterate is feasible for the true problem and Phase II can run with
-    no slacks and no penalty at all.
-
-    Otherwise it is PHASE II: no slacks, no penalty. The iterate is feasible,
-    every constraint is exact or conservative, so the sub-problem's optimum is
-    feasible for the true problem and cannot be worse than the current point.
+    ``minimize_violation`` selects Phase I: minimise the worst violation
+    ``t`` -- feasible by construction, no scaling contest, monotone in t.
+    Otherwise Phase II: no slacks, no penalty; the optimum is feasible for
+    the true problem and no worse than the current point.
     """
     n = problem.n
     cons = problem.constraints
     log_xk = np.log(x_k)
 
     if cache is not None and cache.usable:
-        # Everything below is symbolic construction that does not change
-        # between iterations; the cache does it once and only moves the
-        # numbers. Bounds, including the positivity floor, are re-pointed in
-        # update(). A cacheable problem has no black box, so a trust region
-        # applies only when the caller asks for one -- see update().
+        # The cache does the symbolic construction once and only moves the
+        # numbers; bounds are re-pointed in update(). A cacheable problem
+        # has no black box, so a trust region applies only when forced.
         phase = cache.update(cache.get(minimize_violation, use_slacks),
                              x_k, tau, radius=radius if force_trust else None)
         try:
@@ -1501,23 +1099,18 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                                       minimize_violation, use_slacks,
                                       phase.obj_expr)
         except RuntimeError:
-            # A cache must never change WHETHER something solves, only how
-            # fast. The Param-formulated model is numerically identical on
-            # paper but not to IPOPT at tol = 1e-12, and on the hydrogen
-            # aircraft the cached Phase I burned its whole iteration budget
-            # where the inlined-float build below solves in a handful --
-            # which then read as "phase 1 could not find a feasible point
-            # after 1 iterations" with no hint that a cache was involved.
-            # Fall through and build this one iteration fresh.
+            # A cache must never change WHETHER something solves. The Param
+            # model is not identical to IPOPT at tol = 1e-12 (hydrogen
+            # aircraft: cached Phase I burned its whole budget where the
+            # inlined build solves in a handful). Rebuild this one fresh.
             pass
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
     m.I = pyo.RangeSet(0, len(cons) - 1)
     m.d = pyo.Var(m.J, initialize=0.0)
-    # Variable bounds ride on the variable. The sub-problem works in log space
-    # about x_k -- x = x_k * exp(d) -- so `lo <= x <= hi` is just
-    # `log(lo/x_k) <= d <= log(hi/x_k)`, which is exact and costs nothing.
+    # Bounds ride on the variable: `lo <= x <= hi` is just
+    # `log(lo/x_k) <= d <= log(hi/x_k)`, exact and free.
     if problem.bounds is not None:
         for j, (lo, hi) in enumerate(problem.bounds[:n]):
             if lo is not None and lo > 0:
@@ -1526,13 +1119,9 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 m.d[j].setub(math.log(hi) - log_xk[j])
         seat_step_in_bounds(m)
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
-    # Same three modes as the cached builder: min-max (one shared t), elastic
-    # L1 (a slack per row), and l1_hard (slacks on the inequalities only, with
-    # the equalities imposed exactly). Kept in step deliberately -- the cache
-    # falls through to this path for black-box bodies and on its own numerical
-    # guard, so a mode the cache understands and this does not shows up as
-    # 'ConcreteModel object has no attribute s' from whichever iteration
-    # happened to fall through.
+    # Same three modes as the cached builder, kept in step deliberately:
+    # the cache falls through to this path, so a mode mismatch shows up as
+    # 'ConcreteModel object has no attribute s' mid-run.
     _elastic = (minimize_violation in ('l1', 'l1_hard'))
     _hard_eq = (minimize_violation == 'l1_hard')
     if minimize_violation and not _elastic:
@@ -1549,20 +1138,10 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
 
     # --- objective ---------------------------------------------------------
     if _elastic:
-        # Pure feasibility, L1: the optimum is sparse, so the rows that keep a
-        # slack are the ones that actually cannot be satisfied. Plus the
-        # proximity term -- see SIAOptions.phase1_proximity.
-        #
-        # Proximity is measured FROM THE PHASE-I ENTRY POINT (the seed),
-        # not from the current iterate: per-iterate proximity lets the walk
-        # accumulate -- each step is individually small, and once the slacks
-        # hit zero the remaining iterations polish wherever the walk ended.
-        # Measured on a paired-equality wind model: Phase I dragged a
-        # near-optimal GP seed 4.8 log units to a violation-minimal point at
-        # COE 121 $/MWh, and Phase II could only crawl back at ~0.03% per
-        # step through the condensed rows.  Seed-referenced proximity is
-        # also what the option's own docstring promises ("the SMALLEST
-        # repair of the seed").
+        # Pure feasibility, L1: a sparse optimum names the unsatisfiable
+        # rows. Proximity is measured FROM THE PHASE-I ENTRY POINT, not the
+        # current iterate -- per-iterate proximity let Phase I drag a
+        # near-optimal seed 4.8 log units on a paired-equality wind model.
         _w = getattr(options, 'phase1_proximity', 0.0)
         _anchor = getattr(options, '_phase1_anchor_logx', None)
         if _w and _anchor is not None:
@@ -1582,10 +1161,8 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     elif use_slacks:
         rhs = lambda i: m.s[i]
     else:
-        # Phase II proper: the iterate is feasible and every constraint is
-        # exact or conservative, so the constraint is imposed AS IT STANDS.
-        # No slack variable, no penalty, nothing to distort the objective --
-        # this is the pure inner approximation the guarantees are stated for.
+        # Phase II proper: no slack, no penalty -- the pure inner
+        # approximation the guarantees are stated for.
         rhs = lambda i: 0.0
     if minimize_violation:
         pass
@@ -1629,8 +1206,7 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             if _hard_eq:
                 m.cons.add(e == 0.0)
             elif minimize_violation:
-                # |residual| <= slack. Writing it as `e == t` against a shared
-                # t is what made Phase I fail on feasible problems: it forces
+                # |residual| <= slack; `e == t` against a shared t forces
                 # every equality to the SAME signed residual.
                 m.cons.add(e <= rhs(i))
                 m.cons.add(-e <= rhs(i))
@@ -1655,11 +1231,8 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             v = body(x_k)
             gl = body.log_grad(x_k)
             e = math.log(max(v, 1e-300)) + sum(gl[j] * m.d[j] for j in range(n))
-            # With a curvature model the row becomes a convex quadratic rather
-            # than a plane: still convex, so the subproblem is unchanged in
-            # kind, but now an upper bound wherever B dominates the true
-            # log-curvature -- which is the property the trust region exists to
-            # substitute for.
+            # With curvature the row becomes a convex quadratic -- an upper
+            # bound wherever B dominates the true log-curvature.
             if curvature is not None and i in curvature:
                 curvature[i].observe(gl)
                 e = e + curvature[i].quad(m.d)
@@ -1671,11 +1244,9 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
             else:
                 m.cons.add(e == rhs(i) if op == "==" else e <= rhs(i))
 
-    # Stay in the positive orthant.
-    # The positivity floor and the trust region are both simple bounds on d, so
-    # they go on the variable rather than into m.cons -- 3n fewer rows on every
-    # sub-problem, and IPOPT handles a bound more cheaply than a row besides.
-    # Intersect with whatever the model's own bounds already put there.
+    # Stay in the positive orthant. The floor and trust region are simple
+    # bounds on d, so they ride on the variable -- 3n fewer rows, and a
+    # bound is cheaper to IPOPT than a row.
     floor = math.log(options.x_min)
 
     def tighten(j, lo=None, hi=None):
@@ -1689,10 +1260,8 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
     for j in range(n):
         tighten(j, lo=floor - log_xk[j])
 
-    # Trust region -- ONLY when something had to be linearized. With every
-    # constraint exact or conservative the step is safe by construction and a
-    # region would only slow it down.
-    # radius None means the caller has RELEASED the box (see trust_iterations).
+    # Trust region only when something was linearized; radius None means
+    # the caller has RELEASED the box (see trust_iterations).
     if (has_blackbox or force_trust) and radius is not None:
         for j in range(n):
             tighten(j, lo=-radius, hi=radius)
@@ -1734,14 +1303,10 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
          if ((use_slacks and not minimize_violation) or _elastic)
          else np.zeros(len(cons)))
 
-    # Multipliers. An INEQUALITY multiplier is non-negative by definition, so
-    # its magnitude is the quantity wanted. An EQUALITY multiplier is not --
-    # it carries a sign, and taking its magnitude makes the stationarity sum
-    # unable to cancel. On Hoburg, 25 of 58 constraints are equalities, and
-    # dropping their signs pins the residual at 2.5 no matter how converged
-    # the iterate is. The rest of SLCP takes abs() throughout because it only
-    # ever uses these for a merit function and a BFGS update, where magnitude
-    # is all that matters; a KKT certificate needs the sign.
+    # An inequality multiplier is non-negative, so magnitude is wanted; an
+    # equality multiplier carries a sign the stationarity sum needs (Hoburg:
+    # dropping equality signs pins the residual at 2.5). SLCP takes abs()
+    # because it only feeds a merit function; a KKT certificate cannot.
     mults = np.zeros(len(cons))
     for i in range(len(cons)):
         try:
@@ -1749,17 +1314,13 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
         except Exception:
             lam = 0.0
         # Pyomo/IPOPT report the equality dual with the opposite sign to the
-        # one the Lagrangian gradient f + sum(lam * g) wants, so it is negated.
-        # Verified against a least-squares fit of the multipliers that zero
-        # stationarity at a converged Hoburg point: magnitudes agree exactly,
-        # and only the equality signs were inverted.
+        # Lagrangian convention, so it is negated -- verified against a
+        # least-squares multiplier fit at a converged Hoburg point.
         mults[i] = (-float(lam) if cons[i].operator == '=='
                     else abs(float(lam)))
     if _elastic:
-        # The scalar returned is the total infeasibility, sum(s_i). Zero (to
-        # tolerance) means a feasible point; anything else is how much
-        # constraint violation the model cannot get rid of, and `s` says
-        # exactly WHERE it is.
+        # The scalar is total infeasibility sum(s_i): zero means feasible,
+        # and `s` says exactly WHERE the rest is.
         return d, s, mults, float(sum(s))
     if minimize_violation:
         return d, s, mults, float(pyo.value(m.t))
@@ -1770,21 +1331,10 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
 def _blocking_constraints(problem, x, mults=None, k=8):
     """Which constraints are stopping Phase I, and which variables they touch.
 
-    Phase I minimises the WORST violation, so when it stalls the useful
-    question is not "what is the violation" but "which rows are holding it
-    up, and are they holding each other up". This reports both signals that
-    answer that:
-
-    * **residual** -- ``log g_i`` at the stalled point. Anything above the
-      feasibility tolerance is unsatisfied there.
-    * **multiplier** -- from the last sub-problem. A row with a large
-      multiplier on the min-max objective is one the search is actively
-      trading against; a row with a big residual and a *zero* multiplier is
-      along for the ride and will move once the blockers do.
-
-    Constraints carry no names -- ``Constraint.__slots__`` is
-    ``('body', 'operator')`` -- so each is identified by the variables its
-    exponents actually touch, which is more use than an index anyway.
+    Reports residual (log g_i) and the last sub-problem's multiplier: a
+    large residual with a large multiplier is an active blocker; with a
+    zero multiplier it follows once the blockers move. Constraints carry no
+    names, so each is identified by the variables its exponents touch.
     """
     rows = []
     for i, c in enumerate(problem.constraints):
@@ -1796,10 +1346,8 @@ def _blocking_constraints(problem, x, mults=None, k=8):
     for r, m, i, c in rows[:k]:
         body = getattr(c, 'body', None)
         terms = list(getattr(body, 'terms', None) or [])
-        # CondensedEquality and PosynomialRatio hold two posynomials rather
-        # than terms of their own, and BOTH sides matter: reading only one
-        # was reporting "vars: -" for exactly the equality rows this is
-        # supposed to explain.
+        # CondensedEquality/PosynomialRatio hold p and q, and BOTH sides
+        # matter -- reading one reported "vars: -" for equality rows.
         for side in ('p', 'q'):
             sub = getattr(body, side, None)
             if sub is not None:
@@ -1833,12 +1381,8 @@ def format_infeasibility(problem, x, mults=None, k=8):
 
 
 def _posy_loggrad(posy, x, n):
-    """``(log p, d log p / d log x)`` for a posynomial, analytically.
-
-    log p is a log-sum-exp of monomials, so the gradient is the weighted mean
-    of their exponent vectors -- one pass, exact, and far cheaper than the n
-    finite differences it replaces.
-    """
+    """``(log p, d log p / d log x)`` analytically: the gradient is the
+    value-weighted mean of the exponent vectors."""
     vals = np.array([c * np.prod(x ** a) for c, a in posy.terms])
     tot = vals.sum()
     if tot <= 0:
@@ -1853,13 +1397,9 @@ def _posy_loggrad(posy, x, n):
 def _con_loggrad(con, x, n):
     """``(log g, d log g / d log x)`` for any constraint body.
 
-    Black-box bodies are first-class here: a Signomial carries exactly the
-    value and log-gradient this needs, so a black-box EQUALITY can be restored
-    by the same Gauss--Newton step as a structured one. Before this case was
-    added, restore_equalities crashed on the first problem that reached Phase I
-    with a black-box equality present (the Hoburg UAV with the ROM section's
-    tau coupling) -- the helicopter never hit the path because its start was
-    seeded feasible.
+    Black-box bodies are first-class: without this case restore_equalities
+    crashed on the first black-box equality to reach Phase I (Hoburg UAV
+    with the ROM tau coupling).
     """
     b = con.body
     if getattr(b, 'p', None) is not None:          # ratio / condensed equality
@@ -1878,19 +1418,12 @@ def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False,
                        skip_rows=None, freeze_cols=None):
     """Least-norm Gauss-Newton onto the equality manifold -- the NORMAL step.
 
-    This works on the TRUE residuals, never on the conservative condensation,
-    which is the whole point. A signomial equality reaches the sub-problem as
-    ``p <= q`` AND ``q <= p``, each AGM-condensed, so the approximation's
-    feasible set is strictly smaller than the true one and can be empty where
-    the true equality is perfectly satisfiable. Newton does not care: on a
-    1173-variable aircraft with 802 signomial equalities it reaches 5e-12 in
-    eleven steps, quadratically, while every Phase I formulation stalls.
-
-    Least-norm is deliberate. The repaired point should stay as close to the
-    start as the equalities allow -- it is fixing an inconsistency, not
-    searching. As a standalone feasibility method this is useless (it leaves
-    inequalities exactly where it found them); as the normal half of a
-    composite step it is precisely right.
+    Works on the TRUE residuals, never the condensation, whose feasible set
+    can be empty where the true equality is satisfiable (1173-variable
+    aircraft, 802 equalities: 5e-12 in eleven steps while every Phase I
+    formulation stalls). Least-norm keeps the repair close to the start:
+    useless standalone (inequalities stay put), exactly right as the
+    normal half of a composite step.
     """
     n = problem.n
     eq = [i for i, c in enumerate(problem.constraints) if c.operator == '=='
@@ -1921,10 +1454,8 @@ def restore_equalities(problem, x, iters=12, tol=1e-9, verbose=False,
             print(f"    restore {it:2d}  max|h| = {nrm:.3e}")
         if nrm <= tol:
             break
-        # lstsq, not pinv @ r: for an underdetermined system (802 equalities
-        # in 1173 variables on the aircraft) it returns the same least-norm
-        # solution without forming the pseudo-inverse, and this runs once per
-        # Phase II iteration now, not once per solve.
+        # lstsq, not pinv @ r: same least-norm solution for the under-
+        # determined system without forming the pseudo-inverse.
         d = np.linalg.lstsq(J, -r, rcond=1e-10)[0]
         big = float(np.max(np.abs(d)))
         if big > 1.0:
@@ -1943,22 +1474,12 @@ def restore_composite_bb(problem, x, iters=12, tol=1e-9, passes=3):
     """Equality restore for BLACK-BOX problems: grey-box rows by exact
     closure, structured pins by Gauss-Newton, alternated.
 
-    Every grey-box equality is ``bb(inputs) / x[out] == 1`` with a
-    DEDICATED output column (GreyboxSignomial.out_index), so it restores
-    exactly by ``x[out] *= body(x)`` -- one box evaluation, no Newton.
-    The structured Newton then runs with the grey-box rows SKIPPED and
-    their output columns FROZEN, so the tie rows (out == state alias)
-    close by moving the state side, not by re-opening the box row.
-    Alternating converges because a pass's structured step moves the box
-    INPUTS only second-order; residuals shrink geometrically (measured on
-    the airfoil model: 3 passes reach the structured tolerance).
-
-    This exists because Phase 2's composite restore was gated
-    ``not has_blackbox`` (naive Newton over opaque rows would re-evaluate
-    every box per line-search point).  With the restore silently skipped,
-    tangential drift accumulated in the grey-box equalities and SIA
-    settled at points whose box rows were violated 2-100x --- reported as
-    success, caught only by the model-side referee.
+    A grey-box equality ``bb(inputs) / x[out] == 1`` restores exactly by
+    ``x[out] *= body(x)``; the structured Newton then skips those rows with
+    their output columns frozen. Alternation converges geometrically
+    (airfoil model: 3 passes). Exists because the composite restore was
+    gated ``not has_blackbox``, and the silent skip left box rows violated
+    2-100x while reported as success.
     """
     x = np.array(x, dtype=float).copy()
     gb = [(i, c.body.out_index) for i, c in enumerate(problem.constraints)
@@ -1984,20 +1505,12 @@ def restore_composite_bb(problem, x, iters=12, tol=1e-9, passes=3):
 def _phase1_l1(problem, x, options, has_blackbox, cache=None):
     """Elastic Phase I: a slack per constraint, minimising their SUM.
 
-    ``min sum(s_i)  s.t.  log g_i(x) <= s_i,  s_i >= 0``
-
-    This is the formulation that makes an infeasibility *diagnosable*, and the
-    difference from the min-max form is not cosmetic. Min-max drives every
-    constraint to a common violation level, so a stalled run shows a dozen
-    rows at an identical residual with nothing to choose between them. The L1
-    optimum is sparse instead: constraints that CAN be satisfied go to
-    ``s_i = 0`` and drop out, and the few that cannot are the answer -- an
-    approximate irreducible inconsistent subsystem, read straight off the
-    solution.
-
-    Returns ``(x, iterations, feasible, slacks, multipliers)``. ``slacks`` is
-    the per-constraint infeasibility at the final point; anything above
-    tolerance names a row that has to be relaxed for the model to close.
+    ``min sum(s_i)  s.t.  log g_i(x) <= s_i,  s_i >= 0``. The sparse L1
+    optimum makes infeasibility diagnosable -- the rows keeping slack are
+    an approximate irreducible inconsistent subsystem, where min-max shows
+    a dozen rows at one identical residual. Returns ``(x, iterations,
+    feasible, slacks, multipliers)``; a slack above tolerance names a row
+    that must be relaxed for the model to close.
     """
     # anchor the proximity tie-break to the entry point (see the elastic
     # objective builders)
@@ -2056,21 +1569,10 @@ def _violation_ineq(problem, x):
 def convergence_report(problem, res, options=None, k=8):
     """Explain what a solve did, and if it stopped short, what held it back.
 
-    "did not converge within 400 iterations" is a true statement that tells an
-    engineer nothing. It does not say whether the design is usable, which of
-    the three KKT criteria was binding, how close it came, or -- most useful of
-    all -- WHICH variables carry the residual. Nearly always the answer is a
-    handful of them, and nearly always they turn out to be a sub-model that
-    sizes nothing in the converged design.
-
-    That case is worth naming, because it looks like failure and is not. On the
-    E175 the objective is stable to eight figures by iteration 75 and the run
-    then spends 325 more iterations dragging stationarity from 2e-04 to 6e-06,
-    all of it inside twelve fuselage bending variables whose bending stations
-    have run past the tail (x_hbend = 39.4 m on an aircraft whose tail is at
-    23.8 m) and whose reinforcement areas are ~1e-04 m^2. The shell carries the
-    loads unaided, the block is flat, and a 1e-06 stationarity ask of a flat
-    block is not reasonable. The design is converged; the measure is not.
+    Names WHICH variables carry the residual -- nearly always a handful, in
+    a sub-model that sizes nothing in the converged design (E175: 325
+    iterations dragging stationarity through twelve flat fuselage-bending
+    variables; the design was converged, the measure was not).
     """
     options = options or SIAOptions()
     lines = []
@@ -2098,9 +1600,8 @@ def convergence_report(problem, res, options=None, k=8):
             if (n, v, t) not in binding and v == v:
                 lines.append(f"  met:     {n} = {v:.3e} <= {t:.1e}")
 
-    # Is the objective actually still moving? A run whose objective is stable
-    # to eight figures has converged in every sense an engineer cares about,
-    # whatever the KKT residual says.
+    # A run whose objective is stable to eight figures has converged in
+    # every sense an engineer cares about, whatever the KKT residual says.
     objs = list(getattr(res, 'objectives', None) or [])
     if len(objs) >= 20:
         tail = objs[-20:]
@@ -2177,31 +1678,17 @@ def convergence_report(problem, res, options=None, k=8):
 def _phase1_composite(problem, x, options, has_blackbox, cache=None):
     """Composite-step Phase I: restore the equalities, then move tangentially.
 
-    Each round is a normal step and a tangential step, the classical split:
-
       normal      Gauss-Newton onto ``h(x) = 0``, on the TRUE residuals.
-                  Exact, quadratic, and it ignores the inequalities entirely.
       tangential  one elastic-L1 sub-problem with the equalities imposed
-                  EXACTLY, so the step reduces inequality violation without
-                  leaving the (linearised) manifold.
+                  EXACTLY, so the step stays on the linearised manifold.
 
-    The tangential step leaves the true manifold at second order, which is
-    what the next round's normal step is for. This is why the two halves have
-    to alternate rather than run once each.
-
-    It exists because neither half works alone on a tightly coupled model.
-    Slacking the equalities lets the sub-problem trade equality residual for
-    inequality residual and wander; it stalls on the 1173-variable aircraft
-    with 802 signomial equalities, at every iteration budget, under both
-    min-max and L1. Holding them exactly from an INCONSISTENT point is worse
-    still -- the sub-problem is flatly infeasible at iteration 1. Holding them
-    exactly from a RESTORED point is guaranteed feasible, because the AGM
-    condensation is tight at its expansion point, so ``d = 0`` is always
-    available and the sub-problem can only improve on it.
-
-    Falls back to plain slacked L1 if a hard sub-problem fails at the minimum
-    trust radius -- that means the linearised manifold and the trust region
-    genuinely do not intersect, and slack is then the honest response.
+    They alternate because the tangential step leaves the true manifold at
+    second order. Neither half works alone: slacked equalities wander
+    (stalls on the 1173-variable aircraft at every budget), hard equalities
+    from an INCONSISTENT point are infeasible at iteration 1 -- but from a
+    RESTORED point d = 0 is always available. Falls back to plain L1 when a
+    hard sub-problem fails at the minimum radius: the manifold and trust
+    region do not intersect, and slack is the honest response.
     """
     tol = options.feasibility_tolerance
     radius = options.trust_radius
@@ -2219,11 +1706,9 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
                   tol=min(tol, 1e-10))
 
     if _violation(problem, x) <= tol:
-        # Already feasible: do not touch it. Restoring first would still land
-        # on the manifold, but at a DIFFERENT point, and on a non-convex
-        # problem the starting point picks the local optimum -- it moved
-        # SPaircraft from 95120 to 95560 lbf and simpleac from 4536 to 6485
-        # with no constraint anywhere reporting a problem.
+        # Already feasible: do not touch it. Restoring first lands on a
+        # DIFFERENT manifold point and picks another local optimum
+        # (SPaircraft 95120 -> 95560 lbf, simpleac 4536 -> 6485).
         return x, 0, True, slacks, mults
 
     x, heq = _restore(x)                      # start on the manifold
@@ -2250,14 +1735,9 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
             return x, it, False, slacks, mults
 
         # --- normal step, closing the same composite step --------------------
-        # The pair is accepted or rejected TOGETHER. Judging the tangential
-        # step on its own is what made this oscillate: it would report
-        # 5e-02 -> 1.6e-04, and then the restoration that has to follow it
-        # would put the violation back at 5e-02, because a long tangential
-        # step leaves the manifold far enough that pulling it back moves the
-        # inequalities too. Accepting only when the WHOLE step improves makes
-        # the trust radius responsible for that drift, which is what a trust
-        # radius is for.
+        # The pair is accepted or rejected TOGETHER: a tangential step
+        # judged alone reports improvement the following restoration undoes,
+        # so the trust radius must own the drift.
         x_try, heq_try = _restore(x * np.exp(np.clip(d, -60.0, 60.0)))  # overflow guard
         new_viol = _violation(problem, x_try)
         if options.verbose:
@@ -2268,10 +1748,8 @@ def _phase1_composite(problem, x, options, has_blackbox, cache=None):
         if new_viol >= viol:
             radius *= options.trust_shrink
             if radius < options.trust_min:
-                # The composite step cannot improve at any length. Either the
-                # remaining violation is genuinely irreducible or it is not
-                # reachable this way; the elastic L1 answers which, and names
-                # the rows if it is the former.
+                # No improvement at any length: the elastic L1 answers
+                # whether the rest is irreducible, and names the rows.
                 return _phase1_l1(problem, x, options, has_blackbox,
                                   cache=cache)
             continue
@@ -2291,11 +1769,9 @@ def explain_infeasibility(problem, x, options=None, has_blackbox=False,
     stays positive -- the ones that must be relaxed -- together with the
     variables each touches.
     """
-    # The elastic Phase I is a sequence of IPOPT solves. With no IPOPT every
-    # one of them fails, nothing moves, the slacks stay at their starting
-    # zeros, and the report concludes the model is feasible at the initial
-    # guess -- which is the most damaging possible wrong answer here, since
-    # this function exists to be believed about feasibility.
+    # With no IPOPT every elastic solve fails, nothing moves, and the report
+    # concludes "feasible at the initial guess" -- the most damaging wrong
+    # answer this function could give.
     from lcsolver.environment import ipopt_available
     if not ipopt_available():
         raise SolverUnavailable(
@@ -2340,23 +1816,11 @@ def explain_infeasibility(problem, x, options=None, has_blackbox=False,
 def _phase1(problem, x, options, has_blackbox, cache=None):
     """Find a feasible point by minimizing the worst constraint violation.
 
-    Solves ``min t  s.t.  log g_i(x) <= t`` by the same inner approximation.
-    Three things make this a much better-behaved problem than the penalty
-    formulation it replaces:
-
-    * it is **always feasible** -- raise ``t`` -- so the sub-problem can never
-      be unreachable and there is no penalty parameter to tune;
-    * its objective is a single variable, so there is no scaling contest
-      between cost and feasibility. That contest is what wrecked the penalty
-      version: with an objective of order log(20000) and tau = 1, the first
-      sub-problem effectively ignored 6077 constraints and took a step of
-      e^59, landing in a basin it never left;
-    * the same conservative representations apply, so ``t`` decreases
-      monotonically.
-
-    Returns ``(x, iterations, feasible)``. The margin asks for *strictly*
-    feasible, so Phase II starts inside the set rather than on its boundary
-    where round-off can push it out.
+    ``min t  s.t.  log g_i(x) <= t``: always feasible, a single-variable
+    objective with no scaling contest (the penalty version once took a step
+    of e^59), and t decreases monotonically under the same conservative
+    representations. Returns ``(x, iterations, feasible)``. The margin asks
+    for strict feasibility so Phase II starts inside the set.
     """
     it = 0
     radius = options.trust_radius
@@ -2371,12 +1835,10 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
                                               minimize_violation=True,
                                               cache=cache)
         except RuntimeError:
-            # The min-max sub-problem is ALWAYS feasible on paper -- raise t
-            # -- so a solver failure here means the trust region, not the
-            # model. Shrinking is the right response and the one that was
-            # missing: this used to give up immediately on anything without a
-            # black box, which is how a solvable problem came back as "phase 1
-            # could not find a feasible point after 1 iterations".
+            # The min-max sub-problem is always feasible on paper, so a
+            # failure means the trust region: shrink, don't give up (giving
+            # up read as "phase 1 could not find a feasible point after 1
+            # iterations" on a solvable problem).
             if radius > options.trust_min:
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 if options.verbose:
@@ -2395,14 +1857,10 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
         new_viol = _violation(problem, x_new)
 
         if new_viol > viol:
-            # A step that makes things worse is a trust-region signal, not a
-            # reason to accept it. The conservative representation says the
-            # violation cannot increase; in finite precision, with IPOPT
-            # solving the sub-problem to a tolerance and the approximation
-            # exact only AT x_k, it sometimes does. This used to be checked
-            # only for black boxes, so on a pure SP a bad step was taken
-            # anyway and Phase I could wander uphill. The monotone decrease
-            # the docstring promises is now actually enforced.
+            # Conservatism says the violation cannot increase; in finite
+            # precision it sometimes does. A trust-region signal, not a
+            # reason to accept -- this used to be checked only for black
+            # boxes, and Phase I could wander uphill on a pure SP.
             if radius > options.trust_min:
                 radius = max(options.trust_min,
                              radius * options.trust_shrink)
@@ -2411,16 +1869,10 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
                           f"{viol:+.3e} -> {new_viol:+.3e}, "
                           f"radius -> {radius:.3g}")
                 continue
-            # At trust_min the approximation is as accurate as it is going to
-            # get, and the step still looks worse. ACCEPT it and carry on --
-            # do NOT give up here.
-            #
-            # Giving up was a regression: the original code had no monotone
-            # check at all on a pure SP, so it took these steps and SPaircraft
-            # converged. Rejecting them outright turned a converging run into
-            # "phase 1 could not find a feasible point after 15 iterations".
-            # A worsening step at the smallest radius is numerical noise on a
-            # conservative approximation, not evidence of a bad direction.
+            # At trust_min the approximation is as good as it gets: ACCEPT
+            # the step. Rejecting turned a converging SPaircraft run into
+            # "could not find a feasible point after 15 iterations" -- a
+            # worsening step at the smallest radius is numerical noise.
             if options.verbose:
                 print(f"  phase1 {it:3d}  step worsened at trust_min, "
                       f"accepting {viol:+.3e} -> {new_viol:+.3e}")
@@ -2429,10 +1881,8 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
             print(f"  phase1 {it:3d}  max log g: {viol:+.3e} -> "
                   f"{new_viol:+.3e}   (model t = {t:+.3e})")
         if abs(new_viol - viol) <= 1e-14 * max(1.0, abs(viol)):
-            # No further reduction AT THIS RADIUS. That is not the same as no
-            # further reduction: a smaller trust region gives a tighter, more
-            # accurate approximation and often moves again. Only a stall that
-            # survives shrinking to trust_min is a real stall.
+            # Stalled AT THIS RADIUS only; a smaller region often moves
+            # again. Only a stall that survives trust_min is real.
             if radius > options.trust_min:
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 if options.verbose:
@@ -2445,9 +1895,8 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
                     _violation(problem, x) <= options.feasibility_tolerance,
                     last_mults)
         x = x_new
-        # Expand on a good step regardless of black-box status: the step was
-        # accepted because it reduced the violation, and that is exactly when
-        # a longer one is worth trying.
+        # Expand on any good step; reducing the violation is exactly when a
+        # longer one is worth trying.
         radius = min(options.trust_max, radius * options.trust_expand)
     return x, it, _violation(problem, x) <= 0.0, last_mults
 
@@ -2455,12 +1904,10 @@ def _phase1(problem, x, options, has_blackbox, cache=None):
 def _relative_change_converged(problem, res, options, k):
     """The relative-change stopping rule; see ``objective_reltol``.
 
-    Called once per ACCEPTED iterate, which it compares with the accepted
-    iterate before it, so a rejected step never triggers this and a run that
-    is still moving never stops on it. The previous point is kept here rather
-    than read off ``res.history``, which also records the seed and the Phase
-    I exit and so does not line up with ``res.objectives``. Fills in the
-    result and returns True when it fires.
+    Compares consecutive ACCEPTED iterates, so a rejected step never
+    triggers it. The previous point is kept here because ``res.history``
+    also records the seed and Phase I exit. Fills in the result and
+    returns True when it fires.
     """
     o_tol, v_tol = options.objective_reltol, options.variable_reltol
     if o_tol is None and v_tol is None:
@@ -2500,13 +1947,9 @@ def _relative_change_converged(problem, res, options, k):
 
 def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     """Solve a signomial program by sequential inner approximation."""
-    # Checked here, before anything else, because every sub-problem is an
-    # IPOPT solve and the loop degrades quietly without one: each sub-problem
-    # fails, the trust region never moves, and SIA returns after zero
-    # iterations with `converged=False` and the objective *evaluated at the
-    # initial guess*. That is a plausible-looking number produced by no
-    # optimization at all, and the caller has to read `converged` to know it.
-    # A missing install should say so.
+    # Checked first: without IPOPT every sub-problem fails quietly and SIA
+    # returns the objective at the initial guess with converged=False -- a
+    # plausible number produced by no optimization at all.
     from lcsolver.environment import ipopt_available
     if not ipopt_available():
         raise SolverUnavailable(
@@ -2519,16 +1962,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     if np.any(x <= 0):
         raise ValueError("SIA works in log space, so x0 must be strictly positive")
 
-    # Project the start into its box. The bounds are imposed on the sub-problem
-    # variable, so a start outside them is not merely a poor guess -- Phase I
-    # measures feasibility with `_violation`, which reads the constraints and
-    # not the bounds, so it can call a bound-violating point feasible while the
-    # sub-problem cannot move to it, and the run stops at iteration 0.
-    #
-    # This costs nothing when the guess is already inside, and it is what makes
-    # a model usable after `propagate_bounds`: propagation derives tight bounds
-    # from the constraints, and a hand-written initial guess has no reason to
-    # respect bounds nobody had computed yet.
+    # Project the start into its box: _violation reads the constraints, not
+    # the bounds, so a bound-violating start can look feasible while the
+    # sub-problem cannot move, stopping the run at iteration 0. Free when
+    # already inside; what makes a model usable after propagate_bounds.
     if problem.bounds is not None:
         for j, pair in enumerate(problem.bounds[:problem.n]):
             lo, hi = pair or (None, None)
@@ -2549,10 +1986,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     radius = options.trust_radius
     mults = np.zeros(len(problem.constraints))
 
-    # Build the sub-problem once per phase and re-point it thereafter. The
-    # symbolic structure does not change between iterations; only a few scalars
-    # per constraint do. Falls back to rebuilding for anything with a black-box
-    # body, whose gradient has to be re-linearized every time anyway.
+    # Build the sub-problem once per phase and re-point it; rebuilds for
+    # black-box bodies, which re-linearize every iteration anyway.
     cache = SubproblemCache(problem, options) if options.cache_subproblem \
         else None
     if cache is not None and not cache.usable:
@@ -2565,10 +2000,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                                          "no globalization needed"))
 
     # --- Phase I ----------------------------------------------------------
-    # The conservative guarantees -- feasible iterates, monotone descent --
-    # hold FROM A FEASIBLE POINT. Rather than blend cost and feasibility into
-    # one penalized objective and hope, get feasible first on its own terms,
-    # then optimize with the guarantees switched on and no penalty at all.
+    # The conservative guarantees hold FROM A FEASIBLE POINT: get feasible
+    # first, then optimize with no penalty at all.
     _recovering = False
     _recover_budget = 0
     _recover_best = np.inf
@@ -2596,19 +2029,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                   f"{'FEASIBLE' if feasible else 'still infeasible'}, "
                   f"max log g = {_violation(problem, x):+.3e}")
         if not feasible:
-            # Min-max could not close. Try the ELASTIC form before reporting
-            # that, for two reasons.
-            #
-            # First, it often succeeds where min-max does not. Min-max has to
-            # drag every constraint down together, so one stubborn row holds
-            # the whole vector up. L1 lets satisfied rows fall to zero slack
-            # and get out of the way.
-            #
-            # Second, when it does fail it says WHY in the only form that is
-            # actionable: the specific rows whose slack cannot reach zero.
-            # "Could not find a feasible point" names nothing, and reads like
-            # a verdict on the model when Phase I is a local method that may
-            # simply have started too far away.
+            # Try the ELASTIC form before reporting: it often succeeds where
+            # min-max cannot (one stubborn row holds the whole vector up),
+            # and when it fails it names the rows whose slack cannot close.
             report, x_l1, slacks = explain_infeasibility(
                 problem, x, options, has_blackbox, cache=cache)
             res.infeasibility_report = report
@@ -2632,39 +2055,15 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             stat, viol, comp = _kkt(problem, x, mults, options.x_min)
             res.stationarity, res.max_violation, res.complementarity = (
                 stat, viol, comp)
-            # Hand off to the PENALTY path rather than giving up.
-            #
-            # This module's own docstring says penalty CCP is "used only if
-            # phase1 is off or FAILS", but the failure branch returned here and
-            # the fallback did not exist. That mattered: Phase I would stop at
-            # max log g = 2.4e-6 against a 1e-6 tolerance -- a factor of two
-            # short, on a problem that solves in 149 iterations if the
-            # tolerance is loosened by one decade -- and the whole solve was
-            # abandoned over it.
-            #
-            # Penalty CCP does not need a feasible start; that is its entire
-            # reason for existing. Slacks absorb what remains and tau drives
-            # them out. If the problem really is infeasible it fails too, and
-            # the elastic report above still says which rows are responsible.
-            # The fallback is for TOLERANCE SHORTFALLS, not for genuine
-            # infeasibility: the measured case it exists for stopped at
-            # max log g = 2.4e-6 against a 1e-6 tolerance (a factor of two,
-            # on a problem that solves fine), and abandoning there was
-            # wrong.  A miss beyond three decades of the tolerance is not
-            # that case -- no feasible point means there is nothing to
-            # iterate toward, so the run terminates and the caller gets
-            # the elastic Phase-I report naming the rows that cannot
-            # close.
-            # ...with one widening: a LOCAL Phase-I minimum with the
-            # residual concentrated on a handful of rows (worst log g
-            # under 1.0) is routinely recoverable by the penalty path,
-            # whose objective pressure walks basins Phase I's
-            # feasibility-only steps cannot (measured: a 0.098 tip-cap
-            # residual traded against an operating-point capability row,
-            # both satisfied at the optimum the penalty path then finds).
-            # The recovery attempt is honest because feasibility is
-            # ENFORCED at exit: a run that ends infeasible reports
-            # infeasible, never a design.
+            # Hand off to the PENALTY path rather than giving up. It exists
+            # for TOLERANCE SHORTFALLS (measured: Phase I stopped at
+            # max log g = 2.4e-6 against 1e-6 on a problem that solves),
+            # not genuine infeasibility -- with worst log g above 1.0 there
+            # is nothing to iterate toward, so the run terminates with the
+            # elastic report. Below that, a LOCAL Phase-I minimum is
+            # routinely recoverable by the penalty path's objective
+            # pressure, and feasibility is ENFORCED at exit: a run that
+            # ends infeasible reports infeasible, never a design.
             _near = _violation(problem, x) <= 1.0
             if options.phase1_penalty_fallback and _near:
                 if options.verbose:
@@ -2676,14 +2075,12 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _recovering = True
                 _recover_budget = int(getattr(
                     options, 'feasibility_recovery_iterations', 60))
-                # 60, not 30: measured on the wind missions SP, the finder
-                # crossed viol 0.15 -> 4.6e-6 in exactly 30 iterations and
-                # was terminated three iterations short of tolerance
+                # 60, not 30: the wind missions SP finder was terminated
+                # three iterations short of tolerance at 30
             else:
                 return res
         else:
-            # Feasible now, so no slack is needed and the penalty is switched
-            # off. tau only ever existed to buy feasibility.
+            # Feasible: slacks off, penalty off -- tau only bought feasibility.
             use_slacks = False
     else:
         use_slacks = not options.phase1
@@ -2708,15 +2105,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _bb_g1 = max(_bb_g1, float(np.abs(_g).sum()))
             except Exception:
                 pass
-    # Smallest radius at which a step has been REJECTED since the last accepted
-    # one. The 'unreachable -> widen' and 'bad step -> shrink' branches otherwise
-    # fight: shrink to r, find the sub-problem infeasible there, widen back to 2r,
-    # take the same rejected step, shrink to r again -- a deterministic cycle that
-    # burns the whole iteration budget re-evaluating cached points (measured on the
-    # 4-variable ROM section: 300 iterations, 27 distinct black-box evaluations).
+    # Smallest radius REJECTED since the last accepted step: stops the
+    # widen/shrink branches cycling deterministically (4-variable ROM
+    # section: 300 iterations, 27 distinct black-box evaluations).
     _reject_radius = np.inf
-    #: Which constraints are linearized -- the block the trust region and the
-    #: ratio test exist for.
+    # The linearized block -- what the trust region and ratio test exist for.
     lin_idx = [i for i, con in enumerate(problem.constraints)
                if isinstance(con.body, Signomial)
                and not isinstance(con.body, (Posynomial, PosynomialRatio))]
@@ -2729,10 +2122,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _zz_ceiling = np.inf        # radius cap ratcheted down by REPEAT hits
     _fg_trips = 0               # times the feasibility guard condition HELD
                                 # (counted whether or not it was applied)
-    # TANGENT EQUALITIES get the same treatment as the linearized class:
-    # a CondensedEquality is tangent -- neither inner nor outer -- so a
-    # Phase II step CAN violate it, recoverably. That is exactly the
-    # filter-plus-restoration situation, and it needs no exchange rate.
+    # TANGENT EQUALITIES get the linearized treatment: a CondensedEquality
+    # is tangent -- neither inner nor outer -- so a Phase II step CAN
+    # violate it, recoverably. Filter-plus-restoration, no exchange rate.
     _has_tangent_eq = any(isinstance(c.body, CondensedEquality)
                           for c in problem.constraints)
     _filter = (Filter(options.filter_gamma_h, options.filter_gamma_f)
@@ -2745,29 +2137,21 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     _infeas_best = np.inf       # best violation seen since going infeasible
     _infeas_stall = 0           # iterations infeasible without improving it
     _subfail = 0                # consecutive unsolvable/unreachable sub-problems
-    # SQP-style safeguards: remember the best FEASIBLE iterate ever seen.
-    # First recourse on sustained infeasibility is restoration (Phase I
-    # re-entry); if THAT fails, fall back to this incumbent and continue
-    # in strict feasible-step mode (acceptance rejects any step whose true
-    # violation exceeds tolerance -- guard factor 1, not 10).  And the run
-    # never RETURNS an infeasible excursion while a feasible incumbent
-    # exists (exit discipline below).
+    # SQP-style safeguards: remember the best FEASIBLE iterate. Restoration
+    # first; if that fails, fall back to the incumbent in strict
+    # feasible-step mode (guard factor 1, not 10), and never RETURN an
+    # infeasible excursion while a feasible incumbent exists.
     _x_incumbent = None
     _f_incumbent = np.inf
-    # Incumbent/exit feasibility judgment on BLACK-BOX problems uses the
-    # composite restore's ACHIEVABLE residual, not the raw tolerance:
-    # every Phase-2 iterate carries ~1e-6 of restore residual, so judging
-    # incumbents at 1e-8 records only the Phase-1 starting point and the
-    # exit discipline then discards ALL progress in its favor (measured:
-    # 400-iteration run returned the iteration-0 point byte-identically).
+    # Incumbent/exit feasibility on black-box problems is judged at the
+    # composite restore's ACHIEVABLE residual, not the raw tolerance --
+    # judging at 1e-8 once returned the iteration-0 point byte-identically.
     _inc_tol = (max(options.feasibility_tolerance,
                     float(getattr(options, 'bb_feas_tol', 1e-5) or 0.0))
                 if has_blackbox else options.feasibility_tolerance)
-    # strict_feasible=True starts the run in feasible-step mode: small
-    # honest steps from iteration 1 instead of large excursions that the
-    # safeguards must claw back (the excursion-heavy default wins when
-    # the linearization is trustworthy; strict wins when true-constraint
-    # nonlinearity, e.g. clmax(shape), punishes every long step).
+    # strict_feasible=True starts in feasible-step mode: small honest steps
+    # instead of excursions -- wins when true-constraint nonlinearity
+    # (e.g. clmax(shape)) punishes every long step.
     _strict_feas = bool(getattr(options, 'strict_feasible', False))
     # (_has_tangent_eq hoisted above the filter init; see there.)
     for k in range(options.max_iterations):
@@ -2780,16 +2164,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             if k < _wi:
                 _radius_eff = min(radius, _tgt / _bb_g1)
             elif _bb_growth > 1.0:
-                # GRADUATED RELEASE: past warm-up the bb step cap tapers
-                # open geometrically instead of vanishing.  A hard release
-                # let the linearization propose family-scale shape moves
-                # the curvature models had never sampled (warm-up steps
-                # were 92-96% turbine-side): 3.5 log units of shape motion
-                # in 4 iterations, all retracted by restoration, then a
-                # radius-collapse limit cycle (measured).  Growing the cap
-                # ~30%/iteration keeps each bolder step SURVIVABLE, so the
-                # curvature models learn the shape directions from steps
-                # that actually stand.
+                # GRADUATED RELEASE: past warm-up the bb cap tapers open
+                # ~30%/iteration so each bolder step is survivable and the
+                # curvature models learn from steps that stand (a hard
+                # release measured a radius-collapse limit cycle).
                 grown = min(_tgt * _bb_growth ** (k - _wi),
                             float(getattr(options, 'blackbox_release_max',
                                           0.45) or 0.45))
@@ -2797,9 +2175,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         _ti = getattr(options, 'trust_iterations', None)
         _released = (_ti is not None and k >= int(_ti) and not _trust_forced)
         if _released:
-            # the box comes off; the graduated bb cap (if configured and
-            # still tighter than anything else) remains the only leash
-            # until it grows past relevance
+            # Box off; the graduated bb cap (if configured) is the only
+            # leash until it grows past relevance.
             _radius_eff = None
             if (has_blackbox and _tgt > 0.0 and _bb_g1 > 0.0
                     and _bb_growth > 1.0):
@@ -2812,23 +2189,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 problem, x, tau, _radius_eff, options, has_blackbox, curvature=curvature,
                 use_slacks=use_slacks, cache=cache,
                 force_trust=_has_tangent_eq or _trust_forced)
-            # NOTE: the filter does NOT supersede the trust region -- it
-            # cannot size steps, only accept them. Measured without the
-            # cap: tangent-equality subproblems have near-zero curvature
-            # along the design levers, and the steps thrashed +-0.5 log
-            # units in alternating directions from iteration 2 (pi_f
-            # 1.69->1.82->1.57->2.16->1.43->2.20), then froze 35
-            # iterations in filter rejection. Filter for recoverable
-            # excursions, trust region for scale: complementary.
+            # NOTE: the filter cannot size steps, only accept them --
+            # without the cap tangent-equality steps thrashed +-0.5 log
+            # units then froze 35 iterations in filter rejection. Filter
+            # for recoverable excursions, trust region for scale.
         except RuntimeError as exc:
-            # A sub-problem that cannot be SOLVED is the strongest possible
-            # signal that the linearization here is unusable -- and this path
-            # `continue`s, so it used to skip the restoration trigger entirely.
-            # Measured on 6t+6c: one huge first step (|d| = 3.17 in log space),
-            # then "unreachable / failed" cycling 2.5 -> 5 -> 10 -> 2.5 for all
-            # 1500 iterations with restorations = 0. _reject_radius also stays
-            # inf here (no ratio-test rejection ever happened), so the bracket
-            # hook below could never fire either. Restoration was unreachable.
+            # An unsolvable sub-problem `continue`s past the restoration
+            # trigger, so count it here (6t+6c: "unreachable / failed"
+            # cycled 1500 iterations with restorations = 0).
             _subfail += 1
             if _subfail >= max(int(getattr(options, 'restoration_patience', 0)
                                    or 0), 1):
@@ -2844,21 +2212,14 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         _filter.entries.clear()
                         _zz_prev = None          # new basin: stale geometry
                     continue
-            # An INFEASIBLE sub-problem is not a bad step -- it means the
-            # trust region is too tight for the relaxed feasible set to be
-            # reachable from here, which happens on the first pass from a
-            # badly infeasible start. The trust-region response to a bad step
-            # is to shrink; the response to an unreachable one is the
-            # opposite. Widen and retry before giving up.
+            # An INFEASIBLE sub-problem means the trust region is too tight
+            # for the relaxed set to be reachable -- widen, don't shrink.
             if (has_blackbox and "infeasible" in str(exc).lower()
                     and radius < options.trust_max):
                 grown = min(options.trust_max, radius * options.trust_expand)
                 if grown >= _reject_radius:
-                    # Widening would return to a radius whose step was already
-                    # rejected from this iterate. The region is bracketed: too
-                    # small to be reachable, too large to be believed. Stop rather
-                    # than cycle -- the honest report is that the linearised model
-                    # cannot represent the problem here.
+                    # Bracketed: too small to be reachable, too large to be
+                    # believed. Stop rather than cycle.
                     x_r, _restorations, _ok = _restore(
                         problem, x, options, has_blackbox, cache,
                         _restorations, k, 'the trust region bracketed',
@@ -2898,12 +2259,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     print(f"  itr {k + 1:3d}  sub-problem unreachable, "
                           f"widening radius -> {radius:.3g}")
                 continue
-            # Any OTHER sub-problem failure is a numerical one, not a statement
-            # about the feasible set: Ipopt returning internalSolverError on a
-            # model built at a badly-scaled iterate. The trust-region response to
-            # that is the same as to a bad step -- shrink and re-form the model --
-            # not to abandon a solve that is otherwise converging. Only give up
-            # once the radius has collapsed.
+            # Any OTHER failure is numerical (badly-scaled iterate): shrink
+            # and re-form the model; only give up once the radius collapses.
             if has_blackbox and radius > options.trust_min:
                 radius = max(options.trust_min, radius * options.trust_shrink)
                 if options.verbose:
@@ -2915,10 +2272,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             res.iterations = k
             break
 
-        # What the model says each linearized constraint will be after this
-        # step. Needed twice: by the ratio test below, to measure how well the
-        # linearization actually predicted, and by the curvature update on the
-        # next pass, to detect that the model was optimistic.
+        # Model prediction per linearized row: used by the ratio test and
+        # by the next pass's curvature validation.
         if lin_idx:
             for i in lin_idx:
                 try:
@@ -2937,16 +2292,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
         # --- KKT test on the ORIGINAL problem, AT THE POINT THE MULTIPLIERS
         # --- BELONG TO -------------------------------------------------------
-        # The multipliers just returned are the sub-problem's at x, so the
-        # residual has to be evaluated at x too. Testing at x_new instead
-        # pairs gradients from one point with multipliers from another. That
-        # is asymptotically harmless when the step is small, and badly wrong
-        # when it is not -- SPaircraft carries degenerate variables (a
-        # structural path that sizes nothing in the converged design, pinned
-        # only by the 1e-30..1e30 box) which move tens of log-units per
-        # iteration while contributing nothing. Pairing across that gap left
-        # stationarity stuck near 0.57 no matter how converged the meaningful
-        # variables were.
+        # Testing at x_new pairs gradients from one point with multipliers
+        # from another; SPaircraft's degenerate variables left stationarity
+        # stuck near 0.57 however converged the meaningful ones were.
         stat, viol, comp = _kkt(problem, x, mults, options.x_min)
         if getattr(options, 'traj_log', None):
             try:
@@ -2981,12 +2329,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                   f"|d|={np.linalg.norm(d):.3e}  stat={stat:.3e}  "
                   f"viol={viol:.3e}  comp={comp:.3e}  tau={tau:.1e}")
         # --- feasibility-recovery contract ------------------------------
-        # When Phase 1 fell short, the penalty path runs ONLY to find the
-        # initial feasible point.  The moment it does, the slacks come off
-        # and the solve proceeds as the normal Phase II from a certified-
-        # feasible start; if the budget expires first, the run TERMINATES
-        # as infeasible -- optimizing from a point that never becomes
-        # feasible answers nothing.
+        # The penalty path runs ONLY to find the first feasible point; then
+        # slacks come off and normal Phase II resumes. Budget expired first
+        # = terminate as infeasible.
         if _recovering:
             if viol <= options.feasibility_tolerance:
                 _recovering = False
@@ -3009,42 +2354,27 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     res.iterations = k + 1
                     return res
         # --- restoration trigger: infeasible and not fixing it ---------------
-        # Hooking restoration only to trust-region collapse/bracket was wrong.
-        # Measured on 3t+3c: the filter (correctly) accepted an excursion to
-        # viol 2.69e-01, and the run then sat there for all 1500 iterations
-        # WITHOUT the region ever collapsing or bracketing, so restoration never
-        # fired. The condition that matters is not "the region died", it is "we
-        # are infeasible and not getting closer".
-        # CONSECUTIVE iterations infeasible, reset only by reaching feasibility --
-        # NOT by making progress. Excusing the counter whenever the violation
-        # dropped 10% was wrong: measured on the ladder, rungs 3/6/7/8 all ran the
-        # full 1500 iterations at viol 1.1e-01 .. 3.3e+00 with restorations = 0,
-        # because a creeping violation kept resetting the counter while never
-        # reaching feasibility. Phase II's contract IS feasible iterates, so
-        # sustained infeasibility is the signal regardless of its trend.
+        # Trust-region collapse is not the trigger that matters (3t+3c: sat
+        # at viol 2.69e-01 for 1500 iterations with a healthy region). The
+        # counter is CONSECUTIVE iterations infeasible, reset only by
+        # feasibility -- excusing 10% progress let a creeping violation run
+        # forever (ladder rungs 3/6/7/8: 1500 iterations, restorations = 0).
         if viol > options.feasibility_tolerance:
             _infeas_stall += 1
             _infeas_best = min(_infeas_best, viol)
         else:
             _infeas_best, _infeas_stall = np.inf, 0
-        # Incumbent memory is a GREY-BOX safeguard (see the block comment at
-        # the loop head): on a pure SP it must stay dormant.  Recording it
-        # unconditionally sent black-box-free problems into the strict
-        # fallback below whenever a restoration hiccuped, where the unset
-        # strict floor then rejected every ~1e-6-scale step to the
-        # iteration cap (measured: the lcjetliner b737 anchor, feasible to
-        # 8e-7, parked 184 iterations at stationarity 6e-2 -- a model that
-        # converges in 39 iterations with the safeguard dormant).
+        # Incumbent memory is a GREY-BOX safeguard; on a pure SP it stays
+        # dormant. Recorded unconditionally it sent black-box-free problems
+        # into the strict fallback, whose unset floor rejected every step
+        # (b737 anchor: 184 iterations parked vs 39 with it dormant).
         if has_blackbox and viol <= _inc_tol:
             _f_here = problem.objective_value(x)
             if _f_here < _f_incumbent:
                 _x_incumbent, _f_incumbent = x.copy(), float(_f_here)
-        # The trigger is SUSPENDED while the feasibility-recovery stage
-        # owns the iterate: recovery exists precisely because Phase I got
-        # stuck, so bouncing back into Phase I on an infeasibility timer
-        # re-enters the failed stage mid-repair (observed: recovery had
-        # walked viol 0.77 -> 0.067 when the timer threw it back).  The
-        # recovery stage polices itself with its own bounded budget.
+        # Suspended while feasibility recovery owns the iterate: the timer
+        # once threw recovery back into failed Phase I mid-repair (viol
+        # 0.77 -> 0.067); recovery polices itself with its own budget.
         if (not _recovering and
                 _infeas_stall >= int(getattr(options, 'restoration_patience', 0) or 0) > 0):
             x_r, _restorations, _ok = _restore(
@@ -3060,9 +2390,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     _zz_prev = None          # new basin: stale geometry
                 continue
             if _x_incumbent is not None and not _strict_feas:
-                # restoration failed: SQP fallback -- return to the last
-                # feasible incumbent and continue in STRICT feasible-step
-                # mode (the acceptance guards below drop to factor 1)
+                # Restoration failed: return to the feasible incumbent in
+                # STRICT feasible-step mode (guards drop to factor 1).
                 x = _x_incumbent.copy()
                 _strict_feas = True
                 radius = max(options.trust_min, 0.1 * options.trust_radius)
@@ -3088,45 +2417,27 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
         _subfail = 0                 # the sub-problem solved; the run is healthy
         f_old = problem.objective_value(x)
-        # Clamp the log-space step componentwise before exponentiating: a
-        # penalty-phase sub-problem with a near-flat direction can return
-        # |d_j| in the hundreds, and x * exp(d) then overflows to inf ---
-        # after which every later phase build sees log(inf)/log(0) and
-        # dies with "params.p0 = nan" (observed on the wind-turbine
-        # missions SP and the tidal SP).  e^60 per iteration is far beyond
-        # any legitimate move in these models; the clamp turns a fatal
-        # overflow into an ordinary short step the loop can iterate on.
+        # Clamp the log step before exponentiating: a near-flat penalty
+        # direction can return |d_j| in the hundreds, and x*exp(d)
+        # overflows to inf, after which every phase build dies on
+        # "params.p0 = nan" (wind-turbine missions SP). e^60 is beyond any
+        # legitimate move; the clamp turns overflow into a short step.
         d = np.clip(d, -60.0, 60.0)
         x_new = x * np.exp(d)
 
-        # Extend the step while it stays feasible for the TRUE problem.
-        #
-        # The sub-problem is a conservative inner approximation, so its optimum
-        # is feasible but PESSIMISTIC -- it stops at the edge of the condensed
-        # set, which is strictly inside the real one. Walking further along the
-        # same direction usually stays feasible and keeps reducing the
-        # objective, and it costs one constraint evaluation to find out, against
-        # a whole sub-problem solve to take another step.
-        #
-        # This is what lets the conservative form keep its guarantee and still
-        # move: every candidate is CHECKED against the true constraints, so an
-        # accepted iterate is feasible by verification rather than by
-        # construction. Nothing is assumed.
+        # Extend the step while it stays feasible for the TRUE problem: the
+        # conservative optimum is pessimistic, and walking further costs one
+        # constraint evaluation against a whole sub-problem solve. Every
+        # candidate is CHECKED against the true constraints, so acceptance
+        # is by verification, not construction.
         if options.step_expansion > 1.0 and (not has_blackbox
                                              or options.expand_past_blackbox):
             budget = max(viol, options.feasibility_tolerance)
-            # With a black box present, judge the extension on the STRUCTURED
-            # constraints alone. Evaluating the black box at each trial alpha
-            # would spend the one resource this solver family exists to save --
-            # a five-step expansion would cost five calls per iteration. The
-            # structured constraints are posynomials and cost nothing.
-            #
-            # The black-box block is then policed where it already was, by the
-            # trust-region ratio test, whose evaluation at the accepted point is
-            # needed for the next linearization anyway. So the extension is free
-            # in calls; what it risks is a step the ratio test then rejects,
-            # throwing away the sub-problem solve that produced it. Off by
-            # default for that reason.
+            # With a black box, judge the extension on the STRUCTURED rows
+            # alone -- evaluating the box per trial alpha would spend the
+            # calls this solver exists to save. The bb block is policed by
+            # the ratio test anyway; the risk is a step it then rejects,
+            # which is why this is off by default.
             checker = _violation_structured if has_blackbox else _violation
             f_best = problem.objective_value(x_new)
             alpha = options.step_expansion
@@ -3140,16 +2451,13 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 x_new, f_best = trial, f_trial
                 alpha *= options.step_expansion
 
-        # COMPOSITE-STEP ACCEPTANCE for tangent equalities: pull the trial
-        # point back onto the equality manifold BEFORE any acceptance test
-        # sees it.  A tangential step leaves the true manifold at second
-        # order, so judging the raw point charges the step for drift the
-        # Gauss-Newton restore removes for free -- the filter then rejects
-        # every objective-improving step from a feasible iterate and the
-        # radius collapses (measured: |d| 1.0 -> 1e-3 geometric, objective
-        # frozen at the Phase-I point).  This is the same accept-the-pair-
-        # together principle _phase1_composite documents; the post-
-        # acceptance restore below becomes a cheap no-op on this path.
+        # COMPOSITE-STEP ACCEPTANCE for tangent equalities: restore onto the
+        # manifold BEFORE the acceptance test sees the trial, or the filter
+        # charges the step for drift the restore removes free and rejects
+        # every improving step (measured: radius 1.0 -> 1e-3, objective
+        # frozen at the Phase-I point). Same accept-the-pair-together
+        # principle as _phase1_composite; the post-acceptance restore
+        # becomes a cheap no-op on this path.
         if n_eq_p2 and getattr(options, 'phase2_restore', False):
             import os as _os
             _dbg = _os.environ.get('SIA_DBG')
@@ -3161,15 +2469,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 tol=min(options.feasibility_tolerance, 1e-10))
             if np.all(np.isfinite(x_nr)) and np.all(x_nr > 0):
                 if has_blackbox:
-                    # Grey-box rows: the restore is TRUTH, not a candidate.
-                    # An un-restored iterate can carry bb-row fiction that
-                    # HIDES real inequality violations (measured: cl rows
-                    # satisfied against a clmax alias 2x the section's
-                    # actual peak), and the old only-if-violation-improves
-                    # guard then rejected the repair and kept the fiction.
-                    # Keep the truthful point unconditionally; the
-                    # acceptance test below judges IT, and a bad step is
-                    # rejected as a step, not falsified by its aliases.
+                    # Grey-box rows: the restore is TRUTH, not a candidate --
+                    # an un-restored iterate can carry bb-row fiction hiding
+                    # real inequality violations. Keep it unconditionally;
+                    # the acceptance test judges the restored point.
                     x_new = x_nr
                 elif _violation(problem, x_nr) <= _violation(problem, x_new):
                     x_new = x_nr
@@ -3186,35 +2489,20 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             _curv_step = np.log(x_new) - np.log(x)
 
         # Acceptance state shared by the black-box cascade and the tangent-
-        # equality path: everything from the feasibility guard down runs for
-        # BOTH. It used to live inside `if has_blackbox:`, which left pure-
-        # signomial problems with NO acceptance test at all -- every Phase II
-        # step was taken unconditionally, the filter and the trust-region
-        # ratio logic were dead code, and the radius never adapted. Measured
-        # on the free coupled 737 case: a two-point limit cycle (f 201853 <->
-        # 202080, |d| byte-stable at 2.315) ran for 100+ iterations with
-        # zero filter rejections because rejection was unreachable.
+        # equality path. It used to live inside `if has_blackbox:`, leaving
+        # pure-signomial problems with NO acceptance test (free coupled 737:
+        # a two-point limit cycle ran 100+ iterations with rejection
+        # unreachable).
         ratio = None
         va_seen = None
         v0 = None
         _rejected_by_guard = False
         if has_blackbox:
-            # Globalize the linearized block only: compare the true objective
-            # reduction against the model's prediction, and size the region by
-            # it. Structured constraints cannot be violated by the step, so
-            # they play no part in the test.
-            # The linearized constraints are what the region exists for, so
-            # they are what it is sized by. The objective ratio measures the
-            # wrong thing whenever the black box sits in a constraint rather
-            # than the objective: a posynomial objective is modelled exactly,
-            # so its ratio stays near 1 however badly the linearization is
-            # behaving, and the region never shrinks when it should.
-            #
-            # Aggregated over the block rather than taken per constraint. A
-            # per-constraint minimum lets an inactive constraint whose
-            # prediction barely moves veto a perfectly good step -- measured,
-            # that alone turned the three-black-box Hoburg case from 41
-            # iterations and converged into 400 and not.
+            # Globalize the linearized block only, and size the region by
+            # ITS ratio: the objective ratio measures the wrong thing when
+            # the box sits in a constraint. Aggregated over the block, not
+            # per row -- a per-row minimum let an inactive row veto good
+            # steps (Hoburg: 41 iterations converged -> 400 and not).
             v0 = max((abs(lin_here[i])
                       if problem.constraints[i].operator == '==' else lin_here[i]
                       for i in lin_idx if i in lin_here), default=None)
@@ -3225,16 +2513,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             va_seen = None       # worst TRUE violation over the linearized rows
                                  # at x_new, whenever a level computed it
             _rejected_by_guard = False
-            # Only measure a ratio when the predicted improvement is big
-            # enough to mean something. On the helicopter the linearized
-            # constraints sit at about 1e-8 and successive predictions differ
-            # by 1e-11, so an absolute floor of 1e-10 let a ratio be formed
-            # from two numbers that were both noise: it came out at -3.3 every
-            # third iteration, knocked the radius back to 1.9e-6, and the run
-            # spent 93% of its iterations stepping 1e-5 at a time. Scaled to
-            # the tolerance the run is actually trying to meet, those
-            # differences are correctly treated as "no predicted change" and
-            # the model is judged on its accuracy instead.
+            # Only measure a ratio when the predicted improvement means
+            # something: an absolute 1e-10 floor formed ratios from noise
+            # (helicopter: -3.3 every third iteration, 93% of the run at
+            # 1e-5 steps).
             gate = (float(getattr(options, 'ratio_gate_rel', 0.01) or 0.0)
                     * options.feasibility_tolerance)
             if v0 is not None and vp is not None and v0 - vp > gate:
@@ -3246,19 +2528,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 except Exception:
                     ratio = None
             if ratio is None:
-                # The linearized block predicts no improvement to measure,
-                # which is the usual state once it is satisfied with margin.
-                # Then the question is not "how much of the predicted gain was
-                # realised" but "was the model right", and it was right if the
-                # constraints landed where it said they would.
-                #
-                # Falling back to the objective ratio here is what stalled the
-                # helicopter: at a small radius the predicted and actual
-                # objective changes are both ~1e-5 and their ratio is noise,
-                # so it lands between accept and expand. The step is taken,
-                # the region never grows, and the solve crawls at a radius
-                # some early rejection set -- 250 iterations at |d| = 1.8e-5,
-                # with stationarity slowly getting worse.
+                # No predicted improvement to measure: judge model ACCURACY
+                # instead (did the constraints land where it said). Falling
+                # straight to the objective ratio stalled the helicopter --
+                # 250 iterations at |d| = 1.8e-5 with the region never
+                # growing.
                 err = None
                 if vp is not None:
                     try:
@@ -3277,14 +2551,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     actual = math.log(max(f_old, 1e-300)) \
                         - math.log(max(problem.objective_value(x_new), 1e-300))
                     ratio = actual / pred if abs(pred) > 1e-300 else 1.0
-                    # The objective ratio alone is not an acceptance test: a step
-                    # that buys objective by walking out of the feasible set scores
-                    # well on it and is taken. Measured on the free-form ROM
-                    # section, iteration 1 dropped the objective 1619 -> 1521 while
-                    # feasibility went 9.975e-09 -> 2.074, and the solve never
-                    # recovered. Guard it: if the step made the violation materially
-                    # worse than the model implied, that is a rejection regardless
-                    # of what happened to the objective.
+                    # The objective ratio alone is not an acceptance test: a
+                    # step can buy objective by leaving the feasible set
+                    # (ROM section: 1619 -> 1521 while feasibility went to
+                    # 2.074; never recovered). Guard it.
                     v_old = _violation(problem, x)
                     v_new = _violation(problem, x_new)
                     _g = 1.0 if _strict_feas else _FEAS_GUARD
@@ -3294,24 +2564,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         ratio = -1.0
 
         # --- feasibility guard, applied to EVERY level of the cascade ---
-        # It used to sit inside the objective-ratio fallback only, which is
-        # the branch almost never taken: measured on the 2t+2c section,
-        # _violation() was called ONCE in 300 iterations. So the guard was
-        # effectively dead, and levels 1 and 2 accepted steps that left the
-        # feasible set. Level 2 is the hole -- it scores model ACCURACY,
-        # `ratio = scale/err` with `scale = max(feas_tol, 0.1*||d||)`, and
-        # with ratio_accept = 1e-4 it only rejects when err > 1e4 * scale.
-        #
-        # Measured on 3t+3c: iterate 0 feasible at 9.98e-09, ONE accepted
-        # step to 2.69e-01 -- all of it on the black-box rows, the structured
-        # rows exact to 1.1e-15 -- buying the objective 1619.14 -> 1519.20.
-        # The solve never recovered and aborted at iteration 7.
-        #
-        # va_seen is the true violation over the linearized rows at x_new,
-        # which levels 1 and 2 have already computed, so this costs no extra
-        # black-box calls. The structured rows cannot be violated by the step
-        # (they are exact or conservative in the sub-problem), so the
-        # linearized block IS the feasibility question here.
+        # It used to sit only in the rarely-taken objective-ratio fallback,
+        # so the accuracy level accepted steps that left the feasible set
+        # (3t+3c: one accepted step 9.98e-09 -> 2.69e-01, aborted at
+        # iteration 7). va_seen is already computed, so this costs no extra
+        # black-box calls; the linearized block IS the feasibility question.
         if (_filter is not None and va_seen is None
                 and _has_tangent_eq and not has_blackbox):
             # tangent equalities can be violated by the step, so the
@@ -3319,14 +2576,11 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             va_seen = float(_violation(problem, x_new))
             if v0 is None:
                 v0 = float(_violation(problem, x))
-        # In FEASIBILITY-RECOVERY mode, a RATCHET on the best violation
-        # achieved: early excursions are allowed (the successful warm
-        # recovery climbed 0.15 -> 0.77 before descending to 1e-6, and a
-        # hard monotone guard broke it), but once the finder has
-        # meaningfully descended it may not give back more than a factor
-        # over its best (observed on a cold start: viol reached 1.0e-3,
-        # then objective-favoring steps blew it back to 6.3e-2 and the
-        # budget burned oscillating).
+        # In FEASIBILITY-RECOVERY mode, a RATCHET on the best violation:
+        # early excursions allowed (a hard monotone guard broke a
+        # successful recovery), but after meaningful descent no giving back
+        # more than a factor over the best (a cold start once oscillated
+        # its budget away).
         if _recovering and va_seen is None:
             va_seen = float(_violation(problem, x_new))
             if v0 is None:
@@ -3340,8 +2594,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             ratio = -1.0
             _rejected_by_guard = True
         if _filter is not None and va_seen is not None:
-            # Dominance, not an exchange rate. A trial is refused only if a
-            # point already seen was better in BOTH objective and violation.
+            # Dominance, not an exchange rate: refuse only if a seen point
+            # was better in BOTH objective and violation.
             h_new = Filter.h_of(va_seen)
             f_new = math.log(max(problem.objective_value(x_new), 1e-300))
             if not _filter.acceptable(h_new, f_new):
@@ -3371,18 +2625,12 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     _rejected_by_guard = True
 
         if _strict_feas and ratio != -1.0:
-            # STRICT feasible-step mode measures the TRUE violation at the
-            # (restored) trial point on EVERY iteration -- the cascade's
-            # upper levels judge model accuracy and may never evaluate it
-            # (measured: |d| = 6.07 accepted at iteration 1, violation
-            # 1e-8 -> 9.2, with every conditional guard silently skipped).
-            # The comparison FLOOR is the composite restore's achievable
-            # residual, not the raw feasibility tolerance: on grey-box
-            # problems the alternating restore bottoms out near 1e-6, and
-            # judging trials against 1e-8 rejected EVERY step (measured:
-            # 165/165 rejects at viol 8.4e-7 -> 3.4e-6, radius ground to
-            # 2e-3, zero progress).  Growth beyond 3x the current residual
-            # or the floor -- whichever is larger -- is a real excursion.
+            # STRICT mode measures the TRUE violation at the restored trial
+            # every iteration -- the cascade's upper levels may never
+            # evaluate it (|d| = 6.07 once accepted at violation 1e-8 ->
+            # 9.2). The FLOOR is the restore's achievable residual, not the
+            # raw tolerance (judging at 1e-8 rejected 165/165 steps).
+            # Growth beyond 3x the residual or the floor is a real excursion.
             _floor_s = max(options.feasibility_tolerance,
                            float(getattr(options, 'strict_feas_floor', 0.0)
                                  or 0.0))
@@ -3397,13 +2645,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if ratio is None:
             ratio = 1.0     # nothing measured this step; accept it
         if ratio < options.ratio_accept:
-            # A rejected iteration is still a GENERATION for the
-            # infeasibility clock: the iterate stays where it is, so if it
-            # is infeasible it has now been infeasible one iteration
-            # longer.  This used to be counted only on the accepted path
-            # below, so a rejection streak starved restoration entirely
-            # (measured: 165 consecutive rejections at viol 8.4e-7,
-            # patience 5, restorations fired: 0).
+            # A rejected iteration still ages the infeasibility clock;
+            # counting only on the accepted path starved restoration
+            # through a rejection streak (165 straight rejections, zero
+            # restorations fired).
             if (not _recovering
                     and _violation(problem, x) > options.feasibility_tolerance):
                 _infeas_stall += 1
@@ -3425,10 +2670,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                             _zz_prev = None
                         continue
             if _released:
-                # Rejected with the box OFF. Shrinking a radius that is not
-                # being applied would re-solve an identical sub-problem and
-                # spin, so re-arm permanently, seeded from the step that just
-                # failed rather than from a stale radius.
+                # Rejected with the box OFF: shrinking an unapplied radius
+                # would spin, so re-arm permanently, seeded from the step
+                # that just failed.
                 _trust_forced = True
                 radius = max(options.trust_min,
                              min(radius, float(np.abs(d).max()))
@@ -3437,14 +2681,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     print(f"  itr {k + 1:3d}  REJECT ratio={ratio:.3e} with the "
                           f"trust box released; re-arming at {radius:.3e}")
                 continue
-            # A FEASIBILITY rejection is not evidence that the linearized
-            # model is wrong -- only that this step was too long to stay in
-            # the feasible set. _reject_radius exists to detect the former,
-            # and letting the guard write to it conflates the two: measured
-            # on 2t+2c, three guard rejections were enough to bracket the
-            # region and abort the whole solve at iteration 8 (W 1605, viol
-            # 2e-04) on a problem that converges in 192 iterations untouched.
-            # Shrink and retry, but leave the bracket alone.
+            # A FEASIBILITY rejection says the step was too long, not that
+            # the model is wrong -- letting the guard write _reject_radius
+            # bracketed and aborted 2t+2c at iteration 8 on a problem that
+            # converges in 192 untouched. Shrink; leave the bracket alone.
             if not _rejected_by_guard:
                 _reject_radius = min(_reject_radius, radius)
             radius = max(options.trust_min, radius * options.trust_shrink)
@@ -3485,39 +2725,21 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 res.iterations = k + 1
                 break
             continue
-        # Once the curvature models are TRAINED the trust region has done its
-        # job and should get out of the way. It exists only to substitute for
-        # a conservative model, and B supplies that as soon as it has data --
-        # so past warm-up, expand on every accepted step rather than only on a
-        # good ratio. Without this the radius ratchets: each early rejection
-        # divides it by four, nothing multiplies it back on a merely-adequate
-        # ratio, and the solve crawls at whatever radius an early rejection
-        # set (measured on the 16-variable ROM section: stationarity pinned at
-        # 1.37e-02 with |d| ~ 1e-03 and radius 2.4e-04, feasible to 3e-08 but
-        # unable to take the step that would make it stationary).
-        # --- zigzag damping (see the option's comment for the measured
-        # cycle this exists for). Two sizeable accepted steps that cancel
-        # mean the linearization is flipping between wells the filter
-        # cannot arbitrate; only a smaller radius localizes it.
-        # The detector arms on EVERY model class, not only pins/black boxes:
-        # a plain-signomial model can flip between wells just the same (the
-        # launch-vehicle coupled-losses SP cycled its booster nozzle between
-        # eps 10.8 and the 60 cap forever -- both steps ACCEPTED, objective
-        # alternating 72.35/72.82 around a true optimum of 73.65 at eps 32,
-        # both cycle points ~3.5e-2 infeasible).  Without tangent equalities
-        # force_trust is off, so detection alone is not enough: the hit also
-        # arms _trust_forced below, or the shrunk radius would never reach
-        # the sub-problem and the cycle would replay at full amplitude.
+        # Past warm-up the trust region has done its job -- B supplies the
+        # conservative model -- so expand on every accepted step, or the
+        # radius ratchets down and the solve crawls (16-variable ROM
+        # section: stationarity pinned at 1.37e-02).
+        # --- zigzag damping (see the option's comment). Arms on EVERY
+        # model class -- plain signomials flip between wells too (launch-
+        # vehicle SP: booster nozzle cycled forever, both steps ACCEPTED) --
+        # and the hit also arms _trust_forced below, or the shrunk radius
+        # would never reach the sub-problem.
         _zz_hit = False
         if (getattr(options, 'zigzag_damp', True)
                 and _zz_prev is not None):
-            # L2 over the WHOLE vector, not the max component: a single
-            # lever flipping while the other 1600 variables advance is
-            # progress, not a cycle. Measured with the max-norm version:
-            # false detections during a healthy well-descent collapsed
-            # the radius, tripped restoration to the same feasible point
-            # every time, and the solve replayed a byte-identical 7-state
-            # loop (f 472182.4 -> ... -> 218126.2 -> restore, twice).
+            # L2 over the WHOLE vector, not the max component: one lever
+            # flipping while 1600 variables advance is progress (the max-
+            # norm version replayed a byte-identical 7-state loop).
             _d1 = float(np.linalg.norm(x_new - x))
             _d0 = float(np.linalg.norm(x - _zz_prev))
             _net = float(np.linalg.norm(x_new - _zz_prev))
@@ -3533,18 +2755,13 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _zz_cool = int(getattr(options, 'zigzag_cooldown', 4))
                 radius = max(options.trust_min,
                              min(radius, _s) * options.trust_shrink)
-                # Make the shrink COUNT on models where the box is not
-                # otherwise applied (no tangent equalities, no bb cap):
-                # from here on the sub-problem gets the radius.
+                # Make the shrink COUNT where the box is not otherwise
+                # applied: from here on the sub-problem gets the radius.
                 _trust_forced = True
-                # A REPEAT hit means the cooldown expired and expansion
-                # re-inflated the radius past the well separation, so the
-                # same cycle replayed (measured on the launch-vehicle SP:
-                # 208 detections in 1200 iterations, damp -> re-expand ->
-                # flip, forever).  Ratchet the CEILING expansion may ever
-                # regrow to; once it sits below the well separation the
-                # flip is unreachable and the iterate must settle in one
-                # well, where ordinary descent takes over.
+                # A REPEAT hit means expansion re-inflated past the well
+                # separation and the cycle replayed (launch-vehicle SP: 208
+                # detections in 1200 iterations). Ratchet the ceiling below
+                # the separation so the iterate must settle in one well.
                 if _zz_hits > 1:
                     _zz_ceiling = min(_zz_ceiling,
                                       max(8.0 * options.trust_min,
@@ -3560,15 +2777,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             radius = min(min(options.trust_max, _zz_ceiling),
                          radius * options.trust_expand)
         elif _curv_trained:
-            # Trained, but the step was only adequate. Grow GENTLY rather than
-            # by the full factor: doubling from a radius that works lands
-            # squarely on one that does not, and the region then oscillates
-            # accept-accept-reject forever (measured on the ROM section: a
-            # period-3 cycle, 9.8e-04 -> 2.0e-03 -> 3.9e-03 -> REJECT, ratio
-            # exactly -3.004 every time, a third of the iterations wasted and
-            # the objective creeping 0.04 kg per cycle). The square root of the
-            # expansion factor walks up to the usable radius instead of
-            # vaulting past it.
+            # Adequate step: grow by sqrt of the factor -- doubling from a
+            # working radius lands on one that fails and the region
+            # oscillates (ROM section: period-3 accept-accept-reject cycle).
             radius = min(min(options.trust_max, _zz_ceiling),
                          radius * math.sqrt(options.trust_expand))
 
@@ -3581,11 +2792,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             x_r, _heq = _restore_fn(
                 problem, x, iters=options.phase1_restore_iterations,
                 tol=min(options.feasibility_tolerance, 1e-10))
-            # Structured-only: keep the restore only if it helps (least-
-            # norm barely moves inequalities, so a worsening means the
-            # step was the problem).  Grey-box: the restore is TRUTH ---
-            # rejecting it keeps aliases that misreport the actual rows
-            # (see the pre-acceptance site) --- keep it unconditionally.
+            # Structured-only: keep the restore only if it helps. Grey-box:
+            # the restore is TRUTH (see the pre-acceptance site) -- keep it
+            # unconditionally.
             if np.all(np.isfinite(x_r)) and np.all(x_r > 0) and (
                     has_blackbox
                     or _violation(problem, x_r) <= _violation(problem, x)):
@@ -3596,12 +2805,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
         if _relative_change_converged(problem, res, options, k):
             break
 
-        # Update the curvature models from the step just taken. Both sources
-        # are free: the change in the log-gradient is a secant condition on the
-        # log-Hessian, and the true constraint value here -- which the next
-        # linearization needs anyway -- says whether the model was optimistic.
-        # If it was, the curvature along that direction was underestimated, and
-        # inflating fixes it. That is validation at no extra black-box cost.
+        # Update the curvature models from the step: the gradient change is
+        # a free secant condition, and the true value validates the model --
+        # inflating on optimism costs no extra black-box calls.
         if curvature is not None:
             for i, cv in curvature.items():
                 try:
@@ -3619,17 +2825,12 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                         if actual > pred + margin:
                             cv.inflate(actual - pred, _curv_step)
                         elif actual < pred - margin:
-                            # The model was pessimistic here, so the curvature
-                            # it is carrying is more than the evidence
-                            # supports. Ease it back rather than let it ratchet.
+                            # Pessimistic here: ease B back, don't ratchet.
                             cv.relax()
                 except Exception:
                     pass
-            # Trained once EVERY black-box row has enough BFGS data for its B to
-            # be a real curvature estimate rather than the seeded prior. Taking
-            # the minimum, not the mean, is deliberate: one untrained row is one
-            # row whose model is still only as conservative as the prior, and the
-            # step is bounded by the worst of them.
+            # Trained once EVERY row has enough BFGS data -- the minimum,
+            # not the mean, because the step is bounded by the worst row.
             _bb_g1 = max((float(np.abs(cv.last_grad).sum())
                           for cv in curvature.values() if cv.last_grad is not None),
                          default=_bb_g1)
@@ -3638,37 +2839,13 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 _curv_trained = min(cv.updates for cv in curvature.values()) >= _warm
 
         # --- escalate the slack penalty -----------------------------------
-        # Two reasons to raise tau, and the second is easy to miss.
-        #
-        # 1. Slack is still open, so the iterate is infeasible.
-        # 2. A MULTIPLIER has run into tau. Each slack costs tau per unit, so
-        #    tau is an upper bound on every multiplier: a constraint whose
-        #    true multiplier exceeds tau is cheaper to violate than to satisfy,
-        #    and it goes soft. The iterate then looks feasible (the slack is
-        #    tiny) and complementarity looks satisfied, while stationarity
-        #    stalls at whatever the capped multipliers leave behind. This is
-        #    the classic exact-penalty condition -- the penalty parameter has
-        #    to dominate the multipliers, not merely close the slacks.
-        # BOTH escalation triggers EXCLUDE equality rows, and both for the
-        # same reason: their signals are artifacts of the L1 slacking, not
-        # evidence about the penalty parameter.
-        #
-        # * An active L1-slacked equality's DUAL sits exactly at +-tau by
-        #   construction (|s| costs tau per unit in both directions), so
-        #   the multiplier test fires on every iteration.
-        # * An equality row's SLACK measures the proposed step's
-        #   second-order drift off the manifold, which is positive at any
-        #   useful step length -- and the Gauss-Newton restore closes it
-        #   for free after the step, so it is not an infeasibility tau
-        #   needs to price.
-        #
-        # Measured with both included: tau 1 -> 9.8e6 by iteration 11 on a
-        # designpoint model with paired equality pins; the instant tau
-        # saturated, every subsequent step was filter-rejected (|d|
-        # decaying 1.0 -> 1e-3 geometrically) and the solve froze at the
-        # Phase-I point, 45.45 -> 52.8 $/MWh.  The exact-penalty condition
-        # (tau must dominate the true multipliers) is an INEQUALITY
-        # argument; for slacked equalities it is vacuous.
+        # Raise tau when slack is open OR a multiplier has run into tau
+        # (tau caps every multiplier, so a constraint whose true multiplier
+        # exceeds it goes soft -- the exact-penalty condition). Both
+        # triggers EXCLUDE equality rows: an active L1 equality's dual sits
+        # at +-tau by construction, and its slack is second-order drift the
+        # restore closes free. With both included tau hit 9.8e6 by
+        # iteration 11 and the solve froze at the Phase-I point.
         k_ = min(len(problem.constraints),
                  len(s) if len(s) else 0,
                  len(mults) if len(mults) else 0)
@@ -3693,10 +2870,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                           options.tau_factor * lam_max))
         elif (not need and tau > options.tau0
               and _violation(problem, x) <= options.feasibility_tolerance):
-            # Relief: a feasible iterate with closed inequality slacks and
-            # multipliers well under tau is evidence tau overshot (it
-            # ratchets during the infeasible transient and otherwise never
-            # comes back down, leaving the objective term drowned).
+            # Relief: tau ratchets during the infeasible transient and
+            # otherwise never comes back down, drowning the objective term.
             tau = max(options.tau0, tau / options.tau_factor)
 
     else:
@@ -3707,15 +2882,10 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
 
     if res.x is None:
         res.x, res.objective = x, problem.objective_value(x)
-    # EXIT DISCIPLINE (SQP): if the run is ending on an infeasible
-    # excursion but a feasible incumbent was visited, return the
-    # incumbent.  The old behavior returned the LAST iterate whatever its
-    # violation, so a run whose budget expired mid-excursion handed back
-    # a point its own constraints reject (measured: airfoil stall row
-    # violated at return while feasible iterates had been visited).
-    # UNCONDITIONAL: a converged CLAIM at an infeasible point is the
-    # known false-certificate mode (degenerate multipliers) and is
-    # exactly the claim not to honor -- the true violation is the test.
+    # EXIT DISCIPLINE (SQP): never return an infeasible excursion while a
+    # feasible incumbent exists (a budget once expired mid-excursion).
+    # UNCONDITIONAL -- a converged CLAIM at an infeasible point is the
+    # known false-certificate mode; the true violation is the test.
     if (_x_incumbent is not None
             and _violation(problem, res.x) > _inc_tol):
         res.x, res.objective = _x_incumbent, float(_f_incumbent)
@@ -3728,10 +2898,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
             and viol <= options.feasibility_tolerance
             and (stat > options.stationarity_tolerance
                  or comp > options.complementarity_tolerance)):
-        # the run stopped short with the sub-problem's duals failing the
-        # KKT test -- ask whether MINIMUM-NORM multipliers certify the
-        # point before reporting failure (split equalities make the
-        # returned duals' stationarity meaningless; see kkt_min_norm)
+        # Stopped short with the sub-problem's duals failing: ask whether
+        # MINIMUM-NORM multipliers certify the point first (split
+        # equalities make the returned duals meaningless; see kkt_min_norm)
         m2 = _min_norm_mults(problem, res.x, options.kkt_min_norm_act_tol)
         s2, v2, c2 = _kkt(problem, res.x, m2, options.x_min)
         if s2 <= max(stat, options.stationarity_tolerance) \
@@ -3769,9 +2938,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     res.stationarity, res.max_violation, res.complementarity = stat, viol, comp
     res.multipliers = mults
     res.slacks_active = viol > options.feasibility_tolerance
-    # Attached to every result, not just the failures: the same text explains
-    # why a run that DID converge converged, and the degenerate-block warning
-    # is worth seeing either way.
+    # Attached to every result: the same text explains why a converged run
+    # converged, and the degenerate-block warning is worth seeing either way.
     res.feas_guard_trips = _fg_trips     # times the guard CONDITION held, whether
                                          # or not feasibility_guard applied it
     res.restorations = _restorations     # Phase I re-entries from within Phase II

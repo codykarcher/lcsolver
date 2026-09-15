@@ -6,53 +6,19 @@
 
 """Structural checks on a detected formulation, before anything is solved.
 
-Two kinds of problem show up here, and they need different tools.
+Structural defects show in the sparsity pattern alone (empty/singleton
+columns, bound rows, unbounded directions) -- the classical presolve
+reductions. Solution-dependent defects do not: a variable can be undetermined
+at the optimum because all its constraints go slack there; see
+:func:`degeneracy_report`, which runs after a solve. Measured on SPaircraft:
+7 of 29 undetermined variables are structural, the other 22 need the
+post-solve test.
 
-**Structural** defects are visible in the sparsity pattern alone: a variable
-that appears in no constraint, one that appears in only one, a "constraint"
-that is really a bound, a variable nothing can push down on. These are the
-classical presolve reductions (Andersen & Andersen; Achterberg et al.,
-*Presolve Reductions in Mixed Integer Programming*) and they cost nothing to
-find. Most of them are modelling errors -- a variable nothing determines is
-usually a constraint somebody forgot to write.
-
-**Solution-dependent** defects are not. A variable can appear in half a dozen
-constraints, all of them perfectly ordinary, and still be undetermined at the
-optimum because every one of those constraints goes slack there. Nothing in
-the sparsity pattern says so. For those see :func:`degeneracy_report`, which
-runs *after* a solve and tests the definition directly.
-
-Measured on SPaircraft: of 29 variables the optimum does not determine, the
-structural checks find 7. The other 22 need the post-solve test. Both are
-worth running.
-
-Boundedness
------------
-The check gpkit prints as "x is not upper bounded". In log space a posynomial
-constraint ``sum_k c_k prod_j x_j^a_jk <= 1`` bounds ``x_j`` from **above**
-through any term with ``a_jk > 0`` (pushing ``x_j`` up pushes the constraint
-toward violation) and from **below** through any term with ``a_jk < 0``. An
-equality bounds both ways. For a ratio ``p/q <= 1`` the numerator counts as
-written and the denominator counts negated, since growing ``q`` relaxes it.
-
-A variable bounded on only one side is not necessarily wrong -- plenty of
-quantities only need a floor -- but an unbounded direction is where an
-optimizer runs away, and it is worth seeing the list.
-
-A bound counts only if it says something. LCsolver gives every variable a default
-1e-30..1e30 box, so counting bounds naively would pronounce everything bounded
-both ways and report nothing at all. But throwing out every single-variable
-row goes too far the other way: a hand-written ``w >= 1`` is a real modelling
-statement and genuinely does bound ``w`` below.
-
-So the test is on the **value**, not the shape: a bound counts unless it is
-vacuous (see :data:`VACUOUS_LO` / :data:`VACUOUS_HI`). "x is not upper
-bounded" then means *nothing in this model holds x down except a limit chosen
-to be no limit at all*, which is the statement worth printing -- and is what
-gpkit's ``Bounded`` reports about the box it adds.
-
-The objective counts. Minimising a term with a positive exponent on ``x``
-pushes ``x`` down and so bounds it above, exactly as a constraint would.
+Boundedness: in log space a posynomial term bounds x_j above through
+a_jk > 0 and below through a_jk < 0; an equality bounds both ways; a
+denominator counts negated. The objective counts too. A bound only counts if
+non-vacuous (VACUOUS_LO/HI) -- LCsolver's default 1e-30..1e30 box would
+otherwise make everything look bounded.
 """
 from __future__ import annotations
 
@@ -76,10 +42,8 @@ __all__ = ["PresolveReport", "presolve_report", "degeneracy_report",
            "optimization_check", "floor_report", "structure_report",
            "VACUOUS_LO", "VACUOUS_HI"]
 
-#: A bound at or beyond these is treated as no bound at all. LCsolver's default box
-#: is exactly 1e-30..1e30, and models routinely restate it; either way it was
-#: chosen to keep the solver in positive territory, not to say anything about
-#: the design, so it must not count as bounding.
+# A bound at or beyond these is no bound at all: LCsolver's default box is
+# 1e-30..1e30 and models routinely restate it, so it must not count as bounding.
 VACUOUS_LO = 1e-29
 VACUOUS_HI = 1e29
 
@@ -87,15 +51,8 @@ VACUOUS_HI = 1e29
 def _check_width(structures, n, who):
     """Rows and the variable list must describe the same number of columns.
 
-    Both column-removing passes used to write
-
-        [variables[j] for j in keep if j < len(variables)]
-
-    which silently drops the tail when the rows are wider than the declared
-    variable list, leaving rows and `variables` describing different problems
-    and compounding on the next pass. A guard is better than a mask: if this
-    ever fires, whatever produced the structure is at fault and should be
-    fixed there.
+    The old `j < len(variables)` mask silently dropped the tail and let the
+    mismatch compound on the next pass; fail loudly at the source instead.
     """
     have = structures.get("variables")
     if have is not None and 0 < len(have) < n:
@@ -106,12 +63,8 @@ def _check_width(structures, n, who):
 
 
 def _bound_from_term(term, j, op):
-    """The numeric bound a single-variable monomial term imposes on ``x_j``.
-
-    The term is ``c * x_j**a`` compared against 1, so ``x_j**a <= 1/c`` and the
-    bound is ``(1/c)**(1/a)`` -- an upper bound when ``a > 0``, a lower one when
-    ``a < 0``, and both when the operator is an equality.
-    """
+    """Bound a single-variable term c * x_j**a imposes: (1/c)**(1/a),
+    upper when a > 0, lower when a < 0, both for an equality."""
     a = term.exponents.get(j, 0.0)
     if term.coeff <= 0.0 or a == 0.0:
         return None, None
@@ -125,14 +78,8 @@ def _bound_from_term(term, j, op):
 
 
 def _bound_from_row(coeff, expo, j, op):
-    """Recover the numeric bound a single-variable monomial row imposes.
-
-    The row is ``c * x_j**a <= 1`` (or ``== 1``), so ``x_j**a <= 1/c`` and the
-    bound is ``(1/c)**(1/a)`` -- an upper bound when ``a > 0``, a lower bound
-    when ``a < 0``, and both when the operator is an equality.
-
-    Returns ``(lo, hi)``, either possibly None.
-    """
+    """Bound a single-variable row c * x_j**a <= 1 (or ==) imposes.
+    Returns (lo, hi), either possibly None."""
     a = expo[j]
     if coeff <= 0.0 or a == 0.0:
         return None, None
@@ -160,9 +107,8 @@ class PresolveReport:
     output_columns: list = field(default_factory=list)
     degenerate: list = field(default_factory=list)
     at_floor: list = field(default_factory=list)
-    #: `structure_report` text, filled in by `optimization_check`. Kept as a field
-    #: rather than folded into __str__ so a caller can print the two
-    #: halves separately -- structure needs no solution, the rest does.
+    # structure_report text, filled in by optimization_check. Kept as a field
+    # so a caller can print the two halves separately.
     structure: str = ''
     defaulted_guesses: list = field(default_factory=list)
     cancelling: list = field(default_factory=list)
@@ -172,12 +118,11 @@ class PresolveReport:
     singleton_rows: list = field(default_factory=list)
     duplicate_rows: int = 0
     row_counts: dict = field(default_factory=dict)
-    #: `rigidity_report` output, filled in by `optimization_check`. Needs no
-    #: solution -- it is a property of the equality system alone.
+    # rigidity_report output, filled in by optimization_check; needs no solution
     rigidity: dict = field(default_factory=dict)
-    #: `unopposed_report` output: variables nothing resists.
+    # unopposed_report output: variables nothing resists
     unopposed: list = field(default_factory=list)
-    #: `annihilated_report` output: constraint sides a constant has zeroed.
+    # annihilated_report output: constraint sides a constant has zeroed
     annihilated: list = field(default_factory=list)
 
     @property
@@ -186,22 +131,15 @@ class PresolveReport:
                     or self.unbounded_below)
 
     def summary(self) -> str:
-        """The report, as a string. ``print(report.summary())``.
-
-        Same text as ``str(report)``; named to match
-        :meth:`~lcsolver.objects.solution.Solution.summary`, which is what a reader
-        will have seen first.
-        """
+        """Same text as ``str(report)``; named to match Solution.summary()."""
         return str(self)
 
     def __str__(self):
-        # Structure first when it is there: `str(report)` has to be the whole
-        # report, not the half that happens to live in these fields.
+        # Structure first: str(report) has to be the whole report
         L = ([self.structure, ""] if self.structure else [])
         L += [f"presolve: {self.n_variables} variables, {self.n_rows} rows"]
 
-        # First: it explains failures further down, including this report
-        # being empty because nothing could be classified.
+        # First: it explains failures further down, including an empty report
         if self.annihilated:
             from lcsolver.core import codes
             L.append(f"  [{codes.ANNIHILATED_TERM}] "
@@ -329,10 +267,8 @@ def nm_at(names, j):
 def _rows_of(structures):
     """``(rows, operators, key)`` for the log-space encoding.
 
-    Signomial before geometric, which used to be duplicated here as folklore.
-    :attr:`~lcsolver.presolve.detected.Detected.log_key` names it now, and names
-    why: a model can satisfy several structure flags at once, so "which kind
-    is this" and "which encoding are the terms in" are different questions.
+    log_key picks signomial before geometric -- a model can satisfy several
+    structure flags at once.
     """
     from lcsolver.presolve.detected import as_detected
 
@@ -353,9 +289,9 @@ def _rows_of(structures):
 def _underdetermined_vars(structures, n) -> set:
     """Variables the equality system leaves free (Dulmage-Mendelsohn).
 
-    Maximum matching of equality rows to variables, then everything reachable
-    by alternating paths from the UNMATCHED variables. Canonical: it does not
-    depend on which maximum matching is found.
+    Max matching of equality rows to variables, then everything reachable by
+    alternating paths from UNMATCHED variables; independent of which maximum
+    matching is found.
     """
     try:
         edges, rows, _n, _names = _equality_graph(structures, None)
@@ -408,9 +344,8 @@ def presolve_report(structures, names=None) -> PresolveReport:
     if names is None:
         names = [str(v) for v in structures.get("variables", [])]
 
-    # Index 0 is the objective and is excluded from the constraint scan --
-    # being in the objective is not a constraint, though it does mean the
-    # variable is not free.
+    # Index 0 is the objective; being in it is not a constraint, so it is
+    # excluded from the scan
     n = max([len(r) - 2 for r in rows] + [len(names)])
     con_idx = st.constraint_indices
 
@@ -423,9 +358,8 @@ def presolve_report(structures, names=None) -> PresolveReport:
     lower = [False] * n
     patterns = collections.Counter()
 
-    # The tightest bound seen on each variable, from any source: a declared
-    # box, or a single-variable row. Collected numerically so that a vacuous
-    # limit can be told from a real one.
+    # Tightest bound seen from any source (declared box or single-variable
+    # row), kept numerically so a vacuous limit can be told from a real one
     box_lo = [None] * n
     box_hi = [None] * n
 
@@ -435,14 +369,13 @@ def presolve_report(structures, names=None) -> PresolveReport:
         if hi is not None:
             box_hi[j] = hi if box_hi[j] is None else min(box_hi[j], hi)
 
-    # Bounds the detector split out (bounds_as_rows=False) never appear as
-    # rows, so pick them up here.
+    # Bounds the detector split out (bounds_as_rows=False) never appear as rows
     for j, pair in enumerate(structures.get("bounds") or []):
         if j < n and pair is not None:
             note_bound(j, pair[0], pair[1])
 
-    # Minimising c * prod x^a pushes a positive-exponent variable down, so the
-    # objective bounds it above just as a constraint would.
+    # The objective bounds a positive-exponent variable above, as a
+    # constraint would
     for t in st.terms(0):
         for j, e in t.exponents.items():
             if e > 1e-12:
@@ -463,8 +396,7 @@ def presolve_report(structures, names=None) -> PresolveReport:
         is_bound = (len(touched) == 1 and len(terms) == 1 and not has_den)
 
         if is_bound:
-            # Record the value rather than the fact. Whether it bounds anything
-            # is decided below, once we can see how big it is.
+            # Record the value; whether it bounds anything is decided below
             j = next(iter(touched))
             note_bound(j, *_bound_from_term(terms[0], j, op))
             rep.singleton_rows.append(i)
@@ -502,14 +434,11 @@ def presolve_report(structures, names=None) -> PresolveReport:
     def nm(j):
         return nm_at(names, j)
 
-    # Counted in real constraints, not bound rows -- a variable that appears
-    # in one genuine constraint plus its own box is a singleton column, and
-    # counting the box would hide it.
+    # Count real constraints, not bound rows -- counting the box would hide a
+    # singleton column
     for j in range(n):
-        # A variable whose only rows were folded into bounds has no rows left,
-        # but it is not unconstrained -- calling it "appears in no constraint"
-        # is both alarming and wrong. Distinguish by whether anything
-        # meaningful bounds it.
+        # A variable whose rows all folded into bounds is not unconstrained;
+        # distinguish by whether anything meaningful bounds it
         bounded = ((box_lo[j] is not None and box_lo[j] > VACUOUS_LO)
                    or (box_hi[j] is not None and box_hi[j] < VACUOUS_HI))
         if not in_rows[j] and not bounded:
@@ -526,8 +455,7 @@ def presolve_report(structures, names=None) -> PresolveReport:
     hist = collections.Counter(len(s) for s in in_real)
     rep.row_counts = dict(sorted(hist.items()))
 
-    # Output-only variables need the terms grouped per constraint, and the
-    # bounds separated, so they are only reported when that is available.
+    # Output-only detection needs terms per constraint and separated bounds
     if structures.get("bounds") is not None:
         obj_vars = {j for t in st.terms(0) for j in t.variables}
         outs = _output_only(st, con_idx, structures["bounds"], obj_vars, n)
@@ -538,30 +466,13 @@ def presolve_report(structures, names=None) -> PresolveReport:
 def fold_singleton_rows(structures, only=None):
     """Move single-variable rows into the bounds, and drop them.
 
-    A row like ``x <= 3`` states a bound and nothing else, so a solver that
-    takes bounds natively should be given it as one. This is the classical
-    singleton-row reduction, and it is worth a lot here: SPaircraft writes
-    about 2500 of its constraints this way, on top of the 2346 that come from
-    variable declarations.
-
-    ``only``, when given, restricts the fold to those constraint indices;
-    other singleton rows stay as rows. The distinction is operational, not
-    mathematical: a declared-bound row is a loose box that is safe as a hard
-    sub-problem bound, while a singleton MODEL row (a span gate, say) is an
-    active constraint the sequential solvers' elastic relaxation must be able
-    to put slack on -- a hard bound cannot be relaxed, and folding ~2,500 of
-    them turned the spcomparisons b737 case from a 38-iteration converge into
-    a 200-iteration stall.
-
-    Requires ``structures['bounds']`` -- run ``structure_detector`` with
-    ``bounds_as_rows=False`` first, since otherwise there is nowhere to put
-    them. Returns a **new** structures dict; the input is untouched.
-
-    Bounds are intersected, never loosened: several rows bounding the same
-    variable all apply, and the tightest wins. An equality row fixes the
-    variable, giving an equal pair. Nothing is rounded or clipped -- SPaircraft
-    needs its full 1e-30..1e30 box for the reference solution to lie inside it,
-    and a reduction that "tidied" those limits would cut off the answer.
+    Classical singleton-row reduction; SPaircraft writes ~2500 constraints
+    this way. ``only`` restricts the fold to those constraint indices: a
+    singleton MODEL row must stay a row so the elastic relaxation can put
+    slack on it -- folding those turned the b737 case from 38 iterations into
+    a 200-iteration stall. Requires structures['bounds'] (bounds_as_rows=False);
+    returns a new structures dict. Bounds are intersected, never loosened or
+    clipped -- the reference solution needs the full 1e-30..1e30 box.
     """
     if structures.get("bounds") is None:
         raise ValueError(
@@ -585,10 +496,8 @@ def fold_singleton_rows(structures, only=None):
             cur_lo = lo if cur_lo is None else max(cur_lo, lo)
         if hi is not None:
             cur_hi = hi if cur_hi is None else min(cur_hi, hi)
-        # Crossed bounds are a proof of infeasibility, and the cheapest one
-        # available. Saying so beats silently picking a side: `x >= 2` with
-        # `x <= 1` folded naively becomes "x is fixed at 2", and the solver
-        # then answers a different question than the one that was asked.
+        # Crossed bounds prove infeasibility; say so rather than silently
+        # picking a side and answering a different question
         if (cur_lo is not None and cur_hi is not None
                 and cur_hi < cur_lo * (1.0 - 1e-9)):
             raise InfeasibleProblem(
@@ -615,8 +524,8 @@ def fold_singleton_rows(structures, only=None):
         tighten(j, lo, hi)
         folded.add(i)
 
-    # Renumber what survives; constraint indices must stay contiguous from 1
-    # because the operator list is positional.
+    # Renumber survivors; indices stay contiguous from 1 because the operator
+    # list is positional
     keep = [i for i in sorted(set(numer) | set(denom)) if i != 0
             and i not in folded]
 
@@ -635,9 +544,8 @@ def fold_singleton_rows(structures, only=None):
 class Removed:
     """One variable taken out of the solve, and how to get its value back.
 
-    Unpacks as ``(index, name, value, reason)`` so existing callers keep
-    working; ``recover`` carries the extra data needed for an output-only
-    variable, whose value is not known until the core solve has finished.
+    Unpacks as (index, name, value, reason); `recover` carries the data an
+    output-only variable needs after the core solve.
     """
 
     __slots__ = ('index', 'name', 'value', 'reason', 'recover')
@@ -668,10 +576,8 @@ def _eval_terms(terms, x, j=None, tj=None):
             lx = tj if (j is not None and i == j) else (
                 math.log(x[i]) if i < len(x) and x[i] > 0 else -math.inf)
             acc += e * lx
-        # Saturate BOTH directions: the bisection in _solve_for probes
-        # brackets near log(1e300), where a squared variable puts acc ~ 1400
-        # and a bare math.exp raises OverflowError.  Only the sign of the
-        # ratio matters out there, so +inf is the right answer, not an error.
+        # Saturate BOTH ways: _solve_for probes brackets near log(1e300),
+        # where bare math.exp overflows; only the sign matters out there
         if acc > 700:
             total += math.inf
         elif acc > -700:
@@ -680,13 +586,10 @@ def _eval_terms(terms, x, j=None, tj=None):
 
 
 def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
-    """Solve ``num/den == 1`` for ``x_j``, holding everything else at ``x``.
+    """Solve ``num/den == 1`` for ``x_j`` by bisection on ``log x_j``.
 
-    Bisection on ``log x_j``. The caller has already established that the
-    constraint is monotone in ``x_j`` -- that is what made the variable
-    output-only in the first place -- so a sign change is bracketed and
-    bisection is both safe and enough. This runs once per variable after the
-    solve, so its cost is irrelevant.
+    The caller already established monotonicity in x_j, so a sign change is
+    bracketed and bisection is enough. Runs once per variable after the solve.
     """
     import math
 
@@ -701,14 +604,10 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
 
     a, b = math.log(lo), math.log(hi)
     fa, fb = f(a), f(b)
-    # The bracket ends are deliberately extreme, and _eval_terms saturates
-    # to 0 or +inf out there, so on a steep row -- P**20 == posynomial, a
-    # difference-of-softmax pressure fit -- BOTH ends come back infinite:
-    # -inf at the bottom, +inf at the top.  That is a perfectly good sign
-    # change, and bisection between them is exactly what is wanted; refusing
-    # it left the variable at the 1.0 placeholder with no error (measured:
-    # the ISA block's fitted pressure came back at 129 Pa for 70 kPa).  Only
-    # NaN means the row cannot be evaluated.
+    # On a steep row (P**20 == posynomial) BOTH ends can come back infinite;
+    # that is a valid sign change -- refusing it left the ISA fitted pressure
+    # at the 1.0 placeholder (129 Pa for 70 kPa). Only NaN means the row
+    # cannot be evaluated.
     if math.isnan(fa) or math.isnan(fb):
         return None
     if fa == 0.0:
@@ -732,27 +631,13 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
 def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
     """Variables that are computed but never fed back, peeled in rounds.
 
-    A variable is **output-only** when it appears in exactly one constraint,
-    is absent from the objective, and that constraint cannot restrict anything
-    else through it -- which needs two things:
-
-    * the constraint is monotone in the variable, so it can always be satisfied
-      by moving the variable; and
-    * the bound in the direction that relaxes it is vacuous, so moving it is
-      actually allowed. This is the part that is easy to get wrong. Given
-      ``A_tri >= f(...)`` with ``A_tri`` unbounded above, the constraint says
-      nothing about ``f``; add ``A_tri <= 100`` and it suddenly forces
-      ``f <= 100``, which is a real restriction on real variables.
-
-    Peeling is iterative because removing one output variable can expose
-    another behind it -- a reporting quantity computed from another reporting
-    quantity. Returns ``[(j, constraint_index), ...]`` in peel order.
-
-    ``protect`` columns are never peeled. This scan reads only the algebraic
-    rows, so a variable a grey-box block feeds can look output-only here --
-    the demo shape is ``W >= Wfixed + Wwing`` with ``Wwing`` pinned by a
-    black box the rows cannot see. Escaping downward is not available to it,
-    and peeling would delete a live constraint.
+    Output-only: exactly one constraint, absent from the objective, monotone
+    in the variable, and vacuously bounded in the relaxing direction --
+    ``A_tri <= 100`` on ``A_tri >= f(...)`` would force f <= 100, a real
+    restriction. Iterative because peeling one can expose another. Returns
+    [(j, constraint_index), ...] in peel order. ``protect`` columns are never
+    peeled: a grey-box-fed variable can look output-only to the algebraic
+    rows while its black box pins it.
     """
     alive = set(con_idx)
     taken, order = {}, []
@@ -772,8 +657,7 @@ def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
             op = st.operator(i)
 
             # Monotone in x_j? Numerator exponents one sign, denominator the
-            # other. Mixed signs mean moving x_j can tighten and loosen, so the
-            # constraint really does pin it.
+            # other; mixed signs mean the constraint really does pin it
             signs = set()
             for t in st.terms(i):
                 e = t.exponents.get(j)
@@ -788,7 +672,7 @@ def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
                 or (None, None)
             if op == "==":
                 # An equality pins x_j exactly; it restricts others only via
-                # x_j's own bounds, so both must be vacuous.
+                # x_j's own bounds, so both must be vacuous
                 free = ((lo is None or lo <= VACUOUS_LO)
                         and (hi is None or hi >= VACUOUS_HI))
             elif grows_tighter:
@@ -804,32 +688,19 @@ def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
             alive.discard(i)
             progress = True
         if not progress:
-            # Peel order matters: a variable peeled in round 1 may sit in the
-            # constraint that defines a variable peeled in round 2, so it can
-            # only be recovered once that one is known. Callers recover in
-            # REVERSE of this order.
+            # Callers recover in REVERSE of this order: a round-1 variable may
+            # sit in the constraint defining a round-2 one
             return order
 
 
 def _tighten_linear(linear, L, U, names, max_passes, min_gain):
     """Interval propagation on ``coeffs . v <= rhs`` (or ``==``).
 
-    ``L`` and ``U`` bound ``v`` in whatever space the caller works in --
-    natural variables for an LP, log variables for a GP. The arithmetic does
-    not care which, which is why this is shared.
-
-    For ``a . v <= b`` and any ``k``, isolate ``a_k v_k <= b - S`` where ``S``
-    is the sum of the other terms. The binding case is ``S`` at its **minimum**,
-    reached at ``L_j`` where ``a_j > 0`` and ``U_j`` where ``a_j < 0``.
-
-    An **equality** additionally gives ``a_k v_k >= b - S`` with ``S`` at its
-    **maximum**, and that is a different sum -- the opposite endpoint of every
-    other variable. Reusing the minimum for both directions manufactures
-    contradictions: on SPaircraft it "proved" a variable with a wide-open box
-    both <= 1.6e7 and >= 2.6e-15 from two unrelated monomial equalities, and
-    declared the model infeasible.
-
-    Mutates ``L``/``U`` in place; returns the number of tightenings.
+    L/U bound v in whatever space the caller works in (natural for LP, log
+    for GP). Isolate ``a_k v_k <= b - S`` with S at its minimum; an equality
+    also gives >= with S at its MAXIMUM -- a different sum, and reusing the
+    minimum for both once "proved" SPaircraft infeasible from two unrelated
+    monomial equalities. Mutates L/U in place; returns the tighten count.
     """
     import math
 
@@ -845,8 +716,8 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
     for _pass in range(max_passes):
         changed = False
         for rhs, a, nz, eq in linear:
-            # Sum of all terms at their min, and (for an equality) at their max,
-            # each carrying its own count of infinite contributions.
+            # Sum at min (and max for an equality), each carrying its own
+            # count of infinite contributions
             sums = {}
             for want_min in ((True, False) if eq else (True,)):
                 tot, infs, at = 0.0, 0, -1
@@ -891,25 +762,12 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
 def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
     """Tighten variable bounds by interval propagation.
 
-    Works on a linear program, a quadratic program (whose constraints are
-    linear), and a geometric or signomial program. The last is the interesting
-    case: a monomial ``c * prod x_j**a_j <= 1`` is **linear** once written in
-    ``y = log x``, as ``a . y <= -log c``, so the ordinary LP propagation
-    applies unchanged. Only the space differs, so the arithmetic is shared --
-    see :func:`_tighten_linear`.
-
-    A **posynomial** yields more than it looks like it should. Every term of
-    ``sum_k c_k m_k(x) <= 1`` is strictly positive, so each separately
-    satisfies ``c_k m_k(x) <= 1``. Each term is a monomial, so one posynomial
-    hands over one linear implication per term for free. That is what makes
-    this worth running on a GP at all: most constraints are posynomials, and a
-    strictly-monomial rule would skip nearly everything.
-
-    Ratios are left alone -- ``p <= q`` bounds neither side without a point to
-    evaluate at, and being wrong here would be silent.
-
-    Returns ``(structures, n_tightened)`` with a new bounds list; the input is
-    untouched. Raises :class:`InfeasibleProblem` if a range comes out empty.
+    Works on LP/QP and GP/SP: a monomial is linear in y = log x, so the LP
+    propagation applies unchanged (see :func:`_tighten_linear`). Each term of
+    a posynomial separately satisfies ``c_k m_k(x) <= 1``, handing over one
+    linear implication per term -- that is what makes this worth running on a
+    GP. Ratios are left alone. Returns ``(structures, n_tightened)`` with a
+    new bounds list; raises InfeasibleProblem if a range comes out empty.
     """
     import math
 
@@ -926,7 +784,7 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
           or structures.get("Quadratic_Program", (False,))[0])
 
     if lp:
-        # Natural variables: rows are AG . x <= b, and x may be negative.
+        # Natural variables: rows are AG . x <= b, and x may be negative
         parts = as_detected(structures).linear_parts()
         AG, bh = parts.A, parts.b
         if AG is None:
@@ -971,7 +829,7 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
             op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
             terms = numer.get(i, [])
             # Only a single-term equality is an equality term-wise; a
-            # multi-term one implies just the <= half per term.
+            # multi-term one implies just the <= half per term
             eq = (op == "==" and len(terms) == 1)
             for r in terms:
                 c = float(r[1])
@@ -998,38 +856,14 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
                                   max_eliminations=None):
     """Substitute out variables that a monomial equality already determines.
 
-    A monomial equality ``c * prod x_j**a_j == 1`` is a **linear** equality in
-    ``y = log x``, so it can be solved for one variable and substituted
-    everywhere else -- Gaussian elimination on the exponent matrix. Solving for
-    the pivot ``p`` gives
-
-        x_p = c**(-1/a_p) * prod_{j != p} x_j**(-a_j/a_p)
-
-    which is itself a monomial, so substituting it into any term keeps that
-    term a monomial with a positive coefficient. Posynomial structure survives
-    intact, which is what makes this safe on a GP: nothing becomes signomial,
-    and no approximation is introduced. The result is exact.
-
-    SPaircraft carries 752 monomial equalities among 1267 constraints, so the
-    ceiling here is high.
-
-    **Only variables whose declared bounds are vacuous are eliminated.** A real
-    bound on an eliminated variable does not disappear -- it becomes a
-    constraint on the survivors, and re-adding it as two monomial rows gives
-    back most of what the elimination saved. Bounds *derived* by
-    :func:`propagate_bounds` are a different matter, being implied by the
-    constraints already, but this runs on declared bounds and does not try to
-    tell them apart.
-
-    Fill-in is the real cost. Substituting a dense pivot row into many terms
-    densifies the exponent matrix, and a GP's matrix is normally very sparse.
-    Pivots are chosen greedily by a Markowitz-style estimate,
-    ``(row_nnz - 1) * (col_nnz - 1)``, and any pivot whose estimate exceeds
-    ``max_fill`` is skipped.
-
-    Returns ``(structures, removed)`` with ``removed`` in
-    :func:`reduce_columns` form, so :func:`restore_columns` recovers the
-    eliminated variables by back-substitution.
+    A monomial equality is linear in y = log x: solving for a pivot p gives
+    ``x_p = c**(-1/a_p) * prod x_j**(-a_j/a_p)``, itself a monomial, so
+    substitution keeps posynomial structure exactly. SPaircraft carries 752
+    such equalities. Only variables with vacuous declared bounds are
+    eliminated -- a real bound would come back as two monomial rows. Fill-in
+    is the cost: pivots are chosen by Markowitz estimate
+    ``(row_nnz - 1) * (col_nnz - 1)``, capped at ``max_fill``. Returns
+    ``(structures, removed)`` in :func:`reduce_columns` form.
     """
     import math
 
@@ -1066,13 +900,10 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
         return ((lo is None or lo <= VACUOUS_LO)
                 and (hi is None or hi >= VACUOUS_HI))
 
-    # Column occupancy, for the Markowitz estimate.
-    # The OBJECTIVE is indexed 0 and must be in here. Without it a pivot that
-    # appears in the objective is substituted everywhere except there, and the
-    # rebuild then drops its exponent as a column that no longer exists --
-    # silently changing the objective. Measured on turbofan: 0.269 became
-    # 0.060, both runs reporting convergence, the better number being the
-    # symptom.
+    # Column occupancy for the Markowitz estimate. The OBJECTIVE (index 0)
+    # must be in here: without it a pivot in the objective is substituted
+    # everywhere except there, silently changing it -- measured on turbofan,
+    # 0.269 became 0.060 with both runs reporting convergence.
     col = collections.defaultdict(set)
     for i in [0] + list(con_idx):
         for _c, e, _d in terms[i]:
@@ -1083,7 +914,7 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     changed = True
     while changed:
         changed = False
-        # Candidate monomial equalities, cheapest pivot first.
+        # Candidate monomial equalities, cheapest pivot first
         cands = []
         for i in sorted(alive):
             if op_of(i) != "==" or len(terms[i]) != 1 or terms[i][0][2]:
@@ -1117,8 +948,8 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
             m = {j: -v / ap for j, v in a.items() if j != pj}
 
             for k in list(col[pj]):
-                # k == 0 is the objective, which is never in `alive` because
-                # `alive` tracks constraints. It still needs substituting.
+                # k == 0 is the objective: never in `alive`, still needs
+                # substituting
                 if k == i or (k != 0 and k not in alive):
                     continue
                 for t in terms[k]:
@@ -1175,57 +1006,24 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     if structures.get("variables"):
         out["variables"] = [structures["variables"][j] for j in keep]
 
-    # REVERSE elimination order. A pivot's formula is captured at the moment it
-    # is eliminated, and it may reference variables eliminated in a later
-    # round, so those have to be known first. Recovering forwards instead of
-    # backwards silently produces values off by orders of magnitude while the
-    # reduced problem itself stays perfectly correct -- measured on SPaircraft
-    # at a relative error of 4.3e+03 with an objective still exact to 12
-    # figures.
+    # REVERSE elimination order: a pivot's formula may reference variables
+    # eliminated later, so those must be known first. Forward recovery was off
+    # by 4.3e+03 on SPaircraft while the reduced problem stayed exact.
     return out, removed[::-1]
 
 
 def reduce_columns(structures, guess=None, eliminate_outputs=True,
                    protect=None):
-    """Remove variables the model does not connect to anything.
+    """Remove variables the model does not connect to anything. Exact.
 
-    Two reductions, both exact -- the optimal objective is unchanged and the
-    removed variables are given values that are feasible for the original
-    problem.
-
-    **Disconnected.** In ``min x**2 s.t. x >= 1, y >= 4`` the variable ``y``
-    appears in no real constraint and in no objective term. Nothing determines
-    it, nothing is affected by it, and carrying it through the solve only costs
-    time. It is fixed at its tightest finite bound and dropped.
-
-    **Fixed.** A variable whose bounds are equal is a constant wearing a
-    variable's clothing. Its value is folded into the coefficient of every term
-    it appears in -- ``c * v**a`` -- and the column goes.
-
-    This is structural, which is the whole point: it happens before the solve,
-    unlike :func:`degeneracy_report`, which can only report after one. The two
-    do not overlap much. A degenerate variable typically sits in several real
-    constraints that all happen to go slack at this particular optimum, and
-    removing it would delete those constraints along with it -- they would bind
-    at a different design point. Nothing here touches a variable that appears
-    in a real constraint.
-
-    Requires ``structures['bounds']``; run :func:`fold_singleton_rows` first so
-    that rows which are really bounds have already been recognised as such,
-    otherwise ``y >= 4`` still counts as a constraint and ``y`` is not seen as
-    disconnected.
-
-    Returns ``(reduced_structures, removed)``, where ``removed`` is a list of
-    ``(original_index, name, value, reason)`` ordered by index. Feed it to
-    :func:`restore_columns` to put the values back into a solution vector.
-
-    ``protect`` names column indices that must survive no matter what the
-    algebraic rows say about them. Grey-box (black-box) constraints live
-    outside the rows this function reads, so a variable only a grey box
-    touches looks disconnected -- or output-only -- while being entirely
-    live; removing it would also break the identity-keyed column map the
-    grey-box rows are built from. Crossed bounds on a protected column still
-    raise: infeasibility is a fact about the model either way.
+    Disconnected: in no real constraint or objective term -- fixed at its
+    tightest finite bound and dropped. Fixed: equal bounds -- folded into the
+    coefficients as a constant. Requires ``structures['bounds']``; run
+    :func:`fold_singleton_rows` first or ``y >= 4`` still counts as a
+    constraint. Returns ``(reduced_structures, removed)`` for
+    :func:`restore_columns`. ``protect`` columns always survive: a variable
+    only a grey box touches looks disconnected here while being entirely
+    live. Crossed bounds on a protected column still raise.
     """
     if structures.get("bounds") is None:
         raise ValueError(
@@ -1233,12 +1031,9 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
             "with bounds_as_rows=False (and fold_singleton_rows) first")
 
     if guess is None:
-        # The variables' current values ARE the author's guesses. For a
-        # DISCONNECTED variable that is the only information anyone has about
-        # it -- nothing in the model constrains it, so the guess is the answer
-        # -- and reporting 1.0 instead silently discards the one number the
-        # author supplied. LCsolver requires a guess precisely so it means
-        # something; this is where it means the most.
+        # The variables' current values ARE the author's guesses -- for a
+        # disconnected variable that is the only information anyone has, and
+        # reporting 1.0 instead would discard it
         try:
             import pyomo.environ as pyo
             guess = [float(pyo.value(v)) for v in structures.get("variables")
@@ -1260,7 +1055,7 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
             if abs(float(e)) > 1e-12:
                 target.add(j)
 
-    # Group once; the output-only scan needs terms per constraint.
+    # Group once; the output-only scan needs terms per constraint
     numer, denom = collections.defaultdict(list), collections.defaultdict(list)
     for r in rows:
         idx = int(r[0])
@@ -1294,8 +1089,8 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
 
         if j in in_constraint or j in in_objective:
             continue
-        # Nothing refers to it. Any feasible value will do, so take the
-        # tightest bound that means anything; failing that, the user's guess.
+        # Nothing refers to it: take the tightest meaningful bound, else the
+        # user's guess
         if lo is not None and lo > VACUOUS_LO:
             val = float(lo)
         elif hi is not None and hi < VACUOUS_HI:
@@ -1306,9 +1101,8 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
             val = 1.0
         removed.append(Removed(j, nm_at(names, j), val, "disconnected"))
 
-    # Output-only variables carry their defining constraint rather than a
-    # value, since the value is not known until the core solve has finished.
-    # Recorded in REVERSE peel order, which is the order they can be evaluated.
+    # Output-only variables carry their defining constraint, not a value;
+    # recorded in REVERSE peel order, the order they can be evaluated
     for j, i in reversed(outputs):
         removed.append(Removed(
             j, nm_at(names, j), None, "output",
@@ -1358,14 +1152,9 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
 def restore_columns(removed, x_reduced, n_original=None):
     """Put removed variables back into a reduced solution vector.
 
-    Constants go straight back. **Output-only** variables are post-computed
-    from the constraint that defined them, evaluated at the solved values of
-    everything else -- so a caller sees a full solution vector and cannot tell
-    which quantities took part in the optimization and which were worked out
-    afterwards.
-
-    ``removed`` already holds the output entries in the order they can be
-    evaluated, so this walks them as given.
+    Constants go straight back; output-only variables are post-computed from
+    their defining constraint at the solved values. ``removed`` already holds
+    the output entries in evaluation order.
     """
     import math
 
@@ -1383,13 +1172,9 @@ def restore_columns(removed, x_reduced, n_original=None):
 
     if len(x_reduced) == n_original:
         # The backend solved in the FULL frame (GP-IPOPT builds from the
-        # model, not the reduced structures) and simply parked each peeled
-        # column wherever the interior point left it.  Positions are already
-        # right; only the removed entries need overwriting below.  Slotting
-        # a full vector through the reduced-frame branch instead would shift
-        # every value after the first peeled index by one -- the bug that
-        # scrambled write-back on any model whose peeled variable was not
-        # declared last.
+        # model): positions are already right, only removed entries need
+        # overwriting. Slotting a full vector through the reduced branch
+        # shifted every value after the first peeled index by one.
         out = x_reduced.copy()
         for j, v in constants.items():
             out[j] = v
@@ -1420,8 +1205,7 @@ def restore_columns(removed, x_reduced, n_original=None):
             out[r.index] = val
             r.value = float(val)
         else:
-            # A silent 1.0 here is a wrong number in the printed solution
-            # that looks like an answer.  Say so.
+            # A silent 1.0 here would look like an answer. Say so.
             import warnings
             warnings.warn(
                 f"[LC-W310] presolve could not recover the output-only "
@@ -1434,25 +1218,12 @@ def restore_columns(removed, x_reduced, n_original=None):
 def cancellation_report(structures, x, tol=1e-6, names=None):
     """Terms in a signomial constraint that contribute nothing at ``x``.
 
-    LCsolver writes a constraint containing a subtraction as a ratio ``p/q <= 1``,
-    moving the negative terms into the denominator alongside the left-hand
-    side. So ``M_r*c >= A + B - C`` becomes ``(A + B) / (M_r*c + C) <= 1``, and
-    the two terms in that denominator are in direct competition: whatever ``C``
-    supplies, ``M_r`` need not.
-
-    When one of them supplies essentially all of it, the other is inert. The
-    constraint holds no matter what that variable does, so a quantity the
-    modeller believed was being sized is in fact disconnected -- which is how a
-    variable ends up parked at 1e-30 with nothing complaining.
-
-    This is a signomial-specific failure and the LP presolve battery has no
-    reason to look for it, since LP has no signomials. It is also
-    solution-dependent, so it runs after a solve, like
-    :func:`degeneracy_report`.
-
-    Returns ``[(constraint_index, side, share, variables), ...]`` for each term
-    whose share of its own group falls below ``tol``, worst first. ``side`` is
-    ``'numerator'`` or ``'denominator'``.
+    LCsolver writes subtractions as ratios, so denominator terms compete;
+    when one supplies essentially all of it the other is inert and the
+    quantity it carries is disconnected -- how a variable ends up parked at
+    1e-30 with nothing complaining. Solution-dependent, so it runs after a
+    solve. Returns ``[(constraint_index, side, share, variables), ...]`` for
+    terms whose share falls below ``tol``, worst first.
     """
     import math
 
@@ -1464,8 +1235,8 @@ def cancellation_report(structures, x, tol=1e-6, names=None):
         names = [str(v) for v in structures.get("variables", [])]
 
     out = []
-    # Only constraints that actually have a denominator -- i.e. the signomial
-    # ones. A small term in a plain posynomial is ordinary and not a defect.
+    # Only signomial constraints: a small term in a plain posynomial is
+    # ordinary, not a defect
     for i in st.constraint_indices:
         terms = st.terms(i)
         if not any(t.denominator for t in terms):
@@ -1493,25 +1264,16 @@ def cancellation_report(structures, x, tol=1e-6, names=None):
 def evaluate(structures, x):
     """``(objective, worst_violation)`` for a detected structure at ``x``.
 
-    The violation is in log space for a GP or SP and natural for an LP or QP,
-    matching the space each is linear in. An equality contributes the magnitude
-    of its residual; an inequality only its positive part. Variable bounds
-    count, since presolve turns rows into bounds and a bound violation would
-    otherwise become invisible.
-
-    Written to be independent of any solver, so it can compare two structures
-    that no solver has seen.
+    Violation is log-space for GP/SP, natural for LP/QP. Equalities
+    contribute |residual|, inequalities the positive part; bounds count too.
+    Solver-independent, so it can compare two structures no solver has seen.
     """
     import math
 
     x = list(x)
-    # Dispatch exactly as propagate_bounds does, linear flag first. It has to
-    # match: this compares a structure before and after a transform, and
-    # reading one side in a different encoding than the transform used would
-    # compare two different problems. The linear-first rule also matters for
-    # correctness rather than only consistency -- a model with negative
-    # variables can carry a signomial flag whose log encoding is invalid for
-    # it, and preferring log there would take logs of negative numbers.
+    # Dispatch as propagate_bounds does, linear flag first -- it must match,
+    # and a model with negative variables can carry a signomial flag whose
+    # log encoding would take logs of negatives
     lp = (structures.get("Linear_Program", (False,))[0]
           or structures.get("Quadratic_Program", (False,))[0])
     worst = -math.inf
@@ -1524,18 +1286,10 @@ def evaluate(structures, x):
         obj = float(shift or 0.0) + sum(float(ci) * x[i]
                                         for i, ci in enumerate(c) if i < len(x))
         if parts.hessian is not None:
-            # LCsolver stores the quadratic COEFFICIENT matrix, not the Hessian,
-            # so the objective is x'Px + q'x + shift with no factor of a half:
-            # `x**2 + y**2` gives P = I, and x'Ix = 2 at (1,1), matching the
-            # Pyomo objective. cvxopt.solvers.qp minimises (1/2) x'Px + q'x,
-            # and solve_QP passes `2.0*P` for exactly that reason, so the two
-            # agree -- verified on `min x**2 + y**2 - 4x s.t. x + y >= 1`,
-            # whose optimum is at x=2 and where a missing factor of two would
-            # put it at x=4. cvxopt and IPOPT both return x=2.
-            #
-            # Omitting the quadratic term altogether, as this did at first,
-            # reports the objective of the LP left by deleting it: 0 instead
-            # of 2 on `min x**2 + y**2 s.t. x + y >= 2`.
+            # LCsolver stores the quadratic COEFFICIENT matrix, not the
+            # Hessian: objective is x'Px + q'x + shift with no half (solve_QP
+            # passes 2P to cvxopt for the same reason). Omitting the quadratic
+            # term entirely reported the leftover LP's objective.
             P = parts.hessian
             for i, row in enumerate(P):
                 if i >= len(x):
@@ -1581,20 +1335,11 @@ def evaluate(structures, x):
 def equivalence_error(before, after, x, log=None, x_after=None):
     """How far a transform moved the problem, measured at a known point.
 
-    Every transform in this module claims to preserve the problem. This is the
-    claim, checked: map ``x`` through the transform and compare the objective
-    and the worst violation on both sides. Returns
-    ``(objective_relative_error, violation_absolute_error)``.
-
-    ``log`` is a :class:`PresolveLog`, used to drop the columns the transform
-    removed; pass ``x_after`` instead if the mapping is something else. With
-    neither, ``x`` is assumed to survive unchanged.
-
-    This is the check that caught the elimination bug -- a reduced problem
-    exact to twelve figures whose recovered values were out by 4.3e+03 -- and
-    it would have caught the propagation bug on sight. It costs one evaluation
-    per side and works on any model, which is most of the value of a full
-    integration test at a fraction of the price.
+    Maps ``x`` through the transform and compares objective and worst
+    violation; returns (objective_relative_error, violation_absolute_error).
+    ``log`` is a PresolveLog used to drop removed columns; pass ``x_after``
+    for other mappings. This caught the elimination bug (recovered values off
+    by 4.3e+03) and would have caught the propagation bug on sight.
     """
     if x_after is None:
         x_after = list(x)
@@ -1623,16 +1368,10 @@ def assert_equivalent(before, after, x, log=None, x_after=None,
 class PresolveLog:
     """A record of what presolve did, and the means to undo it.
 
-    Passes compose awkwardly on their own: each one renumbers the columns it
-    leaves behind, so a ``Removed.index`` is relative to the structure as it
-    stood when that pass ran, and concatenating two passes' lists silently
-    mixes two index spaces. This keeps them separate and unwinds them in
-    reverse, which needs no remapping at all -- each list is applied in exactly
-    the space it was recorded in.
-
-    ``print(log)`` gives a human-readable account. It is off by default: the
-    reductions are exact, so most of the time there is nothing an engineer
-    needs to do about them.
+    Each pass renumbers columns, so a ``Removed.index`` is relative to the
+    structure when that pass ran; keeping the lists separate and unwinding
+    in reverse needs no remapping. ``print(log)`` for the account; off by
+    default since the reductions are exact.
     """
 
     __slots__ = ('steps', 'names', 'infeasible')
@@ -1697,16 +1436,9 @@ class PresolveLog:
 def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
     """Variables resting on the solver's positivity floor.
 
-    The log-space solvers clamp every variable at ``x_min`` to stay in the
-    positive orthant. That floor is a property of the ALGORITHM, not of the
-    model -- nobody wrote it, it appears in no report, and a variable sitting
-    on it looks settled while actually being held there by machinery.
-
-    It matters because it is easy to misread. A quantity at 1e-9 is usually a
-    quantity the model never determined, and reads at a glance as "essentially
-    zero, fine" rather than "nothing in this model has an opinion about this".
-
-    Returns ``[(name, value), ...]``.
+    The floor (``x_min``) is a property of the ALGORITHM, not the model -- a
+    quantity at 1e-9 reads as "essentially zero" when it really means
+    "nothing in this model has an opinion". Returns ``[(name, value), ...]``.
     """
     out = []
     for j, v in enumerate(x):
@@ -1717,17 +1449,15 @@ def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
 
 
 def _equality_graph(structures, names=None):
-    """``(edges, rows, n)`` for the bipartite equality/variable graph.
+    """``(edges, rows, n, names)`` for the bipartite equality/variable graph.
 
-    ``edges[i]`` is the variable set of equality row ``i``. Plain
-    single-variable equalities are kept: ``x == 3`` really does consume a
-    degree of freedom, and dropping it would overstate how free the model is.
+    Single-variable equalities are kept: ``x == 3`` consumes a degree of
+    freedom.
     """
     st = as_detected(_as_structures(structures))
     if names is None:
-        # Read the names off the DETECTED object, not the argument: a
-        # Formulation is not a mapping, and taking the same route as the rows
-        # is what keeps name index and column index the same index.
+        # Read names off the DETECTED object -- the same route as the rows
+        # keeps name index and column index the same index
         names = [str(v) for v in (st.variables or [])]
     rows, edges = [], []
     n = len(names)
@@ -1747,11 +1477,8 @@ def _equality_graph(structures, names=None):
 def _max_matching(edges, n):
     """Kuhn's algorithm: match equality rows to variables they determine.
 
-    The matching size is the STRUCTURAL rank of the equality system -- how
-    many variables the equalities can pin between them, ignoring numerics.
-    Structural rank is an upper bound on the true rank, so a system this
-    calls under-determined genuinely is; one it calls square may still be
-    numerically singular.
+    Matching size = STRUCTURAL rank, an upper bound on true rank: an
+    under-determined verdict is genuine; a square one may still be singular.
     """
     match_var = {}                       # variable -> row that determines it
     match_row = [-1] * len(edges)
@@ -1782,37 +1509,14 @@ def _max_matching(edges, n):
 def unopposed_report(structures, names=None, top=25):
     """Variables no constraint resists -- quantities the optimiser moves free.
 
-    A design variable earns its place by being pushed one way and held the
-    other. When nothing holds it, the optimiser moves it until something else
-    breaks, and the answer looks converged while resting on a quantity the
-    model never determined.
-
-    This is the defect class that :func:`presolve_report`'s bounded-ness check
-    misses, and it misses it for a specific reason: that check treats ANY
-    equality as bounding a variable both ways. An equality constrains a
-    COMBINATION, not an individual. ``mac*q == k*c_root`` is one equation in
-    three unknowns, so ``q`` slides along it trading against ``mac`` -- and a
-    wing model carried ``p`` and ``q`` declared as "1 + 2 taper" and
-    "1 + taper", constrained to be neither, for a long time. They were pinned
-    only implicitly, by a structural model that happened to read them; the
-    moment a different structural model was selected ``q`` inflated 1.15 ->
-    1.56, shrinking the mean chord 20% and the horizontal tail with it.
-
-    Nothing was inconsistent, so no infeasibility or over-determination check
-    could see it. Something was absent.
-
-    Two analyses are needed together and neither suffices alone:
-
-    * the Dulmage-Mendelsohn UNDER-determined block, for which variables the
-      equality system genuinely leaves free (canonical, unlike a bare
-      matching);
-    * the sign of each inequality's exponent, for whether it resists motion
-      up, down, or neither.
-
-    A variable is reported when it is under-determined AND some direction has
-    no inequality resisting it. Reported as ``[(name, direction, n_rows)]``.
-
-    This does NOT touch the bounds used by the solve. It is a report.
+    The bounded-ness check misses these: it treats ANY equality as bounding
+    both ways, but an equality constrains a COMBINATION, not an individual.
+    A wing model carried p and q ("1 + 2 taper", "1 + taper") pinned only by
+    whichever structural model read them; swapping models inflated q
+    1.15 -> 1.56, shrinking the mean chord 20%. Reported when
+    Dulmage-Mendelsohn leaves a variable under-determined AND some direction
+    has no inequality resisting it, as ``[(name, direction, n_rows)]``.
+    A report only; the solve's bounds are untouched.
     """
     rows, operators, _key = _rows_of(structures)
     st = as_detected(_as_structures(structures))
@@ -1871,38 +1575,14 @@ def unopposed_text(found) -> str:
 def rigidity_report(structures, names=None, cluster_max=12):
     """Degrees of freedom, per variable, from the equality system alone.
 
-    A model's variable count is not its degree-of-freedom count. Every
-    equality spends one. This walks the bipartite graph of equality rows
-    against the variables they touch and reports what is actually free,
-    which answers three questions that a variable list cannot:
-
-    **Which variables are no longer design variables?** A variable an
-    equality determines is an OUTPUT wearing a design variable's clothes.
-    Writing an identity is the standard way to create one, and it is usually
-    correct -- but it silently removes a degree of freedom that other
-    constraints may have been relying on. Diff this list across a change and
-    the removed freedoms are exactly what you took away.
-
-    **Is any group of equalities over-determined?** More equations than
-    variables to absorb them means no assignment satisfies them all except by
-    numerical coincidence. This is the structurally guaranteed conflict, and
-    it is reported with the offending rows and variables.
-
-    **Which clusters are rigid?** A group whose equalities leave it one
-    degree of freedom or none is welded: an inequality on ANY member becomes,
-    through the chain, a bound on EVERY member. That is how a local bound
-    turns into a global one far from where it was written, and it is
-    invisible in the source, where each row looks independent and reasonable.
-
-    What this does NOT catch, and the limit is worth stating plainly: a
-    conflict needs an inequality to close it, and inequalities are not in
-    this graph. Equalities that leave a healthy number of degrees of freedom
-    can still compose with a bound elsewhere to make a model infeasible.
-    Rigidity is a warning that the composition is possible, not a proof it
-    happened.
-
-    ``cluster_max`` caps how large a rigid cluster may be and still be worth
-    printing -- a 400-variable rigid block is the model, not a finding.
+    Every equality spends one. Reports variables an equality determines
+    (outputs in design-variable clothes -- diff across a change to see the
+    freedoms you removed), over-determined groups (more equations than
+    unknowns), and rigid clusters (dof <= 1: a bound on any member binds all,
+    invisible in the source). Inequalities are not in this graph, so rigidity
+    warns a conflict is possible, not that it happened. ``cluster_max`` caps
+    printable cluster size -- a 400-variable rigid block is the model, not a
+    finding.
     """
     edges, rows, n, names = _equality_graph(structures, names)
     match_var, match_row = _max_matching(edges, n)
@@ -1924,9 +1604,8 @@ def rigidity_report(structures, names=None, cluster_max=12):
         'incidence': {},
     }
 
-    # How many equalities touch each variable. A high count is not wrong --
-    # x_CG legitimately appears in dozens -- but it says the variable is a
-    # hub, and a bound on a hub propagates everywhere.
+    # Equalities touching each variable. A high count marks a hub, and a
+    # bound on a hub propagates everywhere.
     inc = collections.Counter()
     for e in edges:
         for j in e:
@@ -1934,8 +1613,8 @@ def rigidity_report(structures, names=None, cluster_max=12):
     rep['incidence'] = {nm_at(names, j): c for j, c in inc.most_common()}
 
     # -- over-determined block (Dulmage-Mendelsohn) ------------------------
-    # Rows left unmatched have no variable of their own to determine. Walking
-    # alternating paths back from them collects everything implicated.
+    # Unmatched rows have no variable of their own; alternating paths back
+    # from them collect everything implicated.
     var_rows = collections.defaultdict(list)
     for i, e in enumerate(edges):
         for j in e:
@@ -2033,9 +1712,7 @@ def rigidity_text(rep, top=8):
     return "\n".join(L)
 
 
-#: What each class means for the solve, and what it buys. The report exists to
-#: answer "so what" -- a class name alone tells a reader nothing about whether
-#: the answer they got is global.
+# What each class means for the solve -- the report exists to answer "so what"
 _CLASS_INFO = {
     'Linear_Program': (
         'Linear Program (LP)',
@@ -2052,7 +1729,7 @@ _CLASS_INFO = {
         '(SIA/PCCP), so the optimum is LOCAL'),
 }
 
-#: Simplest first. A model is reported as the first class it satisfies.
+# Simplest first; a model is reported as the first class it satisfies
 _CLASS_ORDER = ['Linear_Program', 'Quadratic_Program', 'Geometric_Program',
                 'Signomial_Program']
 
@@ -2086,13 +1763,8 @@ def _constraint_bodies(structures):
 def _as_structures(obj):
     """Accept either the detector's output or the formulation itself.
 
-    Detecting structure means unit-correcting a clone and walking it, which is
-    a detail of how this runs, not of what the caller wants.
-    `optimization_check(f)` is the call people try first; making it work
-    costs one isinstance.
-
-    `Detected` is a dict subclass and a `Formulation` is not, which is the
-    whole test.
+    optimization_check(f) is the call people try first; making it work costs
+    one isinstance (Detected is a dict subclass, a Formulation is not).
     """
     if isinstance(obj, dict):
         return obj
@@ -2104,11 +1776,8 @@ def _as_structures(obj):
 def _units_diagnosis(exc):
     """A unit failure, formatted as a finding rather than raised as an error.
 
-    Asking what is wrong with a model is exactly when it is most likely to be
-    wrong, so `optimization_check` must not fall over on the commonest
-    fault it exists to find. Nothing downstream can run -- the detector reads
-    the unit-corrected model and there is not one -- so this is the whole
-    report, and it says so.
+    Asking what is wrong with a model is exactly when it is most likely to
+    be wrong; nothing downstream can run, so this is the whole report.
     """
     return ('units\n-----\n' + str(exc).rstrip() + '\n\n'
             '  Nothing further can be checked until the units balance: the\n'
@@ -2119,26 +1788,13 @@ def _units_diagnosis(exc):
 def _gp_after_presolve(structures):
     """Is the problem the solver actually receives a geometric program?
 
-    Answered by looking at the presolved rows, not by tracking which original
-    row went away. Two earlier attempts did the latter and both were wrong:
-    ``fold_singleton_rows``, ``eliminate_monomial_equalities`` and
-    ``reduce_columns`` each RENUMBER, so an index means something different
-    after every pass, and matching content across them is guesswork the moment
-    two rows look alike.
-
-    The two things that stop a set of rows being a GP are visible directly:
-
-    * a **fraction** -- a group with a denominator, stored as a negative row
-      index -- is a ratio of posynomials rather than a posynomial;
-    * a **posynomial equality** -- an ``==`` group with more than one term --
-      because log-sum-exp == 0 is not a convex set.
-
-    plus the standing requirement that every coefficient be positive. Checking
-    those on the reduced rows answers the question that matters without
-    needing to know which constraint each row used to be.
-
-    Returns ``None`` if the presolve cannot run, so the caller can decline to
-    claim anything.
+    Answered on the presolved rows, not by tracking which original row went
+    away -- every pass RENUMBERS, so matching content across them is
+    guesswork. The non-GP markers are visible directly: a fraction (a group
+    with a denominator, negative row index), a posynomial equality (an ==
+    group with more than one term), or a non-positive coefficient. Returns
+    None if the presolve cannot run, so the caller can decline to claim
+    anything.
     """
     try:
         st = _with_empty_bounds(structures)
@@ -2176,21 +1832,11 @@ def _gp_after_presolve(structures):
 def structure_report(structures, top=5, simplify=True) -> str:
     """What kind of problem this is, and what stops it being a simpler one.
 
-    The detector already knows: it clears a flag the moment a row rules a class
-    out. It just never said which row, so a model that "is an SP" could not
-    answer the only question worth asking about that fact -- *which constraint
-    made it one*. Usually it is one or two, and usually they are a
-    reformulation away from posynomial, so naming them is the difference
-    between a label and an action.
-
-    ``simplify`` additionally asks whether the blockers survive the presolve.
-    They often do not -- a constraint that merely defines a reporting quantity
-    is removed before the solve -- and then the class the model is *written*
-    in is not the class that gets *solved*. That distinction is the whole
-    point of asking.
-
-    ``top`` caps how many blocking constraints are listed per class; the rest
-    are counted. Set ``top=None`` for all of them.
+    The detector clears a flag the moment a row rules a class out but never
+    said which row; naming it is the difference between a label and an
+    action. ``simplify`` also asks whether the blockers survive the presolve
+    -- often the class written is not the class solved. ``top`` caps blockers
+    listed per class (None for all).
     """
     from lcsolver.presolve.unitCorrector import UnitMismatch
     try:
@@ -2211,9 +1857,8 @@ def structure_report(structures, top=5, simplify=True) -> str:
             L.append(f'  {msg}')
         return '\n'.join(L)
 
-    # Does the problem the SOLVER receives simplify to a GP? Only that is
-    # asked. LP and QP would need the linearity test rerun on the reduced
-    # rows, and asserting them without checking is how this went wrong before.
+    # Only ask whether the solved problem simplifies to a GP; LP/QP would
+    # need the linearity test rerun on the reduced rows
     simplified = detected
     if simplify and detected == 'Signomial_Program':
         if _gp_after_presolve(st) is True:
@@ -2236,10 +1881,9 @@ def structure_report(structures, top=5, simplify=True) -> str:
             rows += blockers.get(cls, [])
         if not rows:
             return
-        # Group by constraint, keeping EVERY distinct reason. One row can
-        # fail a class more than one way -- a posynomial equality that is also
-        # a ratio of posynomials -- and showing only the first reason hid the
-        # more specific one, which is the actionable half.
+        # Group by constraint, keeping EVERY distinct reason -- one row can
+        # fail a class more than one way, and the more specific reason is
+        # the actionable one
         order, reasons = [], {}
         for name, why, row in rows:
             if name not in reasons:
@@ -2271,8 +1915,8 @@ def structure_report(structures, top=5, simplify=True) -> str:
         if advice:
             L.append(f'    {advice}')
 
-    # Only report the classes SIMPLER than the one detected: a GP is not
-    # "failing to be an SP", and saying so would be noise.
+    # Only classes SIMPLER than the one detected: a GP is not "failing to be
+    # an SP"
     rank = _CLASS_ORDER.index(detected)
     if rank > _CLASS_ORDER.index('Geometric_Program'):
         _section(['Geometric_Program'],
@@ -2302,27 +1946,12 @@ def structure_report(structures, top=5, simplify=True) -> str:
 def annihilated_report(model, names=None):
     """Constraint sides that are identically zero at the current constants.
 
-    A posynomial has strictly positive coefficients, so zero is not a value
-    it can take. When a constant sits at a value that annihilates a term --
-    a relief factor written ``(nu**2 - 1)`` with ``nu`` exactly 1, a count
-    or a fraction set to 0 -- the row it was in stops being a posynomial,
-    and the consequences are all silent:
-
-    * the model is reclassified as neither a GP nor an SP, so every other
-      check in this module refuses to run on it;
-    * a variable the annihilated side was bounding is left unbounded below
-      in log space, and the solve returns an arbitrary value for it rather
-      than failing;
-    * or the backend aborts somewhere unrecognisable -- IPOPT's restoration
-      phase, typically -- with nothing pointing back here.
-
-    This runs on the Pyomo model directly rather than on a detected
-    structure, because failing to detect a structure is one of the symptoms.
-
-    Each finding names the constraint, the side, and the constants
-    responsible -- found by perturbing each constant in turn and seeing
-    whether the side comes back to life, so what is reported is the constant
-    a designer should look at rather than every constant in the row.
+    A posynomial cannot be zero, so a constant that annihilates a side (say
+    ``(nu**2 - 1)`` with ``nu`` exactly 1) silently reclassifies the model,
+    leaves a variable unbounded below in log space, or aborts the backend
+    somewhere unrecognisable. Runs on the Pyomo model directly, since
+    failing to detect a structure is one of the symptoms. Culprit constants
+    are found by perturbing each and seeing whether the side revives.
     """
     import pyomo.environ as pyo
     from pyomo.core.expr.visitor import identify_mutable_parameters
@@ -2346,7 +1975,7 @@ def annihilated_report(model, names=None):
                     continue
                 if value != 0.0:
                     continue
-                # which constants annihilated it: nudge each and re-evaluate
+                # Which constants annihilated it: nudge each and re-evaluate
                 culprits = []
                 try:
                     params = list(identify_mutable_parameters(side))
@@ -2375,10 +2004,9 @@ def annihilated_report(model, names=None):
 def _checks_setup(structures):
     """Shared front door for the check entry points.
 
-    Returns ``(st, model, units_report)``. On a unit failure ``st`` is None
-    and ``units_report`` carries the diagnosis text -- bad units are a
-    finding, not a crash: asking what is wrong with a model is exactly when
-    it is most likely to be wrong.
+    Returns ``(st, model, units_report)``; on a unit failure ``st`` is None
+    and ``units_report`` carries the diagnosis -- bad units are a finding,
+    not a crash.
     """
     from lcsolver.presolve.detected import as_detected
     from lcsolver.presolve.unitCorrector import UnitMismatch
@@ -2388,10 +2016,9 @@ def _checks_setup(structures):
     except UnitMismatch as exc:
         model = None if isinstance(structures, dict) else structures
         return None, model, _units_diagnosis(exc)
-    # The interesting checks need bounds separated from rows; fold a copy
-    # rather than making the caller know that (see the note in
-    # optimization_check's history: unfolded single-variable rows hid all 52
-    # output-only variables on SPaircraft).
+    # The checks need bounds separated from rows; fold a copy rather than
+    # making the caller know that (unfolded rows once hid all 52 output-only
+    # variables on SPaircraft)
     try:
         st = fold_singleton_rows(st if st.bounds is not None
                                  else _with_empty_bounds(st))
@@ -2403,9 +2030,9 @@ def _checks_setup(structures):
 def _greybox_covered(st):
     """Names of variables referenced by a grey-box (black-box) row.
 
-    The structural checks read only the algebraic rows, so a variable that a
-    black box computes looks unbounded or empty to them. These names let the
-    check entry points subtract that false positive.
+    The structural checks read only algebraic rows, so a black-box-computed
+    variable looks unbounded or empty; these names subtract that false
+    positive.
     """
     try:
         from lcsolver.solvers.sequential.bridge import (_unwrap_vars,
@@ -2430,20 +2057,15 @@ def _greybox_covered(st):
 def presolve_check(structures, names=None, structure_top=5):
     """The pre-solve half of the checks: needs nothing but the model.
 
-    Structure classification (and what stops the model being a simpler
-    class), the structural findings (empty, unbounded, fixed, output-only
-    variables; foldable rows), rigidity, and unopposed variables. Returns a
-    :class:`PresolveReport` and prints nothing.
-
-    Variables that a black-box constraint computes are excluded from the
-    empty/unbounded findings: the algebraic rows cannot see them, but they
-    are not free.
+    Structure classification, the structural findings, rigidity, and
+    unopposed variables. Black-box-computed variables are excluded from the
+    empty/unbounded findings. Returns a :class:`PresolveReport`; prints
+    nothing.
     """
     st, model, units_report = _checks_setup(structures)
 
-    # Run first, and on the model rather than the detected structure: an
-    # annihilated side is one of the reasons detection fails, so this has to
-    # survive the gate below rather than sit behind it.
+    # Run first and on the model: an annihilated side is one reason detection
+    # fails, so this must survive the gate below
     probe = model if model is not None else (
         None if isinstance(structures, dict) else structures)
     annihilated = annihilated_report(probe) if probe is not None else []
@@ -2457,10 +2079,8 @@ def presolve_check(structures, names=None, structure_top=5):
     try:
         rep = presolve_report(st, names=names)
     except ValueError:
-        # No detected GP/SP rows to walk. If a side was annihilated, that is
-        # very likely why -- return the finding that explains it rather than
-        # the bare "presolve needs a detected GP or SP structure", which
-        # names no cause. With nothing to explain it, the original stands.
+        # No detected GP/SP rows to walk. An annihilated side is likely why;
+        # return the finding that explains it, else the original raise stands.
         if not annihilated:
             raise
         rep = PresolveReport()
@@ -2481,8 +2101,7 @@ def presolve_check(structures, names=None, structure_top=5):
         rep.unbounded_below = [n for n in rep.unbounded_below
                                if n not in covered]
         # A grey-box-fed variable can look output-only to the algebraic scan
-        # (one row, monotone, free to escape) while its black box pins it --
-        # its row is a live constraint, not a definition. Not peelable.
+        # while its black box pins it. Not peelable.
         rep.output_columns = [n for n in rep.output_columns
                               if n not in covered]
 
@@ -2512,17 +2131,12 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9,
                     skip_degeneracy_check=False):
     """The post-solve half: the checks that only mean something at a solution.
 
-    Degenerate variables (the optimum does not determine them), cancelling
-    signomial terms, and variables resting on the solver's positivity floor.
-
-    ``skip_degeneracy_check`` drops the first of those.  It is the expensive
-    one -- it perturbs every variable and re-solves feasibility around it --
-    and on a model whose structure is already trusted it is the check most
-    worth turning off in a sweep.  The other two are cheap and always run.
-    Hand this a SOLVED Formulation and the point is read off the model;
-    passing ``x`` and ``problem`` explicitly also works and takes precedence.
-    An unsolved model raises: running these against an initial guess would
-    describe the guess in the language of a result.
+    Degenerate variables, cancelling signomial terms, and floor-resting
+    variables. ``skip_degeneracy_check`` drops the expensive one (perturb and
+    re-check every variable); the other two are cheap and always run. Hand
+    this a SOLVED Formulation, or pass ``x`` and ``problem`` explicitly
+    (takes precedence). An unsolved model raises: running these against a
+    guess would describe it in the language of a result.
     """
     st, model, units_report = _checks_setup(structures)
     rep = PresolveReport()
@@ -2557,9 +2171,8 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9,
             rep.degenerate = []
         else:
             try:
-                # Read the variable-to-constraint sparsity off the model once;
-                # the scan is quadratic without it.  None means it could not be
-                # matched to the problem rows, and the dense scan runs instead.
+                # Read the sparsity off the model once (the scan is quadratic
+                # without it); None means unmatched, dense scan instead
                 dep = constraint_dependencies(model, st.variables, problem.n,
                                               problem.constraints, x=x)
                 rep.degenerate = degeneracy_report(problem, x, names=names,
@@ -2579,47 +2192,14 @@ def optimization_check(structures, x=None, problem=None, names=None,
                        x_min=1e-9, structure_top=5):
     """Every check on a model, in one call, as one report.
 
-    The individual checks are expert tools: each needs the structure detected a
-    particular way and read in a particular order, which means in practice
-    nobody runs them. This is the entry point that makes them the default.
-
-    It runs on both sides of a solve, which is why it is not called a
-    *precheck*:
-
-    **Before** -- needs nothing but the model. What class of problem it is,
-    what stops it being a simpler one, and the variables that are output-only,
-    unbounded, disconnected or fixed.
-
-    **After** -- the checks that only mean something at a solution: variables
-    the optimum does not determine (``degenerate``), signomial terms
-    contributing nothing there (``cancelling``), and variables resting on the
-    positivity floor (``at_floor``).
-
-    Those turn themselves on. Hand this a *solved* Formulation and it reads
-    the point off the model and builds the low-level problem the checks want,
-    so the same call gives the structural half before a solve and the whole
-    report after::
-
-        report = optimization_check(f)      # before: structure + presolve
-        solve(f)
-        report = optimization_check(f)      # after: adds the three above
-
-    Passing ``x`` and ``problem`` explicitly still works and takes precedence.
-
-    Auto-wiring happens only for a Formulation, never for a structure handed
-    in directly. A detected structure holds the unit-corrected *clone*, and
-    that clone is never solved -- reading values off structures detected
-    before a solve would silently check the author's initial guesses while
-    reporting in the language of a result.
-
-    The report opens with :func:`structure_report` -- what kind of problem
-    this is and what stops it being a simpler one -- because that needs no
-    solution and is the first thing worth knowing. ``structure_top`` caps how
-    many blocking constraints it lists per class.
-
-    Returns a :class:`PresolveReport` and prints nothing --- a function that
-    answers a question should hand back the answer, not emit it as a side
-    effect that a caller cannot capture or suppress::
+    Before a solve: structure class, blockers, and the structural findings.
+    After: ``degenerate``, ``cancelling``, ``at_floor`` -- turned on
+    automatically when handed a SOLVED Formulation (explicit ``x`` and
+    ``problem`` also work and take precedence). Auto-wiring never happens
+    for a structure dict: the detected clone is never solved, and reading
+    values off it would check initial guesses in the language of a result.
+    ``structure_top`` caps blockers listed per class. Returns a
+    :class:`PresolveReport` and prints nothing::
 
         report = optimization_check(f)
         print(report.summary())
@@ -2658,33 +2238,13 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
              reduce=True, verbose=False, fold_only=None, protect=None):
     """Run the presolve passes in an order that is safe to compose.
 
-    The order is not a preference, it is a constraint, and two interactions
-    force it:
-
-    * **reduce before propagate.** Output-only detection requires a *vacuous*
-      bound in the relaxing direction, and propagation fills exactly those in.
-      Propagating first costs real reductions -- 40 variables on SPaircraft.
-    * **eliminate before propagate**, for the same reason: elimination only
-      takes variables whose declared bounds are vacuous.
-
-    ``propagate`` is therefore off by default. It tightens bounds, which is
-    useful as a diagnostic and for a solver that exploits them, but on
-    SPaircraft it buys no time once elimination has run and it blocks other
-    reductions if run early.
-
-    ``fold_only``, when given, is forwarded to :func:`fold_singleton_rows`:
-    only those constraint indices may fold into bounds. The sequential
-    solvers pass the declared-bound row block here, because folding an
-    active singleton MODEL row into a hard bound removes it from the elastic
-    relaxation (see the note on :func:`fold_singleton_rows`).
-
-    ``protect`` is forwarded to :func:`reduce_columns`: those column indices
-    are never removed. The sequential solvers pass the grey-box-referenced
-    columns here, which is what lets presolve run at all on a black-box
-    model.
-
-    Returns ``(structures, log)``. ``log.restore(x)`` rebuilds the full-length
-    solution and ``print(log)`` says what happened.
+    Reduce and eliminate BEFORE propagate: both need vacuous bounds, and
+    propagation fills exactly those in (propagating first cost 40 reductions
+    on SPaircraft) -- so ``propagate`` is off by default. ``fold_only`` is
+    forwarded to :func:`fold_singleton_rows` (the sequential solvers pass
+    the declared-bound row block; see the note there). ``protect`` is
+    forwarded to :func:`reduce_columns` (grey-box columns). Returns
+    ``(structures, log)``; ``log.restore(x)`` rebuilds the full solution.
     """
     log = PresolveLog([str(v) for v in structures.get("variables", [])])
     try:
@@ -2713,16 +2273,12 @@ def presolve(structures, fold=True, eliminate=True, propagate=False,
 def peel_output_columns(structures, protect=None):
     """The exact column reductions alone, keeping the bounds-as-rows form.
 
-    ``solve()`` runs this ONCE, centrally, on every structured route (GP and
-    SP, any backend) -- unlike :func:`presolve`, which the sequential bridge
-    applies with backend-specific tuning. Rows that are really bounds stay
-    rows, because the convex backends read bounds out of the rows; the bounds
-    array is synthesized empty for the scan and stripped again afterwards.
-    With every bound empty the fixed removal cannot trigger, so what runs is
-    the output-only peel plus the removal of columns no row touches at all.
-
-    Returns ``(structures, removed)``; with nothing to peel the input is
-    returned unchanged. ``removed`` feeds :func:`restore_columns`.
+    ``solve()`` runs this ONCE, centrally, on every structured route. Bound
+    rows stay rows (the convex backends read bounds out of them); the bounds
+    array is synthesized empty and stripped after, so only the output-only
+    peel and untouched-column removal can trigger. Returns
+    ``(structures, removed)`` for :func:`restore_columns`; unchanged input
+    when nothing peels.
     """
     if structures.get('bounds') is not None:
         raise ValueError(
@@ -2744,17 +2300,12 @@ def constraint_dependencies(model, variables, n, constraints, x=None,
                             probes=16):
     """Which constraints each variable appears in: ``[j] -> [constraint index]``.
 
-    Read off the Pyomo expressions once, so the degeneracy scan can re-evaluate
-    only the rows a perturbation can possibly move.
-
-    THE MAPPING IS NOT POSITIONAL over every row.  ``build_problem`` folds
-    single-variable rows into variable BOUNDS, so ``constraints`` holds only the
-    rows with two or more distinct variables, in model order.  That is the
-    correspondence used here, and it is then CHECKED rather than assumed: a
-    handful of variables are perturbed and scanned densely, and if any
-    constraint moves that the map did not predict, this returns None and the
-    caller falls back to the dense scan.  A wrong map would silently under-report
-    degeneracy, which is worse than being slow.
+    NOT positional over every row: ``build_problem`` folds single-variable
+    rows into bounds, so ``constraints`` holds only rows with 2+ distinct
+    variables, in model order. The map is CHECKED by perturbing a few
+    variables; if any unpredicted constraint moves this returns None and the
+    caller falls back to the dense scan -- a wrong map would silently
+    under-report degeneracy.
     """
     if model is None:
         return None
@@ -2804,24 +2355,13 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
                       viol_tol=1e-9, names=None, depends_on=None):
     """Variables the solution does not determine, tested directly.
 
-    A variable is degenerate when it can be moved in **both** directions
-    without changing the objective and without worsening feasibility. That is
-    the definition, so there is no heuristic to be wrong about -- which
-    matters, because the obvious structural heuristic ("only bounds are active
-    on it") also flags every variable pinned by a single-variable *equality*,
-    and those are maximally determined rather than free.
-
-    ``problem`` is an :class:`~lcsolver.solvers.sequential.slcp.Problem`; ``x`` the
-    solution. Returns a list of ``(name, value)``.
-
-    ``depends_on`` is the sparsity from :func:`constraint_dependencies`, and it
-    is a pure speed-up: perturbing ``x[j]`` can only move constraints that
-    CONTAIN ``x[j]``, and every other row keeps its value at ``x``, whose worst
-    is ``v0`` and therefore already inside the threshold.  So the local scan
-    answers the same question as the global one -- it just stops asking rows
-    that cannot have changed.  Without it the scan is n x m body evaluations,
-    which is quadratic in model size and, on a few-thousand-row model, is the
-    single most expensive thing in a solve.
+    Degenerate: movable in BOTH directions without changing the objective or
+    worsening feasibility -- the definition itself, no heuristic (the
+    structural one also flags variables pinned by single-variable equalities).
+    Returns a list of ``(name, value)``. ``depends_on`` is the sparsity from
+    :func:`constraint_dependencies`, a pure speed-up: perturbing ``x[j]`` can
+    only move rows containing it; without the map the scan is n x m body
+    evaluations, the most expensive thing in a few-thousand-row solve.
     """
     import math
 
@@ -2865,19 +2405,11 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
 def unbuilt_blocks(model):
     """Blocks attached to `model` that never finished receiving their inputs.
 
-    A model library may build its blocks in two phases -- construct with the
-    settings, then assign the inputs one per line -- so that a thirty-input
-    block is readable.  The rows are posted when the last input arrives.  A
-    block still waiting therefore posts NOTHING: no variables, no constraints,
-    no error.  The formulation stays solvable, and answers a different and
-    easier question than the one written down.
-
-    :class:`~lcsolver.objects.submodel.SubModel` is what this normally finds.
-    The shape is also accepted on its own -- an attribute reporting ``_built``
-    false, with ``_pending`` naming what it waits for -- so a model library
-    that grew its own block class rather than inheriting one is still checked.
-
-    Returns a list of ``(name, [missing input names])``.
+    A two-phase block posts its rows only when the last input arrives, so a
+    waiting block posts NOTHING -- the formulation stays solvable and answers
+    an easier question. Finds SubModel, plus any object with ``_built``
+    false and ``_pending`` naming what it waits for. Returns a list of
+    ``(name, [missing input names])``.
     """
     from lcsolver.objects.submodel import SubModel
 
@@ -2903,13 +2435,12 @@ def unbuilt_blocks(model):
 def unbuilt_blocks_check(model):
     """Raise if any attached block never built.  Called before every solve.
 
-    This is an ERROR and not a finding: a half-assembled model is not a
-    weaker version of the problem, it is a different problem, and it will
-    return a confident number for it.
+    An ERROR, not a finding: a half-assembled model is a different problem,
+    and it will return a confident number for it.
     """
     from lcsolver.core import codes
-    # PresolveError lives with the solver, and importing it at module scope
-    # would close the loop (solver imports this module).  Local import.
+    # Local import: PresolveError lives with the solver, which imports this
+    # module
     from lcsolver.solvers.solver import PresolveError
 
     found = unbuilt_blocks(model)
@@ -2925,7 +2456,7 @@ def unbuilt_blocks_check(model):
         if pending:
             lines.append(f"  {name} is still waiting for {len(pending)} input(s):")
             # wrapped, all of them: a truncated list means another solve to
-            # find out what else was missing
+            # find the rest
             row = '   '
             for item in pending:
                 if len(row) + len(item) + 2 > 74:
