@@ -129,7 +129,17 @@ solve. Recipe (macOS; Linux is the same modulo the loader variable)::
 Building SPRAL into IPOPT
 -------------------------
 
-Done and measured (see above). The recipe on macOS arm64::
+Done, measured, and INTEGRATED: the main build
+(``~/software/ipopt/build/bin/ipopt``) is a statically linked executable
+carrying MA27 + MUMPS + SPRAL, switchable per solve. The shared library
+beside it (which in-process cyipopt loads) stays SPRAL-free on purpose:
+SPRAL's OpenMP runtime (libgomp) aborts inside a conda Python process
+that already holds LLVM's libomp -- two OpenMP runtimes in one process
+is a hard error with a documented-unsafe workaround. The executable is
+its own process, so it carries everything; cyipopt only evaluates
+grey-box functions and never selects a linear solver in-process.
+
+The recipe on macOS arm64::
 
     brew install metis hwloc autoconf automake libtool  # gcc for gfortran
     cd ~/software/ipopt

@@ -9,11 +9,8 @@
 #     lcsolver.solve(f, linear_solver='ma27')     # or 'mumps', 'spral', ...
 #
 # Solvers the local IPOPT build does not carry are probed and skipped, so
-# this runs anywhere.  To compare all three, point at a multi-solver build:
-#
-#     LCSOLVER_IPOPT_EXECUTABLE=~/software/ipopt/build-all/bin/ipopt \
-#         python examples/linear_solver_timing.py
-#
+# this runs anywhere; a build carrying all three (see
+# docs/linear_solvers.rst for the recipe) compares them in one run.
 # SPRAL's required OpenMP environment is set automatically by lcsolver.
 # Expect MA27 fastest on problems this size; the ordering can change with
 # scale (see docs/linear_solvers.rst for the measured table on real decks).
