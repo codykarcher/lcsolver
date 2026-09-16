@@ -356,6 +356,32 @@ def require_linear_solver(name, route='pyomo', executable=None,
     return key
 
 
+def linear_solver_failure_note(linear_solver, executable=None):
+    """Advisory to append when a solve FAILS under a non-MA27 linear solver.
+
+    MA27 is the measured most-robust solver on this problem class (the D8
+    sentinel breaks MUMPS outright -- docs/linear_solvers.rst), so a failure
+    under anything else names the retry.  Empty for MA27 itself, and for an
+    unspecified solver on an MA27 build (that failure is not about the
+    linear solver).  Never raises: this decorates an error path.
+    """
+    key = str(linear_solver).strip().lower() if linear_solver else None
+    if key in (None, '', 'ma27'):
+        return ''
+    try:
+        have_ma27 = bool(linear_solver_available('ma27', executable))
+    except Exception:
+        have_ma27 = False
+    if have_ma27:
+        return (' Note: this solve used linear_solver=%r; MA27 is the most '
+                'robust linear solver on this problem class -- retry with '
+                "linear_solver='ma27'." % key)
+    return (' Note: this solve used linear_solver=%r, and this IPOPT build '
+            'has no MA27 -- the most robust linear solver on this problem '
+            'class. Build one with `lcsolver-install-solvers --ma27 <path>` '
+            '(see docs/linear_solvers.rst).' % key)
+
+
 def linear_solver_available(name, executable=None, library=None):
     """Does this IPOPT build carry the ``name`` linear solver?
 

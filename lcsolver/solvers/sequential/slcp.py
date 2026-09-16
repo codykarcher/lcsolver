@@ -76,15 +76,22 @@ class Signomial:
 
     fn(x) returns (value, gradient) in the natural variables, value > 0.
     The black-box hook: the algorithm only needs f and grad f at the iterate.
+    fn_value(x), when given, returns the value ALONE -- the cheap path for
+    the value-only queries (line search, violation checks, restores) on a
+    box whose derivatives cost extra (a finite-difference sweep, an adjoint
+    solve); without it every value query pays the full fn.
     """
 
-    __slots__ = ('fn', 'n')
+    __slots__ = ('fn', 'n', 'fn_value')
 
-    def __init__(self, fn, n):
+    def __init__(self, fn, n, fn_value=None):
         self.fn = fn
         self.n = int(n)
+        self.fn_value = fn_value
 
     def __call__(self, x):
+        if self.fn_value is not None:
+            return float(self.fn_value(np.asarray(x, dtype=float)))
         return float(self.fn(np.asarray(x, dtype=float))[0])
 
     def grad(self, x):
@@ -114,30 +121,37 @@ class CachedSignomial(Signomial):
 
     __slots__ = ('_cache', '_order', '_maxsize', 'evaluations')
 
-    def __init__(self, fn, n, maxsize=None):
-        super().__init__(fn, n)
+    def __init__(self, fn, n, maxsize=None, fn_value=None):
+        super().__init__(fn, n, fn_value=fn_value)
         self._cache = {}
         self._order = []
         self._maxsize = maxsize
         self.evaluations = 0
 
-    def _eval(self, x):
+    def _eval(self, x, need_grad=True):
+        # a cached entry may be value-only (gradient None, from the cheap
+        # fn_value path); it satisfies value queries and upgrades in place
+        # on the first gradient request
         x = np.asarray(x, dtype=float)
         key = x.tobytes()
         hit = self._cache.get(key)
-        if hit is not None:
+        if hit is not None and (hit[1] is not None or not need_grad):
             return hit
-        v, g = self.fn(x)
-        out = (float(v), np.asarray(g, dtype=float))
+        if need_grad or self.fn_value is None:
+            v, g = self.fn(x)
+            out = (float(v), np.asarray(g, dtype=float))
+        else:
+            out = (float(self.fn_value(x)), None)
+        if hit is None:
+            self._order.append(key)
         self._cache[key] = out
-        self._order.append(key)
         self.evaluations += 1
         if self._maxsize is not None and len(self._order) > self._maxsize:
             del self._cache[self._order.pop(0)]
         return out
 
     def __call__(self, x):
-        return self._eval(x)[0]
+        return self._eval(x, need_grad=False)[0]
 
     def grad(self, x):
         return self._eval(x)[1]
@@ -164,8 +178,8 @@ class GreyboxSignomial(CachedSignomial):
 
     __slots__ = ('out_index',)
 
-    def __init__(self, fn, n, out_index, maxsize=None):
-        super().__init__(fn, n, maxsize=maxsize)
+    def __init__(self, fn, n, out_index, maxsize=None, fn_value=None):
+        super().__init__(fn, n, maxsize=maxsize, fn_value=fn_value)
         self.out_index = int(out_index)
 
 
@@ -852,7 +866,11 @@ def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
     results = opt.solve(m, tee=options.tee, load_solutions=False)
     tc = str(results.solver.termination_condition)
     if tc not in ('optimal', 'locallyOptimal', 'feasible'):
-        raise RuntimeError(f'the {method.upper()} sub-problem failed: {tc}')
+        from lcsolver.environment import linear_solver_failure_note
+        raise RuntimeError(
+            f'the {method.upper()} sub-problem failed: {tc}'
+            + linear_solver_failure_note(
+                (options.ipopt_options or {}).get('linear_solver')))
     m.solutions.load_from(results)
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])

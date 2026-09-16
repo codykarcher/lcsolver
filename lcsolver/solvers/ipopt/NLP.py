@@ -188,7 +188,12 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     if not ok:
         msg = (f"IPOPT did not converge: termination_condition={tc}, "
                f"status={summary['status']}. {summary['message']}".strip())
-        if route == 'pyomo' and not _ma27_available(executable):
+        if options.get('linear_solver'):
+            from lcsolver.environment import linear_solver_failure_note
+            msg += linear_solver_failure_note(
+                options['linear_solver'],
+                executable if route == 'pyomo' else None)
+        elif route == 'pyomo' and not _ma27_available(executable):
             msg += (
                 "\nNote: this IPOPT build appears to lack the HSL MA27 "
                 "linear solver, so it is running MUMPS (the shipped "

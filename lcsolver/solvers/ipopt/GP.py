@@ -305,9 +305,13 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
     if tc not in (str(TerminationCondition.optimal),
                   str(TerminationCondition.locallyOptimal),
                   str(TerminationCondition.feasible)):
+        from lcsolver.environment import linear_solver_failure_note
         raise RuntimeError(
             f'IPOPT did not converge on the log-transformed GP: '
-            f'termination_condition={tc}. {summary["message"]}'.strip())
+            f'termination_condition={tc}. {summary["message"]}'.strip()
+            + linear_solver_failure_note(
+                (options or {}).get('linear_solver'),
+                executable if route == 'pyomo' else None))
 
     # ---- map back to the original variables -------------------------------
     x = [math.exp(pyo.value(m.t[j])) for j in range(n)]

@@ -1332,7 +1332,11 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
     results = opt.solve(m, tee=options.tee, load_solutions=False)
     tc = str(results.solver.termination_condition)
     if tc not in ("optimal", "locallyOptimal", "feasible"):
-        raise RuntimeError(f"the SIA sub-problem failed: {tc}")
+        from lcsolver.environment import linear_solver_failure_note
+        raise RuntimeError(
+            f"the SIA sub-problem failed: {tc}"
+            + linear_solver_failure_note(
+                (options.ipopt_options or {}).get('linear_solver')))
     m.solutions.load_from(results)
 
     d = np.array([pyo.value(m.d[j]) for j in range(n)])
