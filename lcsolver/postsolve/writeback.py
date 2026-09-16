@@ -16,7 +16,7 @@ from pyomo.common.dependencies import numpy as np
 from pyomo.core.base.componentuid import ComponentUID
 
 
-def _resolve_on(model, v):
+def resolve_on_model(model, v):
     """Find the counterpart of variable ``v`` on ``model``, or None.
 
     The CUID is built from the component object, not ``v.name``:
@@ -32,7 +32,7 @@ def _resolve_on(model, v):
     return cuid.find_component_on(model)
 
 
-def _name_of(v):
+def name_of(v):
     """A usable name for ``v``, even if its parent component was collected."""
     try:
         return v.name
@@ -68,12 +68,6 @@ def write_solution(structures, res, model=None):
             f"solution vector has {len(x)} entries but the model has "
             f"{len(variables)} variables; cannot write back unambiguously")
 
-    def _set(target, val):
-        try:
-            target.set_value(val, skip_validation=True)
-        except TypeError:            # older Pyomo without skip_validation
-            target.set_value(val)
-
     written = {}
     unresolved = []
     for i, v in enumerate(variables):
@@ -82,14 +76,14 @@ def write_solution(structures, res, model=None):
         if model is not None:
             # resolve onto the caller's model; `variables` may belong to
             # the unit_corrector clone
-            found = _resolve_on(model, v)
+            found = resolve_on_model(model, v)
             if found is None:
-                unresolved.append(_name_of(v))
+                unresolved.append(name_of(v))
                 continue
             target = found
-            _set(v, val)             # and leave the clone at the solution too
-        _set(target, val)
-        written[_name_of(target)] = val
+            set_value_unchecked(v, val)   # leave the clone at the solution too
+        set_value_unchecked(target, val)
+        written[name_of(target)] = val
 
     if unresolved:
         raise KeyError(
@@ -104,8 +98,21 @@ def write_solution(structures, res, model=None):
     return written
 
 
+def set_value_unchecked(target, val):
+    """Record a value even marginally outside a declared bound (normal for
+    interior point) rather than raising."""
+    try:
+        target.set_value(val, skip_validation=True)
+    except TypeError:            # older Pyomo without skip_validation
+        target.set_value(val)
+
+
 def solution_dict(structures, res):
     """Return ``{variable_name: value}`` without modifying the model."""
     variables = structures['variables']
     x = np.asarray(res['x'], dtype=float).ravel()
-    return {_name_of(v): float(x[i]) for i, v in enumerate(variables)}
+    return {name_of(v): float(x[i]) for i, v in enumerate(variables)}
+
+
+# older scripts in the lc* repos import this by its former name
+_resolve_on = resolve_on_model

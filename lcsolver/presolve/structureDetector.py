@@ -61,7 +61,7 @@ from lcsolver.presolve.detectorSupportFunctions import (
      unstructured_dict,
 )
 
-def _divide_or_disqualify(structures, numerator, denominator, name=None,
+def divide_or_disqualify(structures, numerator, denominator, name=None,
                           row=None):
     """``gpRow_divide``, unless there is no numerator left to divide.
 
@@ -71,7 +71,7 @@ def _divide_or_disqualify(structures, numerator, denominator, name=None,
     whole model. Disqualify GP/SP (with blame, so it isn't silent) and carry on.
     """
     if not numerator:
-        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+        blame(structures, ['Geometric_Program', 'Signomial_Program'],
                name or '(unnamed constraint)',
                'has no positive term once everything is moved to one side. '
                'This is what a nonpositive bound becomes (x >= 0, x >= -10): '
@@ -247,7 +247,7 @@ def require_bounds_as_rows(structures, who):
     return require(structures, who)
 
 
-def _require_bounds_as_rows_legacy(structures, who):
+def require_bounds_as_rows_legacy(structures, who):
     """Refuse structures whose bounds a backend is about to ignore.
 
     With bounds_as_rows=False the bounds sit in structures['bounds']; a
@@ -262,7 +262,7 @@ def _require_bounds_as_rows_legacy(structures, who):
 
 
 
-def _drop_zero_terms(gpRows):
+def drop_zero_terms(gpRows):
     """Remove terms whose leading coefficient is exactly zero.
 
     0*x is an absent term (the natural units-correct way to zero out a term
@@ -278,7 +278,7 @@ def _drop_zero_terms(gpRows):
 
 
 
-def _blame(structures, classes, name, reason, row=None):
+def blame(structures, classes, name, reason, row=None):
     """Record which row ruled out which problem class, and why.
 
     Otherwise only a global flag flips, and a model that "is an SP" cannot
@@ -289,6 +289,16 @@ def _blame(structures, classes, name, reason, row=None):
         rows = blk.setdefault(cls, [])
         if (name, reason, row) not in rows:
             rows.append((name, reason, row))
+
+
+def note_nonpositive_bound(v, found):
+    """Record a declared bound a log-space program cannot express, in the
+    author's terms while the declared value is still in hand."""
+    lb, ub = v.bounds
+    if lb is not None and lb <= 0:
+        found.append((v.name, 'lower bound', lb))
+    elif ub is not None and ub <= 0:
+        found.append((v.name, 'upper bound', ub))
 
 
 def structure_detector(pyomo_component, bounds_as_rows=True):
@@ -327,13 +337,6 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # blame reads in the author's terms rather than the rearranged row's
     nonpositive_bounds = []
 
-    def _note_nonpositive(v):
-        lb, ub = v.bounds
-        if lb is not None and lb <= 0:
-            nonpositive_bounds.append((v.name, 'lower bound', lb))
-        elif ub is not None and ub <= 0:
-            nonpositive_bounds.append((v.name, 'upper bound', ub))
-
     for vr in variableList:
         # check if it's a vector, matrix, etc...
         if isinstance(vr,pyomo.core.base.var.IndexedVar):
@@ -342,13 +345,13 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             ix_st = list(vr.index_set())
             # Iterate for all the variables in the indexed set (eg elements in the vector)
             for ix in ix_st:
-                _note_nonpositive(vr[ix])
+                note_nonpositive_bound(vr[ix], nonpositive_bounds)
                 [success, pyomo_component, N_bound_cons] = implementVariableBound(vr[ix],pyomo_component,N_bound_cons,boundCollector)
                 if not success:
                     return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) }
 
         else: #variable is scalar
-            _note_nonpositive(vr)
+            note_nonpositive_bound(vr, nonpositive_bounds)
             [success, pyomo_component, N_bound_cons] = implementVariableBound(vr,pyomo_component,N_bound_cons,boundCollector)
             if not success:
                 return unstructured_dict() | { "message":"A non-continuous variable (%s) was detected"%(vr[ix].name) }
@@ -486,7 +489,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
     # Blame nonpositive declared bounds up front, in the author's own terms
     # (the bound rows they become still flip the GP/SP flags below)
     for _nm, _which, _val in nonpositive_bounds:
-        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+        blame(structures, ['Geometric_Program', 'Signomial_Program'],
                "variable '%s'" % _nm,
                'declares a nonpositive %s (%g). A log-space variable is '
                'strictly positive, so this bound is not expressible in a '
@@ -502,7 +505,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # Walk the expression, returns the full breakdown of the constraint in dictionary form
         rv = visitor.walk_expression(obj.sense * obj)
         # parses into a gp-solver like matrix/vector
-        gpRows = _drop_zero_terms(
+        gpRows = drop_zero_terms(
             parseDict_GP(0,rv,N_vars_unwrapped,variableMap))
         if gpRows is None:
             return unstructured_dict() | { "message":"The objective is not expressible in the GP algebra (it contains an operation outside the monomial/signomial/signomial-fraction forms, such as a transcendental function)"}
@@ -512,7 +515,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # check that all of the first entries (constraint number) are 0, otherwise this is a signomial fraction
         if not all([rw[0]==0.0 for rw in gpRows]):
             # is sp with fractional objective
-            _blame(structures, ['Linear_Program', 'Quadratic_Program',
+            blame(structures, ['Linear_Program', 'Quadratic_Program',
                                 'Geometric_Program'], 'the objective',
                    'is a ratio of posynomials', row=0)
             structures['Linear_Program'][0] = False
@@ -529,7 +532,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             # Check to see if all of the leading constants are positive for GP/SP
             if not all([rw[1]>0.0 for rw in gpRows]):
                 # has subtraction in the objective
-                _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+                blame(structures, ['Geometric_Program', 'Signomial_Program'],
                        'the objective', 'has a negative term (a true signomial)',
                        row=0)
                 structures['Geometric_Program'][0] = False
@@ -549,7 +552,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
             if quadraticCheck[0]:
                 # If PD, then it is a QP and is not an LP
                 structures['Quadratic_Program'][1] = quadraticCheck[1:] + [None,None]
-                _blame(structures, ['Linear_Program'], 'the objective',
+                blame(structures, ['Linear_Program'], 'the objective',
                        'is quadratic, not affine', row=0)
                 structures['Linear_Program'][0] = False
             else:
@@ -561,7 +564,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                 if linearCheck[0]:
                     structures['Linear_Program'][1] = linearCheck[1:] + [None,None]
                 else:
-                    _blame(structures, ['Linear_Program'], 'the objective',
+                    blame(structures, ['Linear_Program'], 'the objective',
                            'is neither affine nor a convex quadratic',
                            row=0)
                     structures['Linear_Program'][0] = False  
@@ -596,9 +599,9 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                 # Rv includes all constant, monomial, signomial, etc...  Walk through each of these
                 for rvv in rv:
                     # Extract all of the GP style matricies
-                    gpRows_lhs = _drop_zero_terms(parseDict_GP(
+                    gpRows_lhs = drop_zero_terms(parseDict_GP(
                         i+1,rvv['lhs'],N_vars_unwrapped,variableMap))
-                    gpRows_rhs = _drop_zero_terms(parseDict_GP(
+                    gpRows_rhs = drop_zero_terms(parseDict_GP(
                         i+1,rvv['rhs'],N_vars_unwrapped,variableMap))
                     if gpRows_lhs is None or gpRows_rhs is None:
                         side = 'lhs' if gpRows_lhs is None else 'rhs'
@@ -611,7 +614,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         # Do LP/QP stuff
                         if not all([rw[0]>=0.0 for rw in lhs_zeroed]):
                             # has fraction
-                            _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                            blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
                                    'divides by an expression, so it is not affine', row=i + 1)
                             structures['Linear_Program'][0] = False
                             structures['Linear_Program'][1] = None
@@ -635,7 +638,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                                         structures['Quadratic_Program'][1][3] = np.append( structures['Quadratic_Program'][1][3], linearCheck[1] , axis=0)
                                         structures['Quadratic_Program'][1][4] = np.append( structures['Quadratic_Program'][1][4], linearCheck[2] )
                             else:
-                                _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                                blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
                                        'is nonlinear in the design variables', row=i + 1)
                                 structures['Linear_Program'][0] = False
                                 structures['Linear_Program'][1] = None
@@ -643,7 +646,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                                 structures['Quadratic_Program'][1] = None   
                     else:
                         # signomial fraction present
-                        _blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
+                        blame(structures, ['Linear_Program', 'Quadratic_Program'], c.name,
                                'contains a signomial fraction', row=i + 1)
                         structures['Linear_Program'][0] = False
                         structures['Linear_Program'][1] = None
@@ -701,7 +704,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         posMonomial = copy.deepcopy(negMonomial)
                         posMonomial[1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, [negMonomial])
-                        lhs_final = _divide_or_disqualify(structures, lhs_inter,
+                        lhs_final = divide_or_disqualify(structures, lhs_inter,
                                                           [posMonomial],
                                                           name=c.name, row=i + 1)
                     else:
@@ -710,14 +713,14 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
                         for ii in range(0,len(posPosynomial)):
                             posPosynomial[ii][1] *= -1
                         lhs_inter = gpRow_subtract(lhs_zeroed, negPosynomial)
-                        lhs_final = _divide_or_disqualify(structures, lhs_inter,
+                        lhs_final = divide_or_disqualify(structures, lhs_inter,
                                                           posPosynomial,
                                                           name=c.name, row=i + 1)
                     # this is where the else indent should be if present
 
                     if not all([rw[1]>0.0 for rw in lhs_final]):
                         # has subtraction, which is not allowed under this definition of SP
-                        _blame(structures, ['Geometric_Program', 'Signomial_Program'],
+                        blame(structures, ['Geometric_Program', 'Signomial_Program'],
                                c.name, 'has a negative term that cannot be moved '
                                        'to the other side (a true signomial)',
                                row=i + 1)
@@ -733,7 +736,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
 
                     if not all([rw[0]>=0.0 for rw in lhs_final]):
                         # is sp with fraction
-                        _blame(structures, ['Geometric_Program'], c.name,
+                        blame(structures, ['Geometric_Program'], c.name,
                                'is a ratio of posynomials, not a posynomial '
                                '(this is what makes the model an SP)', row=i + 1)
                         structures['Geometric_Program'][0] = False
@@ -763,7 +766,7 @@ def structure_detector(pyomo_component, bounds_as_rows=True):
         # the Hoburg UAV drag-fit equalities went unblamed.
         for conIx, (name, n_rows) in sorted(equality_rows.items()):
             if n_rows > 1:
-                _blame(structures, ['Geometric_Program'], name,
+                blame(structures, ['Geometric_Program'], name,
                        'is a posynomial equality; a GP admits only monomial '
                        'equalities, so this is a signomial constraint',
                        row=conIx)

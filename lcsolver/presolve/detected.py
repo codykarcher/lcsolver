@@ -281,21 +281,21 @@ class Detected(dict):
         (name round-trips mangle indexed variables). Returns {name: value},
         or a list in column order with as_array=True.
         """
-        from lcsolver.postsolve.writeback import _name_of, _resolve_on
+        from lcsolver.postsolve.writeback import name_of, resolve_on_model
 
         import pyomo.environ as pyo
 
         out, ordered = {}, []
         for v in self.variables:
-            target = _resolve_on(model, v)
+            target = resolve_on_model(model, v)
             if target is None:
                 raise ValueError(
-                    f"{_name_of(v)} has no counterpart on the model given. "
+                    f"{name_of(v)} has no counterpart on the model given. "
                     "These variables belong to the unit-corrected clone the "
                     "structure was detected from; pass the model that clone "
                     "was made of.")
             val = float(pyo.value(target))
-            out[_name_of(v)] = val
+            out[name_of(v)] = val
             ordered.append(val)
         return ordered if as_array else out
 
