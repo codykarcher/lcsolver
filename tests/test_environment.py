@@ -39,7 +39,7 @@ def isolated_environment(tmp_path, monkeypatch):
     # step -- so left alone, they pass on a developer's machine (which has it)
     # and fail on a fresh runner (which does not). Pinned to present here; the
     # two tests that are about the ASL library set it themselves.
-    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: True)
+    monkeypatch.setattr(install, 'pynumero_asl_available', lambda: True)
 
     environment._forget_resolution()
     yield
@@ -230,7 +230,7 @@ def test_ma27_sources_recognized_in_each_layout(tmp_path, layout):
     target.mkdir(parents=True)
     (target / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')
 
-    assert install._looks_like_ma27(str(root))
+    assert install.looks_like_ma27(str(root))
 
 
 def test_a_directory_without_ma27_fortran_is_rejected(tmp_path):
@@ -240,18 +240,18 @@ def test_a_directory_without_ma27_fortran_is_rejected(tmp_path):
     (root / 'src').mkdir(parents=True)
     (root / 'src' / 'readme.txt').write_text('nothing useful')
 
-    assert not install._looks_like_ma27(str(root))
-    assert not install._looks_like_ma27(str(tmp_path / 'absent'))
+    assert not install.looks_like_ma27(str(root))
+    assert not install.looks_like_ma27(str(tmp_path / 'absent'))
 
 
 def test_ma27_autodiscovery_only_accepts_real_sources(tmp_path, monkeypatch):
     monkeypatch.setenv('MA27_SOURCE', str(tmp_path / 'empty'))
     (tmp_path / 'empty').mkdir()
-    monkeypatch.setattr(install, '_MA27_SEARCH', ('$MA27_SOURCE',))
-    assert install._find_ma27_sources() is None
+    monkeypatch.setattr(install, 'MA27_SEARCH', ('$MA27_SOURCE',))
+    assert install.find_ma27_sources() is None
 
     (tmp_path / 'empty' / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')
-    assert install._find_ma27_sources() == str(tmp_path / 'empty')
+    assert install.find_ma27_sources() == str(tmp_path / 'empty')
 
 
 # --------------------------------------------------------------------------
@@ -288,7 +288,7 @@ def _report(cvxopt=True, ipopt=None, cyipopt=True):
 
 def test_a_complete_install_plans_nothing(tmp_path):
     exe = _fake_ipopt(str(tmp_path))
-    steps, source_root = install._plan_default(
+    steps, source_root = install.plan_default(
         _report(ipopt=exe), conda=None, args=_Args())
     assert steps == []
     assert source_root is None
@@ -298,10 +298,10 @@ def test_the_default_is_the_open_source_source_build(monkeypatch, tmp_path):
     """No options: IPOPT from source with MUMPS + SPRAL, cyipopt linked
     against it -- even with conda around, since no prebuilt IPOPT carries
     SPRAL."""
-    monkeypatch.setattr(install, '_can_source_build', lambda: True)
+    monkeypatch.setattr(install, 'can_source_build', lambda: True)
     conda = {'exe': 'conda', 'prefix': '/opt/envs/lcsolver',
              'name': 'lcsolver', 'activated': True}
-    steps, source_root = install._plan_default(
+    steps, source_root = install.plan_default(
         _report(ipopt=None, cyipopt=False), conda=conda,
         args=_Args(ma27_root=str(tmp_path)))
 
@@ -316,8 +316,8 @@ def test_the_default_is_the_open_source_source_build(monkeypatch, tmp_path):
 
 
 def test_no_spral_and_no_mumps_reach_the_script(monkeypatch, tmp_path):
-    monkeypatch.setattr(install, '_can_source_build', lambda: True)
-    steps, _ = install._plan_default(
+    monkeypatch.setattr(install, 'can_source_build', lambda: True)
+    steps, _ = install.plan_default(
         _report(ipopt=None), conda=None,
         args=_Args(ma27_root=str(tmp_path), no_spral=True, no_mumps=True))
     assert '--no-spral' in steps[0].command
@@ -327,7 +327,7 @@ def test_no_spral_and_no_mumps_reach_the_script(monkeypatch, tmp_path):
 def test_prebuilt_uses_conda_and_names_the_environment_it_would_change():
     conda = {'exe': 'conda', 'prefix': '/opt/envs/lcsolver',
              'name': 'lcsolver', 'activated': True}
-    steps, source_root = install._plan_default(
+    steps, source_root = install.plan_default(
         _report(ipopt=None, cyipopt=False), conda=conda,
         args=_Args(prebuilt=True))
 
@@ -346,7 +346,7 @@ def test_add_ma27_targets_the_root_the_executable_came_from(tmp_path):
     sources = tmp_path / 'ma27-1.0.0'
     sources.mkdir()
 
-    steps = install._plan_ma27(str(sources), _Args(ma27_root='/elsewhere'),
+    steps = install.plan_ma27(str(sources), _Args(ma27_root='/elsewhere'),
                                add=True, exe=exe)
     build_step = steps[0]
     assert '--add-ma27' in build_step.command
@@ -369,7 +369,7 @@ def test_an_ma27_executable_makes_cyipopt_link_to_it_not_to_conda(tmp_path):
 
     report = _report(ipopt=exe, cyipopt=False)
     report['ipopt']['ma27'] = True
-    steps, _ = install._plan_default(report, conda=conda, args=_Args())
+    steps, _ = install.plan_default(report, conda=conda, args=_Args())
 
     assert len(steps) == 1
     assert '--no-binary' in steps[0].command          # built, not downloaded
@@ -385,7 +385,7 @@ def test_a_mumps_executable_does_not_trigger_a_relink(tmp_path):
 
     report = _report(ipopt=exe, cyipopt=False)
     report['ipopt']['ma27'] = False
-    steps, _ = install._plan_default(report, conda=conda, args=_Args())
+    steps, _ = install.plan_default(report, conda=conda, args=_Args())
 
     assert len(steps) == 1
     assert steps[0].command[0] == 'conda'
@@ -395,7 +395,7 @@ def test_a_mumps_executable_does_not_trigger_a_relink(tmp_path):
 def test_missing_cvxopt_is_planned_even_though_it_is_a_hard_dependency():
     """It is declared, so this only happens after --no-deps or a manual
     uninstall -- but that is exactly when someone runs this script."""
-    steps, _ = install._plan_default(
+    steps, _ = install.plan_default(
         _report(cvxopt=False, ipopt='/usr/bin/ipopt'), conda=None,
         args=_Args())
     assert any('cvxopt' in step.command for step in steps if step.command)
@@ -406,10 +406,10 @@ def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch)
     with neither pyomo nor cyipopt, and without it every black-box solve dies
     on "Cannot load the PyNumero ASL interface"."""
     exe = _fake_ipopt(str(tmp_path))
-    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: False)
+    monkeypatch.setattr(install, 'pynumero_asl_available', lambda: False)
 
     report = _report(ipopt=exe)          # ipopt and cyipopt both already here
-    steps, _ = install._plan_default(report, conda=None, args=_Args())
+    steps, _ = install.plan_default(report, conda=None, args=_Args())
 
     assert len(steps) == 1
     joined = ' '.join(steps[0].command)
@@ -430,9 +430,9 @@ def test_the_pynumero_asl_library_is_fetched_when_missing(tmp_path, monkeypatch)
 
 def test_the_asl_library_is_not_refetched_when_present(tmp_path, monkeypatch):
     exe = _fake_ipopt(str(tmp_path))
-    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: True)
+    monkeypatch.setattr(install, 'pynumero_asl_available', lambda: True)
 
-    steps, _ = install._plan_default(_report(ipopt=exe), conda=None,
+    steps, _ = install.plan_default(_report(ipopt=exe), conda=None,
                                      args=_Args())
     assert steps == []
 
@@ -440,7 +440,7 @@ def test_the_asl_library_is_not_refetched_when_present(tmp_path, monkeypatch):
 def test_a_missing_asl_library_is_reported_not_silent(monkeypatch):
     """It has to appear in the report too: the error it causes at solve time
     names a component the user has never heard of."""
-    monkeypatch.setattr(environment, '_pynumero_asl_available', lambda: False)
+    monkeypatch.setattr(environment, 'pynumero_asl_available', lambda: False)
     report = environment.check_solvers(probe=False)
 
     if report['cyipopt']['available']:   # nothing to say if cyipopt is absent
@@ -453,7 +453,7 @@ def test_relink_targets_the_build_the_executable_came_from(tmp_path):
     build = tmp_path / 'ipopt' / 'build'
     (build / 'lib' / 'pkgconfig').mkdir(parents=True)
 
-    steps = install._plan_relink(str(build))
+    steps = install.plan_relink(str(build))
     assert len(steps) == 1
     step = steps[0]
     assert '--no-binary' in step.command
@@ -469,7 +469,7 @@ def test_ma27_plan_passes_the_sources_through_without_copying(tmp_path):
     sources.mkdir()
     (sources / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')
 
-    steps = install._plan_ma27(str(sources), _Args(ma27_root=str(tmp_path)))
+    steps = install.plan_ma27(str(sources), _Args(ma27_root=str(tmp_path)))
     build_step = steps[0]
     assert build_step.env['MA27_SRC'] == str(sources)
     assert build_step.command[0] == 'bash'
@@ -489,9 +489,9 @@ def test_ma27_also_gets_the_asl_library(tmp_path, monkeypatch):
     sources = tmp_path / 'ma27-1.0.0'
     sources.mkdir()
     (sources / 'ma27ad.f').write_text('      SUBROUTINE MA27AD\n')
-    monkeypatch.setattr(install, '_pynumero_asl_available', lambda: False)
+    monkeypatch.setattr(install, 'pynumero_asl_available', lambda: False)
 
-    steps = install._plan_ma27(str(sources), _Args(ma27_root=str(tmp_path)))
+    steps = install.plan_ma27(str(sources), _Args(ma27_root=str(tmp_path)))
     assert any('build_pynumero' in ' '.join(s.command)
                for s in steps if s.command)
 
@@ -499,7 +499,7 @@ def test_ma27_also_gets_the_asl_library(tmp_path, monkeypatch):
 def test_the_build_script_ships_inside_the_package():
     """It lives in the package rather than utilities/ so that it survives a
     wheel install, which is the only way --ma27 works for anyone else."""
-    path = install._packaged_script('install_ipopt.sh')
+    path = install.packaged_script('install_ipopt.sh')
     assert os.path.isfile(path)
     text = open(path).read()
     assert 'MA27_SRC' in text

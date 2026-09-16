@@ -42,8 +42,8 @@ def _asl_present():
     global _ASL_PRESENT
     if _ASL_PRESENT is None:
         try:
-            from lcsolver.environment import _pynumero_asl_available
-            _ASL_PRESENT = bool(_pynumero_asl_available())
+            from lcsolver.environment import pynumero_asl_available
+            _ASL_PRESENT = bool(pynumero_asl_available())
         except Exception:
             _ASL_PRESENT = False
     return _ASL_PRESENT

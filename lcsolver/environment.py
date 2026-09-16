@@ -634,7 +634,7 @@ def cyipopt_linear_solver_available(name):
     return probe.get(name)
 
 
-def _pynumero_asl_available():
+def pynumero_asl_available():
     """Is the compiled PyNumero ASL library present and loadable?"""
     try:
         from pyomo.contrib.pynumero.asl import AmplInterface
@@ -744,7 +744,7 @@ def check_solvers(probe=True):
 
         # cyipopt alone is not a working in-process route: PyNumero's ASL
         # library ships separately, and without it every black-box solve fails.
-        report['cyipopt']['pynumero_asl'] = _pynumero_asl_available()
+        report['cyipopt']['pynumero_asl'] = pynumero_asl_available()
         if not report['cyipopt']['pynumero_asl']:
             report['warnings'].append(
                 "cyipopt is installed but Pyomo's PyNumero ASL library is "
