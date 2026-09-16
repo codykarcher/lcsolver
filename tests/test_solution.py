@@ -242,5 +242,36 @@ class TestSensitivityDisplay(unittest.TestCase):
         self.assertIn('a vector', text)           # description from the parent
 
 
+@unittest.skipIf(not available, 'LCsolver import failed')
+class TestNumberFormat(unittest.TestCase):
+    """4 decimals by default, scientific below the last printable one.
+
+    ndecimal=2 printed 0.0035 as '0.00' -- an exact zero at a bound to any
+    reader (it cost a debugging session on the MSES camber run).  The fixed
+    cutoff matches the digits: anything under 10**-ndecimal goes scientific
+    instead of rounding to nothing."""
+
+    def test_small_values_keep_their_digits(self):
+        from lcsolver.objects.solution import _fmt
+        self.assertEqual(_fmt(0.0035, 4), '0.0035')
+
+    def test_below_the_cutoff_goes_scientific(self):
+        from lcsolver.objects.solution import _fmt
+        self.assertEqual(_fmt(0.00005, 4), '5.0000e-05')
+
+    def test_the_cutoff_matches_ndecimal(self):
+        from lcsolver.objects.solution import _fmt
+        self.assertEqual(_fmt(0.0001, 4), '0.0001')      # last printable
+        self.assertIn('e-', _fmt(0.00009, 4))            # first not
+
+    def test_summary_default_is_four_decimals(self):
+        f = _model()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            solver_module.solve(f, diagnostics='off')
+        # S* = 400/12 = 33.3333...; two decimals would print 33.33
+        self.assertIn('33.3333', f.solution.summary())
+
+
 if __name__ == '__main__':
     unittest.main()

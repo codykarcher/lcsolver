@@ -68,7 +68,9 @@ def _fmt(value, ndecimal):
         return 'nan'
     if v.is_integer() and abs(v) < 1e15:
         return str(int(v)) + ' ' * (1 + ndecimal)
-    if v != 0 and (abs(v) >= 10 ** 6 or abs(v) < 10 ** -(ndecimal + 1)):
+    # scientific below the last printable decimal -- 0.0035 at ndecimal=2
+    # used to print as '0.00', which reads as an exact zero at a bound
+    if v != 0 and (abs(v) >= 10 ** 6 or abs(v) < 10 ** -ndecimal):
         return f'%.{ndecimal}e' % v
     return f'%.{ndecimal}f' % v
 
@@ -320,7 +322,7 @@ class Solution:
         # summary, next to the captured messages, not here.
         return lines
 
-    def summary(self, ndecimal=2, sensitivity_tol=1e-8, top=None,
+    def summary(self, ndecimal=4, sensitivity_tol=1e-8, top=None,
                 show_ambiguous=False):
         """The table, as a string.
 
