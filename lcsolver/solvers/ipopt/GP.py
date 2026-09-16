@@ -96,6 +96,8 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
         if linear_solver_library is not None:
             options[linear_solver_library_option(
                 options['linear_solver'])] = str(linear_solver_library)
+        from lcsolver.environment import apply_linear_solver_defaults
+        apply_linear_solver_defaults(options, options['linear_solver'])
 
     groups = _group_rows(rows)
     if 0 not in groups:
@@ -296,9 +298,11 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
     if route == 'cyipopt':
         results = opt.solve(m, tee=tee, options=dict(options or {}))
     else:
+        from lcsolver.environment import ipopt_launch
         for k, v in (options or {}).items():
             opt.options[k] = v
-        results = opt.solve(m, tee=tee)
+        with ipopt_launch((options or {}).get('linear_solver'), executable):
+            results = opt.solve(m, tee=tee)
     summary = _summarize(results)
 
     tc = summary['termination_condition']

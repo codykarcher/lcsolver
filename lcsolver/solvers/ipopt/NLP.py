@@ -129,6 +129,8 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         if linear_solver_library is not None:
             options[linear_solver_library_option(
                 options['linear_solver'])] = str(linear_solver_library)
+        from lcsolver.environment import apply_linear_solver_defaults
+        apply_linear_solver_defaults(options, options['linear_solver'])
 
     # Ask for constraint duals: free, and what postsolve.sensitivity uses;
     # without the Suffix they'd have to be reconstructed from the primal.
@@ -150,7 +152,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         # ValueError inside solutions.load_from on any bad status, before the
         # clean "IPOPT did not converge" diagnosis below can run. Solve without
         # loading, check the termination condition, then load explicitly.
-        results = opt.solve(m, tee=tee, load_solutions=False)
+        from lcsolver.environment import ipopt_launch
+        with ipopt_launch(options.get('linear_solver'), executable):
+            results = opt.solve(m, tee=tee, load_solutions=False)
     else:
         opt = pyo.SolverFactory('cyipopt')
         # cyipopt importable is not enough: PyNumero needs a compiled ASL

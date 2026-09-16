@@ -1018,6 +1018,9 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
             _opts.ipopt_options.setdefault(
                 linear_solver_library_option(linear_solver),
                 str(linear_solver_library))
+        from lcsolver.environment import apply_linear_solver_defaults
+        apply_linear_solver_defaults(_opts.ipopt_options,
+                                     _opts.ipopt_options['linear_solver'])
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',

@@ -1311,6 +1311,26 @@ def _subproblem(problem, x_k, tau, radius, options, has_blackbox,
                               use_slacks, obj if not minimize_violation else None)
 
 
+def _launch_subproblem(opt, m, options):
+    """One sub-problem launch. A crashed executable (SPRAL dies on the
+    regularized re-factorization after a singular KKT system -- the D8
+    crash sentinel) is retried once under MA27 when the build has it; the
+    [LC-W313] warning names the event either way."""
+    from lcsolver.environment import (IpoptCrashed, crash_fallback_solver,
+                                      ipopt_launch)
+    ls = (options.ipopt_options or {}).get('linear_solver')
+    try:
+        with ipopt_launch(ls, recoverable=True):
+            return opt.solve(m, tee=options.tee, load_solutions=False)
+    except IpoptCrashed:
+        fallback = crash_fallback_solver(ls)
+        if fallback is None:
+            raise
+        opt.options['linear_solver'] = fallback
+        with ipopt_launch(fallback):
+            return opt.solve(m, tee=options.tee, load_solutions=False)
+
+
 def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
                        obj):
     """Solve an assembled sub-problem and read off the step and multipliers.
@@ -1329,7 +1349,7 @@ def _solve_and_extract(m, problem, options, minimize_violation, use_slacks,
             "was found. Run `lcsolver-install-solvers`; see docs/ipopt.rst.")
     for k, v in (options.ipopt_options or {}).items():
         opt.options[k] = v
-    results = opt.solve(m, tee=options.tee, load_solutions=False)
+    results = _launch_subproblem(opt, m, options)
     tc = str(results.solver.termination_condition)
     if tc not in ("optimal", "locallyOptimal", "feasible"):
         from lcsolver.environment import linear_solver_failure_note

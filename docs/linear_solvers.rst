@@ -76,8 +76,11 @@ All runs: Ipopt 3.14.20, one triple-solver source build (MA27 + MUMPS 5.9.1
   blunting it.
 * **SPaircraft D8.2 full deck** (York et al., AIAA J.; 1172 variables,
   SIA): MA27 certifies at 179 iterations / 35 s / 21,384.0 lbf; **SPRAL
-  certifies the same optimum at 149 iterations / 103 s**; MUMPS stops
-  uncertified at iteration 2, 17 % above the answer.
+  certifies the same optimum** (179 iterations / 86 s with LCsolver's
+  MC64-scaling default; 149 / 103 s on IPOPT's stock SPRAL settings, with
+  two sub-problems crashing the executable along the way -- see the crash
+  sentinel below); MUMPS stops uncertified at iteration 2, 17 % above the
+  answer.
 * **737-800 / TASOPT deck** (lcjetliner, 1298 variables, SIA): MA27
   39 iterations / 110 s; MUMPS 39 / 122 s; SPRAL 23 iterations / 157 s.
   All three certify.
@@ -175,7 +178,52 @@ vtables of dependency-detector classes IPOPT declares but does not
 compile (Ma28), and the link fails on a symbol nothing actually uses.
 At runtime SPRAL needs ``OMP_CANCELLATION=TRUE`` and
 ``OMP_PROC_BIND=TRUE``; LCsolver sets both automatically whenever
-``linear_solver='spral'`` is requested.
+``linear_solver='spral'`` is requested (without them SPRAL aborts its
+first factorization, surfacing as ``internalSolverError``).
+
+The SPRAL crash sentinel
+------------------------
+
+The bookend to the MUMPS sentinel: ``examples/data/d8_spral_crash.nl`` is
+a D8 SIA sub-problem on which SPRAL v2023.03.29 **kills the ipopt
+executable** (SIGBUS or SIGSEGV, return code -10/-11 through pyomo) at
+IPOPT's tolerances. The mechanism, from IPOPT's own log: SPRAL's
+factorization comes back "Singular system, estimated rank 1491 of 1709",
+IPOPT adds its regularization (``delta_c = 5.6e-9``) and re-factorizes,
+and SPRAL dies inside that second factorization. MA27 and MUMPS solve the
+identical file (MA27 in 33 iterations). Deterministic, single-threaded,
+independent of the OpenMP binding and thread stack size; the trigger is
+``constr_viol_tol=1e-12`` (IPOPT's stock 1e-4 never reaches the
+degenerate iterate). Two of the D8's 229 SIA sub-problems hit it under
+IPOPT's stock SPRAL settings; the run still certified because both fell
+in Phase-I restoration solves, whose failures SIA absorbs.
+
+Hunting a SPRAL failure deliberately had found nothing first: the
+ill-conditioned GP family to 44 orders of magnitude and the Hoburg GP
+with every inequality duplicated 64 times (rank-deficient by
+construction) all solve identically under SPRAL and MA27. The crash
+needed a real deck's degenerate interior-point iterate.
+
+Measured on the full deck (358 sub-problems each):
+
+==========================  ========  ==========  =============
+SPRAL option                crashes   certified   wall time
+==========================  ========  ==========  =============
+stock (matching scaling)    2         yes         103 s
+``spral_small=1e-12``       2 (moved) yes         111 s
+``spral_u=0.5``             crashed at sub-problem 30
+``spral_scaling=mc64``      **0**     yes         **86 s**
+==========================  ========  ==========  =============
+
+So LCsolver sets ``spral_scaling=mc64`` whenever SPRAL is selected (an
+explicit user setting wins; ``lcsolver.environment.
+LINEAR_SOLVER_DEFAULT_OPTIONS``). And because a dead executable is a
+class of failure, not one file, every IPOPT launch now runs inside
+``ipopt_launch``: pyomo's raw ERROR log lines are captured instead of
+printed, the failure becomes ``IpoptCrashed`` naming the signal and the
+linear solver, the SIA/SLCP sub-problem loops retry that one sub-problem
+under MA27 when the build has it (else shrink and carry on), and the
+event is filed as ``[LC-W313]`` in the post-solve report.
 
 Remaining avenues
 -----------------

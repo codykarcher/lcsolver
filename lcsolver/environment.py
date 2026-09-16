@@ -356,6 +356,118 @@ def require_linear_solver(name, route='pyomo', executable=None,
     return key
 
 
+# IPOPT options LCsolver sets whenever a linear solver is selected, unless
+# the caller set them. SPRAL's stock settings (IPOPT mirrors MA97's:
+# u=1e-8, matching-based scaling) let it declare the D8's KKT systems
+# singular and then die on the regularized re-factorization -- the bundled
+# crash sentinel examples/data/d8_spral_crash.nl. MC64 scaling is the one
+# setting that cleared the whole deck (358 sub-problems, 0 crashes, and
+# faster: 86 s vs 103 s); spral_small and spral_u only moved the crashes.
+# Measured 2026-09-15, docs/linear_solvers.rst.
+LINEAR_SOLVER_DEFAULT_OPTIONS = {
+    'spral': {'spral_scaling': 'mc64'},
+}
+
+
+def linear_solver_default_options(name):
+    """LCsolver's option overrides for ``name`` (a fresh dict; {} for a
+    solver with none)."""
+    return dict(LINEAR_SOLVER_DEFAULT_OPTIONS.get(
+        str(name or '').strip().lower(), {}))
+
+
+def apply_linear_solver_defaults(options, name):
+    """setdefault linear_solver_default_options(name) into ``options`` (an
+    IPOPT option mapping) and return it; an explicit user setting wins."""
+    for k, v in linear_solver_default_options(name).items():
+        options.setdefault(k, v)
+    return options
+
+
+class IpoptCrashed(RuntimeError):
+    """The ipopt executable died -- a signal (SIGBUS, SIGSEGV) or a non-zero
+    exit, not an IPOPT status. A RuntimeError on purpose: the sequential
+    solvers already treat one as a failed sub-problem (shrink, restore,
+    retry) instead of aborting the whole solve."""
+
+
+@contextlib.contextmanager
+def ipopt_launch(linear_solver=None, executable=None, recoverable=False):
+    """Run ONE pyomo ipopt solve inside this block.
+
+    pyomo reports a dead executable as raw ERROR log lines (the return code
+    and the whole solver log) plus a bare ApplicationError. Here the log is
+    captured instead of printed and the failure comes back as IpoptCrashed
+    naming the signal, the linear solver, and the MA27 note. recoverable=
+    True (the SIA/SLCP sub-problem loops, which carry on from a failed
+    sub-problem) also files an [LC-W313] warning so the event shows in the
+    post-solve report instead of scrolling past. Anything pyomo logged on
+    a solve that did NOT crash is re-emitted untouched.
+    """
+    import re
+    import signal
+    import warnings
+
+    from pyomo.common.errors import ApplicationError
+
+    log = logging.getLogger('pyomo.opt')
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    propagate = log.propagate
+    log.addHandler(handler)
+    log.propagate = False
+    try:
+        yield
+    except ApplicationError as exc:
+        rc = None
+        for r in records:
+            hit = re.search(r'non-zero return code \((-?\d+)\)',
+                            r.getMessage())
+            if hit:
+                rc = int(hit.group(1))
+        if rc is not None and rc < 0:
+            try:
+                how = f'{signal.Signals(-rc).name} (signal {-rc})'
+            except ValueError:
+                how = f'signal {-rc}'
+        elif rc is not None:
+            how = f'exit code {rc}'
+        else:
+            how = 'no exit status'
+        msg = ('the ipopt executable crashed with %s%s.%s'
+               % (how,
+                  f' under linear_solver={linear_solver!r}'
+                  if linear_solver else '',
+                  linear_solver_failure_note(linear_solver, executable)))
+        if recoverable:
+            warnings.warn(
+                '[LC-W313] %s Treated as a failed sub-problem: the loop '
+                'retries under MA27 where the build has it, otherwise '
+                'shrinks its step and carries on.' % msg, stacklevel=3)
+        raise IpoptCrashed(msg) from exc
+    else:
+        log.removeHandler(handler)
+        log.propagate = propagate
+        for r in records:
+            log.handle(r)
+    finally:
+        if handler in log.handlers:
+            log.removeHandler(handler)
+        log.propagate = propagate
+
+
+def crash_fallback_solver(linear_solver, executable=None):
+    """The linear solver to retry a crashed sub-problem under: MA27 when the
+    build has it and it was not already in use, else None."""
+    if str(linear_solver or 'ma27').lower() == 'ma27':
+        return None
+    try:
+        return 'ma27' if linear_solver_available('ma27', executable) else None
+    except Exception:
+        return None
+
+
 def linear_solver_failure_note(linear_solver, executable=None):
     """Advisory to append when a solve FAILS under a non-MA27 linear solver.
 

@@ -29,6 +29,15 @@
 # The whole aircraft solve fails or succeeds on this one factorization
 # choice, which is why the switch exists and why LCsolver's install
 # tooling builds IPOPT with MA27.
+#
+# Part 3 is the bookend: another D8 sub-problem (data/d8_spral_crash.nl)
+# on which SPRAL, at IPOPT's stock SPRAL settings, KILLS the ipopt
+# executable (SIGBUS/SIGSEGV) -- it declares the KKT system singular, and
+# dies on the regularized re-factorization IPOPT asks for next. MA27 and
+# MUMPS solve it. LCsolver's own SPRAL default (spral_scaling=mc64)
+# cleared every sub-problem on the deck, and every launch runs inside
+# ipopt_launch, which turns a dead executable into a named, recoverable
+# failure instead of a raw pyomo error (docs/linear_solvers.rst).
 
 # =================
 # Import Statements
@@ -39,10 +48,13 @@ import pyomo.environ as pyo
 
 import lcsolver
 from lcsolver import Formulation, units
-from lcsolver.environment import ipopt_executable, linear_solver_available
+from lcsolver.environment import (IpoptCrashed, ipopt_executable, ipopt_launch,
+                                  linear_solver_available,
+                                  linear_solver_default_options)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUBPROBLEM_NL = os.path.join(HERE, 'data', 'd8_sia_subproblem.nl')
+CRASH_NL = os.path.join(HERE, 'data', 'd8_spral_crash.nl')
 
 # The exact IPOPT options the SIA loop was running with when the sub-problem
 # was captured. At looser tolerances MUMPS gets away with it; at the loop's
@@ -101,12 +113,49 @@ def part2_the_disagreement():
         print(f'  {name:<6}: termination_condition={tc}  ->  {verdict}')
 
 
+def part3_the_crash():
+    """Replay the SPRAL crash: stock SPRAL settings, then LCsolver's."""
+    print()
+    print('=' * 70)
+    print('Part 3: the SPaircraft D8 sub-problem that crashes SPRAL')
+    print('=' * 70)
+
+    exe = ipopt_executable()
+
+    def run(name, extra):
+        opt = pyo.SolverFactory('ipopt', executable=exe)
+        for k, v in {**SIA_TOLERANCES, 'linear_solver': name,
+                     **extra}.items():
+            opt.options[k] = v
+        # ipopt_launch is what lcsolver.solve wraps every launch in: a dead
+        # executable comes back as IpoptCrashed naming the signal
+        try:
+            with ipopt_launch(name, exe):
+                results = opt.solve(CRASH_NL, tee=False, load_solutions=False)
+        except IpoptCrashed as exc:
+            return 'CRASHED: ' + str(exc).split('.')[0]
+        return str(results.solver.termination_condition)
+
+    for name in ('ma27', 'mumps'):
+        if not linear_solver_available(name, exe):
+            print(f'  {name:<6}: not in this IPOPT build, skipped')
+            continue
+        print(f'  {name:<6}: {run(name, {})}')
+    if not linear_solver_available('spral', exe):
+        print('  spral : not in this IPOPT build, skipped')
+        return
+    print(f"  spral , IPOPT's stock settings : {run('spral', {})}")
+    print(f"  spral , LCsolver's defaults    : "
+          f"{run('spral', linear_solver_default_options('spral'))}")
+
+
 # Run as a script AND when executed by the test suite: the parts print
 # their comparison, and the module leaves behind a solved Formulation `f`
 # like every other example (the integration suite re-builds and re-solves
 # it to check the presolve is behavior-preserving).
 part1_the_switch()
 part2_the_disagreement()
+part3_the_crash()
 
 f = build()
 sol = lcsolver.solve(f)
