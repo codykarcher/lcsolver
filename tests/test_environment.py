@@ -265,7 +265,11 @@ class _Args:
         self.skip_cyipopt = False
         self.skip_cvxopt = False
         self.ma27 = None
+        self.add_ma27 = None
         self.ma27_root = '~/software'
+        self.prebuilt = False
+        self.no_spral = False
+        self.no_mumps = False
         self.__dict__.update(kwargs)
 
 
@@ -290,17 +294,67 @@ def test_a_complete_install_plans_nothing(tmp_path):
     assert source_root is None
 
 
-def test_conda_is_preferred_and_names_the_environment_it_would_change():
+def test_the_default_is_the_open_source_source_build(monkeypatch, tmp_path):
+    """No options: IPOPT from source with MUMPS + SPRAL, cyipopt linked
+    against it -- even with conda around, since no prebuilt IPOPT carries
+    SPRAL."""
+    monkeypatch.setattr(install, '_can_source_build', lambda: True)
     conda = {'exe': 'conda', 'prefix': '/opt/envs/lcsolver',
              'name': 'lcsolver', 'activated': True}
     steps, source_root = install._plan_default(
-        _report(ipopt=None, cyipopt=False), conda=conda, args=_Args())
+        _report(ipopt=None, cyipopt=False), conda=conda,
+        args=_Args(ma27_root=str(tmp_path)))
+
+    build_step, relink = steps[0], steps[1]
+    assert build_step.command[0] == 'bash'
+    assert build_step.command[1].endswith('install_ipopt.sh')
+    assert '--with-ma27' not in build_step.command      # MA27 is opt-in
+    assert '--no-spral' not in build_step.command
+    assert 'MUMPS + SPRAL' in build_step.description
+    assert '--no-binary' in relink.command               # cyipopt against it
+    assert source_root == str(tmp_path)
+
+
+def test_no_spral_and_no_mumps_reach_the_script(monkeypatch, tmp_path):
+    monkeypatch.setattr(install, '_can_source_build', lambda: True)
+    steps, _ = install._plan_default(
+        _report(ipopt=None), conda=None,
+        args=_Args(ma27_root=str(tmp_path), no_spral=True, no_mumps=True))
+    assert '--no-spral' in steps[0].command
+    assert '--no-mumps' in steps[0].command
+
+
+def test_prebuilt_uses_conda_and_names_the_environment_it_would_change():
+    conda = {'exe': 'conda', 'prefix': '/opt/envs/lcsolver',
+             'name': 'lcsolver', 'activated': True}
+    steps, source_root = install._plan_default(
+        _report(ipopt=None, cyipopt=False), conda=conda,
+        args=_Args(prebuilt=True))
 
     assert len(steps) == 1
     assert 'ipopt' in steps[0].command and 'cyipopt' in steps[0].command
     # The prefix has to be visible before the user approves anything.
     assert '/opt/envs/lcsolver' in steps[0].description
     assert source_root is None
+
+
+def test_add_ma27_targets_the_root_the_executable_came_from(tmp_path):
+    root = tmp_path / 'somewhere'
+    build = root / 'ipopt' / 'build'
+    (build / 'bin').mkdir(parents=True)
+    exe = _fake_ipopt(str(build / 'bin'))
+    sources = tmp_path / 'ma27-1.0.0'
+    sources.mkdir()
+
+    steps = install._plan_ma27(str(sources), _Args(ma27_root='/elsewhere'),
+                               add=True, exe=exe)
+    build_step = steps[0]
+    assert '--add-ma27' in build_step.command
+    assert str(sources) in build_step.command
+    assert build_step.command[2] == str(root)            # not /elsewhere
+    assert 'add MA27' in build_step.description
+    # and cyipopt is relinked so the in-process route gains MA27 too
+    assert any('cyipopt' in step.command for step in steps[1:] if step.command)
 
 
 def test_an_ma27_executable_makes_cyipopt_link_to_it_not_to_conda(tmp_path):
@@ -420,6 +474,8 @@ def test_ma27_plan_passes_the_sources_through_without_copying(tmp_path):
     assert build_step.env['MA27_SRC'] == str(sources)
     assert build_step.command[0] == 'bash'
     assert build_step.command[1].endswith('install_ipopt.sh')
+    assert '--with-ma27' in build_step.command
+    assert 'MUMPS + SPRAL + MA27' in build_step.description
     # and the relink follows, or black-box models stay on the old library
     assert any('cyipopt' in step.command for step in steps[1:] if step.command)
 

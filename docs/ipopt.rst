@@ -68,8 +68,8 @@ The quick way, and what it costs you
 
 ::
 
-    lcsolver-install-solvers        # conda-forge if available, else brew/apt,
-                                    # else a source build
+    lcsolver-install-solvers        # builds IPOPT with MUMPS + SPRAL from
+                                    # source; --prebuilt for conda/brew/apt
 
 or, from a clone::
 
@@ -77,8 +77,11 @@ or, from a clone::
     conda activate lcsolver
     pip install -e .
 
-Either gives you a working IPOPT in a minute or two, and it is the right first
-move. Be aware of what it ships with.
+The source build takes a while (it compiles IPOPT and two linear solvers)
+and is the right first move: it is the only way to get SPRAL, the
+open-source linear solver that holds up on real decks (see
+``docs/linear_solvers.rst``). ``--prebuilt`` gives you a working IPOPT in a
+minute or two instead. Be aware of what a prebuilt one ships with.
 
 IPOPT does not factorize anything itself. Every interior-point iteration solves
 a symmetric indefinite KKT system, and that work is handed to a third-party
@@ -86,9 +89,11 @@ sparse linear solver. Which one you have is the single largest determinant of
 how IPOPT behaves on a hard problem, and it is fixed at **build** time --- you
 cannot pip-install a different one afterwards.
 
-Prebuilt IPOPT binaries ship with **MUMPS**, because MUMPS is the only capable
-option whose licence permits redistribution. Every conda-forge, apt and
-Homebrew IPOPT you will encounter is a MUMPS build.
+Prebuilt IPOPT binaries ship with **MUMPS** (historically) or, since the
+CoinHSL licensing change reached the packagers, an MA27-only build --
+never SPRAL. LCsolver's own source build carries MUMPS and SPRAL, plus MA27
+when you have it, all switchable per solve; the rest of this page is about
+why the choice matters.
 
 
 MUMPS is not the one you want
@@ -117,14 +122,22 @@ the SLCP and SIA loops --- this is the common failure mode, and it presents as
 IPOPT's own default value for the ``linear_solver`` option is ``ma27``, not
 ``mumps``. That is the authors' recommendation stated in the source.
 
+Measured on LCsolver's decks: MUMPS falsely declares a feasible SPaircraft
+D8 sub-problem infeasible and the whole run stops 17 % above the answer
+(``examples/data/d8_sia_subproblem.nl``). **SPRAL** -- BSD-licensed,
+MA97-class, the open-source solver LCsolver builds by default -- certifies
+the same optima MA27 does, which is why it is the default when MA27 is
+absent. Told nothing, ``solve()`` picks MA27, else SPRAL, else MUMPS.
 
-Use MA27
---------
+
+Use MA27 (when you can)
+-----------------------
 
 MA27 is part of `HSL <https://www.hsl.rl.ac.uk/>`_, a Fortran library from the
 STFC Rutherford Appleton Laboratory. It is **free for academic use** but cannot
 be redistributed, which is precisely why no prebuilt IPOPT contains it and why
-you have to build IPOPT yourself to get it.
+LCsolver's installer takes it as an option (``--ma27`` at build time,
+``--add-ma27`` afterwards) rather than a default.
 
 It is a serial, symmetric-indefinite multifrontal code from the 1980s that has
 been the reference linear solver for interior-point methods ever since. It is

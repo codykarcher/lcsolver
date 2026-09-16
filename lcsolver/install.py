@@ -11,12 +11,15 @@ is sdist-only, so it compiles against an IPOPT already on the machine. IPOPT
 has to come from a package manager (conda-forge, apt, Homebrew) or source.
 Python rather than shell so it behaves the same on Windows.
 
-Default install is a MUMPS build (the only redistributable linear solver).
-MA27 -- what you actually want under a GP/SP, see docs/ipopt.rst -- is free
-for academic use but cannot be redistributed, so:
-  ``--ma27 <path>``       build IPOPT against MA27 sources, relink cyipopt
-  ``--relink-cyipopt``    just the cyipopt half, against an existing MA27 build
-Both run the shipped install_ipopt.sh.
+Default install builds IPOPT from source with the open-source linear
+solvers, MUMPS and SPRAL (SPRAL is then the default; it certifies
+everything MA27 does -- docs/linear_solvers.rst), and cyipopt against it.
+MA27 is faster, free for academic use, and not redistributable, so:
+  ``--ma27 <path>``       include MA27 in the initial build
+  ``--add-ma27 <path>``   add MA27 to a build made earlier without it
+  ``--relink-cyipopt``    just the cyipopt half, against the existing build
+  ``--prebuilt``          a conda/Homebrew/apt IPOPT instead of a source build
+All source builds run the shipped install_ipopt.sh.
 
 Nothing here modifies an environment without printing the plan and asking.
 """
@@ -165,8 +168,52 @@ def _confirm(prompt, assume_yes):
 # --------------------------------------------------------------------------
 # plan construction
 # --------------------------------------------------------------------------
+def _is_source_build(exe):
+    """An IPOPT this script built (or one laid out like it): its prefix
+    carries the pkgconfig cyipopt links against."""
+    return os.path.isfile(os.path.join(_ipopt_build_prefix(exe), 'lib',
+                                       'pkgconfig', 'ipopt.pc'))
+
+
+def _can_source_build():
+    """bash, git and a Fortran compiler: what install_ipopt.sh needs before
+    it can even start (SPRAL's extra needs it checks and reports itself)."""
+    if sys.platform.startswith('win'):
+        return False
+    have_fc = any(shutil.which(f'gfortran{s}')
+                  for s in ('', '-16', '-15', '-14', '-13', '-12', '-11'))
+    return bool(shutil.which('bash') and shutil.which('git') and have_fc)
+
+
+def _plan_source_build_step(root, args, ma27=None, add=False):
+    """The install_ipopt.sh step: MUMPS + SPRAL by default, MA27 included
+    (``--with-ma27``) or added to an existing root (``--add-ma27``)."""
+    cmd = ['bash', _packaged_script('install_ipopt.sh'), root]
+    if ma27:
+        cmd += ['--add-ma27' if add else '--with-ma27', ma27]
+    if getattr(args, 'no_spral', False):
+        cmd.append('--no-spral')
+    if getattr(args, 'no_mumps', False):
+        cmd.append('--no-mumps')
+    if add:
+        what = f'add MA27 (from {ma27}) to the IPOPT under {root}/ipopt'
+    else:
+        solvers = ' + '.join(s for s, on in (
+            ('MUMPS', not getattr(args, 'no_mumps', False)),
+            ('SPRAL', not getattr(args, 'no_spral', False)),
+            ('MA27', bool(ma27))) if on)
+        what = (f'build IPOPT with {solvers} from source into {root}/ipopt\n'
+                f'      (clones IPOPT and the solvers, then compiles; needs '
+                f'gfortran -- and for SPRAL a GCC toolchain, metis and '
+                f'hwloc, else it is skipped with a note; takes a while)')
+    # MA27_SRC alongside the flag: older callers of the script read the env
+    return Step(what, command=cmd, env={'MA27_SRC': ma27} if ma27 else None)
+
+
 def _plan_default(report, conda, args):
-    """Steps for the plain install: cvxopt, IPOPT+MUMPS, cyipopt.
+    """Steps for the plain install: cvxopt, IPOPT (MUMPS + SPRAL from
+    source), cyipopt against it. ``--prebuilt`` takes a conda/Homebrew/apt
+    IPOPT instead -- MA27-only or MUMPS-only, never SPRAL.
 
     Returns ``(steps, source_build_root)``; the root is set only when IPOPT
     is built from source, so the caller can print the exports (a source build
@@ -194,14 +241,25 @@ def _plan_default(report, conda, args):
     want_ipopt = not have_ipopt and not args.skip_ipopt
     want_cyipopt = not have_cyipopt and not args.skip_cyipopt
 
-    # MA27 executable already here, cyipopt missing: build cyipopt against
-    # THAT IPOPT. `conda install cyipopt` would link conda's MUMPS one, so
-    # black-box models would quietly run MUMPS while everything else ran MA27.
-    if want_cyipopt and have_ipopt and report['ipopt'].get('ma27') is True:
+    # A build of ours (or any MA27 build) already here, cyipopt missing:
+    # build cyipopt against THAT IPOPT. `conda install cyipopt` would link
+    # conda's own IPOPT, so black-box models would quietly run a different
+    # linear solver from everything else.
+    if want_cyipopt and have_ipopt and (report['ipopt'].get('ma27') is True
+                                        or _is_source_build(exe)):
         steps.extend(_plan_relink(_ipopt_build_prefix(exe)))
         want_cyipopt = False
 
     if not (want_ipopt or want_cyipopt):
+        return finish(steps), source_root
+
+    # The default: the open-source multi-solver build from source. Prebuilt
+    # IPOPTs are MA27-only or MUMPS-only and never carry SPRAL.
+    if want_ipopt and not getattr(args, 'prebuilt', False) and _can_source_build():
+        source_root = _ma27_build_root(args)
+        steps.append(_plan_source_build_step(source_root, args))
+        if want_cyipopt:
+            steps.extend(_plan_relink(os.path.join(source_root, 'ipopt', 'build')))
         return finish(steps), source_root
 
     if conda:
@@ -238,17 +296,10 @@ def _plan_default(report, conda, args):
                 'and re-run.',
                 action=lambda: 0))
         else:
-            # last resort: MUMPS is redistributable, so unlike MA27 this
-            # needs no manual download and can run unattended
+            # last resort: the source build anyway (the toolchain check
+            # above said no, so the script will name what is missing)
             source_root = _ma27_build_root(args)
-            steps.append(Step(
-                f'build IPOPT against MUMPS from source into '
-                f'{source_root}/ipopt\n'
-                f'      (no conda or Homebrew here to install a prebuilt one; '
-                f'needs gfortran, and takes a while)',
-                command=['bash', _packaged_script('install_ipopt.sh'),
-                         source_root],
-                env={'IPOPT_BUILD_MUMPS': '1'}))
+            steps.append(_plan_source_build_step(source_root, args))
 
     if want_cyipopt:
         if source_root:
@@ -297,36 +348,37 @@ def _plan_pynumero_asl():
 
 
 def _ma27_build_root(args):
-    return os.path.abspath(os.path.expanduser(args.ma27_root))
+    """The source-build root (``--root``; ``--ma27-root`` is its old name)."""
+    root = getattr(args, 'root', None) or args.ma27_root
+    return os.path.abspath(os.path.expanduser(root))
 
 
-def _plan_ma27(sources, args):
-    """Steps to build IPOPT against MA27 and point cyipopt at it. Delegates
-    the build to the shipped install_ipopt.sh."""
+def _plan_ma27(sources, args, add=False, exe=None):
+    """Steps for a source build carrying MA27 -- the full MUMPS + SPRAL +
+    MA27 build, or (``add``) MA27 bolted onto the root an existing
+    executable came from -- with cyipopt relinked against it."""
     if sys.platform.startswith('win'):
         raise RuntimeError(
-            'building IPOPT against MA27 needs bash and autotools, which this '
-            'script cannot drive on Windows. Build under WSL, or stay on the '
-            'conda-forge MUMPS build.')
+            'building IPOPT from source needs bash and autotools, which this '
+            'script cannot drive on Windows. Build under WSL, or use '
+            '--prebuilt.')
 
     root = _ma27_build_root(args)
-    script = _packaged_script('install_ipopt.sh')
+    if add and exe and os.path.isfile(exe):
+        # <root>/ipopt/build/bin/ipopt -> <root>, when it is one of ours
+        prefix = _ipopt_build_prefix(exe)
+        if (os.path.basename(prefix) == 'build'
+                and os.path.basename(os.path.dirname(prefix)) == 'ipopt'):
+            root = os.path.dirname(os.path.dirname(prefix))
     build = os.path.join(root, 'ipopt', 'build')
 
-    steps = [Step(
-        f'build IPOPT against MA27 from {sources}\n'
-        f'      (into {root}/ipopt -- clones IPOPT, ASL and HSL, then compiles; '
-        f'this takes a while)',
-        command=['bash', script, root],
-        # MA27_SRC lets the script take sources from wherever the user put
-        # them, without changing its one-argument form
-        env={'MA27_SRC': sources})]
+    steps = [_plan_source_build_step(root, args, ma27=sources, add=add)]
 
     if not args.skip_cyipopt:
         steps.extend(_plan_relink(build))
-        # --ma27 is a complete install in its own right and skips the default
-        # planner -- without this the documented quickstart built everything
-        # and still couldn't evaluate a black box
+        # a complete install in its own right, skipping the default planner
+        # -- without this the documented quickstart built everything and
+        # still couldn't evaluate a black box
         if not _pynumero_asl_available():
             steps.append(_plan_pynumero_asl())
 
@@ -364,24 +416,31 @@ def _plan_relink(build):
 # --------------------------------------------------------------------------
 # after the fact
 # --------------------------------------------------------------------------
-def _finish_source_build(root, linear_solver='MA27'):
-    """Record the build and say what, if anything, is left to do. LCsolver
-    records the build and prefers it, so no shell-profile export is needed."""
+def _finish_source_build(root, linear_solver=None):
+    """Record the build and say what it carries. LCsolver records the build
+    and prefers it, so no shell-profile export is needed."""
     build = os.path.join(root, 'ipopt', 'build')
     exe = os.path.join(build, 'bin', 'ipopt')
 
     print('\n' + '-' * 74)
-    print(f'IPOPT with {linear_solver} is built: {exe}')
-
     if not os.path.isfile(exe):
-        print('\nwarning: the build finished but no binary is at that path.')
+        print(f'warning: the build finished but no binary is at {exe}.')
         return
+
+    from lcsolver import environment
+    environment._PROBE_CACHE.clear()
+    have = [s for s in ('ma27', 'mumps', 'spral')
+            if linear_solver_available(s, exe)]
+    default = environment.default_linear_solver('pyomo', exe)
+    print(f'IPOPT is built: {exe}')
+    print(f'linear solvers: {", ".join(have) or "none detected"}'
+          f'{f"  (default: {default})" if default else ""}')
 
     try:
         state = record_ipopt(exe)
         print(f'\nRecorded in {state}. LCsolver will use this build from any '
-              f'environment,\nwithout a PATH change -- it prefers an MA27 '
-              f'build over a prebuilt MUMPS one\neven when conda puts conda\'s '
+              f'environment,\nwithout a PATH change -- it prefers a build '
+              f'carrying more linear solvers\neven when conda puts conda\'s '
               f'first.')
     except Exception as exc:
         # Not fatal: the pin still works, it is just manual again.
@@ -403,17 +462,32 @@ def main(argv=None):
         prog='lcsolver-install-solvers',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Install the LCsolver solver stack: cvxopt, IPOPT, cyipopt.',
-        epilog='With no options: installs cvxopt and a MUMPS build of IPOPT '
-               'plus cyipopt, and reports MA27 as the available upgrade.')
+        epilog='With no options: installs cvxopt, builds IPOPT from source '
+               'with MUMPS + SPRAL (SPRAL is then the default linear solver), '
+               'and builds cyipopt against it. MA27 -- faster, free for '
+               'academic use, not redistributable -- can be included '
+               '(--ma27) or added later (--add-ma27).')
     parser.add_argument('--ma27', metavar='PATH', default=None,
-                        help='build IPOPT against the MA27 sources at PATH '
-                             '(free for academic use; download from '
+                        help='include MA27 (sources at PATH) in the build '
+                             '(download from '
                              'https://www.hsl.rl.ac.uk/download/MA27/1.0.0/)')
-    parser.add_argument('--ma27-root', metavar='DIR', default='~/software',
-                        help='where to build IPOPT+MA27 (default: ~/software)')
+    parser.add_argument('--add-ma27', metavar='PATH', default=None,
+                        help='add MA27 (sources at PATH) to the source build '
+                             'already here, and relink cyipopt')
+    parser.add_argument('--root', '--ma27-root', dest='ma27_root',
+                        metavar='DIR', default='~/software',
+                        help='where the source build lives (default: '
+                             '~/software, i.e. ~/software/ipopt)')
+    parser.add_argument('--prebuilt', action='store_true',
+                        help='take a conda/Homebrew/apt IPOPT instead of the '
+                             'source build (MA27-only or MUMPS-only; no SPRAL)')
+    parser.add_argument('--no-spral', action='store_true',
+                        help='leave SPRAL out of the source build')
+    parser.add_argument('--no-mumps', action='store_true',
+                        help='leave MUMPS out of the source build')
     parser.add_argument('--relink-cyipopt', action='store_true',
-                        help='rebuild cyipopt against an existing MA27 build '
-                             'of IPOPT, and do nothing else')
+                        help='rebuild cyipopt against the existing IPOPT '
+                             'build, and do nothing else')
     parser.add_argument('--skip-ipopt', action='store_true',
                         help='do not touch IPOPT')
     parser.add_argument('--skip-cyipopt', action='store_true',
@@ -452,46 +526,47 @@ def main(argv=None):
                 print('error: no ipopt executable to link against.', file=sys.stderr)
                 return 1
             build = _ipopt_build_prefix(exe)
-            if not linear_solver_available('ma27', exe):
-                print(f'error: {exe} does not have MA27, so relinking cyipopt '
-                      f'against it would gain nothing. Build one first with '
-                      f'--ma27 <path>.', file=sys.stderr)
-                return 1
             steps = _plan_relink(build)
             built_root = built_solver = None
-        elif args.ma27:
-            sources = os.path.abspath(os.path.expanduser(args.ma27))
+        elif args.ma27 or args.add_ma27:
+            add = not args.ma27
+            sources = os.path.abspath(os.path.expanduser(args.ma27
+                                                         or args.add_ma27))
             if not _looks_like_ma27(sources):
                 print(f'error: no MA27 Fortran sources found at {sources}. '
                       f'Expected the extracted archive, containing ma27*.f '
                       f'either at the top level or under src/.', file=sys.stderr)
                 return 1
-            steps = _plan_ma27(sources, args)
+            exe = report['ipopt']['executable']
+            if add and not (exe and _is_source_build(exe)):
+                print('error: --add-ma27 needs a source build to add to, and '
+                      'the IPOPT in use is not one. Run '
+                      'lcsolver-install-solvers first (or --ma27 to build '
+                      'everything at once).', file=sys.stderr)
+                return 1
+            steps = _plan_ma27(sources, args, add=add, exe=exe)
             built_root, built_solver = _ma27_build_root(args), 'MA27'
+            if add:
+                built_root = os.path.dirname(os.path.dirname(
+                    _ipopt_build_prefix(exe)))
         else:
             steps, built_root = _plan_default(report, conda, args)
-            built_solver = 'MUMPS'
+            built_solver = None
     except RuntimeError as exc:
         print(f'error: {exc}', file=sys.stderr)
         return 1
 
     if not steps:
         print('Nothing to do -- everything this script installs is present.')
-        if report['ipopt']['ma27'] is False:
-            found = _find_ma27_sources()
-            if found:
-                print(f'\nMA27 sources found at {found}. To upgrade off MUMPS:\n'
-                      f'    lcsolver-install-solvers --ma27 {found}')
-            else:
-                print('\nThe IPOPT here is a MUMPS build. MA27 is the upgrade; '
-                      'see docs/ipopt.rst.')
+        _suggest_ma27(report)
         return 0
 
     # ---- show it, then ask ------------------------------------------------
     print('Plan:')
     for step in steps:
         print(step.show())
-    if conda and not args.ma27 and not args.relink_cyipopt:
+    if (conda and not args.ma27 and not args.add_ma27
+            and not args.relink_cyipopt and not built_root):
         if conda.get('activated'):
             where = f'the active conda environment "{conda["name"]}"'
         else:
@@ -534,20 +609,32 @@ def main(argv=None):
     environment._PROBE_CACHE.clear()
     report = check_solvers(probe=True)
     print(environment._fmt(report))
-
-    if report['ipopt']['ma27'] is False:
-        found = _find_ma27_sources()
-        print('\nThis is a MUMPS build, which is a working install. MA27 is '
-              'more robust on geometric and signomial programs '
-              '(see docs/ipopt.rst).')
-        if found:
-            print(f'MA27 sources are already on this machine ({found}):\n'
-                  f'    lcsolver-install-solvers --ma27 {found}')
-        else:
-            print('Register at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/, '
-                  'extract, then:\n'
-                  '    lcsolver-install-solvers --ma27 <extracted-path>')
+    _suggest_ma27(report)
     return 0
+
+
+def _suggest_ma27(report):
+    """The MA27 upsell, sized to what the build already has."""
+    if report['ipopt']['ma27'] is not False:
+        return
+    exe = report['ipopt']['executable']
+    flag = '--add-ma27' if exe and _is_source_build(exe) else '--ma27'
+    if report['ipopt'].get('spral'):
+        print('\nThis build has no MA27; LCsolver defaults to SPRAL, which '
+              'certifies the same problems. MA27 is about 3x faster on '
+              'large decks (docs/linear_solvers.rst).')
+    else:
+        print('\nThis build carries only MUMPS, which falsely fails on real '
+              'decks (docs/linear_solvers.rst). Re-run with a GCC toolchain, '
+              'metis and hwloc installed to add SPRAL, or add MA27:')
+    found = _find_ma27_sources()
+    if found:
+        print(f'MA27 sources are already on this machine ({found}):\n'
+              f'    lcsolver-install-solvers {flag} {found}')
+    else:
+        print('MA27 is free for academic use: register at '
+              'https://www.hsl.rl.ac.uk/download/MA27/1.0.0/, extract, then:\n'
+              f'    lcsolver-install-solvers {flag} <extracted-path>')
 
 
 if __name__ == '__main__':

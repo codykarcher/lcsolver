@@ -32,11 +32,20 @@ NL = os.path.join(os.path.dirname(__file__), os.pardir, 'examples', 'data',
 TOLS = {'tol': 1e-12, 'constr_viol_tol': 1e-12,
         'acceptable_constr_viol_tol': 1e-10}
 
+# The second sentinel: a b737/TASOPT SIA sub-problem (1298 variables, the
+# deck's own 1e-9 tolerances) on which SPRAL crashes under EVERY option
+# combination tried -- mc64 included -- while MA27 and MUMPS both solve it.
+# No option guards it; only the crash fallback does.
+NL_B737 = os.path.join(os.path.dirname(__file__), os.pardir, 'examples',
+                       'data', 'b737_spral_crash.nl')
+TOLS_B737 = {'tol': 1e-9, 'constr_viol_tol': 1e-9,
+             'acceptable_constr_viol_tol': 1e-10}
 
-def _solver(linear_solver, extra=None):
+
+def _solver(linear_solver, extra=None, tols=TOLS):
     exe = ipopt_executable()
     opt = pyo.SolverFactory('ipopt', executable=exe)
-    for k, v in TOLS.items():
+    for k, v in tols.items():
         opt.options[k] = v
     opt.options['linear_solver'] = linear_solver
     for k, v in (extra or {}).items():
@@ -87,6 +96,39 @@ class TestSpral:
                                                 load_solutions=False)
         assert str(results.solver.termination_condition) in (
             'optimal', 'locallyOptimal')
+
+    def test_the_b737_crash_survives_every_option(self):
+        """The reason the crash FALLBACK exists, not just the mc64 default."""
+        extra = linear_solver_default_options('spral')
+        with pytest.raises(IpoptCrashed):
+            with ipopt_launch('spral'):
+                _solver('spral', extra, TOLS_B737).solve(
+                    NL_B737, tee=False, load_solutions=False)
+
+
+@pytest.mark.skipif(not available, reason='LCsolver import failed')
+def test_the_b737_crash_file_is_bundled():
+    assert os.path.exists(NL_B737)
+    assert os.path.getsize(NL_B737) > 10_000
+
+
+@pytest.mark.skipif(not available or not _has('ma27'),
+                    reason='needs an IPOPT with ma27')
+def test_ma27_solves_the_b737_crash_file():
+    results = _solver('ma27', tols=TOLS_B737).solve(NL_B737, tee=False,
+                                                    load_solutions=False)
+    assert str(results.solver.termination_condition) in ('optimal',
+                                                         'locallyOptimal')
+
+
+@pytest.mark.skipif(not available or not _has('mumps'),
+                    reason='needs an IPOPT with mumps')
+def test_mumps_solves_the_b737_crash_file():
+    """MUMPS is what the open-source build falls back to."""
+    results = _solver('mumps', tols=TOLS_B737).solve(NL_B737, tee=False,
+                                                     load_solutions=False)
+    assert str(results.solver.termination_condition) in ('optimal',
+                                                         'locallyOptimal')
 
 
 if __name__ == '__main__':

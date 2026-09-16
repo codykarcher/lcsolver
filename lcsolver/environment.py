@@ -458,14 +458,44 @@ def ipopt_launch(linear_solver=None, executable=None, recoverable=False):
 
 
 def crash_fallback_solver(linear_solver, executable=None):
-    """The linear solver to retry a crashed sub-problem under: MA27 when the
-    build has it and it was not already in use, else None."""
-    if str(linear_solver or 'ma27').lower() == 'ma27':
-        return None
-    try:
-        return 'ma27' if linear_solver_available('ma27', executable) else None
-    except Exception:
-        return None
+    """The linear solver to retry a crashed sub-problem under: the most
+    robust one the build carries that is not the one that crashed -- MA27,
+    else MUMPS (the open-source build has no MA27) -- or None."""
+    current = str(linear_solver or '').strip().lower()
+    for name in ('ma27', 'mumps'):
+        if name == current:
+            continue
+        try:
+            if linear_solver_available(name, executable):
+                return name
+        except Exception:
+            pass
+    return None
+
+
+# What solve() picks when told nothing: MA27 when the build has it (fastest
+# and most robust measured -- 3x SPRAL on the D8 sub-problems), else SPRAL
+# (the open-source solver that certifies everything MA27 does), else MUMPS.
+DEFAULT_LINEAR_SOLVER_ORDER = ('ma27', 'spral', 'mumps')
+
+
+def default_linear_solver(route='pyomo', executable=None):
+    """The first of DEFAULT_LINEAR_SOLVER_ORDER the build on ``route``
+    carries, or None (IPOPT's own default then applies). SPRAL is never
+    chosen in-process: its OpenMP runtime cannot share a Python process
+    with conda's, so the cyipopt library is built without it."""
+    for name in DEFAULT_LINEAR_SOLVER_ORDER:
+        if route == 'pyomo':
+            ok = linear_solver_available(name, executable)
+        else:
+            if name == 'spral':
+                continue
+            ok = cyipopt_linear_solver_available(name)
+            if ok is None:
+                return None
+        if ok:
+            return name
+    return None
 
 
 def linear_solver_failure_note(linear_solver, executable=None):
@@ -637,8 +667,8 @@ def check_solvers(probe=True):
     report = {
         'cvxopt': {'available': False, 'version': None},
         'ipopt': {'executable': None, 'pinned': False, 'version': None,
-                  'ma27': None, 'mumps': None, 'shadowed_by': None,
-                  'all_on_path': [], 'reason': None},
+                  'ma27': None, 'mumps': None, 'spral': None, 'default': None,
+                  'shadowed_by': None, 'all_on_path': [], 'reason': None},
         'cyipopt': {'available': False, 'version': None, 'pynumero_asl': None,
                     'ma27': None, 'mumps': None},
         'probed': bool(probe),
@@ -672,6 +702,8 @@ def check_solvers(probe=True):
         if probe:
             report['ipopt']['ma27'] = linear_solver_available('ma27', exe)
             report['ipopt']['mumps'] = linear_solver_available('mumps', exe)
+            report['ipopt']['spral'] = linear_solver_available('spral', exe)
+            report['ipopt']['default'] = default_linear_solver('pyomo', exe)
 
             # An MA27 build losing to one without it: resolution prefers MA27,
             # so a pin or AUTOSELECT=0 overrode it -- say so out loud.
@@ -688,11 +720,20 @@ def check_solvers(probe=True):
                             f'Reason this one was chosen: {reason}.')
                         break
             if not report['ipopt']['ma27'] and not report['ipopt']['shadowed_by']:
-                report['warnings'].append(
-                    'this IPOPT is a MUMPS build. It works; MA27 is markedly '
-                    'more robust on geometric and signomial programs. Upgrade '
-                    'with `lcsolver-install-solvers --ma27 <path-to-ma27>` '
-                    '(see docs/ipopt.rst).')
+                if report['ipopt']['spral']:
+                    report['warnings'].append(
+                        'no MA27 in this IPOPT; LCsolver defaults to SPRAL '
+                        '(open source, certifies the same problems). MA27 is '
+                        'about 3x faster on large decks and free for academic '
+                        'use: `lcsolver-install-solvers --add-ma27 '
+                        '<path-to-ma27>` (see docs/linear_solvers.rst).')
+                else:
+                    report['warnings'].append(
+                        'this IPOPT carries only MUMPS, which falsely fails '
+                        'on real decks (see docs/linear_solvers.rst). Add '
+                        'SPRAL by re-running `lcsolver-install-solvers` with '
+                        'a GCC toolchain plus metis and hwloc installed, or '
+                        'MA27 with `--add-ma27 <path-to-ma27>`.')
     else:
         report['warnings'].append(
             'no ipopt executable found. IPOPT is the default convex backend, '
@@ -757,8 +798,11 @@ def _fmt(report):
         if i['version']:
             add(f"              {i['version']}")
         if i['ma27'] is not None:
-            solvers = [n for n, ok in (('ma27', i['ma27']), ('mumps', i['mumps'])) if ok]
-            add(f"              linear solvers: {', '.join(solvers) or 'none detected'}")
+            solvers = [n for n, ok in (('ma27', i['ma27']), ('mumps', i['mumps']),
+                                       ('spral', i.get('spral'))) if ok]
+            default = f"  (default: {i['default']})" if i.get('default') else ''
+            add(f"              linear solvers: "
+                f"{', '.join(solvers) or 'none detected'}{default}")
         others = [p for p in i['all_on_path']
                   if os.path.realpath(p) != os.path.realpath(i['executable'])]
         if others:

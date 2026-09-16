@@ -8,12 +8,20 @@ binary, and where the effort to reduce MA27 dependence should go next.
 
 Selecting a solver is one argument::
 
-    lcsolver.solve(f, linear_solver='ma27')     # or 'mumps', 'pardiso', ...
+    lcsolver.solve(f, linear_solver='ma27')     # or 'mumps', 'spral', ...
 
 validated by name before any backend runs, probed against the IPOPT build
 actually in use (a missing solver raises ``SolverUnavailable`` naming what
 IS available), and threaded through every route: raw NLP, log-space GP,
-and the SIA/PCCP sub-problem loops. Results record which solver ran.
+and the SIA/PCCP sub-problem loops. Results record which solver ran (the
+summary's Report section says ``[linear solver: ...]``).
+
+Told nothing, LCsolver picks explicitly, in the order **MA27, SPRAL,
+MUMPS** -- the first the build carries. The default install
+(``lcsolver-install-solvers``) builds MUMPS + SPRAL, so SPRAL is the
+default there; adding MA27 (``--ma27`` at build time, ``--add-ma27`` after)
+makes MA27 the default. In-process cyipopt never picks SPRAL (see the
+OpenMP note below).
 
 What upstream IPOPT supports
 ----------------------------
@@ -84,15 +92,31 @@ All runs: Ipopt 3.14.20, one triple-solver source build (MA27 + MUMPS 5.9.1
 * **737-800 / TASOPT deck** (lcjetliner, 1298 variables, SIA): MA27
   39 iterations / 110 s; MUMPS 39 / 122 s; SPRAL 23 iterations / 157 s.
   All three certify.
+* **Every SIA sub-problem of both decks, replayed standalone** (the
+  batch comparison; one IPOPT run per file per solver):
 
-Verdict: **MA27 is the right default** (fastest, most robust). **SPRAL is
-a working, license-free alternative**: it certifies everything MA27 does
--- including the sentinel MUMPS fails -- in consistently FEWER SIA
-iterations, at 1.5-3x the wall time on one machine (its OpenMP
-parallelism should close that gap on larger problems and more cores).
-The MA27-dependence concern is answered without forking anything. MUMPS
-remains acceptable only for small models. The D8 capture is the
-regression sentinel that says when this assessment should be revisited.
+  ==========  =======  =========  ===========  ============  =========
+  deck        files    MA27       SPRAL+mc64   SPRAL stock   MA27 time
+  ==========  =======  =========  ===========  ============  =========
+  D8 (1e-12)  352      352 solve  352 solve    3 crash,      17 s vs
+                       (4 accept) (19 accept)  1 false inf.  59 s SPRAL
+  b737 (1e-9) 168      168 solve  **4 crash**  4 crash       38 s vs
+                                                             139 s SPRAL
+  ==========  =======  =========  ===========  ============  =========
+
+  The four b737 crashes survive **every** SPRAL option tried (all five
+  scalings, ``spral_u``, ``spral_small``, ``spral_umax``, the pivot
+  method); MA27 and MUMPS solve all four. One is bundled as
+  ``examples/data/b737_spral_crash.nl``.
+
+Verdict: **MA27 is the right default when present** (fastest, most
+robust: it solved every sub-problem of both decks, and 3-4x faster).
+**SPRAL is the open-source default**: it certifies the same optima and
+the D8 sentinel MUMPS fails, at 3-4x the wall time, with one real
+capability gap -- a rank-deficient-KKT crash that no option closes, which
+LCsolver survives by retrying the sub-problem under MA27 or MUMPS. MUMPS
+remains the solver of last resort. The three bundled captures are the
+regression sentinels that say when this assessment should be revisited.
 
 Re-running the assessment::
 
@@ -101,85 +125,51 @@ Re-running the assessment::
 
 (one subprocess per model/solver cell, hard per-cell timeout).
 
-Building a multi-solver IPOPT
------------------------------
+The multi-solver build: what the installer does
+------------------------------------------------
 
-The measured binary carries MA27 and MUMPS side by side, switchable per
-solve. Recipe (macOS; Linux is the same modulo the loader variable)::
+``lcsolver-install-solvers`` (running the shipped
+``lcsolver/scripts/install_ipopt.sh``) builds, from source, one IPOPT
+carrying **MUMPS + SPRAL** by default and **MA27** when asked::
 
-    cd ~/software/ipopt
-    git clone https://github.com/coin-or-tools/ThirdParty-Mumps.git
-    cd ThirdParty-Mumps
-    ./get.Mumps
-    ./configure --prefix=$PWD/../MUMPS_build && make -j4 && make install
+    lcsolver-install-solvers                           # MUMPS + SPRAL
+    lcsolver-install-solvers --ma27 <ma27-1.0.0 dir>   # ... + MA27
+    lcsolver-install-solvers --add-ma27 <dir>          # MA27 onto an
+                                                       # existing build
 
-    cd .. && git clone --branch stable/3.14 \
-        https://github.com/coin-or/Ipopt.git Ipopt-src
-    mkdir build-dir && cd build-dir
-    ../Ipopt-src/configure --prefix=$PWD/../build-mumps \
-        --with-hsl-cflags="-I$PWD/../HSL_build/include/coin-or/hsl" \
-        --with-hsl-lflags="-L$PWD/../HSL_build/lib -lcoinhsl" \
-        --with-mumps-cflags="-I$PWD/../MUMPS_build/include/coin-or/mumps" \
-        --with-mumps-lflags="-L$PWD/../MUMPS_build/lib -lcoinmumps" \
-        --with-asl-cflags="-I$PWD/../ASL_build/include/coin-or/asl" \
-        --with-asl-lflags="-L$PWD/../ASL_build/lib -lcoinasl" \
-        --disable-java
-    make -j4 && make install
+The build is idempotent per component (a failed run re-runs; ``--add-ma27``
+rebuilds only the HSL component and the IPOPT link). SPRAL needs a GCC
+toolchain, METIS, hwloc and autotools (macOS: ``brew install gcc metis
+hwloc autoconf automake libtool``; Debian: ``gfortran g++ libmetis-dev
+libhwloc-dev``); without them it is skipped with a message naming what to
+install, and the build carries MUMPS (+ MA27). Prebuilt IPOPTs (conda,
+Homebrew, apt; ``--prebuilt``) are MA27-only or MUMPS-only and never carry
+SPRAL.
 
-(The HSL and ASL third-party builds are the ones
-``utilities/install_ipopt.sh`` already produces.)
+Two products from one source, and why: SPRAL is OpenMP code built with
+GCC (libgomp). A conda Python already holds LLVM's OpenMP runtime
+(libomp), and two OpenMP runtimes in one process is a hard abort -- so
+SPRAL cannot live in the shared library cyipopt loads in-process. The
+installer therefore makes
 
-Building SPRAL into IPOPT
--------------------------
+* ``<root>/ipopt/build/bin/ipopt`` -- a STATIC executable: MUMPS + SPRAL
+  [+ MA27], every solver switchable per solve;
+* ``<root>/ipopt/build/lib/`` -- the SHARED library for cyipopt: MUMPS
+  [+ MA27].
 
-Done, measured, and INTEGRATED: the main build
-(``~/software/ipopt/build/bin/ipopt``) is a statically linked executable
-carrying MA27 + MUMPS + SPRAL, switchable per solve. The shared library
-beside it (which in-process cyipopt loads) stays SPRAL-free on purpose:
-SPRAL's OpenMP runtime (libgomp) aborts inside a conda Python process
-that already holds LLVM's libomp -- two OpenMP runtimes in one process
-is a hard error with a documented-unsafe workaround. The executable is
-its own process, so it carries everything; cyipopt only evaluates
-grey-box functions and never selects a linear solver in-process.
+cyipopt only evaluates grey-box functions in-process and never selects
+the linear solver, so it loses nothing; ``default_linear_solver`` never
+picks SPRAL on that route.
 
-The recipe on macOS arm64::
-
-    brew install metis hwloc autoconf automake libtool  # gcc for gfortran
-    cd ~/software/ipopt
-    git clone --depth 1 --branch v2023.03.29 \
-        https://github.com/ralna/spral.git spral-src
-    cd spral-src && ./autogen.sh
-    CC=gcc-16 CXX=g++-16 FC=gfortran ./configure \
-        --prefix=$PWD/../SPRAL_build \
-        --with-blas="-L/opt/homebrew/opt/openblas/lib -lopenblas" \
-        --with-lapack="-L/opt/homebrew/opt/openblas/lib -lopenblas" \
-        --with-metis="-L/opt/homebrew/lib -lmetis" \
-        --with-metis-inc-dir=/opt/homebrew/include
-    make -j4 && make install
-
-then add to the IPOPT configure (alongside the HSL/MUMPS flags above),
-building IPOPT with the SAME gcc toolchain::
-
-    CC=gcc-16 CXX=g++-16 FC=gfortran \
-    CXXFLAGS="-O2 -fno-devirtualize-speculatively" \
-    ../Ipopt-src/configure ... \
-      --with-spral-cflags="-I$PWD/../SPRAL_build/include" \
-      --with-spral-lflags="-L$PWD/../SPRAL_build/lib -lspral \
-          -L/opt/homebrew/opt/openblas/lib -lopenblas \
-          -L/opt/homebrew/lib -lmetis -lhwloc \
-          -L$(dirname $(gcc-16 -print-file-name=libgomp.dylib)) \
-          -lgomp -lgfortran"
-
-Two gotchas, both hit and solved here: (1) SPRAL's C++ objects need the
-same C++ runtime as IPOPT's -- build both with gcc, or the link dies on
-libstdc++ symbols; (2) ``-fno-devirtualize-speculatively`` is REQUIRED
-with gcc: its speculative devirtualization emits references to the
-vtables of dependency-detector classes IPOPT declares but does not
-compile (Ma28), and the link fails on a symbol nothing actually uses.
-At runtime SPRAL needs ``OMP_CANCELLATION=TRUE`` and
-``OMP_PROC_BIND=TRUE``; LCsolver sets both automatically whenever
-``linear_solver='spral'`` is requested (without them SPRAL aborts its
-first factorization, surfacing as ``internalSolverError``).
+Gotchas the script carries so you do not have to: SPRAL's C++ objects
+need the same C++ runtime as IPOPT's, so when SPRAL is in the build IPOPT
+is built with the same GCC; with GCC, ``-fno-devirtualize-speculatively``
+is REQUIRED (speculative devirtualization emits vtable references to
+dependency-detector classes IPOPT declares but never compiles -- Ma28 --
+and the link dies on a symbol nothing uses); at runtime SPRAL needs
+``OMP_CANCELLATION=TRUE`` and ``OMP_PROC_BIND=TRUE``, which LCsolver sets
+whenever SPRAL is selected (without them SPRAL aborts its first
+factorization, surfacing as ``internalSolverError``).
 
 The SPRAL crash sentinel
 ------------------------
@@ -217,13 +207,24 @@ stock (matching scaling)    2         yes         103 s
 
 So LCsolver sets ``spral_scaling=mc64`` whenever SPRAL is selected (an
 explicit user setting wins; ``lcsolver.environment.
-LINEAR_SOLVER_DEFAULT_OPTIONS``). And because a dead executable is a
-class of failure, not one file, every IPOPT launch now runs inside
-``ipopt_launch``: pyomo's raw ERROR log lines are captured instead of
-printed, the failure becomes ``IpoptCrashed`` naming the signal and the
-linear solver, the SIA/SLCP sub-problem loops retry that one sub-problem
-under MA27 when the build has it (else shrink and carry on), and the
-event is filed as ``[LC-W313]`` in the post-solve report.
+LINEAR_SOLVER_DEFAULT_OPTIONS``).
+
+MC64 is not the whole answer. The b737 deck's sub-problems, replayed
+standalone at the deck's own 1e-9 tolerances, crash SPRAL on 4 of 168
+under **every** option combination tried -- all five scalings, the pivot
+thresholds, the pivot method -- while MA27 and MUMPS solve all four
+(``examples/data/b737_spral_crash.nl`` is one). That is the one genuine
+capability gap between the two, and it runs SPRAL -> MA27: nothing was
+found that MA27 fails and SPRAL solves (the D8 and b737 batches, the
+ill-conditioned family to 44 decades, 64x duplicated rows, the raw-NLP
+route). A dead executable is therefore a class of failure to survive,
+not a file to fix: every IPOPT launch runs inside ``ipopt_launch``, which
+captures pyomo's raw ERROR log instead of printing it, raises
+``IpoptCrashed`` naming the signal and the linear solver, and lets the
+SIA/SLCP sub-problem loops retry that one sub-problem under the most
+robust other solver the build has -- MA27, else MUMPS (which is why the
+open-source build carries both) -- filing the event as ``[LC-W313]`` in
+the post-solve report.
 
 Remaining avenues
 -----------------

@@ -19,22 +19,24 @@ We ask that you please consider the information provided in the [development_evi
 
 ## Dependencies
 
-LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  IPOPT cannot be installed from pip at all: there is no IPOPT executable on PyPI, and the cyipopt package is source-only there, so it *compiles against* an IPOPT that must already exist rather than providing one.  `lcsolver-install-solvers` obtains IPOPT and then builds cyipopt against it.  Every IPOPT you can install prebuilt ships with the MUMPS linear algebra package, which is known to have performance difficulties.  We strongly encourage that users obtain MA27 and build IPOPT on this solver as opposed to the default MUMPS.  LCS is able to build and run without MA27 by default and provides easy options to upgrade later, described below.  
+LCS has some standard dependencies that install on a typical python build:  pyomo, numpy, scipy, pint, packaging, and cvxopt. Optional packages include mpi4py, matplotlib, and pandas.  However, the highest quality LCS solvers depend on IPOPT to converge the hardest and most relevant engineering design problems.  IPOPT cannot be installed from pip at all: there is no IPOPT executable on PyPI, and the cyipopt package is source-only there, so it *compiles against* an IPOPT that must already exist rather than providing one.  `lcsolver-install-solvers` builds IPOPT from source and then builds cyipopt against it.  What matters inside IPOPT is the sparse linear solver, and the default build carries two open-source ones: **MUMPS** and **SPRAL** (SPRAL is then the default; it certifies the same problems as HSL's MA27, the classical choice, at a few times the wall time).  MA27 is free for academic use but cannot be redistributed, so it is an option: include it in the build with `--ma27`, or add it to an existing build later with `--add-ma27`.  See [docs/linear_solvers.rst](docs/linear_solvers.rst) for the measurements behind all of that.
 
 ## Installation
 
 Installation takes two steps due to the IPOPT dependency.
 
-Quickstart TLDR:  First obtain MA27 which is free for individual use
+Quickstart TLDR:
 
-```
-https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
-```
-
-Then run the following commands
 ```
 pip install git+https://github.com/codykarcher/lcsolver.git
-lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
+lcsolver-install-solvers
+```
+
+and, if you have MA27 (free for individual use from https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/), either
+
+```
+lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>       # at build time
+lcsolver-install-solvers --add-ma27 <path-to-extracted-MA27-sources>   # onto an existing build
 ```
 
 However, more detailed build instructions are below
@@ -71,7 +73,7 @@ lcsolver-install-solvers
 
 Run this once in every environment you install into, including the conda one above — part of what it fetches is per-environment and cannot be shared. It prints exactly what it will run and asks before touching anything; `--dry-run` shows the plan and exits.
 
-It finds IPOPT wherever it can — conda-forge, else Homebrew or apt, else a source build — installs cyipopt, and installs Pyomo's PyNumero ASL library, which the in-process route needs and which ships with neither pyomo nor cyipopt. Whatever is already present is left alone.
+It builds IPOPT from source with MUMPS + SPRAL (needs git and gfortran; SPRAL additionally needs a GCC toolchain, metis and hwloc — on macOS `brew install gcc metis hwloc autoconf automake libtool` — and is skipped with a note if those are missing), builds cyipopt against it, and installs Pyomo's PyNumero ASL library, which the in-process route needs and which ships with neither pyomo nor cyipopt. Whatever is already present is left alone. `--prebuilt` takes a conda-forge / Homebrew / apt IPOPT instead — quicker, but those are MA27-only or MUMPS-only builds and never carry SPRAL.
 
 Then confirm what you ended up with — which `ipopt` binary will actually run, which linear solver it carries, and whether cyipopt agrees:
 
@@ -81,22 +83,24 @@ lcsolver-check-solvers
 
 **You do not need IPOPT to try LCsolver.** With the package alone, a detected LP, QP, GP or SP solves through cvxopt — `solve()` falls back on its own and says so — and the test suite passes, skipping what it cannot run. IPOPT is needed for general nonlinear programs, for black-box constraints, and for the SLCP and SIA routes.
 
-### 3. MA27, if you want it (you do, trust me)
+### 3. MA27, if you want it
 
-Either route above leaves you on a **MUMPS** build of IPOPT, because MUMPS is the only linear solver that may be redistributed. That is a working install. For geometric and signomial programs MA27 is markedly more robust; it is free for individual use, but it has to be fetched by hand and IPOPT rebuilt against it.  You can request a download of MA27 here:
+The default build leaves you on **SPRAL** (with MUMPS beside it), which is a complete, open-source install: it certifies every problem MA27 does in our measurements. MA27 is 3-4x faster on large decks and is the one solver that has never failed a sub-problem here; it is free for individual use, but has to be fetched by hand.  You can request a download of MA27 here:
 
 ```
 https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
 ```
 
-and then install LCS with MA27 using the following command
+and then either include it in a fresh build, or add it to the build you already have (only the HSL component and the IPOPT link are rebuilt):
+
 ```
 lcsolver-install-solvers --ma27 <path-to-extracted-MA27-sources>
+lcsolver-install-solvers --add-ma27 <path-to-extracted-MA27-sources>
 ```
 
-This command serves as both a first install and as an upgrade on top of an existing MUMPS one: it rebuilds IPOPT, relinks cyipopt to match, and records where the build went. Nothing needs to go in a shell profile — LCsolver finds a build it installed even when that build is on no `PATH`, and prefers an MA27 build over a MUMPS one whatever `PATH` order says. See [docs/ipopt.rst](docs/ipopt.rst) for why this is worth doing.
+Both relink cyipopt to match and record where the build went. Nothing needs to go in a shell profile — LCsolver finds a build it installed even when that build is on no `PATH`, and prefers the build carrying more linear solvers whatever `PATH` order says. With MA27 present it becomes the default linear solver; every solver in the build stays selectable per solve with `lcsolver.solve(f, linear_solver='spral')`. See [docs/linear_solvers.rst](docs/linear_solvers.rst) for the comparison.
 
-For any other environment on the same machine, `lcsolver-install-solvers --relink-cyipopt` points that environment's cyipopt at the MA27 build without rebuilding IPOPT again.
+For any other environment on the same machine, `lcsolver-install-solvers --relink-cyipopt` points that environment's cyipopt at the build without rebuilding IPOPT again.
 
 ## Usage
 

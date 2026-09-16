@@ -311,6 +311,8 @@ class Solution:
                          f'bypassing auto-detection; run as a '
                          f'{structure}{bb}')
         solved = f'   Solved with {solver}'
+        if r.get('linear_solver'):
+            solved += f" [linear solver: {r['linear_solver']}]"
         if (r.get('convex_backend') not in (None, 'ipopt')
                 and r.get('structure') != 'nonlinear_program'
                 and requested in (None, 'auto')):

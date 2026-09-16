@@ -117,6 +117,11 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             "this model contains black-box (grey-box) constraints, which the "
             "AMPL-based 'pyomo' route cannot evaluate; use method='cyipopt'")
 
+    if linear_solver is None and not options.get('linear_solver'):
+        # explicit so the choice is recorded and SPRAL's env/defaults apply
+        from lcsolver.environment import default_linear_solver
+        linear_solver = default_linear_solver(
+            route, executable if route == 'pyomo' else None)
     if linear_solver is not None:
         from lcsolver.environment import (
             linear_solver_library_option,

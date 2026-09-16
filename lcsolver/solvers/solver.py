@@ -977,9 +977,12 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
 
     # resolve the linear solver once and thread it in: SIA via
     # SIAOptions.ipopt_options (an explicit user setting wins), PCCP via
-    # the inner GP solves
+    # the inner GP solves. Told nothing, pick LCsolver's default explicitly
+    # so the choice is recorded and SPRAL's env/defaults apply
+    from lcsolver.environment import default_linear_solver, require_linear_solver
+    if linear_solver is None:
+        linear_solver = default_linear_solver('pyomo')
     if linear_solver is not None:
-        from lcsolver.environment import require_linear_solver
         linear_solver = require_linear_solver(linear_solver, route='pyomo',
                                               library=linear_solver_library)
 
@@ -1018,9 +1021,13 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
             _opts.ipopt_options.setdefault(
                 linear_solver_library_option(linear_solver),
                 str(linear_solver_library))
+        # a solver set straight on SIAOptions.ipopt_options wins; validate
+        # it the same way so SPRAL's runtime env gets set for it too
+        _eff = _opts.ipopt_options['linear_solver']
+        if _eff != linear_solver:
+            require_linear_solver(_eff, route='pyomo')
         from lcsolver.environment import apply_linear_solver_defaults
-        apply_linear_solver_defaults(_opts.ipopt_options,
-                                     _opts.ipopt_options['linear_solver'])
+        apply_linear_solver_defaults(_opts.ipopt_options, _eff)
 
     result = solve_sia(structures, **{k: v for k, v in kwargs.items()
                                       if k in ('x0', 'options', 'sp_form',
@@ -1041,6 +1048,8 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
     res = {
         'x': list(result.x),
         'primal objective': result.objective,
+        'linear_solver': (kwargs['options'].ipopt_options or {}).get(
+            'linear_solver') if kwargs.get('options') is not None else None,
         'status': 'optimal' if result.converged else result.status,
         'solver': 'ipopt (SIA, sequential inner approximation)',
         'problem_structure': 'signomial_program_sia',

@@ -77,6 +77,16 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     relations = operator per constraint 1..N, x0 in the original (not log)
     variables. Returns a dict with status, primal objective, x.
     """
+    if linear_solver is None and not (options or {}).get('linear_solver'):
+        # told nothing: LCsolver's default, explicitly, so the choice is
+        # recorded and SPRAL's env/defaults apply
+        from lcsolver.environment import default_linear_solver
+        from lcsolver.solvers.ipopt.NLP import _executable_available
+        _route = (method if method != 'auto'
+                  else ('pyomo' if _executable_available('ipopt')
+                        else 'cyipopt'))
+        linear_solver = default_linear_solver(
+            _route, executable if _route == 'pyomo' else None)
     if linear_solver is not None:
         # Resolve here, at the top of the chain, against the same route
         # _assemble_and_solve will choose; the choice travels in options
