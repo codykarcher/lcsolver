@@ -98,8 +98,9 @@ class TestIpoptLaunch:
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
 class TestFallback:
 
-    def test_never_falls_back_to_the_solver_that_crashed(self):
-        assert crash_fallback_solver('ma27') in (None, 'mumps')
+    def test_only_ma27_is_ever_a_fallback(self):
+        assert crash_fallback_solver('ma27') is None
+        assert crash_fallback_solver('spral') in (None, 'ma27')
         assert crash_fallback_solver('mumps') in (None, 'ma27')
 
     def test_never_raises_on_a_bad_executable(self):

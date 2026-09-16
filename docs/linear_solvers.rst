@@ -114,8 +114,9 @@ robust: it solved every sub-problem of both decks, and 3-4x faster).
 **SPRAL is the open-source default**: it certifies the same optima and
 the D8 sentinel MUMPS fails, at 3-4x the wall time, with one real
 capability gap -- a rank-deficient-KKT crash that no option closes, which
-LCsolver survives by retrying the sub-problem under MA27 or MUMPS. MUMPS
-remains the solver of last resort. The three bundled captures are the
+LCsolver survives by retrying the sub-problem under MA27 when it has one
+and otherwise reports with the advice to add MA27. MUMPS is in the build
+to be selectable, not to stand in for either. The three bundled captures are the
 regression sentinels that say when this assessment should be revisited.
 
 Re-running the assessment::
@@ -221,10 +222,12 @@ route). A dead executable is therefore a class of failure to survive,
 not a file to fix: every IPOPT launch runs inside ``ipopt_launch``, which
 captures pyomo's raw ERROR log instead of printing it, raises
 ``IpoptCrashed`` naming the signal and the linear solver, and lets the
-SIA/SLCP sub-problem loops retry that one sub-problem under the most
-robust other solver the build has -- MA27, else MUMPS (which is why the
-open-source build carries both) -- filing the event as ``[LC-W313]`` in
-the post-solve report.
+SIA/SLCP sub-problem loops retry that one sub-problem under MA27 when the
+build has it, filing the event as ``[LC-W313]`` in the post-solve report.
+Without MA27 the failure stands and the message says to add it
+(``lcsolver-install-solvers --add-ma27``). MUMPS is **never** used as a
+stand-in: a solve that chose SPRAL is not quietly handed to a less
+capable solver.
 
 Remaining avenues
 -----------------

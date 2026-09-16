@@ -124,7 +124,7 @@ def test_ma27_solves_the_b737_crash_file():
 @pytest.mark.skipif(not available or not _has('mumps'),
                     reason='needs an IPOPT with mumps')
 def test_mumps_solves_the_b737_crash_file():
-    """MUMPS is what the open-source build falls back to."""
+    """For the record only: MUMPS is never used as a stand-in for SPRAL."""
     results = _solver('mumps', tols=TOLS_B737).solve(NL_B737, tee=False,
                                                      load_solutions=False)
     assert str(results.solver.termination_condition) in ('optimal',

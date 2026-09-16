@@ -6,8 +6,9 @@ default is MA27 when present (fastest, most robust measured), else SPRAL
 (certifies everything MA27 does), else MUMPS -- chosen explicitly so the
 choice is recorded and SPRAL's runtime env and mc64 default always apply.
 SPRAL is never chosen in-process (its OpenMP runtime cannot share a Python
-process with conda's), and a crashed sub-problem retries under the most
-robust OTHER solver the build has: MA27, else MUMPS.
+process with conda's). A crashed sub-problem retries under MA27 when the
+build has it and never under MUMPS: if SPRAL cannot do it, the answer is
+to add MA27, not to hand the solve to a less capable solver.
 """
 import pytest
 
@@ -73,18 +74,18 @@ class TestCrashFallback:
         monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
         assert env.crash_fallback_solver('spral') == 'ma27'
 
-    def test_without_ma27_it_falls_back_to_mumps(self, monkeypatch):
+    def test_without_ma27_there_is_no_fallback(self, monkeypatch):
+        """Never MUMPS: a SPRAL solve is not handed to a less capable solver.
+        The failure stands and the note advises adding MA27."""
         exe_probe, _ = _have('mumps', 'spral')
         monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
-        assert env.crash_fallback_solver('spral') == 'mumps'
+        assert env.crash_fallback_solver('spral') is None
+        assert '--add-ma27' in env.linear_solver_failure_note('spral')
 
     def test_never_retries_the_solver_that_crashed(self, monkeypatch):
-        exe_probe, _ = _have('ma27')
+        exe_probe, _ = _have('ma27', 'mumps', 'spral')
         monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
         assert env.crash_fallback_solver('ma27') is None
-        exe_probe, _ = _have('mumps')
-        monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
-        assert env.crash_fallback_solver('mumps') is None
 
     def test_nothing_else_available_means_none(self, monkeypatch):
         exe_probe, _ = _have('spral')

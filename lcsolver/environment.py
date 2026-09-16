@@ -442,9 +442,9 @@ def ipopt_launch(linear_solver=None, executable=None, recoverable=False):
                   linear_solver_failure_note(linear_solver, executable)))
         if recoverable:
             warnings.warn(
-                '[LC-W313] %s Treated as a failed sub-problem: the loop '
-                'retries under MA27 where the build has it, otherwise '
-                'shrinks its step and carries on.' % msg, stacklevel=3)
+                '[LC-W313] %s Treated as a failed sub-problem: retried under '
+                'MA27 where the build has it; otherwise the failure stands.'
+                % msg, stacklevel=3)
         raise IpoptCrashed(msg) from exc
     else:
         log.removeHandler(handler)
@@ -458,19 +458,16 @@ def ipopt_launch(linear_solver=None, executable=None, recoverable=False):
 
 
 def crash_fallback_solver(linear_solver, executable=None):
-    """The linear solver to retry a crashed sub-problem under: the most
-    robust one the build carries that is not the one that crashed -- MA27,
-    else MUMPS (the open-source build has no MA27) -- or None."""
-    current = str(linear_solver or '').strip().lower()
-    for name in ('ma27', 'mumps'):
-        if name == current:
-            continue
-        try:
-            if linear_solver_available(name, executable):
-                return name
-        except Exception:
-            pass
-    return None
+    """The linear solver to retry a crashed sub-problem under: MA27, when
+    the build has it and it was not the one that crashed; else None and the
+    failure stands, with the note advising MA27. Never MUMPS: a solve that
+    chose SPRAL is not quietly handed to a less capable solver."""
+    if str(linear_solver or '').strip().lower() == 'ma27':
+        return None
+    try:
+        return 'ma27' if linear_solver_available('ma27', executable) else None
+    except Exception:
+        return None
 
 
 # What solve() picks when told nothing: MA27 when the build has it (fastest
@@ -520,8 +517,8 @@ def linear_solver_failure_note(linear_solver, executable=None):
                 "linear_solver='ma27'." % key)
     return (' Note: this solve used linear_solver=%r, and this IPOPT build '
             'has no MA27 -- the most robust linear solver on this problem '
-            'class. Build one with `lcsolver-install-solvers --ma27 <path>` '
-            '(see docs/linear_solvers.rst).' % key)
+            'class. Add it with `lcsolver-install-solvers --add-ma27 '
+            '<path-to-ma27>` (see docs/linear_solvers.rst).' % key)
 
 
 def linear_solver_available(name, executable=None, library=None):
