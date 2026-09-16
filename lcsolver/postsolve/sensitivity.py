@@ -59,7 +59,7 @@ KKT_RESIDUAL_WARN = 1e-3
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
-def _d(expr, wrt):
+def partial_derivative(expr, wrt):
     """Exact partial d(expr)/d(wrt) as a float; 0.0 when absent or independent."""
     if expr is None:
         return 0.0
@@ -75,7 +75,7 @@ def _d(expr, wrt):
         return 0.0
 
 
-def _grad(expr, wrt_list):
+def gradient_of(expr, wrt_list):
     """Gradient of a Pyomo expression with respect to a list of variables."""
     if expr is None or not hasattr(expr, 'is_expression_type'):
         return np.zeros(len(wrt_list))
@@ -92,7 +92,7 @@ def _grad(expr, wrt_list):
     return out
 
 
-def _bound_of(con):
+def bound_of(con):
     """The bound a constraint is measured against, and whether it is an equality.
 
     Pyomo hoists a mutable Param into the bound (``x >= p`` lives in
@@ -118,21 +118,21 @@ def _bound_of(con):
     return lower, False
 
 
-def _residual_scale(con, variables):
+def residual_scale(con, variables):
     """Natural magnitude of a constraint, for a scale-aware feasibility test.
 
     The bound is routinely 0 (LCsolver moves everything to one side), so judge
     the residual against the largest term, ``max_j |x_j d(body)/dx_j|`` --
     a 1e4 N weight constraint with a 1e-1 residual is tight, not slack.
     """
-    g = _grad(con.body, variables)
+    g = gradient_of(con.body, variables)
     xs = np.array([abs(pyo.value(v)) if v.value is not None else 0.0
                    for v in variables])
     terms = np.abs(g) * xs
     return float(terms.max()) if terms.size and terms.max() > 0 else 1.0
 
 
-def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
+def is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
     """True if the constraint is binding at the current point.
 
     Compared against the constraint's own natural magnitude only. An earlier
@@ -141,7 +141,7 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
     active set rank deficient, and gave a wrong-signed dual. No floor:
     agreement with finite differences to ~1e-5.
     """
-    bound, is_eq = _bound_of(con)
+    bound, is_eq = bound_of(con)
     if is_eq:
         return True
     if bound is None:
@@ -152,7 +152,7 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
         return False
     if scale is None:
         if variables is not None:
-            scale = _residual_scale(con, variables)
+            scale = residual_scale(con, variables)
         else:
             # no variables to measure terms against, so the bound is the only
             # scale; fall back to 1.0 only when it is exactly 0, never floor
@@ -162,7 +162,7 @@ def _is_active(con, rtol=ACTIVE_RTOL, variables=None, scale=None):
     return abs(b - bd) <= rtol * (scale if scale > 0 else 1.0)
 
 
-def _param_gradient(expr, index):
+def parameter_gradient(expr, index):
     """``{name: d expr / d constant}`` for every Constant appearing in ``expr``.
 
     One reverse sweep per constraint, restricted to the constants actually
@@ -195,7 +195,7 @@ def _param_gradient(expr, index):
     return out
 
 
-def _constants(model):
+def model_constants(model):
     """Every LCsolver Constant (mutable Param) as ParamData keyed by name;
     an indexed Constant contributes one entry per element, GPkit-style."""
     out = {}
@@ -208,20 +208,20 @@ def _constants(model):
     return out
 
 
-def _active_constraints(model, rtol=ACTIVE_RTOL, variables=None):
+def active_constraints(model, rtol=ACTIVE_RTOL, variables=None):
     if variables is None:
-        variables = _variables(model)
+        variables = model_variables(model)
     return [c for c in model.component_data_objects(pyo.Constraint, active=True,
                                                     descend_into=True)
-            if _is_active(c, rtol, variables)]
+            if is_active(c, rtol, variables)]
 
 
-def _variables(model):
+def model_variables(model):
     return list(model.component_data_objects(pyo.Var, active=True,
                                              descend_into=True))
 
 
-def _objective(model):
+def model_objective(model):
     for o in model.component_data_objects(pyo.Objective, active=True,
                                           descend_into=True):
         return o
@@ -231,7 +231,7 @@ def _objective(model):
 # ---------------------------------------------------------------------------
 # duals
 # ---------------------------------------------------------------------------
-def _duals_from_suffix(model):
+def duals_from_suffix(model):
     """Duals imported from the solver, if the model carries a populated Suffix."""
     suffix = getattr(model, 'dual', None)
     if suffix is None or len(suffix) == 0:
@@ -244,7 +244,7 @@ def _duals_from_suffix(model):
     return duals if len(duals) else None
 
 
-def _greybox_blocks(model):
+def greybox_blocks(model):
     """Every active ExternalGreyBoxBlock on the model; empty without pynumero."""
     try:
         from pyomo.contrib.pynumero.interfaces.external_grey_box import (
@@ -255,7 +255,7 @@ def _greybox_blocks(model):
                                              descend_into=True, active=True))
 
 
-def _greybox_gradients(model, variables):
+def greybox_gradients(model, variables):
     """``[(block, [grad_1, ..., grad_m])]`` for each grey box on the model.
 
     One gradient per output over ``variables``: +1 on the output variable,
@@ -266,7 +266,7 @@ def _greybox_gradients(model, variables):
     """
     index = {v.name: i for i, v in enumerate(variables)}
     out = []
-    for blk in _greybox_blocks(model):
+    for blk in greybox_blocks(model):
         try:
             bb = blk.get_external_model()
             ins, outs = list(bb.input_names()), list(bb.output_names())
@@ -293,21 +293,21 @@ def _greybox_gradients(model, variables):
 KKTSystem = collections.namedtuple("KKTSystem", "A_s rhs_s col_scale owners")
 
 
-def _kkt_system(model, rtol=ACTIVE_RTOL):
+def kkt_system(model, rtol=ACTIVE_RTOL):
     """Assemble the scaled stationarity system ``A_s lambda_s = rhs_s``.
 
     Separate from solving because dual_ambiguity needs the same matrix, and
     assembly (one symbolic gradient per active constraint) is the expensive half.
     """
-    obj = _objective(model)
-    variables = _variables(model)
+    obj = model_objective(model)
+    variables = model_variables(model)
     if not variables:
         return None
 
     columns, owners = [], []
-    for con in _active_constraints(model, rtol, variables):
-        bound, _ = _bound_of(con)
-        columns.append(_grad(con.body, variables) - _grad(bound, variables))
+    for con in active_constraints(model, rtol, variables):
+        bound, _ = bound_of(con)
+        columns.append(gradient_of(con.body, variables) - gradient_of(bound, variables))
         owners.append(con)
 
     # A RuntimeConstraint is an ExternalGreyBoxBlock, not a pyo.Constraint, so
@@ -317,10 +317,10 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
     # +1 on the output variable, -J on the inputs. The grey-box multipliers
     # are kept -- a box may declare Constants, whose sensitivities chain
     # through lambda -- and the owner marker records which block and row.
-    for _blk, grads in _greybox_gradients(model, variables):
-        for _r, g in enumerate(grads):
+    for block, grads in greybox_gradients(model, variables):
+        for row, g in enumerate(grads):
             columns.append(g)
-            owners.append(('gb', _blk, _r))
+            owners.append(('gb', block, row))
 
     # Active variable bounds participate in stationarity too.
     for i, v in enumerate(variables):
@@ -341,7 +341,7 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
         return None
 
     A = np.column_stack(columns)
-    rhs = _grad(obj.expr, variables)
+    rhs = gradient_of(obj.expr, variables)
 
     # Equilibrate before solving: the variables span many orders of magnitude,
     # so scale rows by variable value (relative changes, O(1) entries) and
@@ -357,7 +357,7 @@ def _kkt_system(model, rtol=ACTIVE_RTOL):
                      rhs_s=rhs * row_scale, col_scale=col_scale, owners=owners)
 
 
-def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
+def duals_from_kkt(model, rtol=ACTIVE_RTOL):
     """Recover duals from the primal solution via KKT stationarity.
 
     Least-squares solve of ``grad f = sum_i lambda_i grad(body_i - bound_i)``
@@ -365,7 +365,7 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
     variable bounds are included as columns so stationarity can be met, then
     their multipliers are discarded (a bound cannot depend on a Constant).
     """
-    system = _kkt_system(model, rtol)
+    system = kkt_system(model, rtol)
     duals = ComponentMap()
     if system is None:
         return duals
@@ -382,7 +382,7 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
     # set or not a local optimum; record it rather than fail silently.
     denom = np.linalg.norm(rhs_s)
     resid = float(np.linalg.norm(A_s @ lam_s - rhs_s) / (denom if denom > 0 else 1.0))
-    _duals_from_kkt.last_residual = resid
+    duals_from_kkt.last_residual = resid
 
     greybox_duals = []
     for owner, value in zip(owners, lam):
@@ -392,7 +392,7 @@ def _duals_from_kkt(model, rtol=ACTIVE_RTOL):
             greybox_duals.append((owner[1], owner[2], float(value)))
             continue
         duals[owner] = float(value)
-    _duals_from_kkt.last_greybox_duals = greybox_duals
+    duals_from_kkt.last_greybox_duals = greybox_duals
     return duals
 
 
@@ -406,11 +406,11 @@ def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
     reported rather than treated as a failure.
     """
     if system is None:
-        system = _kkt_system(model, rtol)
+        system = kkt_system(model, rtol)
     if system is None:
         return {}
     if constants is None:
-        constants = _constants(model)
+        constants = model_constants(model)
     index = {id(pd): n for n, pd in constants.items()}
 
     A_s, col_scale, owners = system.A_s, system.col_scale, system.owners
@@ -433,18 +433,18 @@ def dual_ambiguity(model, rtol=ACTIVE_RTOL, system=None, constants=None):
         if isinstance(con, tuple) and con and con[0] == 'gb':
             # grey-box row g = out - box(in, c): gradient in a declared
             # constant is -d(box)/d(c), read from the box itself
-            _blk, _r = con[1], con[2]
+            block, row = con[1], con[2]
             try:
-                cj = _blk.get_external_model().constant_jacobian()
+                cj = block.get_external_model().constant_jacobian()
             except Exception:
                 continue
             for name, colv in cj.items():
                 if name in grads:
-                    grads[name][i] = -float(colv[_r])
+                    grads[name][i] = -float(colv[row])
             continue
-        bound, _ = _bound_of(con)
-        g = _param_gradient(con.body, index)
-        for name, dv in _param_gradient(bound, index).items():
+        bound, _ = bound_of(con)
+        g = parameter_gradient(con.body, index)
+        for name, dv in parameter_gradient(bound, index).items():
             g[name] = g.get(name, 0.0) - dv
         for name, dv in g.items():
             grads[name][i] = dv
@@ -469,7 +469,7 @@ def constraint_duals(model, method='auto', rtol=ACTIVE_RTOL):
         raise ValueError("method must be 'auto', 'suffix', or 'kkt'; "
                          f"got {method!r}")
     if method in ('auto', 'suffix'):
-        duals = _duals_from_suffix(model)
+        duals = duals_from_suffix(model)
         if duals is not None:
             return duals
         if method == 'suffix':
@@ -477,14 +477,14 @@ def constraint_duals(model, method='auto', rtol=ACTIVE_RTOL):
                 "the model carries no populated 'dual' Suffix. Solve with the "
                 "IPOPT route, or use method='kkt' to recover duals from the "
                 "primal solution.")
-    return _duals_from_kkt(model, rtol)
+    return duals_from_kkt(model, rtol)
 
 
 # ---------------------------------------------------------------------------
 # public entry point
 # ---------------------------------------------------------------------------
 
-def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
+def finite_difference_sensitivities(model, fstar, normalized=True, rel_step=0.01,
                       abs_step=1e-6, solve_fn=None):
     """Central-difference sensitivities by re-solving the model per Constant.
 
@@ -494,9 +494,9 @@ def _fd_sensitivities(model, fstar, normalized=True, rel_step=0.01,
     """
     if solve_fn is None:
         from lcsolver.solvers.solver import cvxopt_solve as solve_fn
-    obj = _objective(model)
+    obj = model_objective(model)
     sens = {}
-    for name, pd in _constants(model).items():
+    for name, pd in model_constants(model).items():
         c0 = float(pyo.value(pd))
         h = abs(c0) * rel_step if c0 != 0.0 else abs_step
         try:
@@ -545,14 +545,14 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     # sensitivities are unchanged. Only KKT recovery produces grey-box row
     # duals, which a box that declares Constants needs: such a model goes
     # KKT on 'auto', and an explicit 'suffix' is honoured but warned.
-    _gb_constants = any(
+    box_declares_constants = any(
         getattr(blk.get_external_model(), 'constantParams_optimization', None)
-        for blk in _greybox_blocks(model))
+        for blk in greybox_blocks(model))
     if method != 'fd' and duals is None:
         use_suffix = (method in ('auto', 'suffix')
-                      and _duals_from_suffix(model) is not None
-                      and not (_gb_constants and method == 'auto'))
-        if _gb_constants and method == 'suffix':
+                      and duals_from_suffix(model) is not None
+                      and not (box_declares_constants and method == 'auto'))
+        if box_declares_constants and method == 'suffix':
             warnings.warn(
                 "[LC-W312] this model's black box(es) declare Constants, "
                 "whose sensitivity contribution needs KKT-recovered "
@@ -563,7 +563,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             from lcsolver.presolve.unitCorrector import unit_corrector
             model = unit_corrector(model)
 
-    obj = _objective(model)
+    obj = model_objective(model)
     try:
         fstar = float(pyo.value(obj))
     except Exception as e:
@@ -572,7 +572,7 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             f"hold a solution ({type(e).__name__}: {e})")
 
     if method == 'fd':
-        return _fd_sensitivities(model, fstar, normalized=normalized)
+        return finite_difference_sensitivities(model, fstar, normalized=normalized)
 
     # SP duals belong to the last convex subproblem; flag the approximation
     # unless the caller has said otherwise.
@@ -582,16 +582,16 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             approximate = True
 
     if duals is None:
-        _duals_from_kkt.last_residual = None
-        _duals_from_kkt.last_greybox_duals = []
-        _method = ('kkt' if (_gb_constants and method == 'auto')
+        duals_from_kkt.last_residual = None
+        duals_from_kkt.last_greybox_duals = []
+        dual_method = ('kkt' if (box_declares_constants and method == 'auto')
                    else method)
-        duals = constraint_duals(model, method=_method, rtol=rtol)
-        used = ('suffix' if (_method != 'kkt' and _duals_from_suffix(model))
+        duals = constraint_duals(model, method=dual_method, rtol=rtol)
+        used = ('suffix' if (dual_method != 'kkt' and duals_from_suffix(model))
                 else 'kkt')
     else:
         used = 'given'
-    residual = getattr(_duals_from_kkt, 'last_residual', None)
+    residual = getattr(duals_from_kkt, 'last_residual', None)
 
     # Duals that don't satisfy stationarity give plausible-looking garbage;
     # both failure modes are reachable from a non-converged solve, so warn
@@ -610,18 +610,18 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
             f"the solve did not converge or the active set is ambiguous.",
             RuntimeWarning, stacklevel=2)
 
-    constants = _constants(model)
+    constants = model_constants(model)
     index = {id(pd): name for name, pd in constants.items()}
 
     # partial of the objective, at fixed x*
     totals = dict.fromkeys(constants, 0.0)
-    for name, dv in _param_gradient(obj.expr, index).items():
+    for name, dv in parameter_gradient(obj.expr, index).items():
         totals[name] += dv
     # minus the duals times the partial of each active constraint residual
     for con, lam in duals.items():
-        bound, _ = _bound_of(con)
-        g = _param_gradient(con.body, index)
-        for name, dv in _param_gradient(bound, index).items():
+        bound, _ = bound_of(con)
+        g = parameter_gradient(con.body, index)
+        for name, dv in parameter_gradient(bound, index).items():
             g[name] = g.get(name, 0.0) - dv
         for name, dv in g.items():
             totals[name] -= lam * dv
@@ -629,15 +629,15 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     # ... and the same term for grey-box rows whose box declares Constants:
     # dg/dc = -d(box)/d(c), so the contribution is +lambda * d(box)/d(c)
     if used == 'kkt':
-        for _blk, _r, lam in (getattr(_duals_from_kkt,
+        for block, row, lam in (getattr(duals_from_kkt,
                                       'last_greybox_duals', None) or []):
             try:
-                cj = _blk.get_external_model().constant_jacobian()
+                cj = block.get_external_model().constant_jacobian()
             except Exception:
                 continue
             for name, colv in cj.items():
                 if name in totals:
-                    totals[name] += lam * float(colv[_r])
+                    totals[name] += lam * float(colv[row])
 
     out = {}
     for name, pd in constants.items():
@@ -716,3 +716,8 @@ def format_sensitivities(result, tol=1e-8, width=72):
         lines.append(f"  ({negligible} constant(s) with |sensitivity| < {tol:g} omitted)")
     lines.append('=' * width)
     return '\n'.join(lines)
+
+
+# older scripts in the lc* repos import these by their former names
+_param_gradient = parameter_gradient
+_constants = model_constants

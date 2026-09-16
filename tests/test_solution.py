@@ -252,17 +252,17 @@ class TestNumberFormat(unittest.TestCase):
     instead of rounding to nothing."""
 
     def test_small_values_keep_their_digits(self):
-        from lcsolver.objects.solution import _fmt
-        self.assertEqual(_fmt(0.0035, 4), '0.0035')
+        from lcsolver.objects.solution import format_number
+        self.assertEqual(format_number(0.0035, 4), '0.0035')
 
     def test_below_the_cutoff_goes_scientific(self):
-        from lcsolver.objects.solution import _fmt
-        self.assertEqual(_fmt(0.00005, 4), '5.0000e-05')
+        from lcsolver.objects.solution import format_number
+        self.assertEqual(format_number(0.00005, 4), '5.0000e-05')
 
     def test_the_cutoff_matches_ndecimal(self):
-        from lcsolver.objects.solution import _fmt
-        self.assertEqual(_fmt(0.0001, 4), '0.0001')      # last printable
-        self.assertIn('e-', _fmt(0.00009, 4))            # first not
+        from lcsolver.objects.solution import format_number
+        self.assertEqual(format_number(0.0001, 4), '0.0001')      # last printable
+        self.assertIn('e-', format_number(0.00009, 4))            # first not
 
     def test_summary_default_is_four_decimals(self):
         f = _model()

@@ -162,7 +162,7 @@ class SolveResult(dict):
         sol = self.solution
         if sol is None or not getattr(sol, 'report', None):
             return None
-        return '\n'.join(line.strip() for line in sol._report_lines())
+        return '\n'.join(line.strip() for line in sol.report_lines())
 
     def summary(self, *args, **kwargs):
         """The solution summary -- same as ``f.solution.summary(...)``."""
@@ -376,8 +376,8 @@ def any_ipopt_available():
     cvxopt, an IPOPT-path bug should not. Not cached, so a mid-session
     install is seen.
     """
-    from lcsolver.solvers.ipopt.NLP import _executable_available
-    if _executable_available('ipopt'):
+    from lcsolver.solvers.ipopt.NLP import executable_available
+    if executable_available('ipopt'):
         return True
     try:
         import pyomo.environ as pyo
@@ -464,6 +464,7 @@ def attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
                 'solver': res.get('solver'),
                 'status': res.get('status'),
                 'gp_form': res.get('gp form'),
+                'linear_solver': res.get('linear_solver'),
                 'requested_solver': req.get('solver'),
                 'convex_backend': req.get('convex_backend'),
                 'greybox': n_greybox,
@@ -773,8 +774,8 @@ def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                  and (structures['Geometric_Program'][0]
                       or structures['Signomial_Program'][0]))
     if presolve and can_peel:
-        from lcsolver.solvers.sequential.bridge import _greybox_protected
-        protect = _greybox_protected(structures)
+        from lcsolver.solvers.sequential.bridge import greybox_protected
+        protect = greybox_protected(structures)
     will_peel = presolve and can_peel and protect is not None
 
     if want_checks and structures is not None:
@@ -824,8 +825,8 @@ def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                          ('Linear_Program', 'Quadratic_Program',
                           'Geometric_Program', 'Signomial_Program'))
 
-    from lcsolver.solvers.ipopt.NLP import _has_greybox
-    if _has_greybox(m):
+    from lcsolver.solvers.ipopt.NLP import has_greybox
+    if has_greybox(m):
         # A black box can't enter the algebraic convex backends, and running
         # the structured route without it would solve a relaxation. GP/SP
         # algebraic part -> SIA, which linearizes each black box inside the

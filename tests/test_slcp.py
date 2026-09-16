@@ -235,8 +235,8 @@ class TestSLCPSolve(unittest.TestCase):
         x = np.array([2.0, 3.0])
         mults = np.array([5.0, 7.0])
 
-        reduced = slcp._lagrangian_gradient(problem, x, mults, 'slcp', True)
-        full = slcp._lagrangian_gradient(problem, x, mults, 'slcp', False)
+        reduced = slcp.lagrangian_gradient(problem, x, mults, 'slcp', True)
+        full = slcp.lagrangian_gradient(problem, x, mults, 'slcp', False)
 
         self.assertTrue(np.allclose(reduced, problem.objective.log_grad(x)))
         self.assertFalse(np.allclose(reduced, full))
@@ -252,7 +252,7 @@ class TestDampedBFGS(unittest.TestCase):
         B = np.eye(2)
         s = np.array([1.0, 0.0])
         z = np.array([-5.0, 0.0])          # negative curvature
-        B_new = slcp._damped_bfgs(B, s, z)
+        B_new = slcp.damped_bfgs(B, s, z)
         eigenvalues = np.linalg.eigvalsh(B_new)
         self.assertTrue((eigenvalues > 0).all(),
                         msg=f'B lost positive definiteness: {eigenvalues}')
@@ -262,7 +262,7 @@ class TestDampedBFGS(unittest.TestCase):
         B = np.eye(2)
         s = np.array([1.0, 0.0])
         z = np.array([2.0, 0.0])
-        B_new = slcp._damped_bfgs(B, s, z)
+        B_new = slcp.damped_bfgs(B, s, z)
         Bs = B @ s
         expected = (B - np.outer(Bs, Bs) / (s @ Bs)
                     + np.outer(z, z) / (s @ z))

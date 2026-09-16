@@ -10,7 +10,7 @@ import pyomo.environ as pyo
 import pytest
 
 from lcsolver import Formulation
-from lcsolver.solvers.sequential.slcp import LimitedMemoryB, Options, _damped_bfgs
+from lcsolver.solvers.sequential.slcp import LimitedMemoryB, Options, damped_bfgs
 from lcsolver.solvers.sequential.bridge import solve_slcp
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
@@ -27,7 +27,7 @@ def test_matches_dense_bfgs_within_the_memory_window():
     for _ in range(4):
         s = rng.normal(size=n)
         z = rng.normal(size=n) + 3.0 * s      # keep curvature mostly positive
-        dense = _damped_bfgs(dense, s, z)
+        dense = damped_bfgs(dense, s, z)
         lm.update(s, z)
     probe = rng.normal(size=n)
     assert np.allclose(lm.matvec(probe), dense @ probe, rtol=1e-9, atol=1e-9)

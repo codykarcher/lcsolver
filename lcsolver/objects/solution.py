@@ -29,7 +29,7 @@ _DIGITS = re.compile(r'(\d+)')
 _ELEMENT = re.compile(r'^(.*)\[([0-9, ]+)\]$')
 
 
-def _split_element(name):
+def split_element(name):
     """``'V[2]'`` -> ``('V', (2,))``; None when the name carries no index.
 
     Reverses Pyomo's element naming so ``sol['V[2]']`` keeps working after
@@ -41,12 +41,12 @@ def _split_element(name):
     return m.group(1), tuple(int(p) for p in m.group(2).split(','))
 
 
-def _element_name(name, index):
+def element_name(name, index):
     """The name Pyomo gives an element: ``V[2]``, ``x[0,1]``."""
     return name + '[' + ','.join(str(i) for i in index) + ']'
 
 
-def _alphabetical(name):
+def alphabetical_key(name):
     """Sort key: case folded, digit runs compared as numbers.
 
     A plain string sort files ``Re_station`` before ``area_disk`` (ASCII
@@ -58,7 +58,7 @@ def _alphabetical(name):
                  for p in _DIGITS.split(name))
 
 
-def _fmt(value, ndecimal):
+def format_number(value, ndecimal):
     """A number as corsair printed it: integers bare, everything else fixed."""
     try:
         v = float(value)
@@ -75,7 +75,7 @@ def _fmt(value, ndecimal):
     return f'%.{ndecimal}f' % v
 
 
-def _units(u):
+def units_label(u):
     s = str(u) if u is not None else ''
     return '[-]' if s in ('dimensionless', 'None', '') else f'[{s}]'
 
@@ -109,12 +109,12 @@ class Entry:
         if not self.is_array:
             raise KeyError(f'{self.name!r} is a scalar; it has no element '
                            f'{index}')
-        return Entry(_element_name(self.name, index),
+        return Entry(element_name(self.name, index),
                      self.value[tuple(index)].item(), self.units,
                      self.description)
 
     def __repr__(self):
-        return f'<{self.name} = {self.value!r} {_units(self.units)}>'
+        return f'<{self.name} = {self.value!r} {units_label(self.units)}>'
 
 
 class EntryMap(dict):
@@ -127,7 +127,7 @@ class EntryMap(dict):
     """
 
     def __missing__(self, name):
-        split = _split_element(name)
+        split = split_element(name)
         if split is None or not dict.__contains__(self, split[0]):
             raise KeyError(name)
         base = dict.__getitem__(self, split[0])
@@ -232,7 +232,7 @@ class Solution:
                 return path + '.' + name[len(prefix):]
         return name
 
-    def _order(self, names):
+    def ordered_names(self, names):
         """Ungrouped first, then grouped, each alphabetically.
 
         A model's own quantities get buried when a hundred namespaced ones
@@ -240,11 +240,11 @@ class Solution:
         only in case still have a settled order.
         """
         return sorted(names, key=lambda n: (self.display_name(n) != n,
-                                            _alphabetical(self.display_name(n)),
+                                            alphabetical_key(self.display_name(n)),
                                             self.display_name(n)))
 
     @staticmethod
-    def _rows(entries):
+    def rows_per_element(entries):
         """``{row_name: Entry}`` with every array broken out per element
         for printing; the entries themselves stay stacked."""
         out = {}
@@ -257,14 +257,14 @@ class Solution:
                 out[n] = e
         return out
 
-    def _table(self, entries, ndecimal):
+    def table_lines(self, entries, ndecimal):
         if not entries:
             return []
-        entries = self._rows(entries)
-        names = self._order(entries)
+        entries = self.rows_per_element(entries)
+        names = self.ordered_names(entries)
         shown = [self.display_name(n) for n in names]
-        vals = [_fmt(entries[n].value, ndecimal) for n in names]
-        uts = [_units(entries[n].units) for n in names]
+        vals = [format_number(entries[n].value, ndecimal) for n in names]
+        uts = [units_label(entries[n].units) for n in names]
         des = [entries[n].description for n in names]
         w = (max(len(s) for s in shown), max(len(s) for s in vals),
              max(len(s) for s in uts), max((len(s) for s in des), default=0))
@@ -272,7 +272,7 @@ class Solution:
                 + u.center(w[2]) + ('   ' + d.ljust(w[3]) if d else '')
                 for n, v, u, d in zip(shown, vals, uts, des)]
 
-    _STRUCTURE_NAMES = {
+    STRUCTURE_NAMES = {
         'linear_program': 'linear program (LP)',
         'quadratic_program': 'quadratic program (QP)',
         'geometric_program': 'geometric program (GP)',
@@ -280,23 +280,23 @@ class Solution:
         'signomial_program_pccp': 'signomial program (SP)',
         'nonlinear_program': 'general nonlinear program (NLP)',
     }
-    _SOLVER_NAMES = {
+    SOLVER_NAMES = {
         'pyomo': 'IPOPT (executable, AMPL interface)',
         'cyipopt': 'IPOPT (in-process, cyipopt)',
         'cvxopt': 'cvxopt',
     }
 
-    def _report_lines(self):
+    def report_lines(self):
         """How the problem was classified and solved, stated accurately.
 
         'auto-detected' is only claimed when the router actually chose;
         a prescribed solver or backend is reported as prescribed.
         """
         r = self.report or {}
-        structure = self._STRUCTURE_NAMES.get(r.get('structure'),
+        structure = self.STRUCTURE_NAMES.get(r.get('structure'),
                                               r.get('structure') or
                                               'unknown structure')
-        solver = self._SOLVER_NAMES.get(r.get('solver'),
+        solver = self.SOLVER_NAMES.get(r.get('solver'),
                                         r.get('solver') or 'unknown solver')
         requested = r.get('requested_solver')
         n_bb = r.get('greybox') or 0
@@ -335,16 +335,16 @@ class Solution:
         """
         L = ['']
         if self.report:
-            L += ['Report', '------'] + self._report_lines() + ['']
+            L += ['Report', '------'] + self.report_lines() + ['']
         if self.objective is not None:
             L += ['Objective', '---------',
-                  '   ' + _fmt(self.objective, ndecimal) + ' '
-                  + _units(self.objective_units).strip('[]'), '']
+                  '   ' + format_number(self.objective, ndecimal) + ' '
+                  + units_label(self.objective_units).strip('[]'), '']
         if self.variables:
-            L += ['Variables', '---------'] + self._table(self.variables,
+            L += ['Variables', '---------'] + self.table_lines(self.variables,
                                                           ndecimal) + ['']
         if self.constants:
-            L += ['Constants', '---------'] + self._table(self.constants,
+            L += ['Constants', '---------'] + self.table_lines(self.constants,
                                                           ndecimal) + ['']
 
         if self.holographic:
@@ -378,7 +378,7 @@ class Solution:
                 # block. Ties break alphabetically so equal pairs keep a
                 # settled order across runs.
                 items.sort(key=lambda kv: (-abs(kv[1]),
-                                           _alphabetical(self.display_name(kv[0])),
+                                           alphabetical_key(self.display_name(kv[0])),
                                            self.display_name(kv[0])))
                 shown = items if top is None else items[:top]
                 wn = max(len(self.display_name(n)) for n, _ in shown)

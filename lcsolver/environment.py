@@ -127,7 +127,7 @@ def ipopt_executable():
     return ipopt_choice()[0]
 
 
-def _forget_resolution():
+def forget_resolution():
     """Drop the cached choice. For tests, and for callers that change PATH."""
     global _RESOLVED
     _RESOLVED = None
@@ -140,8 +140,8 @@ def ipopt_available():
     Not cached: caching would make an IPOPT installed mid-session invisible.
     """
     try:
-        from lcsolver.solvers.ipopt.NLP import _executable_available
-        if _executable_available('ipopt'):
+        from lcsolver.solvers.ipopt.NLP import executable_available
+        if executable_available('ipopt'):
             return True
     except Exception:
         pass
@@ -279,7 +279,7 @@ def linear_solver_library_option(name):
     return RUNTIME_LOADED_LINEAR_SOLVERS.get(str(name).strip().lower())
 
 
-def _spral_runtime_env():
+def spral_runtime_env():
     """SPRAL's required OpenMP settings, set process-wide (the ipopt
     executable inherits them); explicit user settings are left alone"""
     os.environ.setdefault('OMP_CANCELLATION', 'TRUE')
@@ -322,7 +322,7 @@ def require_linear_solver(name, route='pyomo', executable=None,
                 % (key, library))
 
     if key == 'spral':
-        _spral_runtime_env()
+        spral_runtime_env()
 
     if route == 'pyomo':
         ok = linear_solver_available(key, executable, library=library)
@@ -337,9 +337,9 @@ def require_linear_solver(name, route='pyomo', executable=None,
         else:
             present = [s for s in ('ma27', 'mumps', 'pardiso')
                        if cyipopt_linear_solver_available(s)]
-        _lib_note = ''
+        library_note = ''
         if libopt is not None and library is None:
-            _lib_note = (' %r is a runtime-loaded solver: pass '
+            library_note = (' %r is a runtime-loaded solver: pass '
                          'linear_solver_library=<path to the %s library> '
                          'if you have one.' % (key,
                                                'CoinHSL' if libopt == 'hsllib'
@@ -352,7 +352,7 @@ def require_linear_solver(name, route='pyomo', executable=None,
             % (key, route,
                f', executable {executable}' if executable else '',
                ', '.join(present) if present else 'none of ma27/mumps/pardiso',
-               _lib_note))
+               library_note))
     return key
 
 
@@ -552,7 +552,7 @@ def linear_solver_available(name, executable=None, library=None):
         if library and _libopt:
             opt.options[_libopt] = library
         if name == 'spral':
-            _spral_runtime_env()
+            spral_runtime_env()
         with _quiet():
             res = opt.solve(probe, tee=False, load_solutions=False)
         result = (res.solver.termination_condition
@@ -567,7 +567,7 @@ def linear_solver_available(name, executable=None, library=None):
 # Run in a child interpreter: IPOPT's C++ journalist flushes its option-error
 # dump at process exit, after any dup2 redirection is undone, so in-process it
 # cannot be silenced. One child answers all three questions.
-_CYIPOPT_PROBE = r'''
+CYIPOPT_PROBE_SCRIPT = r'''
 import json, sys
 out = {"baseline": False, "ma27": None, "mumps": None}
 try:
@@ -598,7 +598,7 @@ sys.__stdout__.write("\n@@LCSOLVER@@" + json.dumps(out) + "\n")
 '''
 
 
-def _cyipopt_probe():
+def cyipopt_probe():
     """Ask a child interpreter what cyipopt's IPOPT was built with."""
     key = ('cyipopt', '_all')
     if key in _PROBE_CACHE:
@@ -608,7 +608,7 @@ def _cyipopt_probe():
     try:
         import subprocess
 
-        proc = subprocess.run([sys.executable, '-c', _CYIPOPT_PROBE],
+        proc = subprocess.run([sys.executable, '-c', CYIPOPT_PROBE_SCRIPT],
                               capture_output=True, text=True, timeout=300)
         for line in proc.stdout.splitlines():
             if line.startswith('@@LCSOLVER@@'):
@@ -628,7 +628,7 @@ def cyipopt_linear_solver_available(name):
     True/False, or None when the probe could not run at all (cyipopt absent
     or broken) -- a different fact from "this build lacks MA27".
     """
-    probe = _cyipopt_probe()
+    probe = cyipopt_probe()
     if not probe.get('baseline'):
         return None
     return probe.get(name)
@@ -643,7 +643,7 @@ def pynumero_asl_available():
         return False
 
 
-def _ipopt_version(executable):
+def ipopt_version(executable):
     try:
         import subprocess
         out = subprocess.run([executable, '--version'], capture_output=True,
@@ -695,7 +695,7 @@ def check_solvers(probe=True):
             f'{IPOPT_EXECUTABLE_ENV} points at {exe}, which does not exist. '
             f'Unset it or correct it; nothing else will override it.')
     elif exe:
-        report['ipopt']['version'] = _ipopt_version(exe)
+        report['ipopt']['version'] = ipopt_version(exe)
         if probe:
             report['ipopt']['ma27'] = linear_solver_available('ma27', exe)
             report['ipopt']['mumps'] = linear_solver_available('mumps', exe)
@@ -775,7 +775,7 @@ def check_solvers(probe=True):
     return report
 
 
-def _fmt(report):
+def format_report(report):
     """Render the report for a terminal."""
     lines = []
     add = lines.append
@@ -858,7 +858,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     report = check_solvers(probe=not args.no_probe)
-    print(_fmt(report))
+    print(format_report(report))
     incomplete = (report['ipopt']['executable'] is None
                   or not report['cvxopt']['available'])
     return EXIT_INCOMPLETE if incomplete else 0

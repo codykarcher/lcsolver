@@ -31,7 +31,7 @@ from lcsolver.core.errors import SolverUnavailable
 
 
 # ---------------------------------------------------------------------------
-def _group_rows(rows):
+def group_rows(rows):
     """Group monomial rows by constraint index. Row = [idx, coeff, *exponents]."""
     groups = {}
     for r in rows:
@@ -50,7 +50,7 @@ MIN_BOX = 0.5
 MAX_BOX = 200.0
 
 
-def _log_box(n, groups):
+def log_space_box(n, groups):
     """Per-column log-space bounds that keep every monomial evaluable."""
     amax = [0.0] * n
     for terms in groups.values():
@@ -81,27 +81,27 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
         # told nothing: LCsolver's default, explicitly, so the choice is
         # recorded and SPRAL's env/defaults apply
         from lcsolver.environment import default_linear_solver
-        from lcsolver.solvers.ipopt.NLP import _executable_available
-        _route = (method if method != 'auto'
-                  else ('pyomo' if _executable_available('ipopt')
+        from lcsolver.solvers.ipopt.NLP import executable_available
+        route = (method if method != 'auto'
+                  else ('pyomo' if executable_available('ipopt')
                         else 'cyipopt'))
         linear_solver = default_linear_solver(
-            _route, executable if _route == 'pyomo' else None)
+            route, executable if route == 'pyomo' else None)
     if linear_solver is not None:
         # Resolve here, at the top of the chain, against the same route
-        # _assemble_and_solve will choose; the choice travels in options
+        # assemble_and_solve will choose; the choice travels in options
         from lcsolver.environment import (
             linear_solver_library_option,
             require_linear_solver,
         )
-        from lcsolver.solvers.ipopt.NLP import _executable_available
-        _route = (method if method != 'auto'
-                  else ('pyomo' if _executable_available('ipopt')
+        from lcsolver.solvers.ipopt.NLP import executable_available
+        route = (method if method != 'auto'
+                  else ('pyomo' if executable_available('ipopt')
                         else 'cyipopt'))
         options = dict(options or {})
         options['linear_solver'] = require_linear_solver(
-            linear_solver, route=_route,
-            executable=executable if _route == 'pyomo' else None,
+            linear_solver, route=route,
+            executable=executable if route == 'pyomo' else None,
             library=linear_solver_library)
         if linear_solver_library is not None:
             options[linear_solver_library_option(
@@ -109,7 +109,7 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
         from lcsolver.environment import apply_linear_solver_defaults
         apply_linear_solver_defaults(options, options['linear_solver'])
 
-    groups = _group_rows(rows)
+    groups = group_rows(rows)
     if 0 not in groups:
         raise ValueError('no objective monomials found in the GP structure')
 
@@ -119,20 +119,23 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
 
-    def _t0(_m, j):
+    # warm start in log space from the iterate, where it is positive
+    t0 = {}
+    for j in range(0, n):
+        t0[j] = 0.0
         if x0 is not None and j < len(x0):
             try:
                 v = float(x0[j])
                 if v > 0:
-                    return math.log(v)
+                    t0[j] = math.log(v)
             except Exception:
                 pass
-        return 0.0
-
-    box = _log_box(n, groups)
-    m.t = pyo.Var(m.J, initialize=_t0,
-                  bounds=lambda _m, j: (-box[j], box[j]))
-    res = _build_and_solve_gp(m, n, groups, relations, tee, options,
+    box = log_space_box(n, groups)
+    t_bounds = {}
+    for j in range(0, n):
+        t_bounds[j] = (-box[j], box[j])
+    m.t = pyo.Var(m.J, initialize=t0, bounds=t_bounds)
+    res = build_and_solve_gp(m, n, groups, relations, tee, options,
                               method, executable, form)
     if isinstance(res, dict):
         # first question when two machines disagree; None = build default
@@ -154,12 +157,12 @@ def solve_gp_rows_ipopt(rows, relations, x0=None, tee=False, options=None,
 # claimed 'sum' success with a warm-started 'lse' polish -- 'sum' can fail
 # SILENTLY when the optimum sits at small scale (wind turbine COE, ~1e-7:
 # KKT residuals deflate below tolerance at a point 7x off the optimum).
-# See _build_and_solve_gp.
+# See build_and_solve_gp.
 GP_FORM_AUTO_LOGC = 100.0     # |log c| above which 'auto' switches to 'lse'
 GP_FORM_AUTO_EXPONENT = 100.0  # |exponent| likewise
 
 
-def _auto_form(groups):
+def auto_form(groups):
     """Choose 'sum' or 'lse' from the magnitudes actually present."""
     max_logc = 0.0
     max_a = 0.0
@@ -181,14 +184,14 @@ def _auto_form(groups):
 GP_SUM_VERIFY_RTOL = 1e-4
 
 
-def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
+def build_and_solve_gp(m, n, groups, relations, tee, options, method,
                         executable, form='auto'):
     """Shared objective/constraint assembly and IPOPT call."""
     if form not in ('auto', 'sum', 'lse'):
         raise ValueError("form must be 'auto', 'sum' or 'lse'")
-    chosen = _auto_form(groups) if form == 'auto' else form
+    chosen = auto_form(groups) if form == 'auto' else form
     try:
-        res = _assemble_and_solve(m, n, groups, relations, tee, options,
+        res = assemble_and_solve(m, n, groups, relations, tee, options,
                                   method, executable, chosen)
     except Exception:
         if form != 'auto' or chosen == 'lse':
@@ -197,7 +200,7 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
         # magnitude test did not predict.
         m.del_component(m.obj)
         m.del_component(m.cons)
-        return _assemble_and_solve(m, n, groups, relations, tee, options,
+        return assemble_and_solve(m, n, groups, relations, tee, options,
                                    method, executable, 'lse')
 
     if form != 'auto' or chosen != 'sum':
@@ -213,7 +216,7 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
     m.del_component(m.obj)
     m.del_component(m.cons)
     try:
-        res_lse = _assemble_and_solve(m, n, groups, relations, tee, options,
+        res_lse = assemble_and_solve(m, n, groups, relations, tee, options,
                                       method, executable, 'lse')
     except Exception:
         return res
@@ -230,38 +233,52 @@ def _build_and_solve_gp(m, n, groups, relations, tee, options, method,
     return res
 
 
-def _assemble_and_solve(m, n, groups, relations, tee, options, method,
+def affine_term(t, c, a, n):
+    """log c + a . t for one monomial, over the log-space variables t."""
+    expr = math.log(c)
+    for j in range(0, n):
+        if a[j]:
+            expr = expr + a[j] * t[j]
+    return expr
+
+
+def posynomial_body(t, terms, n, form):
+    """A group's posynomial as IPOPT sees it: 'sum' is sum_k exp(b_k +
+    a_k . t); 'lse' its logarithm. The outer log keeps large arguments
+    finite (see the form comment above) and is free mathematically -- log
+    is monotone, posy <= 1 is log(posy) <= 0. Under 'lse' a single-term
+    group is a monomial: returned affine, not round-tripped through
+    exp/log, keeping ~half a typical GP linear."""
+    if form == 'lse' and len(terms) == 1:
+        c, a = terms[0]
+        return affine_term(t, c, a, n)
+    total = 0.0
+    for c, a in terms:
+        total = total + pyo.exp(affine_term(t, c, a, n))
+    if form == 'lse':
+        return pyo.log(total)
+    return total
+
+
+def assemble_and_solve(m, n, groups, relations, tee, options, method,
                         executable, form):
 
-    def _affine(t, c, a):
-        return math.log(c) + sum(a[j] * t[j] for j in range(n) if a[j])
-
-    def _lse(t, terms):
-        """log sum_k exp(b_k + a_k . t) for one group. The outer log keeps
-        large arguments finite (see the form comment above) and is free
-        mathematically -- log is monotone, posy <= 1 is log(posy) <= 0.
-        A single-term group is a monomial: returned affine, not
-        round-tripped through exp/log, keeping ~half a typical GP linear.
-        """
-        if len(terms) == 1:
-            c, a = terms[0]
-            return _affine(t, c, a)
-        return pyo.log(sum(pyo.exp(_affine(t, c, a)) for c, a in terms))
-
-    def _body(t, terms):
-        return _lse(t, terms) if form == 'lse' else _posy(t, terms)
-
-    def _posy(t, terms):
-        return sum(pyo.exp(_affine(t, c, a)) for c, a in terms)
-
     # objective: the posynomial, or its logarithm (same minimizer either way)
-    m.obj = pyo.Objective(expr=_body(m.t, groups[0]), sense=pyo.minimize)
+    m.obj = pyo.Objective(expr=posynomial_body(m.t, groups[0], n, form),
+                          sense=pyo.minimize)
 
     # constraints: index i in 1..N maps to relations[i-1]
     m.cons = pyo.ConstraintList()
     n_ineq = n_eq = 0
+    if form == 'lse':
+        rhs = 0.0
+    else:
+        rhs = 1.0
     for idx in sorted(k for k in groups if k != 0):
-        rel = relations[idx - 1] if (idx - 1) < len(relations) else '<='
+        if (idx - 1) < len(relations):
+            rel = relations[idx - 1]
+        else:
+            rel = '<='
         terms = groups[idx]
         if rel == '==':
             if len(terms) != 1:
@@ -274,17 +291,17 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
             n_eq += 1
         else:
             # posy <= 1, or equivalently log(posy) <= 0
-            m.cons.add(_body(m.t, terms) <= (0.0 if form == 'lse' else 1.0))
+            m.cons.add(posynomial_body(m.t, terms, n, form) <= rhs)
             n_ineq += 1
 
     # ---- solve -----------------------------------------------------------
     from lcsolver.solvers.ipopt.NLP import (
-        _executable_available, _summarize)
+        executable_available, summarize_results)
     from pyomo.opt import TerminationCondition
 
     route = method
     if route == 'auto':
-        route = 'pyomo' if _executable_available('ipopt') else 'cyipopt'
+        route = 'pyomo' if executable_available('ipopt') else 'cyipopt'
     if route == 'pyomo':
         from lcsolver.environment import ipopt_solver_factory
         opt = ipopt_solver_factory(executable)
@@ -313,7 +330,7 @@ def _assemble_and_solve(m, n, groups, relations, tee, options, method,
             opt.options[k] = v
         with ipopt_launch((options or {}).get('linear_solver'), executable):
             results = opt.solve(m, tee=tee)
-    summary = _summarize(results)
+    summary = summarize_results(results)
 
     tc = summary['termination_condition']
     if tc not in (str(TerminationCondition.optimal),
@@ -395,3 +412,7 @@ def solve_lp_qp_ipopt(m, structure='linear_program', **kwargs):
     except Exception:
         pass
     return res
+
+
+# older scripts in the lc* repos import this by its former name
+_auto_form = auto_form

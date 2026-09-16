@@ -128,7 +128,7 @@ class CachedSignomial(Signomial):
         self._maxsize = maxsize
         self.evaluations = 0
 
-    def _eval(self, x, need_grad=True):
+    def evaluate(self, x, need_grad=True):
         # a cached entry may be value-only (gradient None, from the cheap
         # fn_value path); it satisfies value queries and upgrades in place
         # on the first gradient request
@@ -151,14 +151,14 @@ class CachedSignomial(Signomial):
         return out
 
     def __call__(self, x):
-        return self._eval(x, need_grad=False)[0]
+        return self.evaluate(x, need_grad=False)[0]
 
     def grad(self, x):
-        return self._eval(x)[1]
+        return self.evaluate(x)[1]
 
     def log_grad(self, x):
         x = np.asarray(x, dtype=float)
-        v, g = self._eval(x)
+        v, g = self.evaluate(x)
         if v <= 0:
             raise ValueError(
                 'SLCP requires every constraint function to stay strictly '
@@ -430,13 +430,13 @@ class Result:
                 f'objective={self.objective!r}{viol}>')
 
 
-def _fully_log_convex(problem):
+def fully_log_convex(problem):
     """True when objective and every constraint are exact in log space -- then one sub-problem solve is enough."""
     return (isinstance(problem.objective, Posynomial)
             and all(c.exact_in_logspace for c in problem.constraints))
 
 
-def _apply_variable_bounds(m, problem, log_xk):
+def apply_variable_bounds(m, problem, log_xk):
     """Put the model's variable bounds on the sub-problem step.
 
     lo <= x <= hi becomes log(lo/x_k) <= d <= log(hi/x_k), exact and free.
@@ -498,14 +498,27 @@ class SubproblemCache:
         self.options = options
         self.n = problem.n
         self.model = None
-        self.usable = self._is_cacheable()
+        self.usable = self.is_cacheable()
 
-    def _is_cacheable(self):
+    def is_cacheable(self):
         for con in self.problem.constraints:
             if not (isinstance(con.body, Posynomial)
                     or isinstance(con.body, PosynomialRatio)):
                 return False
         return isinstance(self.problem.objective, Posynomial)
+
+    def projection(self, m, a):
+        """The fixed part a . d, built once."""
+        expr = 0.0
+        for j in np.nonzero(a)[0]:
+            expr = expr + float(a[j]) * m.d[j]
+        return expr
+
+    def new_param(self, m, name):
+        """A fresh mutable scalar Param on m.pblocks."""
+        setattr(m.pblocks, name,
+                pyo.Param(mutable=True, initialize=0.0, within=pyo.Reals))
+        return getattr(m.pblocks, name)
 
     def build(self):
         n = self.n
@@ -513,20 +526,18 @@ class SubproblemCache:
         m = pyo.ConcreteModel()
         m.J = pyo.RangeSet(0, n - 1)
         m.d = pyo.Var(m.J, initialize=0.0)
-        m.S = pyo.RangeSet(0, len(cons) - 1) if cons else pyo.RangeSet(0, -1)
+        if cons:
+            m.S = pyo.RangeSet(0, len(cons) - 1)
+        else:
+            m.S = pyo.RangeSet(0, -1)
         m.sigma = pyo.Var(m.S, domain=pyo.NonNegativeReals, initialize=0.0)
         m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
-        def projection(a):
-            """The fixed part a . d, built once."""
-            nz = np.nonzero(a)[0]
-            return sum(float(a[j]) * m.d[j] for j in nz) if nz.size else 0.0
-
         # --- objective ------------------------------------------------------
         obj = self.problem.objective
-        self.obj_proj = [projection(a) for _, a in obj.terms]
+        self.obj_proj = [self.projection(m, a) for _, a in obj.terms]
         self.exact_obj = getattr(self.options, 'exact_objective', False)
-        self.drop_quad = self.exact_obj and _fully_log_convex(self.problem)
+        self.drop_quad = self.exact_obj and fully_log_convex(self.problem)
         if self.exact_obj:
             # Exact: log sum exp(b_k + a_k.d), with b_k the same mutable
             # constant the constraints use.
@@ -555,21 +566,19 @@ class SubproblemCache:
                 terms = body.terms
                 names = []
                 for k, (_, a) in enumerate(terms):
-                    pname = f'b_{pcount}'
-                    setattr(m.pblocks, pname,
-                            pyo.Param(mutable=True, initialize=0.0,
-                                      within=pyo.Reals))
-                    names.append(getattr(m.pblocks, pname))
+                    names.append(self.new_param(m, f'b_{pcount}'))
                     pcount += 1
                 self.const_params.append(names)
                 self.weight_params.append(None)
                 self.rhs_params.append(None)
                 if body.is_monomial:
-                    expr = names[0] + projection(terms[0][1])
-                    m.cons.add(expr == m.sigma[i] if op == '=='
-                               else expr <= m.sigma[i])
+                    expr = names[0] + self.projection(m, terms[0][1])
+                    if op == '==':
+                        m.cons.add(expr == m.sigma[i])
+                    else:
+                        m.cons.add(expr <= m.sigma[i])
                 else:
-                    expr = sum(pyo.exp(names[k] + projection(a))
+                    expr = sum(pyo.exp(names[k] + self.projection(m, a))
                                for k, (_, a) in enumerate(terms))
                     m.cons.add(pyo.log(expr) <= m.sigma[i])
             else:
@@ -577,27 +586,19 @@ class SubproblemCache:
                 pterms, qterms = body.p.terms, body.q.terms
                 names = []
                 for k, (_, a) in enumerate(pterms):
-                    pname = f'b_{pcount}'
-                    setattr(m.pblocks, pname,
-                            pyo.Param(mutable=True, initialize=0.0,
-                                      within=pyo.Reals))
-                    names.append(getattr(m.pblocks, pname))
+                    names.append(self.new_param(m, f'b_{pcount}'))
                     pcount += 1
                 wname = f'w_{i}'
                 setattr(m.pblocks, wname,
                         pyo.Param(range(len(qterms)), mutable=True,
                                   initialize=0.0, within=pyo.Reals))
-                rname = f'r_{i}'
-                setattr(m.pblocks, rname,
-                        pyo.Param(mutable=True, initialize=0.0,
-                                  within=pyo.Reals))
                 wpar = getattr(m.pblocks, wname)
-                rpar = getattr(m.pblocks, rname)
+                rpar = self.new_param(m, f'r_{i}')
                 self.const_params.append(names)
                 self.weight_params.append(wpar)
                 self.rhs_params.append(rpar)
-                qproj = [projection(a) for _, a in qterms]
-                lhs = sum(pyo.exp(names[k] + projection(a))
+                qproj = [self.projection(m, a) for _, a in qterms]
+                lhs = sum(pyo.exp(names[k] + self.projection(m, a))
                           for k, (_, a) in enumerate(pterms))
                 rhs = rpar + sum(wpar[k] * qproj[k] for k in range(len(qterms)))
                 m.cons.add(pyo.log(lhs) - rhs <= m.sigma[i])
@@ -646,7 +647,7 @@ class SubproblemCache:
         lo = floor - log_xk
         hi = np.full(n, np.inf)
         # the model's own bounds, which presolve may have folded rows into;
-        # without them this solves an unbounded relaxation (see _apply_variable_bounds)
+        # without them this solves an unbounded relaxation (see apply_variable_bounds)
         if self.problem.bounds is not None:
             for j, pair in enumerate(self.problem.bounds[:n]):
                 blo, bhi = pair or (None, None)
@@ -661,9 +662,12 @@ class SubproblemCache:
                 mls = np.full(n, float(mls))
             lo = np.maximum(lo, -mls)
             hi = np.minimum(hi, mls)
-        _r = getattr(self.options, 'max_step_ratio', None)
-        if _r is not None:
-            r = np.asarray(_r(x_k) if callable(_r) else _r, dtype=float)
+        ratio_option = self.options.max_step_ratio
+        if ratio_option is not None:
+            if callable(ratio_option):
+                r = np.asarray(ratio_option(x_k), dtype=float)
+            else:
+                r = np.asarray(ratio_option, dtype=float)
             if r.ndim == 0:
                 r = np.full(n, float(r))
             ok = np.isfinite(r) & (r > 0)
@@ -680,7 +684,7 @@ class SubproblemCache:
         # Hessian term (O(n*memory) limited-memory, O(n^2) dense)
         if m.component('obj') is not None:
             m.del_component(m.obj)
-        quad = 0.0 if self.drop_quad else _quadratic_expression(B, m.d, n)
+        quad = 0.0 if self.drop_quad else quadratic_expression(B, m.d, n)
         penalty = self.options.penalty_constant * sum(
             m.sigma[i] ** 2 for i in range(len(cons)))
         # exact form: obj_lin already carries log f; linearized: gradient
@@ -690,7 +694,7 @@ class SubproblemCache:
         return self
 
 
-def _quadratic_expression(B, d, n):
+def quadratic_expression(B, d, n):
     """0.5 d^T B d, in whichever representation B is carried."""
     if isinstance(B, LimitedMemoryB):
         gamma, pairs = B.quad_terms()
@@ -707,7 +711,7 @@ def _quadratic_expression(B, d, n):
 # ---------------------------------------------------------------------------
 # Sub-problem construction
 # ---------------------------------------------------------------------------
-def _solve_subproblem(problem, x_k, B, options, method, cache=None):
+def solve_subproblem(problem, x_k, B, options, method, cache=None):
     """Build and solve one sub-problem; return the step d and the multipliers.
 
     method: 'slcp' = posynomials/monomials exact, rest linearized in log space
@@ -719,18 +723,18 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
     exact_obj = (getattr(options, 'exact_objective', False)
                  and method == 'slcp'
                  and isinstance(problem.objective, Posynomial))
-    drop_quad = exact_obj and _fully_log_convex(problem)
+    drop_quad = exact_obj and fully_log_convex(problem)
 
     if cache is not None and cache.usable and method == 'slcp':
         cache.update(x_k, B)
-        return _solve_pyomo_subproblem(cache.model, n, len(cons), options)
+        return solve_pyomo_subproblem(cache.model, n, len(cons), options)
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
     m.d = pyo.Var(m.J, initialize=0.0)
 
     log_xk = np.log(x_k)
-    _apply_variable_bounds(m, problem, log_xk)
+    apply_variable_bounds(m, problem, log_xk)
     f_k = problem.objective_value(x_k)
 
     # --- objective ---------------------------------------------------------
@@ -752,7 +756,7 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
 
     # objective and constraints all exact: the sub-problem IS the original
     # problem, a curvature term would only bias the step
-    quad = 0.0 if drop_quad else _quadratic_expression(B, m.d, n)
+    quad = 0.0 if drop_quad else quadratic_expression(B, m.d, n)
 
     # --- constraints -------------------------------------------------------
     # each constraint gets a relaxation variable sigma >= 0, penalised in the
@@ -815,11 +819,14 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
 
     # per-iteration trust region stated as a ratio to the current iterate
     # (see Options.max_step_ratio)
-    if getattr(options, 'max_step_ratio', None) is not None:
-        _r = options.max_step_ratio
+    if options.max_step_ratio is not None:
         # callable r(x_k) evaluated at the outer iterate: needed for shifted
         # variables (x = c + q), where a fixed ratio on x is not one on q
-        r = np.asarray(_r(x_k) if callable(_r) else _r, dtype=float)
+        ratio_option = options.max_step_ratio
+        if callable(ratio_option):
+            r = np.asarray(ratio_option(x_k), dtype=float)
+        else:
+            r = np.asarray(ratio_option, dtype=float)
         if r.ndim == 0:
             r = np.full(n, float(r))
         if r.shape != (n,):
@@ -846,10 +853,10 @@ def _solve_subproblem(problem, x_k, B, options, method, cache=None):
                 m.cons.add(m.d[j] <= float(mls[j]))
                 m.cons.add(m.d[j] >= -float(mls[j]))
 
-    return _solve_pyomo_subproblem(m, n, len(cons), options, method)
+    return solve_pyomo_subproblem(m, n, len(cons), options, method)
 
 
-def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
+def solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
     """Hand an assembled sub-problem to IPOPT and read back (d, multipliers). Shared by the rebuild and cached paths."""
     from lcsolver.environment import ipopt_solver_factory
     opt = ipopt_solver_factory()
@@ -902,7 +909,7 @@ def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
 # ---------------------------------------------------------------------------
 # Lagrangian gradients
 # ---------------------------------------------------------------------------
-def _lagrangian_gradient(problem, x, mults, method, reduced,
+def lagrangian_gradient(problem, x, mults, method, reduced,
                          exact_objective=False):
     """Gradient of the (optionally Reduced) Lagrangian in the working space.
 
@@ -998,7 +1005,7 @@ class LimitedMemoryB:
         return self
 
 
-def _damped_bfgs(B, s, z):
+def damped_bfgs(B, s, z):
     """Damped BFGS update, paper Eq. 13 (Nocedal & Wright Procedure 18.2).
 
     Damping keeps B positive definite when the curvature condition fails,
@@ -1024,7 +1031,7 @@ def _damped_bfgs(B, s, z):
 # ---------------------------------------------------------------------------
 # Merit function
 # ---------------------------------------------------------------------------
-def _constraint_violations(problem, x):
+def constraint_violations(problem, x):
     """The l1 constraint violation of each constraint, in body <= 1 form."""
     out = np.zeros(len(problem.constraints))
     for i, con in enumerate(problem.constraints):
@@ -1033,19 +1040,19 @@ def _constraint_violations(problem, x):
     return out
 
 
-def _max_violation(problem, x):
+def max_violation(problem, x):
     """Largest single constraint violation at x, or 0.0 if unconstrained."""
     if not problem.constraints:
         return 0.0
-    return float(np.max(_constraint_violations(problem, x)))
+    return float(np.max(constraint_violations(problem, x)))
 
 
-def _merit(problem, x, mu):
+def merit(problem, x, mu):
     """l1 merit function phi(x) = f(x) + sum_i mu_i |c_i(x)|_+."""
-    return problem.objective_value(x) + float(np.dot(mu, _constraint_violations(problem, x)))
+    return problem.objective_value(x) + float(np.dot(mu, constraint_violations(problem, x)))
 
 
-def _all_positive(problem, x):
+def all_positive(problem, x):
     """True when the objective and every constraint body are strictly positive.
 
     The log transform is undefined otherwise; the line search rejects a trial
@@ -1113,12 +1120,12 @@ def solve(problem, x0, method='slcp', options=None):
 
     for k in range(options.max_iterations):
         try:
-            d, mults = _solve_subproblem(problem, x, B, options, method,
+            d, mults = solve_subproblem(problem, x, B, options, method,
                                          cache=cache)
         except RuntimeError as exc:
             res.status = f'sub-problem failure at iteration {k}: {exc}'
             res.x, res.objective, res.iterations = x, problem.objective_value(x), k
-            res.max_violation = _max_violation(problem, x)
+            res.max_violation = max_violation(problem, x)
             return res
         res.subproblem_solves += 1
 
@@ -1130,13 +1137,13 @@ def solve(problem, x0, method='slcp', options=None):
         mu = np.maximum(mu, mu_floor)
 
         # --- line search ----------------------------------------------------
-        phi0 = _merit(problem, x, mu)
+        phi0 = merit(problem, x, mu)
         # directional derivative of phi along d, in the working space
         if method == 'sqp':
             dphi = float(np.dot(problem.objective.grad(x), d))
         else:
             dphi = float(np.dot(problem.objective.log_grad(x), d))
-        dphi -= float(np.dot(mu, _constraint_violations(problem, x)))
+        dphi -= float(np.dot(mu, constraint_violations(problem, x)))
 
         alpha = 1.0
         accepted = False
@@ -1145,12 +1152,12 @@ def solve(problem, x0, method='slcp', options=None):
             if np.any(x_trial <= 0) or not np.all(np.isfinite(x_trial)):
                 alpha *= options.rho
                 continue
-            if method != 'sqp' and not _all_positive(problem, x_trial):
+            if method != 'sqp' and not all_positive(problem, x_trial):
                 # shorten rather than step where the log transform can't be evaluated
                 alpha *= options.rho
                 continue
             try:
-                phi_trial = _merit(problem, x_trial, mu)
+                phi_trial = merit(problem, x_trial, mu)
                 res.function_evaluations += 1
             except (ValueError, FloatingPointError, OverflowError):
                 alpha *= options.rho
@@ -1170,18 +1177,18 @@ def solve(problem, x0, method='slcp', options=None):
                               f'watchdog limit ({options.watchdog_iterations}) '
                               f'was exceeded')
                 res.x, res.objective, res.iterations = x, problem.objective_value(x), k
-                res.max_violation = _max_violation(problem, x)
+                res.max_violation = max_violation(problem, x)
                 return res
             alpha = 1.0
             x_probe = (x * np.exp(alpha * d)) if method != 'sqp' else (x + alpha * d)
             while (np.any(x_probe <= 0) or not np.all(np.isfinite(x_probe))
-                   or (method != 'sqp' and not _all_positive(problem, x_probe))):
+                   or (method != 'sqp' and not all_positive(problem, x_probe))):
                 alpha *= options.rho
                 if alpha < 1e-12:
                     res.status = f'no positive step available at iteration {k}'
                     res.x, res.objective, res.iterations = (
                         x, problem.objective_value(x), k)
-                    res.max_violation = _max_violation(problem, x)
+                    res.max_violation = max_violation(problem, x)
                     return res
                 x_probe = (x * np.exp(alpha * d)) if method != 'sqp' else (x + alpha * d)
         else:
@@ -1198,15 +1205,15 @@ def solve(problem, x0, method='slcp', options=None):
         # excluding them fails from every start; including them takes ~20 iters.
         exact_obj_opt = (getattr(options, 'exact_objective', False)
                          and isinstance(problem.objective, Posynomial))
-        g_old = _lagrangian_gradient(problem, x, mults, method, reduced,
+        g_old = lagrangian_gradient(problem, x, mults, method, reduced,
                                      exact_obj_opt)
-        g_new = _lagrangian_gradient(problem, x_new, mults, method, reduced,
+        g_new = lagrangian_gradient(problem, x_new, mults, method, reduced,
                                      exact_obj_opt)
         s = (np.log(x_new) - np.log(x)) if method != 'sqp' else (x_new - x)
         if isinstance(B, LimitedMemoryB):
             B.update(s, g_new - g_old)
         else:
-            B = _damped_bfgs(B, s, g_new - g_old)
+            B = damped_bfgs(B, s, g_new - g_old)
 
         x = x_new
         res.history.append(x.copy())
@@ -1214,7 +1221,7 @@ def solve(problem, x0, method='slcp', options=None):
         step_norm = float(np.linalg.norm(alpha * d))
         res.step_norms.append(step_norm)
         grad_lag = float(np.max(np.abs(
-            _lagrangian_gradient(problem, x, mults, method, reduced=False))))
+            lagrangian_gradient(problem, x, mults, method, reduced=False))))
         res.grad_lagrangian.append(grad_lag)
 
         if options.verbose:
@@ -1226,7 +1233,7 @@ def solve(problem, x0, method='slcp', options=None):
         # It used to mean "the loop stopped" (True on a small step alone) --
         # misleading on hard signomial/black-box problems, which crawl to a
         # tiny step while still infeasible. max_violation makes the check free.
-        viol = _max_violation(problem, x)
+        viol = max_violation(problem, x)
         feasible = viol <= options.feasibility_tolerance
         if grad_lag < options.lagrangian_gradient_tolerance and feasible:
             res.converged, res.status = True, 'converged on the gradient of the Lagrangian'
@@ -1246,7 +1253,7 @@ def solve(problem, x0, method='slcp', options=None):
             # the termination criterion, not merely reported.
             if escalations < options.max_penalty_escalations:
                 escalations += 1
-                bad = _constraint_violations(problem, x) > options.feasibility_tolerance
+                bad = constraint_violations(problem, x) > options.feasibility_tolerance
                 mu_floor[bad] = np.maximum(mu_floor[bad] * options.penalty_escalation,
                                            max(1.0, abs(problem.objective_value(x))))
                 mu = np.maximum(mu, mu_floor)
@@ -1270,5 +1277,5 @@ def solve(problem, x0, method='slcp', options=None):
 
     res.status = f'did not converge within {options.max_iterations} iterations'
     res.x, res.objective, res.iterations = x, problem.objective_value(x), options.max_iterations
-    res.max_violation = _max_violation(problem, x)
+    res.max_violation = max_violation(problem, x)
     return res

@@ -137,7 +137,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
 
     from lcsolver.presolve.reductions import as_structures
     from lcsolver.solvers.sequential.sia import SIAOptions, explain_infeasibility
-    from lcsolver.solvers.sequential.bridge import (_apply_presolve, _restore,
+    from lcsolver.solvers.sequential.bridge import (apply_presolve, restore_presolved,
                                                build_problem)
 
     st = as_structures(model)
@@ -152,7 +152,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
         x0 = [float(pyo.value(v)) for v in st['variables']]
     log, n_original = None, len(st.get('variables') or [])
     if presolve:
-        st, x0, log, n_original = _apply_presolve(st, x0)
+        st, x0, log, n_original = apply_presolve(st, x0)
 
     problem = build_problem(st, sp_form=True)
     x0 = np.asarray(x0, dtype=float)
@@ -189,7 +189,7 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
                           if j < len(problem.names)]))
 
     # Put the presolved-away columns back, so `.x` is indexed like the model.
-    restored = _restore(type('R', (), {'x': np.asarray(x1, dtype=float)})(),
+    restored = restore_presolved(type('R', (), {'x': np.asarray(x1, dtype=float)})(),
                         log, n_original)
     return FeasibilityResult(
         feasible=not blocking,

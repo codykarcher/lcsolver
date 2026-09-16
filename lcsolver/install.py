@@ -503,8 +503,8 @@ def main(argv=None):
 
     print('Checking what is already installed...\n')
     report = check_solvers(probe=True)
-    from lcsolver.environment import _fmt
-    print(_fmt(report))
+    from lcsolver.environment import format_report
+    print(format_report(report))
     print()
 
     # A broken pin has to be fixed by the user; it outranks anything
@@ -609,7 +609,7 @@ def main(argv=None):
     from lcsolver import environment
     environment._PROBE_CACHE.clear()
     report = check_solvers(probe=True)
-    print(environment._fmt(report))
+    print(environment.format_report(report))
     suggest_ma27(report)
     return 0
 

@@ -2124,7 +2124,7 @@ def greybox_covered(st):
     positive.
     """
     try:
-        from lcsolver.solvers.sequential.bridge import (_unwrap_vars,
+        from lcsolver.solvers.sequential.bridge import (unwrap_variables,
                                                         greybox_blocks)
         blocks = greybox_blocks(st)
     except Exception:
@@ -2135,7 +2135,7 @@ def greybox_covered(st):
         if bb is None:
             continue
         try:
-            for v in _unwrap_vars(list(bb.inputVariables_optimization)
+            for v in unwrap_variables(list(bb.inputVariables_optimization)
                                   + list(bb.outputVariables_optimization)):
                 covered.add(str(v))
         except Exception:

@@ -41,9 +41,9 @@ def isolated_environment(tmp_path, monkeypatch):
     # two tests that are about the ASL library set it themselves.
     monkeypatch.setattr(install, 'pynumero_asl_available', lambda: True)
 
-    environment._forget_resolution()
+    environment.forget_resolution()
     yield
-    environment._forget_resolution()
+    environment.forget_resolution()
 
 
 # --------------------------------------------------------------------------
@@ -72,7 +72,7 @@ def test_pin_beats_path(tmp_path, monkeypatch):
     assert environment.ipopt_executable() == os.path.join(str(on_path), 'ipopt')
 
     monkeypatch.setenv(environment.IPOPT_EXECUTABLE_ENV, pin)
-    environment._forget_resolution()
+    environment.forget_resolution()
     assert environment.ipopt_executable() == pin
 
 
@@ -113,7 +113,7 @@ def test_no_ipopt_anywhere_is_a_warning_not_a_crash(tmp_path, monkeypatch):
 def test_report_renders_without_probing(tmp_path, monkeypatch):
     """`--no-probe` must produce a readable report, not a half-filled one."""
     monkeypatch.setenv('PATH', str(tmp_path))
-    text = environment._fmt(environment.check_solvers(probe=False))
+    text = environment.format_report(environment.check_solvers(probe=False))
     assert 'LCsolver solver environment' in text
     assert 'ipopt' in text
 
@@ -150,7 +150,7 @@ def test_an_ma27_build_wins_even_when_it_is_last_on_path(tmp_path, monkeypatch):
                                                 str(source_like)]))
     monkeypatch.setattr(environment, 'linear_solver_available',
                         lambda name, exe=None: name == 'ma27' and exe == ma27)
-    environment._forget_resolution()
+    environment.forget_resolution()
 
     chosen, reason = environment.ipopt_choice()
     assert chosen == ma27
@@ -171,7 +171,7 @@ def test_strict_path_order_is_still_available(tmp_path, monkeypatch):
     monkeypatch.setenv(environment.AUTOSELECT_ENV, '0')
     monkeypatch.setattr(environment, 'linear_solver_available',
                         lambda name, exe=None: exe == ma27)
-    environment._forget_resolution()
+    environment.forget_resolution()
 
     chosen, reason = environment.ipopt_choice()
     assert chosen == a
@@ -186,11 +186,11 @@ def test_a_recorded_build_is_used_with_nothing_on_path(tmp_path, monkeypatch):
     exe = _fake_ipopt(str(build))
 
     monkeypatch.setenv('PATH', str(tmp_path / 'nothing_here'))
-    environment._forget_resolution()
+    environment.forget_resolution()
     assert environment.ipopt_executable() is None
 
     environment.record_ipopt(exe)
-    environment._forget_resolution()
+    environment.forget_resolution()
     chosen, reason = environment.ipopt_choice()
     assert chosen == exe
     assert 'recorded' in reason
@@ -200,7 +200,7 @@ def test_a_recorded_build_that_was_deleted_is_ignored(tmp_path, monkeypatch):
     """Stale state must not turn into a pin at a path that no longer exists."""
     monkeypatch.setenv('PATH', str(tmp_path / 'nothing_here'))
     environment.record_ipopt(str(tmp_path / 'gone' / 'ipopt'))
-    environment._forget_resolution()
+    environment.forget_resolution()
 
     assert environment.recorded_ipopt() is None
     assert environment.ipopt_executable() is None
@@ -212,11 +212,11 @@ def test_the_report_says_why_this_binary(tmp_path, monkeypatch):
     directory.mkdir()
     _fake_ipopt(str(directory))
     monkeypatch.setenv('PATH', str(directory))
-    environment._forget_resolution()
+    environment.forget_resolution()
 
     report = environment.check_solvers(probe=False)
     assert report['ipopt']['reason']
-    assert report['ipopt']['reason'] in environment._fmt(report)
+    assert report['ipopt']['reason'] in environment.format_report(report)
 
 
 # --------------------------------------------------------------------------
@@ -446,7 +446,7 @@ def test_a_missing_asl_library_is_reported_not_silent(monkeypatch):
     if report['cyipopt']['available']:   # nothing to say if cyipopt is absent
         assert report['cyipopt']['pynumero_asl'] is False
         assert any('PyNumero ASL' in w for w in report['warnings'])
-        assert 'MISSING' in environment._fmt(report)
+        assert 'MISSING' in environment.format_report(report)
 
 
 def test_relink_targets_the_build_the_executable_came_from(tmp_path):

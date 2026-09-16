@@ -42,18 +42,18 @@ def _monomial_objective():
 def _count(make, **opts):
     import lcsolver.solvers.sequential.slcp as S
     calls = {"n": 0}
-    original = S._solve_pyomo_subproblem
+    original = S.solve_pyomo_subproblem
 
     def traced(m, n, n_cons, options, method="slcp"):
         calls["n"] += 1
         return original(m, n, n_cons, options, method)
 
-    S._solve_pyomo_subproblem = traced
+    S.solve_pyomo_subproblem = traced
     try:
         result = solve_slcp(structure_detector(unit_corrector(make())),
                             options=Options(**opts))
     finally:
-        S._solve_pyomo_subproblem = original
+        S.solve_pyomo_subproblem = original
     return calls["n"], result
 
 
@@ -80,8 +80,8 @@ def test_monomial_objective_still_benefits_from_dropping_the_quadratic():
 
 
 def test_fully_log_convex_detection():
-    from lcsolver.solvers.sequential.slcp import _fully_log_convex
-    assert _fully_log_convex(build_problem(
+    from lcsolver.solvers.sequential.slcp import fully_log_convex
+    assert fully_log_convex(build_problem(
         structure_detector(unit_corrector(_box()))))
 
 

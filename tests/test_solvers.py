@@ -107,8 +107,8 @@ class TestWriteBack(unittest.TestCase):
 
 def _ipopt_route_available(route):
     try:
-        from lcsolver.solvers.ipopt.NLP import _executable_available
-        return _executable_available('ipopt' if route == 'pyomo' else 'cyipopt')
+        from lcsolver.solvers.ipopt.NLP import executable_available
+        return executable_available('ipopt' if route == 'pyomo' else 'cyipopt')
     except Exception:
         return False
 
@@ -200,10 +200,10 @@ class TestIpoptBlackBox(unittest.TestCase):
     only case the AMPL-based route cannot handle, so it is covered explicitly."""
 
     def test_greybox_is_detected(self):
-        from lcsolver.solvers.ipopt.NLP import _has_greybox
+        from lcsolver.solvers.ipopt.NLP import has_greybox
 
-        self.assertTrue(_has_greybox(_unit_circle_model()))
-        self.assertFalse(_has_greybox(_rosenbrock()))
+        self.assertTrue(has_greybox(_unit_circle_model()))
+        self.assertFalse(has_greybox(_rosenbrock()))
 
     def test_pyomo_route_refuses_greybox(self):
         """The AMPL route cannot evaluate a Python black box; it must say so."""
@@ -505,20 +505,20 @@ class TestGPObjectiveForm(unittest.TestCase):
         self.assertAlmostEqual(answers["sum"], answers["auto"], places=5)
 
     def test_auto_picks_sum_for_ordinary_magnitudes(self):
-        from lcsolver.solvers.ipopt.GP import _auto_form
+        from lcsolver.solvers.ipopt.GP import auto_form
         groups = {0: [(1.0, [1.0, 0.0])], 1: [(2.5, [1.0, 2.0])]}
-        self.assertEqual(_auto_form(groups), "sum")
+        self.assertEqual(auto_form(groups), "sum")
 
     def test_auto_picks_lse_for_large_exponents(self):
-        from lcsolver.solvers.ipopt.GP import _auto_form
+        from lcsolver.solvers.ipopt.GP import auto_form
         groups = {0: [(1.0, [1.0, 0.0])], 1: [(1.0, [1022.7, 0.0])]}
-        self.assertEqual(_auto_form(groups), "lse")
+        self.assertEqual(auto_form(groups), "lse")
 
     def test_auto_picks_lse_for_large_coefficients(self):
-        from lcsolver.solvers.ipopt.GP import _auto_form
+        from lcsolver.solvers.ipopt.GP import auto_form
         import math
         groups = {0: [(1.0, [1.0])], 1: [(math.exp(176.0), [1.0])]}
-        self.assertEqual(_auto_form(groups), "lse")
+        self.assertEqual(auto_form(groups), "lse")
 
     def test_invalid_form_is_rejected(self):
         from lcsolver.solvers.ipopt.GP import solve_gp_ipopt
@@ -534,7 +534,7 @@ class TestGPObjectiveForm(unittest.TestCase):
     # below IPOPT's tolerances (the wind turbine COE model certifies a point
     # 7x off).  Under form='auto' a claimed 'sum' success is therefore
     # verified by a warm-started 'lse' solve.  These tests drive
-    # _build_and_solve_gp with a stubbed _assemble_and_solve so the three
+    # build_and_solve_gp with a stubbed assemble_and_solve so the three
     # outcomes are exercised without needing a model that reproduces the
     # numerics.
 
@@ -558,10 +558,10 @@ class TestGPObjectiveForm(unittest.TestCase):
 
         m = pyo.ConcreteModel()
         groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}   # tame -> auto=sum
-        with mock.patch.object(convex, '_assemble_and_solve', fake):
+        with mock.patch.object(convex, 'assemble_and_solve', fake):
             with _warnings.catch_warnings(record=True) as caught:
                 _warnings.simplefilter('always')
-                res = convex._build_and_solve_gp(
+                res = convex.build_and_solve_gp(
                     m, 1, groups, ['<='], False, None, 'auto', None,
                     form='auto')
         return res, calls, caught
@@ -604,8 +604,8 @@ class TestGPObjectiveForm(unittest.TestCase):
 
         m = pyo.ConcreteModel()
         groups = {0: [(1.0, [1.0])], 1: [(2.0, [1.0])]}
-        with mock.patch.object(convex, '_assemble_and_solve', fake):
-            res = convex._build_and_solve_gp(
+        with mock.patch.object(convex, 'assemble_and_solve', fake):
+            res = convex.build_and_solve_gp(
                 m, 1, groups, ['<='], False, None, 'auto', None, form='sum')
         self.assertEqual(calls, ['sum'])
         self.assertEqual(res['gp form'], 'sum')

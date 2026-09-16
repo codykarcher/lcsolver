@@ -21,7 +21,7 @@ from lcsolver.core.errors import SolverUnavailable
 
 
 # ---------------------------------------------------------------------------
-def _resolve_executable(executable=None):
+def resolve_executable(executable=None):
     """Which ipopt binary: explicit arg, else LCSOLVER_IPOPT_EXECUTABLE,
     else PATH. The env var exists because conda activate prepends to PATH
     every shell, so a source-built MA27 ipopt silently loses to the conda
@@ -32,15 +32,15 @@ def _resolve_executable(executable=None):
     return ipopt_executable()
 
 
-def _ma27_available(executable=None):
+def ma27_available(executable=None):
     """Does the ipopt executable carry HSL MA27? Probed with a one-variable
     solve, cached for the session; only consulted on a FAILED solve to
     sharpen the error, so the probe never costs the success path."""
     from lcsolver.environment import linear_solver_available
-    return linear_solver_available('ma27', _resolve_executable(executable))
+    return linear_solver_available('ma27', resolve_executable(executable))
 
 
-def _has_greybox(model):
+def has_greybox(model):
     """True if the model contains any ExternalGreyBoxBlock (a black-box constraint)."""
     try:
         from pyomo.contrib.pynumero.interfaces.external_grey_box import (
@@ -54,9 +54,9 @@ def _has_greybox(model):
     return False
 
 
-def _executable_available(name='ipopt'):
+def executable_available(name='ipopt'):
     try:
-        executable = _resolve_executable() if name == 'ipopt' else None
+        executable = resolve_executable() if name == 'ipopt' else None
         opt = (pyo.SolverFactory(name, executable=executable) if executable
                else pyo.SolverFactory(name))
         return bool(opt.available(exception_flag=False))
@@ -64,7 +64,7 @@ def _executable_available(name='ipopt'):
         return False
 
 
-def _summarize(results):
+def summarize_results(results):
     """Condense a Pyomo results object into a plain dict."""
     out = {'solver': None, 'status': None, 'termination_condition': None,
            'objective': None, 'message': None}
@@ -94,16 +94,16 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     raises RuntimeError when no IPOPT is usable or the solve fails.
     """
     options = dict(options or {})
-    greybox = _has_greybox(m)
+    greybox = has_greybox(m)
     # Resolved once here so the route choice, the solve and the MA27 diagnosis
     # all talk about the same binary.
-    executable = _resolve_executable(executable)
+    executable = resolve_executable(executable)
 
     # ---- choose the route -------------------------------------------------
     if method == 'auto':
         if greybox:
             route = 'cyipopt'          # AMPL route cannot evaluate a Python black box
-        elif _executable_available('ipopt'):
+        elif executable_available('ipopt'):
             route = 'pyomo'            # preferred
         else:
             route = 'cyipopt'          # fall back
@@ -184,7 +184,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         results = opt.solve(m, tee=tee, options=dict(options))
 
     # ---- interpret --------------------------------------------------------
-    summary = _summarize(results)
+    summary = summarize_results(results)
     summary['solver'] = route
     summary['problem_structure'] = 'nonlinear_program'
     # first question when two machines disagree; None = build default
@@ -202,7 +202,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
             msg += linear_solver_failure_note(
                 options['linear_solver'],
                 executable if route == 'pyomo' else None)
-        elif route == 'pyomo' and not _ma27_available(executable):
+        elif route == 'pyomo' and not ma27_available(executable):
             msg += (
                 "\nNote: this IPOPT build appears to lack the HSL MA27 "
                 "linear solver, so it is running MUMPS (the shipped "
@@ -232,3 +232,7 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
         summary['objective'] = None
 
     return summary
+
+
+# older scripts in the lc* repos import this by its former name
+_executable_available = executable_available

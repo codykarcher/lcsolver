@@ -290,42 +290,42 @@ class TestParameterGradient(unittest.TestCase):
     the cases where the batched form could differ from the pairwise one."""
 
     def _index(self, f):
-        from lcsolver.postsolve.sensitivity import _constants
-        return {id(pd): n for n, pd in _constants(f).items()}
+        from lcsolver.postsolve.sensitivity import model_constants
+        return {id(pd): n for n, pd in model_constants(f).items()}
 
     def test_a_constant_appearing_twice_is_not_counted_twice(self):
         """The walker yields a repeated Param once per occurrence."""
-        from lcsolver.postsolve.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import parameter_gradient
         f = Formulation()
         x = f.Variable('x', 1.0, '')
         a = f.Constant('a', 3.0, '')
         f.Objective(x)
-        g = _param_gradient(a * x + a * x, self._index(f))
+        g = parameter_gradient(a * x + a * x, self._index(f))
         self.assertAlmostEqual(g['a'], 2.0, places=12)     # d(2ax)/da = 2x
 
     def test_constants_absent_from_an_expression_are_omitted(self):
-        from lcsolver.postsolve.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import parameter_gradient
         f = Formulation()
         x = f.Variable('x', 2.0, '')
         a = f.Constant('a', 3.0, '')
         b = f.Constant('b', 5.0, '')
         f.Objective(x)
-        g = _param_gradient(a * x, self._index(f))
+        g = parameter_gradient(a * x, self._index(f))
         self.assertIn('a', g)
         self.assertNotIn('b', g)                # contributes nothing, not zero
 
     def test_a_plain_number_has_no_gradient(self):
         """Bounds are often literals, and were reaching the walker as floats."""
-        from lcsolver.postsolve.sensitivity import _param_gradient
+        from lcsolver.postsolve.sensitivity import parameter_gradient
         f = Formulation()
         x = f.Variable('x', 1.0, '')
         f.Constant('a', 3.0, '')
         f.Objective(x)
-        self.assertEqual(_param_gradient(4.0, self._index(f)), {})
-        self.assertEqual(_param_gradient(None, self._index(f)), {})
+        self.assertEqual(parameter_gradient(4.0, self._index(f)), {})
+        self.assertEqual(parameter_gradient(None, self._index(f)), {})
 
     def test_it_agrees_with_differentiating_one_at_a_time(self):
-        from lcsolver.postsolve.sensitivity import _param_gradient, _d, _constants
+        from lcsolver.postsolve.sensitivity import parameter_gradient, partial_derivative, model_constants
         f = Formulation()
         x = f.Variable('x', 2.0, '')
         y = f.Variable('y', 3.0, '')
@@ -333,10 +333,10 @@ class TestParameterGradient(unittest.TestCase):
         b = f.Constant('b', 5.0, '')
         f.Objective(x)
         expr = a * x ** 2 + b * y + a * b * x * y
-        constants = _constants(f)
-        batched = _param_gradient(expr, {id(pd): n for n, pd in constants.items()})
+        constants = model_constants(f)
+        batched = parameter_gradient(expr, {id(pd): n for n, pd in constants.items()})
         for name, pd in constants.items():
-            self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
+            self.assertAlmostEqual(batched[name], partial_derivative(expr, pd), places=10)
 
 
 @unittest.skipIf(not any_ipopt_available(),
@@ -418,37 +418,37 @@ class TestActiveSetIsScaleInvariant(unittest.TestCase):
 
     def test_a_slack_bound_far_below_unit_scale_is_not_active(self):
         """The unit that fails directly, with no solve in the way."""
-        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+        from lcsolver.postsolve.sensitivity import is_active, ACTIVE_RTOL
 
         f, y, con = self._one_constraint(lambda v: v >= 1.0e-12)
         y.set_value(2.0e-5)
 
         self.assertFalse(
-            _is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
+            is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
             'y is 2e-5 and the bound is 1e-12 -- seven orders of magnitude '
             'of slack must not read as binding')
 
     def test_the_no_variables_fallback_is_also_scale_invariant(self):
         """The same trap sits in the branch that has no variables to measure."""
-        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+        from lcsolver.postsolve.sensitivity import is_active, ACTIVE_RTOL
 
         f, y, con = self._one_constraint(lambda v: v >= 1.0e-12)
         y.set_value(2.0e-5)
 
         self.assertFalse(
-            _is_active(con, rtol=ACTIVE_RTOL),
+            is_active(con, rtol=ACTIVE_RTOL),
             'the bound is the only scale available, and 2e-5 is nowhere near '
             '1e-12 by any measure')
 
     def test_a_genuinely_tight_small_scale_bound_is_still_active(self):
         """The fix must not go the other way and lose real active bounds."""
-        from lcsolver.postsolve.sensitivity import _is_active, ACTIVE_RTOL
+        from lcsolver.postsolve.sensitivity import is_active, ACTIVE_RTOL
 
         f, y, con = self._one_constraint(lambda v: v >= 1.0e-5)
         y.set_value(1.0e-5 * (1 + 1e-9))     # converged onto its bound
 
         self.assertTrue(
-            _is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
+            is_active(con, rtol=ACTIVE_RTOL, variables=[y]),
             'a bound the solver has converged onto is active regardless of '
             'the magnitude it is expressed in')
 

@@ -99,7 +99,7 @@ def test_the_report_names_spral_and_the_default():
     assert 'spral' in report['ipopt'] and 'default' in report['ipopt']
     report['ipopt'].update(executable='/x/ipopt', ma27=False, mumps=True,
                            spral=True, default='spral')
-    text = env._fmt(report)
+    text = env.format_report(report)
     assert 'mumps, spral' in text and '(default: spral)' in text
 
 
