@@ -115,10 +115,10 @@ class FeasibilityResult:
         The backends take their initial point from the model's current variable
         values, so this is what makes the result passable. Returns the model.
         """
-        from lcsolver.presolve.reductions import _as_structures
+        from lcsolver.presolve.reductions import as_structures
         from lcsolver.postsolve.writeback import write_solution
 
-        st = _as_structures(model)
+        st = as_structures(model)
         write_solution(st, {'x': np.asarray(self.x, dtype=float)}, model=model)
         return model
 
@@ -135,12 +135,12 @@ def feasibility(model, x0=None, options=None, top=12, presolve=True):
     """
     import pyomo.environ as pyo
 
-    from lcsolver.presolve.reductions import _as_structures
+    from lcsolver.presolve.reductions import as_structures
     from lcsolver.solvers.sequential.sia import SIAOptions, explain_infeasibility
     from lcsolver.solvers.sequential.bridge import (_apply_presolve, _restore,
                                                build_problem)
 
-    st = _as_structures(model)
+    st = as_structures(model)
     if st.get('bounds') is not None:
         # Phase I reads rows, and this form split bounds out of them; detect
         # afresh rather than search a problem with no variable bounds

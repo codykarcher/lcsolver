@@ -1314,7 +1314,7 @@ def test_a_rebuilt_structure_does_not_answer_from_the_old_cache():
 
 
 def test_term_values_match_direct_evaluation():
-    from lcsolver.presolve.reductions import _eval_terms
+    from lcsolver.presolve.reductions import evaluate_terms
 
     st = _detect(_rich_model(), bounds_as_rows=False)
     x = np.linspace(1.5, 4.0, st.n_variables)
@@ -1325,7 +1325,7 @@ def test_term_values_match_direct_evaluation():
         dense = [(t.coeff, [t.exponents.get(j, 0.0)
                             for j in range(st.n_variables)]) for t in terms]
         assert sum(t.value(x) for t in terms) == pytest.approx(
-            _eval_terms(dense, x), rel=1e-9)
+            evaluate_terms(dense, x), rel=1e-9)
 
 
 def test_the_typed_view_is_idempotent():

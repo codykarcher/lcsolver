@@ -15,14 +15,14 @@ from pyomo.common.dependencies import attempt_import, numpy as np, numpy_availab
 slcp, slcp_available = attempt_import('lcsolver.solvers.sequential.slcp')
 
 
-def _ipopt_available():
+def any_ipopt_available():
     try:
         return pyo.SolverFactory('ipopt').available(exception_flag=False)
     except Exception:
         return False
 
 
-ipopt_available = _ipopt_available()
+ipopt_available = any_ipopt_available()
 
 
 def _xy_problem():

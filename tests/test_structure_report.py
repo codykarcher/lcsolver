@@ -291,10 +291,10 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
     """Where "as solved" comes from: inspecting the reduced rows, which
     needs no provenance. Earlier row-tracking versions broke because each
     pass RENUMBERS. Blanking the blame list must not change the verdict."""
-    from lcsolver.presolve.reductions import _gp_after_presolve
+    from lcsolver.presolve.reductions import gp_after_presolve
     from lcsolver.presolve.reductions import structure_report as report
     st = _detected(_sp_only_on_paper())
-    assert _gp_after_presolve(st) is True
+    assert gp_after_presolve(st) is True
     with_blame = report(st)
     st['blockers'] = {}
     assert 'as solved' in with_blame
@@ -303,8 +303,8 @@ def test_the_claim_is_derived_from_the_reduced_rows_not_the_blame_list():
 
 def test_a_genuine_sp_is_not_gp_after_presolve():
     """The other side of it: an unremovable signomial must fail the check."""
-    from lcsolver.presolve.reductions import _gp_after_presolve
-    assert _gp_after_presolve(_detected(_sp())) is False
+    from lcsolver.presolve.reductions import gp_after_presolve
+    assert gp_after_presolve(_detected(_sp())) is False
 
 
 # --- the post-solve half turns itself on ------------------------------------

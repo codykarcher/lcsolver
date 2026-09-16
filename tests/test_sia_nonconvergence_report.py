@@ -34,8 +34,8 @@ class _Result:
         self.max_violation = 1.5e-3
         self.stationarity = 4.25e-2
         self.complementarity = 0.0
-        if infeasibility_report is not None:
-            self.infeasibility_report = infeasibility_report
+        self.phase1_feasible = None
+        self.infeasibility_report = infeasibility_report
 
 
 def _sp():
@@ -57,7 +57,7 @@ def _solve_with_status(status, report=None, monkeypatch=None):
     # the SIA solve itself is faked above. Without this, a machine with no
     # IPOPT routes the signomial program to cvxopt instead, the fake never
     # runs, and the test fails for a reason it is not testing.
-    monkeypatch.setattr(solver_module, '_ipopt_available', lambda: True)
+    monkeypatch.setattr(solver_module, 'any_ipopt_available', lambda: True)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         res = solver_module.solve(_sp(), sensitivities=False, quiet=False)

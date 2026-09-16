@@ -48,7 +48,7 @@ VACUOUS_LO = 1e-29
 VACUOUS_HI = 1e29
 
 
-def _check_width(structures, n, who):
+def check_width(structures, n, who):
     """Rows and the variable list must describe the same number of columns.
 
     The old `j < len(variables)` mask silently dropped the tail and let the
@@ -62,7 +62,7 @@ def _check_width(structures, n, who):
             "renumbered rows and variables differently.")
 
 
-def _bound_from_term(term, j, op):
+def bound_from_term(term, j, op):
     """Bound a single-variable term c * x_j**a imposes: (1/c)**(1/a),
     upper when a > 0, lower when a < 0, both for an equality."""
     a = term.exponents.get(j, 0.0)
@@ -77,7 +77,7 @@ def _bound_from_term(term, j, op):
     return (None, val) if a > 0 else (val, None)
 
 
-def _bound_from_row(coeff, expo, j, op):
+def bound_from_row(coeff, expo, j, op):
     """Bound a single-variable row c * x_j**a <= 1 (or ==) imposes.
     Returns (lo, hi), either possibly None."""
     a = expo[j]
@@ -261,10 +261,68 @@ class PresolveReport:
 
 
 def nm_at(names, j):
-    return names[j] if j < len(names) else f"<var {j}>"
+    if j < len(names):
+        return names[j]
+    return f"<var {j}>"
 
 
-def _rows_of(structures):
+def operator_at(operators, i):
+    """The operator of constraint i (1-based, as the rows index them);
+    '<=' when the list is short."""
+    if 0 <= i - 1 < len(operators):
+        return operators[i - 1]
+    return "<="
+
+
+def has_vacuous_bounds(bounds, j):
+    """True when x_j's declared box is no box at all (the 1e-30..1e30
+    default, or None)."""
+    if j < len(bounds) and bounds[j] is not None:
+        lo, hi = bounds[j]
+    else:
+        lo, hi = None, None
+    return ((lo is None or lo <= VACUOUS_LO)
+            and (hi is None or hi >= VACUOUS_HI))
+
+
+def max_matching(edges):
+    """Kuhn's algorithm: match equality rows to variables they determine.
+
+    edges[i] is the set of variables in equality row i. Returns
+    (match_var, match_row): variable -> row that determines it, and row ->
+    variable (-1 when unmatched). Matching size = STRUCTURAL rank, an upper
+    bound on true rank: an under-determined verdict is genuine; a square
+    one may still be singular.
+    """
+    import sys
+
+    match_var = {}
+    match_row = [-1] * len(edges)
+
+    def augment(i, seen):
+        for j in edges[i]:
+            if j in seen:
+                continue
+            seen.add(j)
+            owner = match_var.get(j)
+            if owner is None or augment(owner, seen):
+                match_var[j] = i
+                match_row[i] = j
+                return True
+        return False
+
+    # the augmenting search recurses once per row on a long alternating path
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(limit, 10 * len(edges) + 1000))
+    try:
+        for i in range(0, len(edges)):
+            augment(i, set())
+    finally:
+        sys.setrecursionlimit(limit)
+    return match_var, match_row
+
+
+def log_rows_of(structures):
     """``(rows, operators, key)`` for the log-space encoding.
 
     log_key picks signomial before geometric -- a model can satisfy several
@@ -275,10 +333,10 @@ def _rows_of(structures):
     from lcsolver.presolve.unitCorrector import UnitMismatch
     model = None if isinstance(structures, dict) else structures
     try:
-        st = as_detected(_as_structures(structures))
+        st = as_detected(as_structures(structures))
     except UnitMismatch as exc:
         rep = PresolveReport()
-        rep.structure = _units_diagnosis(exc)
+        rep.structure = units_diagnosis(exc)
         return rep
     key = st.log_key
     if key is None:
@@ -286,7 +344,7 @@ def _rows_of(structures):
     return st[key][1], st[key][2], key
 
 
-def _underdetermined_vars(structures, n) -> set:
+def underdetermined_variables(structures, n) -> set:
     """Variables the equality system leaves free (Dulmage-Mendelsohn).
 
     Max matching of equality rows to variables, then everything reachable by
@@ -294,52 +352,38 @@ def _underdetermined_vars(structures, n) -> set:
     matching is found.
     """
     try:
-        edges, rows, _n, _names = _equality_graph(structures, None)
+        edges, rows, _n, _names = equality_graph(structures, None)
     except Exception:
         return set()
-    match_var, match_row = {}, {}
-
-    def augment(i, seen):
-        for j in edges[i]:
-            if j in seen:
-                continue
-            seen.add(j)
-            owner = match_var.get(j)
-            if owner is None or augment(owner, seen):
-                match_var[j], match_row[i] = i, j
-                return True
-        return False
-
-    import sys as _sys
-    lim = _sys.getrecursionlimit()
-    _sys.setrecursionlimit(max(lim, 10 * len(edges) + 1000))
-    try:
-        for i in range(len(edges)):
-            augment(i, set())
-    finally:
-        _sys.setrecursionlimit(lim)
+    match_var, match_row = max_matching(edges)
 
     var_rows = collections.defaultdict(list)
     for i, e in enumerate(edges):
         for j in e:
             var_rows[j].append(i)
-    involved = {j for e in edges for j in e}
-    free = {j for j in range(n) if j in involved and j not in match_var}
-    # a variable in NO equality is trivially undetermined by them
-    free |= {j for j in range(n) if j not in involved}
+    involved = set()
+    for e in edges:
+        involved |= e
+    # unmatched variables, and a variable in NO equality is trivially
+    # undetermined by them
+    free = set()
+    for j in range(0, n):
+        if j not in involved or j not in match_var:
+            free.add(j)
     seen, stack = set(free), list(free)
     while stack:
         j = stack.pop()
         for i in var_rows.get(j, []):
-            u = match_row.get(i)
-            if u is not None and u not in seen:
-                seen.add(u); stack.append(u)
+            u = match_row[i]
+            if u >= 0 and u not in seen:
+                seen.add(u)
+                stack.append(u)
     return seen
 
 
 def presolve_report(structures, names=None) -> PresolveReport:
     """Run the structural checks. Nothing is solved and nothing is modified."""
-    rows, operators, _ = _rows_of(structures)
+    rows, operators, _ = log_rows_of(structures)
     st = as_detected(structures)
     if names is None:
         names = [str(v) for v in structures.get("variables", [])]
@@ -363,16 +407,10 @@ def presolve_report(structures, names=None) -> PresolveReport:
     box_lo = [None] * n
     box_hi = [None] * n
 
-    def note_bound(j, lo, hi):
-        if lo is not None:
-            box_lo[j] = lo if box_lo[j] is None else max(box_lo[j], lo)
-        if hi is not None:
-            box_hi[j] = hi if box_hi[j] is None else min(box_hi[j], hi)
-
     # Bounds the detector split out (bounds_as_rows=False) never appear as rows
     for j, pair in enumerate(structures.get("bounds") or []):
         if j < n and pair is not None:
-            note_bound(j, pair[0], pair[1])
+            note_bound(box_lo, box_hi, j, pair[0], pair[1])
 
     # The objective bounds a positive-exponent variable above, as a
     # constraint would
@@ -398,7 +436,8 @@ def presolve_report(structures, names=None) -> PresolveReport:
         if is_bound:
             # Record the value; whether it bounds anything is decided below
             j = next(iter(touched))
-            note_bound(j, *_bound_from_term(terms[0], j, op))
+            lo, hi = bound_from_term(terms[0], j, op)
+            note_bound(box_lo, box_hi, j, lo, hi)
             rep.singleton_rows.append(i)
         else:
             for t in terms:
@@ -431,9 +470,6 @@ def presolve_report(structures, names=None) -> PresolveReport:
 
     rep.duplicate_rows = sum(c - 1 for c in patterns.values() if c > 1)
 
-    def nm(j):
-        return nm_at(names, j)
-
     # Count real constraints, not bound rows -- counting the box would hide a
     # singleton column
     for j in range(n):
@@ -442,25 +478,64 @@ def presolve_report(structures, names=None) -> PresolveReport:
         bounded = ((box_lo[j] is not None and box_lo[j] > VACUOUS_LO)
                    or (box_hi[j] is not None and box_hi[j] < VACUOUS_HI))
         if not in_rows[j] and not bounded:
-            rep.empty_columns.append(nm(j))
+            rep.empty_columns.append(nm_at(names, j))
         elif not in_real[j]:
-            rep.bound_only_columns.append(nm(j))
+            rep.bound_only_columns.append(nm_at(names, j))
         elif len(in_real[j]) == 1:
-            rep.singleton_columns.append(nm(j))
+            rep.singleton_columns.append(nm_at(names, j))
         if not upper[j]:
-            rep.unbounded_above.append(nm(j))
+            rep.unbounded_above.append(nm_at(names, j))
         if not lower[j]:
-            rep.unbounded_below.append(nm(j))
+            rep.unbounded_below.append(nm_at(names, j))
 
     hist = collections.Counter(len(s) for s in in_real)
     rep.row_counts = dict(sorted(hist.items()))
 
     # Output-only detection needs terms per constraint and separated bounds
     if structures.get("bounds") is not None:
-        obj_vars = {j for t in st.terms(0) for j in t.variables}
-        outs = _output_only(st, con_idx, structures["bounds"], obj_vars, n)
-        rep.output_columns = [nm(j) for j, _i in outs]
+        obj_vars = set()
+        for t in st.terms(0):
+            obj_vars |= t.variables
+        outs = output_only_columns(st, con_idx, structures["bounds"], obj_vars, n)
+        rep.output_columns = [nm_at(names, j) for j, _i in outs]
     return rep
+
+
+def note_bound(box_lo, box_hi, j, lo, hi):
+    """Tighten the recorded box of x_j with another source's bound."""
+    if lo is not None:
+        if box_lo[j] is None:
+            box_lo[j] = lo
+        else:
+            box_lo[j] = max(box_lo[j], lo)
+    if hi is not None:
+        if box_hi[j] is None:
+            box_hi[j] = hi
+        else:
+            box_hi[j] = min(box_hi[j], hi)
+
+
+def intersect_bounds(bounds, j, lo, hi, names):
+    """Intersect x_j's (lo, hi) box with another bound, in place. Crossed
+    bounds prove infeasibility: say so rather than silently picking a side
+    and answering a different question."""
+    cur_lo, cur_hi = bounds[j]
+    if lo is not None:
+        if cur_lo is None:
+            cur_lo = lo
+        else:
+            cur_lo = max(cur_lo, lo)
+    if hi is not None:
+        if cur_hi is None:
+            cur_hi = hi
+        else:
+            cur_hi = min(cur_hi, hi)
+    if (cur_lo is not None and cur_hi is not None
+            and cur_hi < cur_lo * (1.0 - 1e-9)):
+        raise InfeasibleProblem(
+            f"{nm_at(names, j)} is required to be both >= {cur_lo:g} and "
+            f"<= {cur_hi:g}; the model has no feasible point")
+    bounds[j] = (cur_lo, cur_hi)
 
 
 def fold_singleton_rows(structures, only=None):
@@ -479,7 +554,7 @@ def fold_singleton_rows(structures, only=None):
             "fold_singleton_rows needs structures['bounds'] to fold into; "
             "run structure_detector with bounds_as_rows=False")
 
-    rows, operators, key = _rows_of(structures)
+    rows, operators, key = log_rows_of(structures)
     names = [str(v) for v in structures.get("variables", [])]
     numer, denom = collections.defaultdict(list), collections.defaultdict(list)
     for r in rows:
@@ -487,23 +562,12 @@ def fold_singleton_rows(structures, only=None):
         (numer if idx >= 0 else denom)[
             idx if idx >= 0 else -idx - 1].append(r)
 
-    bounds = [tuple(b) if b is not None else (None, None)
-              for b in structures["bounds"]]
-
-    def tighten(j, lo, hi):
-        cur_lo, cur_hi = bounds[j]
-        if lo is not None:
-            cur_lo = lo if cur_lo is None else max(cur_lo, lo)
-        if hi is not None:
-            cur_hi = hi if cur_hi is None else min(cur_hi, hi)
-        # Crossed bounds prove infeasibility; say so rather than silently
-        # picking a side and answering a different question
-        if (cur_lo is not None and cur_hi is not None
-                and cur_hi < cur_lo * (1.0 - 1e-9)):
-            raise InfeasibleProblem(
-                f"{nm_at(names, j)} is required to be both >= {cur_lo:g} and "
-                f"<= {cur_hi:g}; the model has no feasible point")
-        bounds[j] = (cur_lo, cur_hi)
+    bounds = []
+    for b in structures["bounds"]:
+        if b is None:
+            bounds.append((None, None))
+        else:
+            bounds.append(tuple(b))
 
     folded = set()
     for i in sorted(k for k in set(numer) | set(denom) if k != 0):
@@ -517,11 +581,11 @@ def fold_singleton_rows(structures, only=None):
         if len(nz) != 1 or nz[0] >= len(bounds):
             continue
         j = nz[0]
-        op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
-        lo, hi = _bound_from_row(float(row[1]), expo, j, op)
+        op = operator_at(operators, i)
+        lo, hi = bound_from_row(float(row[1]), expo, j, op)
         if lo is None and hi is None:
             continue
-        tighten(j, lo, hi)
+        intersect_bounds(bounds, j, lo, hi, names)
         folded.add(i)
 
     # Renumber survivors; indices stay contiguous from 1 because the operator
@@ -563,7 +627,7 @@ class Removed:
                 f"value={self.value!r})")
 
 
-def _eval_terms(terms, x, j=None, tj=None):
+def evaluate_terms(terms, x, j=None, tj=None):
     """``sum_k c_k prod_i x_i**a_ik``, optionally overriding ``log x_j``."""
     import math
 
@@ -576,7 +640,7 @@ def _eval_terms(terms, x, j=None, tj=None):
             lx = tj if (j is not None and i == j) else (
                 math.log(x[i]) if i < len(x) and x[i] > 0 else -math.inf)
             acc += e * lx
-        # Saturate BOTH ways: _solve_for probes brackets near log(1e300),
+        # Saturate BOTH ways: solve_row_for probes brackets near log(1e300),
         # where bare math.exp overflows; only the sign matters out there
         if acc > 700:
             total += math.inf
@@ -585,7 +649,7 @@ def _eval_terms(terms, x, j=None, tj=None):
     return total
 
 
-def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
+def solve_row_for(num, den, j, x, lo=1e-300, hi=1e300):
     """Solve ``num/den == 1`` for ``x_j`` by bisection on ``log x_j``.
 
     The caller already established monotonicity in x_j, so a sign change is
@@ -593,17 +657,9 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
     """
     import math
 
-    def f(t):
-        n = _eval_terms(num, x, j, t)
-        d = _eval_terms(den, x, j, t) if den else 1.0
-        if n <= 0:
-            return -math.inf
-        if d <= 0:
-            return math.inf
-        return math.log(n) - math.log(d)
-
     a, b = math.log(lo), math.log(hi)
-    fa, fb = f(a), f(b)
+    fa = log_ratio_at(num, den, j, x, a)
+    fb = log_ratio_at(num, den, j, x, b)
     # On a steep row (P**20 == posynomial) BOTH ends can come back infinite;
     # that is a valid sign change -- refusing it left the ISA fitted pressure
     # at the 1.0 placeholder (129 Pa for 70 kPa). Only NaN means the row
@@ -618,7 +674,7 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
         return None                    # no sign change: not recoverable here
     for _ in range(200):
         m = 0.5 * (a + b)
-        fm = f(m)
+        fm = log_ratio_at(num, den, j, x, m)
         if fm == 0.0:
             return math.exp(m)
         if (fm > 0) == (fa > 0):
@@ -628,7 +684,24 @@ def _solve_for(num, den, j, x, lo=1e-300, hi=1e300):
     return math.exp(0.5 * (a + b))
 
 
-def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
+def log_ratio_at(num, den, j, x, t):
+    """log(num/den) with log x_j overridden by t; +-inf where a side is
+    non-positive, so a bisection can still read the sign."""
+    import math
+
+    n = evaluate_terms(num, x, j, t)
+    if den:
+        d = evaluate_terms(den, x, j, t)
+    else:
+        d = 1.0
+    if n <= 0:
+        return -math.inf
+    if d <= 0:
+        return math.inf
+    return math.log(n) - math.log(d)
+
+
+def output_only_columns(st, con_idx, bounds, in_objective, n, protect=frozenset()):
     """Variables that are computed but never fed back, peeled in rounds.
 
     Output-only: exactly one constraint, absent from the objective, monotone
@@ -668,13 +741,14 @@ def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
                 continue
             grows_tighter = signs.pop()
 
-            lo, hi = (bounds[j] if j < len(bounds) else (None, None)) \
-                or (None, None)
+            if j < len(bounds) and bounds[j] is not None:
+                lo, hi = bounds[j]
+            else:
+                lo, hi = None, None
             if op == "==":
                 # An equality pins x_j exactly; it restricts others only via
                 # x_j's own bounds, so both must be vacuous
-                free = ((lo is None or lo <= VACUOUS_LO)
-                        and (hi is None or hi >= VACUOUS_HI))
+                free = has_vacuous_bounds(bounds, j)
             elif grows_tighter:
                 # Raising x_j tightens, so the constraint is escaped downward.
                 free = lo is None or lo <= VACUOUS_LO
@@ -693,7 +767,7 @@ def _output_only(st, con_idx, bounds, in_objective, n, protect=frozenset()):
             return order
 
 
-def _tighten_linear(linear, L, U, names, max_passes, min_gain):
+def tighten_linear_bounds(linear, L, U, names, max_passes, min_gain):
     """Interval propagation on ``coeffs . v <= rhs`` (or ``==``).
 
     L/U bound v in whatever space the caller works in (natural for LP, log
@@ -707,22 +781,20 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
     NEG, POS = -math.inf, math.inf
     tightened = 0
 
-    def side(a_j, lo, hi, want_min):
-        """Contribution of one term at whichever endpoint is asked for."""
-        if want_min:
-            return a_j * lo if a_j > 0 else a_j * hi
-        return a_j * hi if a_j > 0 else a_j * lo
-
     for _pass in range(max_passes):
         changed = False
         for rhs, a, nz, eq in linear:
             # Sum at min (and max for an equality), each carrying its own
             # count of infinite contributions
+            if eq:
+                ends = (True, False)
+            else:
+                ends = (True,)
             sums = {}
-            for want_min in ((True, False) if eq else (True,)):
+            for want_min in ends:
                 tot, infs, at = 0.0, 0, -1
                 for j in nz:
-                    m = side(a[j], L[j], U[j], want_min)
+                    m = endpoint_contribution(a[j], L[j], U[j], want_min)
                     if m == NEG or m == POS:
                         infs += 1
                         at = j
@@ -733,12 +805,15 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
                 sums[want_min] = (tot, infs, at)
 
             for k in nz:
-                for want_min in ((True, False) if eq else (True,)):
+                for want_min in ends:
                     tot, infs, at = sums[want_min]
                     if infs > 1 or (infs == 1 and k != at):
                         continue
-                    mk = side(a[k], L[k], U[k], want_min)
-                    rest = tot if (infs == 1 and k == at) else tot - mk
+                    if infs == 1 and k == at:
+                        rest = tot
+                    else:
+                        rest = tot - endpoint_contribution(a[k], L[k], U[k],
+                                                           want_min)
                     if rest == NEG or rest == POS:
                         continue
                     limit = (rhs - rest) / a[k]
@@ -746,10 +821,14 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
                     upper = (a[k] > 0) == want_min
                     if upper:
                         if limit < U[k] - min_gain:
-                            U[k] = limit; tightened += 1; changed = True
+                            U[k] = limit
+                            tightened += 1
+                            changed = True
                     else:
                         if limit > L[k] + min_gain:
-                            L[k] = limit; tightened += 1; changed = True
+                            L[k] = limit
+                            tightened += 1
+                            changed = True
                     if L[k] > U[k] + 1e-6:
                         raise InfeasibleProblem(
                             f"bound propagation drove {nm_at(names, k)} to an "
@@ -757,6 +836,18 @@ def _tighten_linear(linear, L, U, names, max_passes, min_gain):
         if not changed:
             break
     return tightened
+
+
+def endpoint_contribution(a_j, lo, hi, want_min):
+    """a_j * v_j at whichever endpoint of [lo, hi] minimises (or maximises)
+    it."""
+    if want_min:
+        if a_j > 0:
+            return a_j * lo
+        return a_j * hi
+    if a_j > 0:
+        return a_j * hi
+    return a_j * lo
 
 
 def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
@@ -803,11 +894,11 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
                 continue
             op = operators[i] if i < len(operators) else "<="
             linear.append((-float(bh[i]), a, nz, op == "=="))
-        k = _tighten_linear(linear, L, U, names, max_passes, min_gain)
+        k = tighten_linear_bounds(linear, L, U, names, max_passes, min_gain)
         new_bounds = [(None if L[j] == NEG else L[j],
                        None if U[j] == POS else U[j]) for j in range(n)]
     else:
-        rows, operators, _key = _rows_of(structures)
+        rows, operators, key = log_rows_of(structures)
         n = max([len(r) - 2 for r in rows] + [len(bounds)])
         while len(bounds) < n:
             bounds.append((None, None))
@@ -826,7 +917,7 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
         for i in sorted(kk for kk in set(numer) | set(denom) if kk != 0):
             if denom.get(i):
                 continue
-            op = operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
+            op = operator_at(operators, i)
             terms = numer.get(i, [])
             # Only a single-term equality is an equality term-wise; a
             # multi-term one implies just the <= half per term
@@ -839,7 +930,7 @@ def propagate_bounds(structures, max_passes=8, min_gain=1e-6):
                 nz = [j for j in range(n) if abs(a[j]) > 1e-12]
                 if nz:
                     linear.append((-math.log(c), a, nz, eq))
-        k = _tighten_linear(linear, L, U, names, max_passes, min_gain)
+        k = tighten_linear_bounds(linear, L, U, names, max_passes, min_gain)
         new_bounds = [(None if L[j] == NEG else math.exp(L[j]),
                        None if U[j] == POS else math.exp(U[j]))
                       for j in range(n)]
@@ -872,7 +963,7 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
             "eliminate_monomial_equalities needs structures['bounds']; run "
             "structure_detector with bounds_as_rows=False first")
 
-    rows, operators, key = _rows_of(structures)
+    rows, operators, key = log_rows_of(structures)
     names = [str(v) for v in structures.get("variables", [])]
     bounds = list(structures["bounds"])
     n = max([len(r) - 2 for r in rows] + [len(bounds)])
@@ -880,25 +971,23 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
         bounds.append((None, None))
 
     # Sparse form: constraint -> list of (coeff, {j: exponent}, is_denominator)
-    _check_width(structures, n, "eliminate_monomial_equalities")
+    check_width(structures, n, "eliminate_monomial_equalities")
 
     terms = collections.defaultdict(list)
     for r in rows:
         idx = int(r[0])
-        i = idx if idx >= 0 else -idx - 1
-        e = {j: float(v) for j, v in enumerate(r[2:]) if abs(float(v)) > 1e-12}
+        if idx >= 0:
+            i = idx
+        else:
+            i = -idx - 1
+        e = {}
+        for j, v in enumerate(r[2:]):
+            if abs(float(v)) > 1e-12:
+                e[j] = float(v)
         terms[i].append([float(r[1]), e, idx < 0])
-
-    def op_of(i):
-        return operators[i - 1] if 0 <= i - 1 < len(operators) else "<="
 
     con_idx = sorted(k for k in terms if k != 0)
     alive = set(con_idx)
-
-    def vacuous(j):
-        lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
-        return ((lo is None or lo <= VACUOUS_LO)
-                and (hi is None or hi >= VACUOUS_HI))
 
     # Column occupancy for the Markowitz estimate. The OBJECTIVE (index 0)
     # must be in here: without it a pivot in the objective is substituted
@@ -917,13 +1006,14 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
         # Candidate monomial equalities, cheapest pivot first
         cands = []
         for i in sorted(alive):
-            if op_of(i) != "==" or len(terms[i]) != 1 or terms[i][0][2]:
+            if (operator_at(operators, i) != "==" or len(terms[i]) != 1
+                    or terms[i][0][2]):
                 continue
             c_eq, a, _d = terms[i][0]
             if c_eq <= 0:
                 continue
             for pj, ap in a.items():
-                if abs(ap) < min_pivot or not vacuous(pj):
+                if abs(ap) < min_pivot or not has_vacuous_bounds(bounds, pj):
                     continue
                 fill = (len(a) - 1) * (len(col[pj]) - 1)
                 if fill > max_fill:
@@ -981,25 +1071,14 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     pos = {j: t for t, j in enumerate(keep)}
     surviving = [i for i in con_idx if i in alive]
 
-    def rewrite(i):
-        """The surviving terms of constraint ``i``, renumbered."""
-        out_terms = []
-        for coeff, expo, den in terms[i]:
-            out_terms.append(Term(
-                coeff=float(coeff),
-                exponents={pos[j]: v for j, v in expo.items()
-                           if j in pos and abs(v) > 1e-12},
-                denominator=bool(den)))
-        return out_terms
-
     st = as_detected(structures)
     info = dict(structures.get("info") or {})
     info["N_vars_substituted"] = len(removed)
     info["N_cons_total"] = len(surviving)
     out = st.rebuild(
-        rewrite(0),
-        [rewrite(i) for i in surviving],
-        [op_of(i) for i in surviving],
+        renumbered_terms(terms[0], pos),
+        [renumbered_terms(terms[i], pos) for i in surviving],
+        [operator_at(operators, i) for i in surviving],
         n=len(keep),
         bounds=[bounds[j] for j in keep],
         info=info)
@@ -1010,6 +1089,37 @@ def eliminate_monomial_equalities(structures, max_fill=16, min_pivot=1e-6,
     # eliminated later, so those must be known first. Forward recovery was off
     # by 4.3e+03 on SPaircraft while the reduced problem stayed exact.
     return out, removed[::-1]
+
+
+def renumbered_terms(sparse_terms, pos):
+    """The surviving [coeff, {j: e}, is_denominator] terms as Terms over
+    the renumbered columns."""
+    out_terms = []
+    for coeff, expo, den in sparse_terms:
+        exponents = {}
+        for j, v in expo.items():
+            if j in pos and abs(v) > 1e-12:
+                exponents[pos[j]] = v
+        out_terms.append(Term(coeff=float(coeff), exponents=exponents,
+                              denominator=bool(den)))
+    return out_terms
+
+
+def fold_and_renumber(terms, drop, pos):
+    """Fold removed constants into each term's coefficient and renumber the
+    surviving columns."""
+    out_terms = []
+    for t in terms:
+        coeff = t.coeff
+        expo = {}
+        for j, e in t.exponents.items():
+            if j in drop:
+                coeff *= drop[j] ** e         # a constant, into the coeff
+            elif j in pos:
+                expo[pos[j]] = e              # survivor, renumbered
+        out_terms.append(Term(coeff=coeff, exponents=expo,
+                              denominator=t.denominator))
+    return out_terms
 
 
 def reduce_columns(structures, guess=None, eliminate_outputs=True,
@@ -1041,12 +1151,12 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
         except Exception:
             guess = None
 
-    rows, operators, key = _rows_of(structures)
+    rows, operators, key = log_rows_of(structures)
     names = [str(v) for v in structures.get("variables", [])]
     bounds = list(structures["bounds"])
     n = max([len(r) - 2 for r in rows] + [len(bounds)])
 
-    _check_width(structures, n, "reduce_columns")
+    check_width(structures, n, "reduce_columns")
 
     in_objective, in_constraint = set(), set()
     for r in rows:
@@ -1065,15 +1175,19 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
     con_idx = sorted(k for k in set(numer) | set(denom) if k != 0)
 
     protect = frozenset(protect or ())
-    outputs = (_output_only(as_detected(structures), con_idx, bounds,
-                            in_objective, n, protect=protect)
-               if eliminate_outputs else [])
+    outputs = []
+    if eliminate_outputs:
+        outputs = output_only_columns(as_detected(structures), con_idx, bounds,
+                               in_objective, n, protect=protect)
     out_vars = {j for j, _i in outputs}
     out_cons = {i for _j, i in outputs}
 
     removed = []
     for j in range(n):
-        lo, hi = (bounds[j] if j < len(bounds) else (None, None)) or (None, None)
+        if j < len(bounds) and bounds[j] is not None:
+            lo, hi = bounds[j]
+        else:
+            lo, hi = None, None
 
         if lo is not None and hi is not None and lo > 0:
             if hi < lo * (1.0 - 1e-9):
@@ -1117,32 +1231,23 @@ def reduce_columns(structures, guess=None, eliminate_outputs=True,
     pos = {j: t for t, j in enumerate(keep)}
     surviving = [i for i in con_idx if i not in out_cons]
 
-    def rewrite(terms):
-        """Fold removed constants into the coefficient, renumber the rest."""
-        out_terms = []
-        for t in terms:
-            coeff = t.coeff
-            expo = {}
-            for j, e in t.exponents.items():
-                if j in drop:
-                    coeff *= drop[j] ** e         # a constant, into the coeff
-                elif j in pos:
-                    expo[pos[j]] = e              # survivor, renumbered
-            out_terms.append(Term(coeff=coeff, exponents=expo,
-                                  denominator=t.denominator))
-        return out_terms
-
     st = as_detected(structures)
     info = dict(structures.get("info") or {})
     info["N_vars_removed"] = len(removed)
     info["N_vars_output"] = len(outputs)
     info["N_cons_total"] = len(surviving)
+    kept_bounds = []
+    for j in keep:
+        if j < len(bounds):
+            kept_bounds.append(bounds[j])
+        else:
+            kept_bounds.append((None, None))
     out = st.rebuild(
-        rewrite(st.terms(0)),
-        [rewrite(st.terms(i)) for i in surviving],
+        fold_and_renumber(st.terms(0), drop, pos),
+        [fold_and_renumber(st.terms(i), drop, pos) for i in surviving],
         [st.operator(i) for i in surviving],
         n=len(keep),
-        bounds=[bounds[j] if j < len(bounds) else (None, None) for j in keep],
+        bounds=kept_bounds,
         info=info)
     if structures.get("variables"):
         out["variables"] = [structures["variables"][j] for j in keep]
@@ -1164,10 +1269,13 @@ def restore_columns(removed, x_reduced, n_original=None):
     if n_original is None:
         n_original = len(x_reduced) + len(removed)
 
-    constants = {r.index: r.value for r in removed
-                 if getattr(r, 'reason', None) != 'output'
-                 and getattr(r, 'recover', None) is None}
-    outputs = [r for r in removed if getattr(r, 'recover', None) is not None]
+    constants = {}
+    outputs = []
+    for r in removed:
+        if r.recover is not None:
+            outputs.append(r)
+        elif r.reason != 'output':
+            constants[r.index] = r.value
     placed = set(constants) | {r.index for r in outputs}
 
     if len(x_reduced) == n_original:
@@ -1191,7 +1299,7 @@ def restore_columns(removed, x_reduced, n_original=None):
         spec = r.recover
         if spec[0] == "monomial":
             # x_p = C * prod x_j ** m_j, from a monomial equality solved for p
-            _tag, C, m = spec
+            tag, C, m = spec
             acc = math.log(C) if C > 0 else -math.inf
             for j, e in m.items():
                 if j < len(out) and out[j] > 0:
@@ -1200,7 +1308,7 @@ def restore_columns(removed, x_reduced, n_original=None):
                 0.0 if acc <= -700 else math.inf)
         else:
             num, den, j0 = spec
-            val = _solve_for(num, den, j0, out)
+            val = solve_row_for(num, den, j0, out)
         if val is not None:
             out[r.index] = val
             r.value = float(val)
@@ -1448,13 +1556,13 @@ def floor_report(x, names=None, x_min=1e-9, rtol=1e-3):
 
 
 
-def _equality_graph(structures, names=None):
+def equality_graph(structures, names=None):
     """``(edges, rows, n, names)`` for the bipartite equality/variable graph.
 
     Single-variable equalities are kept: ``x == 3`` consumes a degree of
     freedom.
     """
-    st = as_detected(_as_structures(structures))
+    st = as_detected(as_structures(structures))
     if names is None:
         # Read names off the DETECTED object -- the same route as the rows
         # keeps name index and column index the same index
@@ -1474,38 +1582,6 @@ def _equality_graph(structures, names=None):
     return edges, rows, n, list(names)
 
 
-def _max_matching(edges, n):
-    """Kuhn's algorithm: match equality rows to variables they determine.
-
-    Matching size = STRUCTURAL rank, an upper bound on true rank: an
-    under-determined verdict is genuine; a square one may still be singular.
-    """
-    match_var = {}                       # variable -> row that determines it
-    match_row = [-1] * len(edges)
-
-    def augment(i, seen):
-        for j in edges[i]:
-            if j in seen:
-                continue
-            seen.add(j)
-            owner = match_var.get(j)
-            if owner is None or augment(owner, seen):
-                match_var[j] = i
-                match_row[i] = j
-                return True
-        return False
-
-    import sys
-    limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(limit, 10 * len(edges) + 1000))
-    try:
-        for i in range(len(edges)):
-            augment(i, set())
-    finally:
-        sys.setrecursionlimit(limit)
-    return match_var, match_row
-
-
 def unopposed_report(structures, names=None, top=25):
     """Variables no constraint resists -- quantities the optimiser moves free.
 
@@ -1518,12 +1594,12 @@ def unopposed_report(structures, names=None, top=25):
     has no inequality resisting it, as ``[(name, direction, n_rows)]``.
     A report only; the solve's bounds are untouched.
     """
-    rows, operators, _key = _rows_of(structures)
-    st = as_detected(_as_structures(structures))
+    rows, operators, key = log_rows_of(structures)
+    st = as_detected(as_structures(structures))
     if names is None:
         names = [str(v) for v in (st.variables or [])]
     n = max([len(r) - 2 for r in rows] + [len(names)])
-    loose = _underdetermined_vars(structures, n)
+    loose = underdetermined_variables(structures, n)
 
     up_held = [False] * n
     down_held = [False] * n
@@ -1584,8 +1660,8 @@ def rigidity_report(structures, names=None, cluster_max=12):
     printable cluster size -- a 400-variable rigid block is the model, not a
     finding.
     """
-    edges, rows, n, names = _equality_graph(structures, names)
-    match_var, match_row = _max_matching(edges, n)
+    edges, rows, n, names = equality_graph(structures, names)
+    match_var, match_row = max_matching(edges)
 
     involved = set()
     for e in edges:
@@ -1713,7 +1789,7 @@ def rigidity_text(rep, top=8):
 
 
 # What each class means for the solve -- the report exists to answer "so what"
-_CLASS_INFO = {
+CLASS_INFO = {
     'Linear_Program': (
         'Linear Program (LP)',
         'one convex solve; global optimum, exact duals'),
@@ -1730,11 +1806,11 @@ _CLASS_INFO = {
 }
 
 # Simplest first; a model is reported as the first class it satisfies
-_CLASS_ORDER = ['Linear_Program', 'Quadratic_Program', 'Geometric_Program',
+CLASS_ORDER = ['Linear_Program', 'Quadratic_Program', 'Geometric_Program',
                 'Signomial_Program']
 
 
-def _clean_expr(text, width=88):
+def clean_expression(text, width=88):
     """A constraint body as a reader wants it, not as Pyomo prints it."""
     for junk in ('dimensionless*', '*dimensionless', ' dimensionless'):
         text = text.replace(junk, '')
@@ -1742,16 +1818,16 @@ def _clean_expr(text, width=88):
     return text if len(text) <= width else text[:width - 3] + '...'
 
 
-def _constraint_bodies(structures):
+def constraint_bodies(structures):
     """``{name: body}`` for every constraint on the detected model."""
     model = structures.get('model') if hasattr(structures, 'get') else None
     if model is None:
         return {}
     try:
         import pyomo.environ as pyo
-        bodies = {c.name: _clean_expr(str(c.expr))
+        bodies = {c.name: clean_expression(str(c.expr))
                   for c in model.component_data_objects(ctype=pyo.Constraint)}
-        objs = [_clean_expr(str(o.expr))
+        objs = [clean_expression(str(o.expr))
                 for o in model.component_data_objects(ctype=pyo.Objective)]
         if objs:
             bodies['the objective'] = objs[0]
@@ -1760,7 +1836,7 @@ def _constraint_bodies(structures):
         return {}
 
 
-def _as_structures(obj):
+def as_structures(obj):
     """Accept either the detector's output or the formulation itself.
 
     optimization_check(f) is the call people try first; making it work costs
@@ -1773,7 +1849,7 @@ def _as_structures(obj):
     return structure_detector(unit_corrector(obj), bounds_as_rows=False)
 
 
-def _units_diagnosis(exc):
+def units_diagnosis(exc):
     """A unit failure, formatted as a finding rather than raised as an error.
 
     Asking what is wrong with a model is exactly when it is most likely to
@@ -1785,7 +1861,7 @@ def _units_diagnosis(exc):
             '  has no correction. Fix the above and run this again.')
 
 
-def _gp_after_presolve(structures):
+def gp_after_presolve(structures):
     """Is the problem the solver actually receives a geometric program?
 
     Answered on the presolved rows, not by tracking which original row went
@@ -1797,11 +1873,11 @@ def _gp_after_presolve(structures):
     anything.
     """
     try:
-        st = _with_empty_bounds(structures)
+        st = with_empty_bounds(structures)
         st = fold_singleton_rows(st)
-        st, _elim = eliminate_monomial_equalities(st)
-        st, _red = reduce_columns(st)
-        rows, operators, _key = _rows_of(st)
+        st, eliminated = eliminate_monomial_equalities(st)
+        st, reduced_out = reduce_columns(st)
+        rows, operators, key = log_rows_of(st)
     except Exception:
         return None
 
@@ -1840,15 +1916,15 @@ def structure_report(structures, top=5, simplify=True) -> str:
     """
     from lcsolver.presolve.unitCorrector import UnitMismatch
     try:
-        st = as_detected(_as_structures(structures))
+        st = as_detected(as_structures(structures))
     except UnitMismatch as exc:
-        return _units_diagnosis(exc)
+        return units_diagnosis(exc)
     blockers = (st.get('blockers') or {}) if hasattr(st, 'get') else {}
-    bodies = _constraint_bodies(st)
+    bodies = constraint_bodies(st)
 
     L = ['structure', '---------']
 
-    detected = next((k for k in _CLASS_ORDER
+    detected = next((k for k in CLASS_ORDER
                      if st.get(k) and st[k][0] and st[k][1] is not None), None)
     if detected is None:
         L.append('  unstructured -- no LP, QP, GP or SP form was detected')
@@ -1861,12 +1937,12 @@ def structure_report(structures, top=5, simplify=True) -> str:
     # need the linearity test rerun on the reduced rows
     simplified = detected
     if simplify and detected == 'Signomial_Program':
-        if _gp_after_presolve(st) is True:
+        if gp_after_presolve(st) is True:
             simplified = 'Geometric_Program'
 
-    label, consequence = _CLASS_INFO[detected]
+    label, consequence = CLASS_INFO[detected]
     if simplified != detected:
-        s_label, s_consequence = _CLASS_INFO[simplified]
+        s_label, s_consequence = CLASS_INFO[simplified]
         L.append(f'  {label} as written')
         L.append(f'  {s_label} as solved -- every constraint that blocked it '
                  f'is removed by the presolve')
@@ -1875,72 +1951,85 @@ def structure_report(structures, top=5, simplify=True) -> str:
         L.append(f'  {label}')
         L.append(f'    {consequence}')
 
-    def _section(classes, headline, advice=None):
-        rows = []
-        for cls in classes:
-            rows += blockers.get(cls, [])
-        if not rows:
-            return
-        # Group by constraint, keeping EVERY distinct reason -- one row can
-        # fail a class more than one way, and the more specific reason is
-        # the actionable one
-        order, reasons = [], {}
-        for name, why, row in rows:
-            if name not in reasons:
-                reasons[name] = (row, [])
-                order.append(name)
-            if why not in reasons[name][1]:
-                reasons[name][1].append(why)
-        uniq = [(name, reasons[name][1], reasons[name][0]) for name in order]
-        L.append('')
-        n = len(uniq)
-        n_obj = sum(1 for nm, _, _ in uniq if nm == 'the objective')
-        n_con = n - n_obj
-        parts = []
-        if n_con:
-            parts.append(f'{n_con} constraint' + ('s' if n_con != 1 else ''))
-        if n_obj:
-            parts.append('the objective')
-        L.append(f'  {headline} -- {" and ".join(parts)} '
-                 f'block{"s" if n == 1 else ""} it:')
-        shown = uniq if top is None else uniq[:top]
-        for name, whys, row in shown:
-            body = bodies.get(name)
-            L.append(f'      {name}' + (f'   {body}' if body else ''))
-            for why in whys:
-                L.append(f'          {why}')
-
-        if len(uniq) > len(shown):
-            L.append(f'      ... and {len(uniq) - len(shown)} more')
-        if advice:
-            L.append(f'    {advice}')
-
     # Only classes SIMPLER than the one detected: a GP is not "failing to be
     # an SP"
-    rank = _CLASS_ORDER.index(detected)
-    if rank > _CLASS_ORDER.index('Geometric_Program'):
-        _section(['Geometric_Program'],
-                 'Not a Geometric Program as written'
-                 if simplified == 'Geometric_Program' else
-                 'Not a Geometric Program',
-                 'The solver dispatches on the as-written class, so this still '
-                 'routes through the SP loop; the presolve then hands that loop '
-                 'a GP, which is why it converges in a couple of iterations.'
-                 if simplified == 'Geometric_Program' else
-                 'Reformulate those and the model becomes a GP: one convex '
-                 'solve, global optimum, no iteration.')
-    if rank > _CLASS_ORDER.index('Quadratic_Program'):
+    rank = CLASS_ORDER.index(detected)
+    if rank > CLASS_ORDER.index('Geometric_Program'):
+        if simplified == 'Geometric_Program':
+            headline = 'Not a Geometric Program as written'
+            advice = ('The solver dispatches on the as-written class, so this '
+                      'still routes through the SP loop; the presolve then '
+                      'hands that loop a GP, which is why it converges in a '
+                      'couple of iterations.')
+        else:
+            headline = 'Not a Geometric Program'
+            advice = ('Reformulate those and the model becomes a GP: one '
+                      'convex solve, global optimum, no iteration.')
+        blocker_section(L, blockers, bodies, ['Geometric_Program'], headline,
+                        advice, top)
+    if rank > CLASS_ORDER.index('Quadratic_Program'):
         lp = {r[0] for r in blockers.get('Linear_Program', ())}
         qp = {r[0] for r in blockers.get('Quadratic_Program', ())}
         if lp == qp:
-            _section(['Linear_Program'], 'Not a Linear or Quadratic Program')
+            blocker_section(L, blockers, bodies, ['Linear_Program'],
+                            'Not a Linear or Quadratic Program', None, top)
         else:
-            _section(['Quadratic_Program'], 'Not a Quadratic Program')
-            _section(['Linear_Program'], 'Not a Linear Program')
-    elif rank > _CLASS_ORDER.index('Linear_Program'):
-        _section(['Linear_Program'], 'Not a Linear Program')
+            blocker_section(L, blockers, bodies, ['Quadratic_Program'],
+                            'Not a Quadratic Program', None, top)
+            blocker_section(L, blockers, bodies, ['Linear_Program'],
+                            'Not a Linear Program', None, top)
+    elif rank > CLASS_ORDER.index('Linear_Program'):
+        blocker_section(L, blockers, bodies, ['Linear_Program'],
+                        'Not a Linear Program', None, top)
 
     return '\n'.join(L)
+
+
+def blocker_section(L, blockers, bodies, classes, headline, advice, top):
+    """Append one 'Not a ...' section: the rows blocking those classes,
+    grouped by constraint with EVERY distinct reason (one row can fail a
+    class more than one way, and the more specific reason is the
+    actionable one)."""
+    rows = []
+    for cls in classes:
+        rows += blockers.get(cls, [])
+    if not rows:
+        return
+    order, reasons = [], {}
+    for name, why, row in rows:
+        if name not in reasons:
+            reasons[name] = (row, [])
+            order.append(name)
+        if why not in reasons[name][1]:
+            reasons[name][1].append(why)
+    uniq = [(name, reasons[name][1], reasons[name][0]) for name in order]
+    L.append('')
+    n = len(uniq)
+    n_obj = sum(1 for nm, _, _ in uniq if nm == 'the objective')
+    n_con = n - n_obj
+    parts = []
+    if n_con:
+        parts.append(f'{n_con} constraint' + ('s' if n_con != 1 else ''))
+    if n_obj:
+        parts.append('the objective')
+    L.append(f'  {headline} -- {" and ".join(parts)} '
+             f'block{"s" if n == 1 else ""} it:')
+    if top is None:
+        shown = uniq
+    else:
+        shown = uniq[:top]
+    for name, whys, row in shown:
+        body = bodies.get(name)
+        if body:
+            L.append(f'      {name}   {body}')
+        else:
+            L.append(f'      {name}')
+        for why in whys:
+            L.append(f'          {why}')
+    if len(uniq) > len(shown):
+        L.append(f'      ... and {len(uniq) - len(shown)} more')
+    if advice:
+        L.append(f'    {advice}')
 
 
 def annihilated_report(model, names=None):
@@ -2001,7 +2090,7 @@ def annihilated_report(model, names=None):
     return findings
 
 
-def _checks_setup(structures):
+def checks_setup(structures):
     """Shared front door for the check entry points.
 
     Returns ``(st, model, units_report)``; on a unit failure ``st`` is None
@@ -2012,22 +2101,22 @@ def _checks_setup(structures):
     from lcsolver.presolve.unitCorrector import UnitMismatch
 
     try:
-        st = as_detected(_as_structures(structures))
+        st = as_detected(as_structures(structures))
     except UnitMismatch as exc:
         model = None if isinstance(structures, dict) else structures
-        return None, model, _units_diagnosis(exc)
+        return None, model, units_diagnosis(exc)
     # The checks need bounds separated from rows; fold a copy rather than
     # making the caller know that (unfolded rows once hid all 52 output-only
     # variables on SPaircraft)
     try:
         st = fold_singleton_rows(st if st.bounds is not None
-                                 else _with_empty_bounds(st))
+                                 else with_empty_bounds(st))
     except Exception:
         pass
     return st, st.get("model"), None
 
 
-def _greybox_covered(st):
+def greybox_covered(st):
     """Names of variables referenced by a grey-box (black-box) row.
 
     The structural checks read only algebraic rows, so a black-box-computed
@@ -2062,7 +2151,7 @@ def presolve_check(structures, names=None, structure_top=5):
     empty/unbounded findings. Returns a :class:`PresolveReport`; prints
     nothing.
     """
-    st, model, units_report = _checks_setup(structures)
+    st, model, units_report = checks_setup(structures)
 
     # Run first and on the model: an annihilated side is one reason detection
     # fails, so this must survive the gate below
@@ -2092,7 +2181,7 @@ def presolve_check(structures, names=None, structure_top=5):
     if guesses:
         rep.defaulted_guesses = list(guesses)
 
-    covered = _greybox_covered(st)
+    covered = greybox_covered(st)
     if covered:
         rep.empty_columns = [n for n in rep.empty_columns
                              if n not in covered]
@@ -2138,7 +2227,7 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9,
     (takes precedence). An unsolved model raises: running these against a
     guess would describe it in the language of a result.
     """
-    st, model, units_report = _checks_setup(structures)
+    st, model, units_report = checks_setup(structures)
     rep = PresolveReport()
     if st is None:
         rep.structure = units_report
@@ -2149,16 +2238,16 @@ def postsolve_check(structures, x=None, problem=None, names=None, x_min=1e-9,
             raise ValueError(
                 'postsolve_check needs a solved model (or explicit x= and '
                 'problem=); this one has not been solved')
-        import numpy as _np
-        import pyomo.environ as _pyo
+        import numpy as np
+        import pyomo.environ as pyo
 
         from lcsolver.solvers.sequential.bridge import build_problem
 
-        _x = _np.asarray([float(_pyo.value(v)) for v in st.variables],
-                         dtype=float)
-        _p = build_problem(st, sp_form=True)
-        if _x.size >= _p.n:
-            x, problem = _x[:_p.n], _p
+        solved_x = np.asarray([float(pyo.value(v)) for v in st.variables],
+                              dtype=float)
+        built = build_problem(st, sp_form=True)
+        if solved_x.size >= built.n:
+            x, problem = solved_x[:built.n], built
 
     if names is None:
         try:
@@ -2222,11 +2311,11 @@ def optimization_check(structures, x=None, problem=None, names=None,
     return rep
 
 
-def _with_empty_bounds(structures):
+def with_empty_bounds(structures):
     """A copy carrying an empty bounds array, so rows can be folded into it."""
     st = dict(structures)
     if st.get("bounds") is None:
-        rows, _ops, key = _rows_of(st)
+        rows, ops, key = log_rows_of(st)
         width = max((len(r) - 2 for r in rows), default=0)
         n = max(width, len(st.get("variables") or []))
         st["bounds"] = [(None, None)] * n
@@ -2336,15 +2425,14 @@ def constraint_dependencies(model, variables, n, constraints, x=None,
             import numpy as np
 
             x = np.asarray(x, dtype=float)
-            lg = lambda b: math.log(max(b, 1e-300))
-            base = [lg(c.body(x)) for c in constraints]
+            base = [log_body(c, x) for c in constraints]
             step = max(1, n // int(probes))
             for j in range(0, n, step):
                 xp = x.copy()
                 xp[j] *= math.exp(0.05)
                 expected = set(dep[j])
                 for i, c in enumerate(constraints):
-                    if abs(lg(c.body(xp)) - base[i]) > 1e-12 and i not in expected:
+                    if abs(log_body(c, xp) - base[i]) > 1e-12 and i not in expected:
                         return None      # the map missed a row: do not trust it
         return dep
     except Exception:
@@ -2371,19 +2459,11 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
     names = list(names or [])
     cons = problem.constraints
 
-    def logbody(c, xx):
-        return math.log(max(c.body(xx), 1e-300))
-
     v0 = -math.inf
     for c in cons:
-        v0 = max(v0, logbody(c, x))
+        v0 = max(v0, log_body(c, x))
     f0 = problem.objective_value(x)
     thresh = max(v0, 0.0) + viol_tol
-
-    def worsens(xx, j):
-        if depends_on is not None:
-            return any(logbody(cons[i], xx) > thresh for i in depends_on[j])
-        return any(logbody(c, xx) > thresh for c in cons)
 
     out = []
     for j in range(problem.n):
@@ -2391,15 +2471,26 @@ def degeneracy_report(problem, x, rel_step=0.05, obj_tol=1e-9,
         for s in (rel_step, -rel_step):
             xp = x.copy()
             xp[j] *= math.exp(s)
-            if (abs(problem.objective_value(xp) - f0)
-                    > obj_tol * max(1.0, abs(f0))
-                    or worsens(xp, j)):
+            if abs(problem.objective_value(xp) - f0) > obj_tol * max(1.0, abs(f0)):
+                free = False
+                break
+            # only the rows containing x_j can move (depends_on); else all
+            if depends_on is not None:
+                rows = [cons[i] for i in depends_on[j]]
+            else:
+                rows = cons
+            if any(log_body(c, xp) > thresh for c in rows):
                 free = False
                 break
         if free:
-            out.append((names[j] if j < len(names) else f"<var {j}>",
-                        float(x[j])))
+            out.append((nm_at(names, j), float(x[j])))
     return out
+
+
+def log_body(constraint, x):
+    """log g(x) for a constraint written g <= 1, floored away from -inf."""
+    import math
+    return math.log(max(constraint.body(x), 1e-300))
 
 
 def unbuilt_blocks(model):
@@ -2475,3 +2566,9 @@ def unbuilt_blocks_check(model):
               '  f.<block>.get_status() prints every input a block needs and',
               '  what each one is currently connected to.']
     raise PresolveError(codes.tag(codes.UNBUILT_BLOCK, '\n'.join(lines)))
+
+
+# older scripts in the lc* repos import these by their former names
+_tighten_linear = tighten_linear_bounds
+_as_structures = as_structures
+_gp_after_presolve = gp_after_presolve

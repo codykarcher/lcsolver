@@ -23,7 +23,7 @@ from lcsolver.solvers import solver as solver_module  # noqa: E402
 from lcsolver.presolve.structureDetector import structure_detector  # noqa: E402
 from lcsolver.presolve.unitCorrector import unit_corrector  # noqa: E402
 
-def _ipopt_available():
+def any_ipopt_available():
     try:
         from lcsolver.environment import ipopt_available
         return bool(ipopt_available())
@@ -40,7 +40,7 @@ def _ipopt_available():
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
-        not _ipopt_available(),
+        not any_ipopt_available(),
         reason='cross-path comparison needs IPOPT: 4 of its 5 paths are IPOPT'),
 ]
 

@@ -25,8 +25,8 @@ def _ipopt_present():
     global _IPOPT_PRESENT
     if _IPOPT_PRESENT is None:
         try:
-            from lcsolver.solvers.solver import _ipopt_available
-            _IPOPT_PRESENT = bool(_ipopt_available())
+            from lcsolver.solvers.solver import any_ipopt_available
+            _IPOPT_PRESENT = bool(any_ipopt_available())
         except Exception:
             _IPOPT_PRESENT = False
     return _IPOPT_PRESENT

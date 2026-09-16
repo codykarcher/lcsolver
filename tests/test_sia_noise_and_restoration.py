@@ -15,7 +15,7 @@ try:
     from lcsolver.solvers.sequential.sia import (
         SIAOptions,
         SIAResult,
-        _relative_change_converged,
+        relative_change_converged,
     )
     available = True
 except Exception:                                    # pragma: no cover
@@ -53,20 +53,20 @@ def _converge_pair(viol, binding=False, **opt):
     """Run the stop rule over two nearly identical accepted iterates."""
     import lcsolver.solvers.sequential.sia as sia
     problem = _StubProblem(viol)
-    real = sia._violation
-    sia._violation = lambda p, x: viol
+    real = sia.worst_violation
+    sia.worst_violation = lambda p, x: viol
     try:
         options = SIAOptions(objective_reltol=1e-3, variable_reltol=1e-2,
                              **opt)
         res = SIAResult()
         res.history = [np.array([1.0, 2.0]), np.array([1.0, 2.0000001])]
         res.objectives = [3.0, 3.0000001]
-        res._relative_change_prev = (res.history[0], res.objectives[0])
-        res._rel_step_binding = binding
-        fired = _relative_change_converged(problem, res, options, k=9)
+        res.relative_change_prev = (res.history[0], res.objectives[0])
+        res.step_was_binding = binding
+        fired = relative_change_converged(problem, res, options, k=9)
         return fired, res
     finally:
-        sia._violation = real
+        sia.worst_violation = real
 
 
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
@@ -99,8 +99,8 @@ class TestRelativeChangeGate:
 
 def _ipopt_here():
     try:
-        from lcsolver.solvers.solver import _ipopt_available
-        return bool(_ipopt_available())
+        from lcsolver.solvers.solver import any_ipopt_available
+        return bool(any_ipopt_available())
     except Exception:
         return False
 

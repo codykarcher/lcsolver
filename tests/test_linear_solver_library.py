@@ -109,8 +109,8 @@ class TestProbePlumbing:
 
 def _ipopt_here():
     try:
-        from lcsolver.solvers.solver import _ipopt_available
-        return bool(_ipopt_available())
+        from lcsolver.solvers.solver import any_ipopt_available
+        return bool(any_ipopt_available())
     except Exception:
         return False
 

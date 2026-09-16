@@ -863,7 +863,7 @@ def _solve_pyomo_subproblem(m, n, n_cons, options, method='slcp'):
     # load_solutions=False: pyomo's default loads before the status check, so a
     # failed sub-problem dies inside load_from instead of raising the clean
     # RuntimeError below. Same fix as the main ipopt path. A crashed
-    # executable is retried once under MA27 (see sia._launch_subproblem).
+    # executable is retried once under MA27 (see sia.launch_subproblem).
     from lcsolver.environment import (IpoptCrashed, crash_fallback_solver,
                                       ipopt_launch)
     ls = (options.ipopt_options or {}).get('linear_solver')

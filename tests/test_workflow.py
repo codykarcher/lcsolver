@@ -15,7 +15,7 @@ returned by solve().
 import warnings
 
 
-def _ipopt_available():
+def any_ipopt_available():
     try:
         from lcsolver.environment import ipopt_available
         return bool(ipopt_available())
@@ -96,7 +96,7 @@ def test_solve_returns_solveresult():
 
 
 @pytest.mark.skipif(
-    not _ipopt_available(),
+    not any_ipopt_available(),
     reason='the Report names the route that solved it, and the cvxopt fallback reports a different one')
 def test_messages_captured_not_printed():
     """Solve warnings land in sol.messages; the console stays clean."""

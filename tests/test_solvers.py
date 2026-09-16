@@ -19,7 +19,7 @@ from pyomo.core.base.units_container import pint_available
 cvxopt, cvxopt_available = attempt_import("cvxopt")
 
 
-def _ipopt_available():
+def any_ipopt_available():
     """Is there a usable IPOPT? Without one `solve` falls back to cvxopt --
     right answer, different route -- and several tests below are about the
     route, not the answer."""
@@ -415,24 +415,24 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         import gc
         from lcsolver.solvers import solver as solver_module
 
-        original = solver_module._convex_ipopt
+        original = solver_module.convex_ipopt
 
         def _collect_then_solve(*a, **k):
             gc.collect()                    # detection is done; the clone is on
             return original(*a, **k)        # its own from here
 
-        solver_module._convex_ipopt = _collect_then_solve
+        solver_module.convex_ipopt = _collect_then_solve
         try:
             f = _indexed_gp()
             r = solver_module.solve(f, solver='auto', convex_backend='ipopt')
         finally:
-            solver_module._convex_ipopt = original
+            solver_module.convex_ipopt = original
 
         self.assertIn('log-transformed', str(r.get('solver', '')))
         for i in range(4):
             self.assertAlmostEqual(pyo.value(f.sK[i]), 2 ** -0.5, places=4)
 
-    @unittest.skipIf(not _ipopt_available(),
+    @unittest.skipIf(not any_ipopt_available(),
                      'this is the fallback FROM IPOPT, so it needs one to fall back from')
     def test_auto_fallback_warns_instead_of_swallowing(self):
         """A failing structured backend must not fall through in silence."""
@@ -444,8 +444,8 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
 
         # Patch whichever backend `auto` actually reaches. The default convex
         # backend is ipopt; cvxopt is only used when asked for explicitly.
-        original = solver_module._convex_ipopt
-        solver_module._convex_ipopt = _boom
+        original = solver_module.convex_ipopt
+        solver_module.convex_ipopt = _boom
         try:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
@@ -458,7 +458,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
             self.assertTrue(any('structured backend exploded' in msg for msg in messages),
                             msg=f'no explanatory warning was issued; got {messages}')
         finally:
-            solver_module._convex_ipopt = original
+            solver_module.convex_ipopt = original
 
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_cvxopt_is_still_reachable_on_request(self):
@@ -475,7 +475,7 @@ class TestIndexedVariableWriteBack(unittest.TestCase):
         self.assertAlmostEqual(pyo.value(f.y), 2.0, places=5)
 
 
-@unittest.skipIf(not _ipopt_available(),
+@unittest.skipIf(not any_ipopt_available(),
                  'both objective forms are IPOPT-side transformations')
 class TestGPObjectiveForm(unittest.TestCase):
     """The GP backend writes posynomials two ways: 'sum' is better
@@ -673,7 +673,7 @@ class TestConstantOnlyConstraints(unittest.TestCase):
 
 
 @unittest.skipIf(not formulation_available, 'LCsolver import failed')
-@unittest.skipIf(not _ipopt_available(),
+@unittest.skipIf(not any_ipopt_available(),
                  'counts detector walks on the IPOPT route; the cvxopt fallback walks again')
 class TestSolveDetectsOnce(unittest.TestCase):
     """`solve` walks the model once, not once per consumer. The checks and
@@ -730,7 +730,7 @@ class TestIpoptUnavailableFallback:
 
     def test_structured_model_falls_back_to_cvxopt_and_warns(self, monkeypatch):
         from lcsolver.solvers import solver as S
-        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        monkeypatch.setattr(S, 'any_ipopt_available', lambda: False)
         f = self._gp()
         with pytest.warns(RuntimeWarning, match='cvxopt instead'):
             S.solve(f, sensitivities=False, quiet=False)
@@ -740,7 +740,7 @@ class TestIpoptUnavailableFallback:
 
     def test_unstructured_model_raises_a_named_dead_end(self, monkeypatch):
         from lcsolver.solvers import solver as S
-        monkeypatch.setattr(S, '_ipopt_available', lambda: False)
+        monkeypatch.setattr(S, 'any_ipopt_available', lambda: False)
         f = Formulation()
         x = f.Variable(name='x', guess=1.0, units='-', description='x')
         f.Objective(x ** 3 - 2 * x + 5)          # not LP, QP, GP or SP
@@ -750,7 +750,7 @@ class TestIpoptUnavailableFallback:
 
     def test_ipopt_is_still_preferred_when_present(self, monkeypatch):
         from lcsolver.solvers import solver as S
-        monkeypatch.setattr(S, '_ipopt_available', lambda: True)
+        monkeypatch.setattr(S, 'any_ipopt_available', lambda: True)
         f = self._gp()
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')

@@ -31,7 +31,7 @@ except Exception:
     edi_available = False
 
 
-def _ipopt_available():
+def any_ipopt_available():
     try:
         return bool(pyo.SolverFactory('ipopt').available(exception_flag=False))
     except Exception:
@@ -130,7 +130,7 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
         self.assertAlmostEqual(sensitivities(f)['sensitivities']['a'], 0.5, places=5)
 
     # ---- ipopt core ---------------------------------------------------
-    @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
+    @unittest.skipIf(not any_ipopt_available(), 'the ipopt executable is not available')
     def test_lp_ipopt(self):
         f = _lp()
         self._solve_ipopt(f)
@@ -139,20 +139,20 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
         self.assertAlmostEqual(s['sensitivities']['a'], 1.0 / 3.0, places=5)
         self.assertAlmostEqual(s['sensitivities']['b'], 2.0 / 3.0, places=5)
 
-    @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
+    @unittest.skipIf(not any_ipopt_available(), 'the ipopt executable is not available')
     def test_qp_ipopt(self):
         f = _qp()
         self._solve_ipopt(f)
         self.assertAlmostEqual(sensitivities(f)['sensitivities']['a'], 2.0, places=5)
 
-    @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
+    @unittest.skipIf(not any_ipopt_available(), 'the ipopt executable is not available')
     def test_gp_ipopt(self):
         f = _gp()
         self._solve_ipopt(f)
         self.assertAlmostEqual(sensitivities(f)['sensitivities']['a'], 0.5, places=5)
 
     # ---- structural cases ---------------------------------------------
-    @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
+    @unittest.skipIf(not any_ipopt_available(), 'the ipopt executable is not available')
     def test_constant_in_objective(self):
         """A constant appearing only in the objective still gets a
         sensitivity: f* = 2a, elasticity exactly 1, picked up from df/dtheta
@@ -161,7 +161,7 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
         self._solve_ipopt(f)
         self.assertAlmostEqual(sensitivities(f)['sensitivities']['a'], 1.0, places=5)
 
-    @unittest.skipIf(not _ipopt_available(), 'the ipopt executable is not available')
+    @unittest.skipIf(not any_ipopt_available(), 'the ipopt executable is not available')
     def test_unnormalized_is_raw_derivative(self):
         """normalized=False must give df*/dc, not the elasticity."""
         f = _objective_only()
@@ -174,7 +174,7 @@ class TestSensitivityKnownAnswers(unittest.TestCase):
     @unittest.skipIf(not cvxopt_available, 'cvxopt is not installed')
     def test_both_cores_agree(self):
         """The two dual routes are independent and must give the same answer."""
-        if not _ipopt_available():
+        if not any_ipopt_available():
             self.skipTest('the ipopt executable is not available')
         f1 = _gp(); self._solve_cvxopt(f1)
         f2 = _gp(); self._solve_ipopt(f2)
@@ -339,7 +339,7 @@ class TestParameterGradient(unittest.TestCase):
             self.assertAlmostEqual(batched[name], _d(expr, pd), places=10)
 
 
-@unittest.skipIf(not _ipopt_available(),
+@unittest.skipIf(not any_ipopt_available(),
                  'the ambiguity measure is read off the duals the IPOPT route '
                  'returns; the cvxopt fallback recovers a different dual vector')
 class TestDualAmbiguity(unittest.TestCase):
@@ -453,7 +453,7 @@ class TestActiveSetIsScaleInvariant(unittest.TestCase):
             'the magnitude it is expressed in')
 
     @unittest.skipUnless(edi_available, "lcsolver not available")
-    @unittest.skipUnless(_ipopt_available(), "ipopt not available")
+    @unittest.skipUnless(any_ipopt_available(), "ipopt not available")
     def test_a_small_scale_slack_bound_does_not_poison_the_duals(self):
         """End to end: the spurious column used to cost every sensitivity.
         Without the slack bound, d log x / d log a == 1 exactly; a bound

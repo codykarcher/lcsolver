@@ -1,18 +1,15 @@
 #  ___________________________________________________________________________
 #
-#  Pyomo: Python Optimization Modeling Objects
-#  Copyright (c) 2008-2023
-#  National Technology and Engineering Solutions of Sandia, LLC
-#  Under the terms of Contract DE-NA0003525 with National Technology and
-#  Engineering Solutions of Sandia, LLC, the U.S. Government retains certain
-#  rights in this software.
+#  LCsolver: The Engineering Design Interface
 #  This software is distributed under the 3-clause BSD License.
 #  ___________________________________________________________________________
 
+"""solve(): detect the structure, pick the backend, attach the report."""
+
+import functools
+
 import numpy as np
-from pyomo.common.dependencies import numpy, numpy_available
 from pyomo.common.dependencies import attempt_import
-# from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.structureDetector import structure_detector
 from lcsolver.presolve.unitCorrector import unit_corrector
 from lcsolver.postsolve.writeback import write_solution
@@ -22,7 +19,7 @@ from lcsolver.core.errors import SolverUnavailable
 cvxopt, cvxopt_available = attempt_import( "cvxopt" )
 
 
-def _require_cvxopt():
+def require_cvxopt():
     """Raise only when a cvxopt backend is actually asked for.
 
     Checked here, not at module import: raising at import made a missing
@@ -38,7 +35,7 @@ def _require_cvxopt():
 
 
 def cvxopt_solve(m, write_back=True, structures=None):
-    _require_cvxopt()
+    require_cvxopt()
     cvxopt.solvers.options['show_progress'] = False
     cvxopt.solvers.options['maxiters'] = 100
     cvxopt.solvers.options['feastol'] = 1e-6
@@ -47,30 +44,23 @@ def cvxopt_solve(m, write_back=True, structures=None):
     # solve() hands down its already-detected structures; a direct caller detects here
     if structures is None:
         structures = structure_detector(unit_corrector(m))
-    _raise_if_infeasible(structures)
-    # print('Detected problem structure')
-    
-    # structures = structure_detector(m)
-    # print(structures)
+    raise_if_infeasible(structures)
+
     if structures['Linear_Program'][0]:
-        # from lcsolver.solvers.cvxopt import solve_LP
         from lcsolver.solvers.cvxopt.LP import solve_LP
         res = solve_LP(structures)
         res['problem_structure'] = 'linear_program'
     elif structures['Quadratic_Program'][0]:
-        # from lcsolver.solvers.cvxopt import solve_QP
         from lcsolver.solvers.cvxopt.QP import solve_QP
         res = solve_QP(structures)
         res['problem_structure'] = 'quadratic_program'
     elif structures['Geometric_Program'][0]:
-        # from lcsolver.solvers.cvxopt import solve_GP
         from lcsolver.solvers.cvxopt.GP import solve_GP
         res = solve_GP(structures)
         res['problem_structure'] = 'geometric_program'
     elif structures['Signomial_Program'][0]:
-        # from lcsolver.solvers.sequential.pccp import solve_SP
         from lcsolver.solvers.sequential.pccp import solve_SP
-        res = solve_SP(structures,m)
+        res = solve_SP(structures, m)
         res['problem_structure'] = 'signomial_program_pccp'
     else:
         raise ValueError('Could not convert the formulation to a valid CVXOPT structure (LP,QP,GP,SP)')
@@ -110,7 +100,7 @@ def cvxopt_solve(m, write_back=True, structures=None):
     return res
 
 
-def _raise_if_infeasible(structures):
+def raise_if_infeasible(structures):
     """Turn the detector's infeasibility proof into an error, not a fallback.
 
     Falling through to an NLP solver used to lose the sentence naming the
@@ -148,7 +138,7 @@ class SolveResult(dict):
         sol = self.__dict__.get('_model')
         sol = getattr(sol, 'solution', None)
         if sol is not None and getattr(sol, 'objective', None) is not None:
-            return self._quantity(sol.objective,
+            return self.as_quantity(sol.objective,
                                   getattr(sol, 'objective_units', None))
         return self.get('primal objective', self.get('objective'))
 
@@ -176,7 +166,7 @@ class SolveResult(dict):
 
     def summary(self, *args, **kwargs):
         """The solution summary -- same as ``f.solution.summary(...)``."""
-        sol = self._rich()
+        sol = self.rich_solution()
         return sol.summary(*args, **kwargs)
 
     # -- named access with units -------------------------------------------
@@ -191,7 +181,7 @@ class SolveResult(dict):
     # An array variable is ONE entry with an ndarray magnitude, pint even
     # when dimensionless. Names accepted dotted ('wing.AR') or flat ('wing_AR').
 
-    def _rich(self):
+    def rich_solution(self):
         sol = self.solution
         if sol is None or not hasattr(sol, 'variables'):
             raise AttributeError(
@@ -199,52 +189,60 @@ class SolveResult(dict):
         return sol
 
     @staticmethod
-    def _quantity(value, units):
-        from pyomo.environ import units as _pu
+    def as_quantity(value, units):
+        from pyomo.environ import units as pyomo_units
         if units is None or str(units) in ('dimensionless', 'None', ''):
             # dimensionless scalar -> plain float; dimensionless ARRAY stays
             # pint, since a bare ndarray breaks callers reading .magnitude
             if isinstance(value, np.ndarray):
-                return value * _pu.pint_registry.dimensionless
+                return value * pyomo_units.pint_registry.dimensionless
             return value
-        return value * _pu.pint_registry(str(units))
+        return value * pyomo_units.pint_registry(str(units))
 
     @staticmethod
-    def _pick(sol, mapping, names, one):
+    def resolve_name(sol, mapping, name):
+        """The flat key in ``mapping`` for a flat or dotted name."""
+        if name in mapping:
+            return name
+        for k in mapping:
+            if sol.display_name(k) == name:
+                return k
+        known = sorted(sol.display_name(k) for k in mapping)
+        raise KeyError(
+            f'{name!r} is not in this solution; known names: '
+            + ', '.join(known[:8]) + (', ...' if len(mapping) > 8 else ''))
+
+    @staticmethod
+    def pick(sol, mapping, names, one):
         """Apply the shared calling convention to ``mapping``.
 
         ``mapping`` is {flat_name: payload}; ``one(flat_name)`` renders a
         single payload. Lookup accepts flat or dotted names.
         """
-        def resolve(name):
-            if name in mapping:
-                return name
-            for k in mapping:
-                if sol.display_name(k) == name:
-                    return k
-            raise KeyError(
-                f'{name!r} is not in this solution; known names: '
-                + ', '.join(sorted(sol.display_name(k) for k in mapping)[:8])
-                + (', ...' if len(mapping) > 8 else ''))
-
         if names is None:
-            return {sol.display_name(k): one(k) for k in mapping}
+            out = {}
+            for k in mapping:
+                out[sol.display_name(k)] = one(k)
+            return out
         if isinstance(names, str):
-            return one(resolve(names))
-        return {name: one(resolve(name)) for name in names}
+            return one(SolveResult.resolve_name(sol, mapping, names))
+        out = {}
+        for name in names:
+            out[name] = one(SolveResult.resolve_name(sol, mapping, name))
+        return out
 
     def variables(self, names=None):
         """Design-variable values with their units. See the class note."""
-        sol = self._rich()
-        return self._pick(sol, sol.variables, names,
-                          lambda k: self._quantity(sol.variables[k].value,
+        sol = self.rich_solution()
+        return self.pick(sol, sol.variables, names,
+                          lambda k: self.as_quantity(sol.variables[k].value,
                                                    sol.variables[k].units))
 
     def constants(self, names=None):
         """Constant values with their units. Same convention as variables()."""
-        sol = self._rich()
-        return self._pick(sol, sol.constants, names,
-                          lambda k: self._quantity(sol.constants[k].value,
+        sol = self.rich_solution()
+        return self.pick(sol, sol.constants, names,
+                          lambda k: self.as_quantity(sol.constants[k].value,
                                                    sol.constants[k].units))
 
     def sensitivities(self, names=None):
@@ -254,9 +252,9 @@ class SolveResult(dict):
         floats. Same calling convention as variables(). For the dimensioned
         d(objective)/d(constant), use dimensioned_sensitivities().
         """
-        sol = self._rich()
+        sol = self.rich_solution()
         sens = sol.sensitivities or {}
-        return self._pick(sol, sens, names, lambda k: sens[k])
+        return self.pick(sol, sens, names, lambda k: sens[k])
 
     def dimensioned_sensitivities(self, names=None):
         """Dimensioned sensitivities: d(objective) / d(constant), with units.
@@ -265,7 +263,7 @@ class SolveResult(dict):
         df/dc = S * f / c, carried in objective-units per constant-units.
         Same calling convention as variables().
         """
-        sol = self._rich()
+        sol = self.rich_solution()
         sens = sol.sensitivities or {}
         if sol.objective is None:
             raise AttributeError(
@@ -273,7 +271,7 @@ class SolveResult(dict):
                 'cannot be dimensioned')
 
         def one(k):
-            from pyomo.environ import units as _pu
+            from pyomo.environ import units as pyomo_units
             entry = sol.constants[k]
             value = sens[k] * sol.objective / entry.value
             obj_u, c_u = sol.objective_units, entry.units
@@ -284,13 +282,13 @@ class SolveResult(dict):
             if obj_dimless and c_dimless:
                 return value
             if c_dimless:
-                return value * _pu.pint_registry(str(obj_u))
+                return value * pyomo_units.pint_registry(str(obj_u))
             if obj_dimless:
-                return value / _pu.pint_registry(str(c_u))
-            return (value * _pu.pint_registry(str(obj_u))
-                    / _pu.pint_registry(str(c_u)))
+                return value / pyomo_units.pint_registry(str(c_u))
+            return (value * pyomo_units.pint_registry(str(obj_u))
+                    / pyomo_units.pint_registry(str(c_u)))
 
-        return self._pick(sol, sens, names, one)
+        return self.pick(sol, sens, names, one)
 
     def __getattr__(self, name):
         if name.startswith('_'):
@@ -301,7 +299,7 @@ class SolveResult(dict):
             raise AttributeError(name)
 
 
-def _run_diagnostics(structures, level, peel_outputs=False):
+def run_diagnostics(structures, level, peel_outputs=False):
     """Structural checks before a solve. 'error' raises PresolveError on
     ill-posed findings (unconstrained/unbounded variables), batched; 'warn'
     demotes to RuntimeWarning; 'print' shows the report; 'off' skips.
@@ -325,7 +323,7 @@ def _run_diagnostics(structures, level, peel_outputs=False):
     # Unbounded gates as an error EXCEPT for output-only variables
     # (rep.output_columns; grey-box-fed already excluded): they can't affect
     # the optimum, so demote to a note and let the central peel in
-    # _solve_impl remove them. Demote ONLY when the peel will run
+    # run_solve remove them. Demote ONLY when the peel will run
     # (peel_outputs) -- with presolve bypassed it stays an error.
     peelable = set(rep.output_columns or []) if peel_outputs else set()
     unbounded_above = [n for n in rep.unbounded_above if n not in peelable]
@@ -371,7 +369,7 @@ def _run_diagnostics(structures, level, peel_outputs=False):
     return rep
 
 
-def _ipopt_available():
+def any_ipopt_available():
     """Any usable IPOPT -- the executable, or cyipopt?
 
     Asked before dispatching, not caught after: no-IPOPT should fall back to
@@ -388,7 +386,7 @@ def _ipopt_available():
         return False
 
 
-def _mark_solved(m):
+def mark_solved(m):
     """Record that the model's values are an answer, not a guess -- the
     post-solve checks read current values and must not describe an initial
     guess as if it were the optimum."""
@@ -401,7 +399,7 @@ def _mark_solved(m):
 
 
 
-def _check_structures_match(structures, m):
+def check_structures_match(structures, m):
     """Refuse structures detected from a DIFFERENT formulation.
 
     Undetectable downstream: the backends read the structures' clone, so a
@@ -431,7 +429,7 @@ def _check_structures_match(structures, m):
             "deck: structures=structure_detector(unit_corrector(f)).")
 
 
-def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
+def attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
                           structures=None):
     """Post-solve reporting: holographic checks, then sensitivities onto the
     model so f.solution carries them.
@@ -441,7 +439,7 @@ def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
     fatal -- a solve that produced an answer must return it.
     """
     import warnings
-    _mark_solved(m)
+    mark_solved(m)
 
     # wrap the raw backend dict for attribute access (see SolveResult);
     # writes below use normal dict item assignment either way
@@ -540,8 +538,8 @@ def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
     if not wanted or not isinstance(res, dict):
         return res
     try:
-        from lcsolver.postsolve.sensitivity import sensitivities as _sens
-        out = _sens(m)
+        from lcsolver.postsolve.sensitivity import sensitivities as compute_sensitivities
+        out = compute_sensitivities(m)
     except Exception as exc:
         # never fatal, but never SILENT: an unexplained empty table once cost
         # a day of diagnosis (unit-corrector recursion)
@@ -566,16 +564,14 @@ def _attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
     return res
 
 
-def _apply_start(m, start):
+def apply_start(m, start):
     """Put a starting point onto the model. Accepts a FeasibilityResult (or
     anything with an ``x``) or a sequence in structures['variables'] order.
     Written onto the model because that's where the backends read x0."""
-    import numpy as _np
-
     from lcsolver.postsolve.writeback import write_solution
 
     x = getattr(start, 'x', start)
-    x = _np.asarray(x, dtype=float).ravel()
+    x = np.asarray(x, dtype=float).ravel()
     if x.size == 0:
         return
     st = structure_detector(unit_corrector(m))
@@ -597,15 +593,15 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     ``result['messages']`` instead of printing them; errors still raise.
     """
     if not quiet:
-        return _solve_impl(m, solver=solver, convex_backend=convex_backend,
+        return run_solve(m, solver=solver, convex_backend=convex_backend,
                            diagnostics=diagnostics,
                            sensitivities=sensitivities, structures=structures,
                            skip_degeneracy_check=skip_degeneracy_check,
                            start=start, **kwargs)
-    import warnings as _warnings
-    with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter('always')
-        res = _solve_impl(m, solver=solver, convex_backend=convex_backend,
+    import warnings as warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        res = run_solve(m, solver=solver, convex_backend=convex_backend,
                           diagnostics=diagnostics,
                           sensitivities=sensitivities, structures=structures,
                           skip_degeneracy_check=skip_degeneracy_check,
@@ -623,7 +619,7 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     return res
 
 
-def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
+def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 sensitivities=True, structures=None, start=None,
                 skip_degeneracy_check=False, **kwargs):
     """Solve an LCsolver Formulation, choosing a backend automatically.
@@ -644,7 +640,6 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     import warnings
 
     from lcsolver.presolve.reductions import InfeasibleProblem
-    from lcsolver.solvers.ipopt import ipopt_solve
 
     # remembered so the Report section can say auto-detected vs prescribed
     try:
@@ -655,65 +650,64 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
     # Detect once for both the checks and the solve -- the walk is 4-6s on
     # SPaircraft against an 11s solve, and optimization_check reads either form.
-    # Validate sp_method HERE, not in _solve_sp: inside the structured-backend
+    # Validate sp_method HERE, not in solve_signomial_program: inside the structured-backend
     # try a ValueError gets caught, retried on the raw NLP route, and dies as
     # an unrelated TypeError. A misspelled option must not be retried.
-    _skipdeg = skip_degeneracy_check
-    _sp_method = kwargs.get('sp_method', 'sia')
-    if _sp_method not in ('sia', 'pccp'):
+    sp_method = kwargs.get('sp_method', 'sia')
+    if sp_method not in ('sia', 'pccp'):
         raise ValueError(
-            f"sp_method must be 'sia' or 'pccp'; got {_sp_method!r}")
+            f"sp_method must be 'sia' or 'pccp'; got {sp_method!r}")
 
     # linear_solver selects IPOPT's inner linear solver. Validate the NAME
     # here (same reason as sp_method); availability is probed at the backend.
     # cvxopt has no such option, so pairing them is a mistake in the call
-    _linear_solver = kwargs.get('linear_solver')
-    if _linear_solver is not None:
+    linear_solver = kwargs.get('linear_solver')
+    if linear_solver is not None:
         from lcsolver.environment import KNOWN_IPOPT_LINEAR_SOLVERS
-        _linear_solver = str(_linear_solver).strip().lower()
-        if _linear_solver not in KNOWN_IPOPT_LINEAR_SOLVERS:
+        linear_solver = str(linear_solver).strip().lower()
+        if linear_solver not in KNOWN_IPOPT_LINEAR_SOLVERS:
             raise ValueError(
                 'unknown linear_solver %r. IPOPT linear solvers are: %s'
                 % (kwargs['linear_solver'],
                    ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
-        kwargs['linear_solver'] = _linear_solver
+        kwargs['linear_solver'] = linear_solver
         if solver == 'cvxopt' or convex_backend == 'cvxopt':
             raise ValueError(
                 "linear_solver=%r selects IPOPT's inner linear solver, and "
                 "cvxopt has no such option. Drop the argument, or use the "
-                "IPOPT backend." % _linear_solver)
+                "IPOPT backend." % linear_solver)
 
     # linear_solver_library supplies the dlopened library (hsllib for
     # ma57/77/86/97, pardisolib for pardiso); meaningless alone or with a
     # compiled-in solver, so refuse both here in the caller's own frame
-    _ls_library = kwargs.get('linear_solver_library')
-    if _ls_library is not None:
-        if _linear_solver is None:
+    library = kwargs.get('linear_solver_library')
+    if library is not None:
+        if linear_solver is None:
             raise ValueError(
                 'linear_solver_library was given without linear_solver; '
                 'name the solver the library provides (ma57/ma77/ma86/ma97 '
                 'for a CoinHSL library, pardiso for Panua Pardiso)')
         from lcsolver.environment import linear_solver_library_option
-        if linear_solver_library_option(_linear_solver) is None:
+        if linear_solver_library_option(linear_solver) is None:
             raise ValueError(
                 '%r is compiled into IPOPT, not loaded from a library; '
                 'linear_solver_library applies only to ma57/ma77/ma86/ma97 '
-                'and pardiso' % _linear_solver)
+                'and pardiso' % linear_solver)
 
     # stamp finite-difference permission onto every grey-box model NOW,
     # before detection clones the formulation, so the clones carry it
-    _fd_flag = kwargs.pop('allow_blackbox_finite_difference', None)
-    if _fd_flag is not None:
+    fd_flag = kwargs.pop('allow_blackbox_finite_difference', None)
+    if fd_flag is not None:
         try:
             from pyomo.contrib.pynumero.interfaces.external_grey_box import (
                 ExternalGreyBoxBlock,
             )
-            for _blk in m.component_data_objects(ExternalGreyBoxBlock,
+            for block in m.component_data_objects(ExternalGreyBoxBlock,
                                                  descend_into=True,
                                                  active=True):
-                _ex = _blk.get_external_model()
-                if _ex is not None:
-                    _ex.allow_finite_difference = bool(_fd_flag)
+                external = block.get_external_model()
+                if external is not None:
+                    external.allow_finite_difference = bool(fd_flag)
         except ImportError:
             pass
 
@@ -722,7 +716,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # VarData, and collecting the clone would collect their parents
     if start is not None:
         # before detection, so the detected structures carry the new values
-        _apply_start(m, start)
+        apply_start(m, start)
 
     corrected = None
     detection_failed = None
@@ -737,13 +731,13 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 "different question. Re-run structure_detector(corrected) with "
                 "its default bounds_as_rows=True; optimization_check() reads that form "
                 "too.")
-        _check_structures_match(structures, m)
-        _raise_if_infeasible(structures)
+        check_structures_match(structures, m)
+        raise_if_infeasible(structures)
     elif want_checks or solver == 'auto':
         try:
             corrected = unit_corrector(m)
             structures = structure_detector(corrected)
-            _raise_if_infeasible(structures)
+            raise_if_infeasible(structures)
         except InfeasibleProblem:
             # a proof of infeasibility is an answer, not a reason to fall back
             raise
@@ -762,7 +756,7 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
     # detection is settled (supplied, detected, or failed); the post-solve
     # checks read this rather than re-deriving it
-    _st = structures
+    structures_for_checks = structures
 
     # Central presolve: the output-only peel runs HERE, once, so every
     # structured backend consumes the same reduced structures. An output-only
@@ -770,65 +764,52 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # it from its defining constraint. Grey-box-referenced columns are never
     # peeled; presolve=False bypasses the peel and the gate above keeps the
     # dangling variable an error.
-    _presolve = bool(kwargs.pop('presolve', True))
-    _peeled = None
-    _full_structures = structures
-    _protect = None
-    _can_peel = (structures is not None and detection_failed is None
+    presolve = bool(kwargs.pop('presolve', True))
+    peeled = None
+    full_structures = structures
+    protect = None
+    can_peel = (structures is not None and detection_failed is None
                  and solver != 'ipopt'
                  and (structures['Geometric_Program'][0]
                       or structures['Signomial_Program'][0]))
-    if _presolve and _can_peel:
+    if presolve and can_peel:
         from lcsolver.solvers.sequential.bridge import _greybox_protected
-        _protect = _greybox_protected(structures)
-    _will_peel = _presolve and _can_peel and _protect is not None
+        protect = _greybox_protected(structures)
+    will_peel = presolve and can_peel and protect is not None
 
     if want_checks and structures is not None:
         try:
-            _run_diagnostics(structures, diagnostics, peel_outputs=_will_peel)
+            run_diagnostics(structures, diagnostics, peel_outputs=will_peel)
         except (InfeasibleProblem, PresolveError):
             # the gate is the point: stop before any solver spends time
             raise
         except Exception:
             pass                         # a broken check must not block a solve
 
-    if _will_peel:
+    if will_peel:
         from lcsolver.presolve.reductions import peel_output_columns
         try:
             reduced, removed = peel_output_columns(structures,
-                                                   protect=_protect)
+                                                   protect=protect)
         except Exception:
             removed = None               # a broken peel must not block a solve
         if removed:
-            structures, _peeled = reduced, removed
+            structures, peeled = reduced, removed
 
-    def _finish(res):
-        """Restore centrally peeled variables into a backend result: values
-        recovered from the defining constraints go back into res['x'], and
-        the write-back re-runs against the FULL structures."""
-        if not _peeled or not isinstance(res, dict) or res.get('x') is None:
-            return res
-        import numpy as np
-
-        from lcsolver.postsolve.writeback import write_solution
-        from lcsolver.presolve.reductions import restore_columns
-        # ravel: cvxopt returns x as a column matrix, whose rows are
-        # length-1 sequences, not floats
-        res['x'] = list(restore_columns(
-            _peeled, np.asarray(res['x'], dtype=float).ravel(),
-            n_original=len(_full_structures['variables'])))
-        try:
-            res['solution'] = write_solution(_full_structures, res, model=m)
-        except Exception:
-            pass                  # the reduced write-back already succeeded
-        return res
+    # every route ends the same way: peeled columns restored, then the
+    # post-solve report attached
+    def finish(res):
+        res = restore_peeled_columns(res, peeled, full_structures, m)
+        return attach_sensitivities(m, res, sensitivities, skip_degeneracy_check, structures_for_checks)
 
     if solver == 'cvxopt':
-        return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))), sensitivities, _skipdeg, _st)
+        return finish(cvxopt_solve(m, structures=structures,
+                                   **strip_routing_kwargs(kwargs)))
     if solver == 'ipopt-convex':
-        return _attach_sensitivities(m, _finish(_convex_ipopt(m, structures=structures, presolve=_presolve, **kwargs)), sensitivities, _skipdeg, _st)
+        return finish(convex_ipopt(m, structures=structures,
+                                    presolve=presolve, **kwargs))
     if solver == 'ipopt':
-        return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), linear_solver_library=kwargs.get('linear_solver_library'), **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
+        return finish(raw_ipopt(m, kwargs))
     if solver != 'auto':
         raise ValueError(f"solver must be 'auto', 'cvxopt', or 'ipopt'; got {solver!r}")
 
@@ -854,10 +835,8 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         if (structures is not None and detection_failed is None
                 and (structures['Geometric_Program'][0]
                      or structures['Signomial_Program'][0])):
-            return _attach_sensitivities(
-                m, _finish(_solve_sp(structures, m, presolve=_presolve,
-                                     **kwargs)),
-                sensitivities, _skipdeg, _st)
+            return finish(solve_signomial_program(structures, m, presolve=presolve,
+                                    **kwargs))
         if structures is not None and detection_failed is None:
             # not-GP/SP, so this grey-box model takes the raw route --
             # probably a surprise; say why (the detector's blame list) and
@@ -875,19 +854,18 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 msg += (' The SIAOptions passed via options= are IGNORED on '
                         'this route.')
             warnings.warn(msg, RuntimeWarning, stacklevel=2)
-        if not _ipopt_available():
+        if not any_ipopt_available():
             raise SolverUnavailable(
                 'this model has black-box constraints and its algebraic part '
                 'is not a detected GP/SP, so it needs the raw IPOPT route -- '
                 'and no usable IPOPT installation was found. Run '
                 '`lcsolver-install-solvers`; see docs/ipopt.rst.')
-        return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), linear_solver_library=kwargs.get('linear_solver_library'), **_strip_routing_kwargs(kwargs)),
-                                     sensitivities, _skipdeg, _st)
+        return finish(raw_ipopt(m, kwargs))
 
     cvxopt_failure = None
     if structured:
         backend = convex_backend
-        if backend == 'ipopt' and not _ipopt_available():
+        if backend == 'ipopt' and not any_ipopt_available():
             # cvxopt solves the same convex problem to the same optimum, so
             # fall back -- but say so, or the missing IPOPT install stays
             # hidden as long as the models stay convex
@@ -904,12 +882,10 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             backend = 'cvxopt'
         try:
             if backend == 'ipopt':
-                return _attach_sensitivities(
-                    m, _finish(_convex_ipopt(m, structures=structures,
-                                             presolve=_presolve, **kwargs)),
-                    sensitivities, _skipdeg, _st)
-            return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))),
-                                         sensitivities, _skipdeg, _st)
+                return finish(convex_ipopt(m, structures=structures,
+                                            presolve=presolve, **kwargs))
+            return finish(cvxopt_solve(m, structures=structures,
+                                       **strip_routing_kwargs(kwargs)))
         except Exception as e:
             from lcsolver.presolve.reductions import InfeasibleProblem
             if isinstance(e, InfeasibleProblem):
@@ -921,17 +897,17 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             # structured-path bug into a confusing failure further down
             if backend == 'cvxopt':
                 cvxopt_failure = e
-            where = ('IPOPT on the raw model' if _ipopt_available()
+            where = ('IPOPT on the raw model' if any_ipopt_available()
                      else 'cvxopt' if backend == 'ipopt' else 'nothing else')
             warnings.warn(
                 f"[LC-W201] the structured backend failed ({type(e).__name__}: {e}); "
                 f"falling back to {where}.",
                 RuntimeWarning, stacklevel=2)
-            if not _ipopt_available() and backend == 'ipopt':
-                return _attach_sensitivities(m, _finish(cvxopt_solve(m, structures=structures, **_strip_routing_kwargs(kwargs))),
-                                             sensitivities, _skipdeg, _st)
+            if not any_ipopt_available() and backend == 'ipopt':
+                return finish(cvxopt_solve(m, structures=structures,
+                                           **strip_routing_kwargs(kwargs)))
 
-    if not _ipopt_available():
+    if not any_ipopt_available():
         # nothing left to try: cvxopt can't take a general NLP, so this is a
         # real dead end -- name it as one
         if cvxopt_failure is not None:
@@ -947,14 +923,43 @@ def _solve_impl(m, solver='auto', convex_backend='ipopt', diagnostics='error',
             + ('It is not a detected LP, QP, GP or SP, so cvxopt cannot solve '
                'it. ' if not structured else '')
             + 'Run `lcsolver-install-solvers`. See docs/ipopt.rst.')
-    return _attach_sensitivities(m, ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), linear_solver_library=kwargs.get('linear_solver_library'), **_strip_routing_kwargs(kwargs)), sensitivities, _skipdeg, _st)
+    return finish(raw_ipopt(m, kwargs))
 
 
 # help(solve) should tell the whole story, not just the wrapper's.
-solve.__doc__ = (solve.__doc__ or '') + '\n' + (_solve_impl.__doc__ or '')
+solve.__doc__ = (solve.__doc__ or '') + '\n' + (run_solve.__doc__ or '')
 
 
-def _strip_routing_kwargs(kwargs):
+def raw_ipopt(m, kwargs):
+    """The raw NLP route: IPOPT on the model as written, with the linear
+    solver threaded through and the structured-route kwargs dropped."""
+    from lcsolver.solvers.ipopt import ipopt_solve
+    return ipopt_solve(m, linear_solver=kwargs.get('linear_solver'),
+                       linear_solver_library=kwargs.get('linear_solver_library'),
+                       **strip_routing_kwargs(kwargs))
+
+
+def restore_peeled_columns(res, peeled, full_structures, m):
+    """Put centrally peeled variables back into a backend result: values
+    recovered from the defining constraints go into res['x'], and the
+    write-back re-runs against the FULL structures."""
+    if not peeled or not isinstance(res, dict) or res.get('x') is None:
+        return res
+    from lcsolver.postsolve.writeback import write_solution
+    from lcsolver.presolve.reductions import restore_columns
+    # ravel: cvxopt returns x as a column matrix, whose rows are length-1
+    # sequences, not floats
+    res['x'] = list(restore_columns(
+        peeled, np.asarray(res['x'], dtype=float).ravel(),
+        n_original=len(full_structures['variables'])))
+    try:
+        res['solution'] = write_solution(full_structures, res, model=m)
+    except Exception:
+        pass                  # the reduced write-back already succeeded
+    return res
+
+
+def strip_routing_kwargs(kwargs):
     """Drop routing/options kwargs the raw backends reject -- an unexpected
     'sp_method' from the fallback used to mask every structured-path error."""
     drop = ('sp_method', 'options', 'sia_options', 'sp_form', 'presolve',
@@ -963,7 +968,7 @@ def _strip_routing_kwargs(kwargs):
     return {k: v for k, v in kwargs.items() if k not in drop}
 
 
-def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
+def solve_signomial_program(structures, m, sp_method='sia', linear_solver=None,
               linear_solver_library=None, **kwargs):
     """Solve a signomial program. SIA by default.
 
@@ -990,15 +995,15 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
         from lcsolver.solvers.sequential.pccp import solve_SP
         from lcsolver.solvers.ipopt.GP import solve_gp_rows_ipopt
 
-        def _inner(rows, relations, x0=None):
-            return solve_gp_rows_ipopt(
-                rows, relations, x0=x0, linear_solver=linear_solver,
-                linear_solver_library=linear_solver_library)
-
-        res = solve_SP(structures, m, gp_solver=_inner,
-                       **{k: v for k, v in kwargs.items()
-                          if k in ('reltol', 'var_reltol', 'max_iter',
-                                   'use_pccp', 'penalty_exponent')})
+        inner_gp = functools.partial(
+            solve_gp_rows_ipopt, linear_solver=linear_solver,
+            linear_solver_library=linear_solver_library)
+        pccp_kwargs = {}
+        for k in ('reltol', 'var_reltol', 'max_iter', 'use_pccp',
+                  'penalty_exponent'):
+            if k in kwargs:
+                pccp_kwargs[k] = kwargs[k]
+        res = solve_SP(structures, m, gp_solver=inner_gp, **pccp_kwargs)
         res['solver'] = 'ipopt (PCCP, log-transformed subproblems)'
         res['problem_structure'] = 'signomial_program_pccp'
         res['solution'] = write_solution(structures, res, model=m)
@@ -1012,45 +1017,53 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
     if linear_solver is not None:
         from lcsolver.environment import linear_solver_library_option
         from lcsolver.solvers.sequential.sia import SIAOptions
-        _opts = kwargs.get('options')
-        if not isinstance(_opts, SIAOptions):
-            _opts = SIAOptions()
-            kwargs['options'] = _opts
-        _opts.ipopt_options.setdefault('linear_solver', linear_solver)
+        sia_options = kwargs.get('options')
+        if not isinstance(sia_options, SIAOptions):
+            sia_options = SIAOptions()
+            kwargs['options'] = sia_options
+        sia_options.ipopt_options.setdefault('linear_solver', linear_solver)
         if linear_solver_library is not None:
-            _opts.ipopt_options.setdefault(
+            sia_options.ipopt_options.setdefault(
                 linear_solver_library_option(linear_solver),
                 str(linear_solver_library))
         # a solver set straight on SIAOptions.ipopt_options wins; validate
         # it the same way so SPRAL's runtime env gets set for it too
-        _eff = _opts.ipopt_options['linear_solver']
-        if _eff != linear_solver:
-            require_linear_solver(_eff, route='pyomo')
+        chosen = sia_options.ipopt_options['linear_solver']
+        if chosen != linear_solver:
+            require_linear_solver(chosen, route='pyomo')
         from lcsolver.environment import apply_linear_solver_defaults
-        apply_linear_solver_defaults(_opts.ipopt_options, _eff)
+        apply_linear_solver_defaults(sia_options.ipopt_options, chosen)
 
-    result = solve_sia(structures, **{k: v for k, v in kwargs.items()
-                                      if k in ('x0', 'options', 'sp_form',
-                                               'presolve', 'split_equalities',
-                                               'pair_equalities')})
-    _final_viol = float(getattr(result, 'max_violation', 0.0) or 0.0)
-    if (getattr(result, 'phase1_feasible', None) is False
-            and not result.converged
-            and _final_viol > 10.0 * 1e-6):
+    sia_kwargs = {}
+    for k in ('x0', 'options', 'sp_form', 'presolve', 'split_equalities',
+              'pair_equalities'):
+        if k in kwargs:
+            sia_kwargs[k] = kwargs[k]
+    result = solve_sia(structures, **sia_kwargs)
+    final_violation = float(result.max_violation or 0.0)
+    if (result.phase1_feasible is False and not result.converged
+            and final_violation > 10.0 * 1e-6):
         # no feasible point and no recovery: an ANSWER, not a partial
         # result. Surface the elastic Phase-I diagnosis instead of
         # returning the best infeasible iterate as if it were a design.
         from lcsolver.presolve.reductions import InfeasibleProblem
-        report = getattr(result, 'infeasibility_report', None) or result.status
+        report = result.infeasibility_report or result.status
         raise InfeasibleProblem(
             'SIA Phase I could not find a feasible point and the solve did '
             'not recover.\n' + str(report))
+    ran_linear_solver = None
+    if kwargs.get('options') is not None:
+        ran_linear_solver = (kwargs['options'].ipopt_options or {}).get(
+            'linear_solver')
+    if result.converged:
+        status = 'optimal'
+    else:
+        status = result.status
     res = {
         'x': list(result.x),
         'primal objective': result.objective,
-        'linear_solver': (kwargs['options'].ipopt_options or {}).get(
-            'linear_solver') if kwargs.get('options') is not None else None,
-        'status': 'optimal' if result.converged else result.status,
+        'linear_solver': ran_linear_solver,
+        'status': status,
         'solver': 'ipopt (SIA, sequential inner approximation)',
         'problem_structure': 'signomial_program_sia',
         'converged': result.converged,
@@ -1070,7 +1083,7 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
         # say what to DO about it, keyed on how it failed
         remedies = []
         if 'phase 1' in status:
-            report = getattr(result, 'infeasibility_report', None)
+            report = result.infeasibility_report
             if report:
                 res['infeasibility_report'] = report
                 msg += ("\nWhere feasibility fails (the L1-elastic optimum's "
@@ -1104,7 +1117,7 @@ def _solve_sp(structures, m, sp_method='sia', linear_solver=None,
     return res
 
 
-def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
+def convex_ipopt(m, structures=None, presolve=True, **kwargs):
     """Solve a structured formulation with IPOPT rather than cvxopt.
 
     A GP is solved in log space where it is convex, so global optimality is
@@ -1112,27 +1125,26 @@ def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
     signomial path -- the central peel in _solve_impl has already run.
     """
     from lcsolver.solvers.ipopt.GP import solve_gp_ipopt, solve_lp_qp_ipopt
-    from lcsolver.solvers.ipopt import ipopt_solve
 
     if structures is None:
         structures = structure_detector(unit_corrector(m))
-    _raise_if_infeasible(structures)
+    raise_if_infeasible(structures)
 
     # `options` is overloaded by history: an IPOPT dict on the convex paths,
     # SIAOptions on the signomial path. Route it by TYPE so SIA parameters
     # don't crash a pure-GP solve into the raw-IPOPT fallback; `sia_options`
     # is the unambiguous spelling, forwarded only on the signomial path.
     from lcsolver.solvers.sequential.sia import SIAOptions
-    _sia_opts = kwargs.pop('sia_options', None)
+    sia_options = kwargs.pop('sia_options', None)
     # mirror the dispatch order below: a GP is also a detected SP but is
     # SOLVED as a GP, so the SIA meaning applies only when SP is the route
-    _is_sp = bool(structures['Signomial_Program'][0]
+    is_sp = bool(structures['Signomial_Program'][0]
                   and not structures['Geometric_Program'][0]
                   and not structures['Linear_Program'][0]
                   and not structures['Quadratic_Program'][0])
-    if _is_sp:
-        if _sia_opts is not None:
-            kwargs['options'] = _sia_opts
+    if is_sp:
+        if sia_options is not None:
+            kwargs['options'] = sia_options
         elif isinstance(kwargs.get('options'), dict):
             kwargs.pop('options')          # an IPOPT dict means nothing to SIA
     elif isinstance(kwargs.get('options'), SIAOptions):
@@ -1147,12 +1159,12 @@ def _convex_ipopt(m, structures=None, presolve=True, **kwargs):
                        else 'quadratic_program'),
             **kwargs)
     if structures['Signomial_Program'][0]:
-        return _solve_sp(structures, m, presolve=presolve, **kwargs)
+        return solve_signomial_program(structures, m, presolve=presolve, **kwargs)
     # Nothing structured left to exploit.
-    return ipopt_solve(m, linear_solver=kwargs.get('linear_solver'), linear_solver_library=kwargs.get('linear_solver_library'), **_strip_routing_kwargs(kwargs))
+    return raw_ipopt(m, kwargs)
 
 
-
-
-
-
+# older scripts in the lc* repos import these by their former names
+_convex_ipopt = convex_ipopt
+_solve_sp = solve_signomial_program
+_ipopt_available = any_ipopt_available
