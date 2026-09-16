@@ -487,15 +487,20 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         self._cache = None
 
     def evaluate_outputs(self):
-        """The output values at the current iterate. Calls `fillCache`."""
-        self.fillCache()
+        """The output values at the current iterate. Calls `fillCache`
+        values-only: a line search or violation check never pays for
+        derivatives (in particular, no finite-difference sweep on an
+        availableDerivative=0 box, and no permission needed for one)."""
+        self.fillCache(need_jacobian=False)
         opts = self._cache['pyomo_outputs']
         return opts
 
     def evaluate_jacobian_outputs(self):
         """The jacobian at the current iterate, sparse. Calls `fillCache`.
-        Computed with the values in one BlackBox call -- an analysis code is
-        usually too expensive to evaluate twice per iterate."""
+        A derivative-capable box computes it with the values in one BlackBox
+        call -- an analysis code is usually too expensive to evaluate twice
+        per iterate; a values-only box pays its finite-difference sweep here
+        and only here."""
         self.fillCache()
         jac = self._cache['pyomo_jacobian']
         return jac
@@ -617,7 +622,7 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
                     blocks[k][j] = float(blocks[k][j])
         return blocks if multi_out else blocks[0]
 
-    def fillCache(self):
+    def fillCache(self, need_jacobian=True):
         """Call `BlackBox` once and cache values + jacobian at this iterate.
 
         Cuts the solver's flat vector into the declared shapes, converts
@@ -627,7 +632,20 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
         reads. Cached because the solver asks for values and jacobian
         separately; set_input_values drops the cache, so exactly one BlackBox
         call per iterate.
+
+        need_jacobian=False stops before any derivative work: a line search
+        or violation check only wants values, and derivatives are the
+        expensive half (a finite-difference sweep on a values-only box, an
+        adjoint solve in a real analysis).  A later jacobian request at the
+        same iterate upgrades the cache in place, reusing the cached values.
+        A box that RETURNS values and jacobian together (availableDerivative
+        >= 1) caches both regardless -- they came in one call.
         """
+        if self._cache is not None and need_jacobian \
+                and 'pyomo_jacobian' not in self._cache:
+            cache = dict(self._cache)
+            self._fill_jacobian(cache)
+            self._cache = cache
         if self._cache is None:
             # Build locally, publish only on success: filling self._cache in
             # place left a partial non-None cache behind on error, and the
@@ -692,23 +710,24 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             bbo = self.BlackBox(*bb_inputs)
 
-            # availableDerivative=0 means values only -- no jacobian tuple to
-            # unpack.  Either raise (default) or, with permission granted
-            # through solve(), build one by central differences
+            # availableDerivative=0 means values only -- no jacobian tuple
+            # to unpack; the jacobian, when asked for, is _fill_jacobian's
+            # problem (raise by default, central differences with permission
+            # granted through solve())
             if not self.availableDerivative:
-                bbo = (bbo, self._finite_difference_jacobian(bb_inputs, bbo))
-
-            cache['raw'] = bbo
-            cache['raw_value'] = bbo[0]
-            cache['raw_jacobian'] = bbo[1]
+                values = bbo
+            else:
+                values = bbo[0]
+                cache['raw'] = bbo
+                cache['raw_jacobian'] = bbo[1]
+            cache['raw_value'] = values
+            cache['bb_inputs'] = bb_inputs
 
             outputVector = []
-            if not isinstance(bbo[0], (list, tuple)):
-                valueList = [bbo[0]]
-                jacobianList = [bbo[1]]
+            if not isinstance(values, (list, tuple)):
+                valueList = [values]
             else:
-                valueList = bbo[0]
-                jacobianList = bbo[1]
+                valueList = values
             for i in range(0, len(valueList)):
                 optimizationOutput = self.outputVariables_optimization[i]
                 if not isinstance(
@@ -759,164 +778,183 @@ class BlackBoxFunctionModel(ExternalGreyBoxModel):
 
             cache['pyomo_outputs'] = outputVector
 
-            outputJacobian = (
-                np.ones([self._NunwrappedOutputs, self._NunwrappedInputs]) * -1
-            )
-            constJacobian = np.zeros([self._NunwrappedOutputs,
-                                      len(self.constants)])
-            ptr_row = 0
+            if need_jacobian or self.availableDerivative:
+                self._fill_jacobian(cache)
+            self._cache = cache
+
+    def _fill_jacobian(self, cache):
+        """Jacobian half of fillCache: finite-difference it if the box is
+        values-only, then unit-convert every d(output)/d(input) block into
+        the sparse matrix the solver reads.  Separate from the value half
+        so a values-only request never pays for derivatives."""
+        if 'raw_jacobian' not in cache:
+            jac = self._finite_difference_jacobian(cache['bb_inputs'],
+                                                   cache['raw_value'])
+            cache['raw'] = (cache['raw_value'], jac)
+            cache['raw_jacobian'] = jac
+        values = cache['raw_value']
+        if isinstance(values, (list, tuple)):
+            jacobianList = cache['raw_jacobian']
+        else:
+            jacobianList = [cache['raw_jacobian']]
+
+        outputJacobian = (
+            np.ones([self._NunwrappedOutputs, self._NunwrappedInputs]) * -1
+        )
+        constJacobian = np.zeros([self._NunwrappedOutputs,
+                                  len(self.constants)])
+        ptr_row = 0
+        ptr_col = 0
+
+        for i in range(0, len(jacobianList)):
+            oopt = self.outputVariables_optimization[i]
+            # Checked about 20 lines above
+            # if not isinstance(oopt, (pyomo.core.base.var.ScalarVar,pyomo.core.base.var.IndexedVar)):
+            #     raise ValueError("Invalid type for output variable")
+            lopt = self.outputs[i]
+            oounits = oopt.get_units()
+            lounits = lopt.units
+            # oshape  = [len(idx) for idx in oopt.index_set().subsets()]
             ptr_col = 0
-
-            for i in range(0, len(jacobianList)):
-                oopt = self.outputVariables_optimization[i]
-                # Checked about 20 lines above
-                # if not isinstance(oopt, (pyomo.core.base.var.ScalarVar,pyomo.core.base.var.IndexedVar)):
+            for j in range(0, len(self.inputs)):
+                oipt = self.inputVariables_optimization[j]
+                # This is checked about 80 lines up
+                # if not isinstance(oipt, (pyomo.core.base.var.ScalarVar,pyomo.core.base.var.IndexedVar)):
                 #     raise ValueError("Invalid type for output variable")
-                lopt = self.outputs[i]
-                oounits = oopt.get_units()
-                lounits = lopt.units
-                # oshape  = [len(idx) for idx in oopt.index_set().subsets()]
-                ptr_col = 0
-                for j in range(0, len(self.inputs)):
-                    oipt = self.inputVariables_optimization[j]
-                    # This is checked about 80 lines up
-                    # if not isinstance(oipt, (pyomo.core.base.var.ScalarVar,pyomo.core.base.var.IndexedVar)):
-                    #     raise ValueError("Invalid type for output variable")
-                    lipt = self.inputs[j]
-                    oiunits = oipt.get_units()
-                    liunits = lipt.units
-                    # ishape  = [len(idx) for idx in oipt.index_set().subsets()]
+                lipt = self.inputs[j]
+                oiunits = oipt.get_units()
+                liunits = lipt.units
+                # ishape  = [len(idx) for idx in oipt.index_set().subsets()]
 
-                    jacobianValue_raw = self.attachUnits(
-                        jacobianList[i][j], lounits / liunits
-                    )
+                jacobianValue_raw = self.attachUnits(
+                    jacobianList[i][j], lounits / liunits
+                )
 
-                    if isinstance(jacobianValue_raw, NumericValue):
-                        corrected_value = pyo.value(
-                            pyomo_units.convert(jacobianValue_raw, oounits / oiunits)
-                        )  # now unitless in correct units
-                        outputJacobian[ptr_row, ptr_col] = corrected_value
-                        ptr_col += 1
+                if isinstance(jacobianValue_raw, NumericValue):
+                    corrected_value = pyo.value(
+                        pyomo_units.convert(jacobianValue_raw, oounits / oiunits)
+                    )  # now unitless in correct units
+                    outputJacobian[ptr_row, ptr_col] = corrected_value
+                    ptr_col += 1
+                    ptr_row_step = 1
+
+                elif isinstance(
+                    jacobianValue_raw, pyomo.core.expr.ndarray.NumericNDArray
+                ):
+                    jshape = jacobianValue_raw.shape
+
+                    if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
+                        oshape = 0
+                    else:  # isinstance(oopt, pyomo.core.base.var.IndexedVar), checked above
+                        oshape = [len(idx) for idx in oopt.index_set().subsets()]
+
+                    if not isinstance(oipt, pyomo.core.base.var.IndexedVar):
+                        ishape = 0
+                    else:  # isinstance(oipt, pyomo.core.base.var.IndexedVar), checked above
+                        ishape = [len(idx) for idx in oipt.index_set().subsets()]
+
+                    if oshape == 0:
+                        validIndices = list(oipt.index_set().data())
+                        for vi in validIndices:
+                            corrected_value = pyo.value(
+                                pyomo_units.convert(
+                                    jacobianValue_raw[vi], oounits / oiunits
+                                )
+                            )  # now unitless in correct units
+                            outputJacobian[ptr_row, ptr_col] = corrected_value
+                            ptr_col += 1
                         ptr_row_step = 1
 
-                    elif isinstance(
-                        jacobianValue_raw, pyomo.core.expr.ndarray.NumericNDArray
-                    ):
-                        jshape = jacobianValue_raw.shape
+                    elif ishape == 0:
+                        ptr_row_cache = ptr_row
+                        validIndices = list(oopt.index_set().data())
+                        for vi in validIndices:
+                            corrected_value = pyo.value(
+                                pyomo_units.convert(
+                                    jacobianValue_raw[vi], oounits / oiunits
+                                )
+                            )  # now unitless in correct units
+                            outputJacobian[ptr_row, ptr_col] = corrected_value
+                            ptr_row += 1
+                        ptr_row = ptr_row_cache
+                        # A scalar input occupies one column of the block,
+                        # which the next input must start after.
+                        ptr_col += 1
+                        ptr_row_step = len(validIndices)
 
-                        if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
-                            oshape = 0
-                        else:  # isinstance(oopt, pyomo.core.base.var.IndexedVar), checked above
-                            oshape = [len(idx) for idx in oopt.index_set().subsets()]
+                    # elif ishape == 0 and oshape == 0: # Handled by the scalar case above
 
-                        if not isinstance(oipt, pyomo.core.base.var.IndexedVar):
-                            ishape = 0
-                        else:  # isinstance(oipt, pyomo.core.base.var.IndexedVar), checked above
-                            ishape = [len(idx) for idx in oipt.index_set().subsets()]
+                    else:
+                        # both are dimensioned vectors
+                        # oshape, ishape, jshape
+                        ptr_row_cache = ptr_row
+                        ptr_col_cache = ptr_col
+                        validIndices_o = list(oopt.index_set().data())
+                        validIndices_i = list(oipt.index_set().data())
 
-                        if oshape == 0:
-                            validIndices = list(oipt.index_set().data())
-                            for vi in validIndices:
+                        for vio in validIndices_o:
+                            if isinstance(vio, (float, int)):
+                                vio = (vio,)
+                            for vii in validIndices_i:
+                                if isinstance(vii, (float, int)):
+                                    vii = (vii,)
                                 corrected_value = pyo.value(
                                     pyomo_units.convert(
-                                        jacobianValue_raw[vi], oounits / oiunits
+                                        jacobianValue_raw[vio + vii],
+                                        oounits / oiunits,
                                     )
                                 )  # now unitless in correct units
                                 outputJacobian[ptr_row, ptr_col] = corrected_value
                                 ptr_col += 1
-                            ptr_row_step = 1
+                            ptr_col = ptr_col_cache
+                            ptr_row += 1
+                        ptr_row = ptr_row_cache
+                        # The block spans one column per input element; the
+                        # inner loop rewinds ptr_col for the next row, so
+                        # step past the whole block once the rows are done.
+                        ptr_col = ptr_col_cache + len(validIndices_i)
+                        ptr_row_step = len(validIndices_o)
 
-                        elif ishape == 0:
-                            ptr_row_cache = ptr_row
-                            validIndices = list(oopt.index_set().data())
-                            for vi in validIndices:
-                                corrected_value = pyo.value(
-                                    pyomo_units.convert(
-                                        jacobianValue_raw[vi], oounits / oiunits
-                                    )
-                                )  # now unitless in correct units
-                                outputJacobian[ptr_row, ptr_col] = corrected_value
-                                ptr_row += 1
-                            ptr_row = ptr_row_cache
-                            # A scalar input occupies one column of the block,
-                            # which the next input must start after.
-                            ptr_col += 1
-                            ptr_row_step = len(validIndices)
-
-                        # elif ishape == 0 and oshape == 0: # Handled by the scalar case above
-
-                        else:
-                            # both are dimensioned vectors
-                            # oshape, ishape, jshape
-                            ptr_row_cache = ptr_row
-                            ptr_col_cache = ptr_col
-                            validIndices_o = list(oopt.index_set().data())
-                            validIndices_i = list(oipt.index_set().data())
-
-                            for vio in validIndices_o:
-                                if isinstance(vio, (float, int)):
-                                    vio = (vio,)
-                                for vii in validIndices_i:
-                                    if isinstance(vii, (float, int)):
-                                        vii = (vii,)
-                                    corrected_value = pyo.value(
-                                        pyomo_units.convert(
-                                            jacobianValue_raw[vio + vii],
-                                            oounits / oiunits,
-                                        )
-                                    )  # now unitless in correct units
-                                    outputJacobian[ptr_row, ptr_col] = corrected_value
-                                    ptr_col += 1
-                                ptr_col = ptr_col_cache
-                                ptr_row += 1
-                            ptr_row = ptr_row_cache
-                            # The block spans one column per input element; the
-                            # inner loop rewinds ptr_col for the next row, so
-                            # step past the whole block once the rows are done.
-                            ptr_col = ptr_col_cache + len(validIndices_i)
-                            ptr_row_step = len(validIndices_o)
-
-                    else:
-                        raise ValueError(
-                            "Invalid jacobian type for d(output %d, '%s')/d(input %d, "
-                            "'%s'): expected a pyomo united scalar or array, or a plain "
-                            "number in units of %s, received %s"
-                            % (
-                                i,
-                                lopt.name,
-                                j,
-                                lipt.name,
-                                str(lounits / liunits),
-                                type(jacobianList[i][j]).__name__,
-                            )
+                else:
+                    raise ValueError(
+                        "Invalid jacobian type for d(output %d, '%s')/d(input %d, "
+                        "'%s'): expected a pyomo united scalar or array, or a plain "
+                        "number in units of %s, received %s"
+                        % (
+                            i,
+                            lopt.name,
+                            j,
+                            lipt.name,
+                            str(lounits / liunits),
+                            type(jacobianList[i][j]).__name__,
                         )
+                    )
 
-                # Trailing row entries are d(output)/d(constant) columns.  They
-                # never enter the optimizer's jacobian (a Constant is not an NLP
-                # column); the sensitivity pass chain-rules them into the
-                # reported d(objective)/d(constant)
-                for k2, cdecl in enumerate(self.constants):
-                    cparam = self.constantParams_optimization[k2]
-                    raw = self.attachUnits(
-                        jacobianList[i][len(self.inputs) + k2],
-                        lounits / cdecl.units)
-                    ocunits = pyomo_units.get_units(cparam)
-                    if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
-                        vals = [raw]
-                    else:
-                        vals = [raw[vi]
-                                for vi in list(oopt.index_set().data())]
-                    for rr, v in enumerate(vals):
-                        constJacobian[ptr_row + rr, k2] = pyo.value(
-                            pyomo_units.convert(v, oounits / ocunits))
+            # Trailing row entries are d(output)/d(constant) columns.  They
+            # never enter the optimizer's jacobian (a Constant is not an NLP
+            # column); the sensitivity pass chain-rules them into the
+            # reported d(objective)/d(constant)
+            for k2, cdecl in enumerate(self.constants):
+                cparam = self.constantParams_optimization[k2]
+                raw = self.attachUnits(
+                    jacobianList[i][len(self.inputs) + k2],
+                    lounits / cdecl.units)
+                ocunits = pyomo_units.get_units(cparam)
+                if not isinstance(oopt, pyomo.core.base.var.IndexedVar):
+                    vals = [raw]
+                else:
+                    vals = [raw[vi]
+                            for vi in list(oopt.index_set().data())]
+                for rr, v in enumerate(vals):
+                    constJacobian[ptr_row + rr, k2] = pyo.value(
+                        pyomo_units.convert(v, oounits / ocunits))
 
-                ptr_row += ptr_row_step
+            ptr_row += ptr_row_step
 
-            cache['pyomo_jacobian'] = sps.coo_matrix(outputJacobian)
-            cache['constant_jacobian'] = {
-                self.constantParams_optimization[k2].name: constJacobian[:, k2]
-                for k2 in range(len(self.constants))}
-            self._cache = cache
+        cache['pyomo_jacobian'] = sps.coo_matrix(outputJacobian)
+        cache['constant_jacobian'] = {
+            self.constantParams_optimization[k2].name: constJacobian[:, k2]
+            for k2 in range(len(self.constants))}
 
     # ---------------------------------------------------------------------------------------------------------------------
     # ---------------------------------------------------------------------------------------------------------------------

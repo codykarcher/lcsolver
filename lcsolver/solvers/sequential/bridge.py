@@ -110,7 +110,19 @@ def _greybox_rows(blocks, structures, n):
 
         def make_fn(bb, in_idx, k, iout, flip=False):
             """flip=False: bb/out (rows 'out >= bb' and '==').
-            flip=True:  out/bb (rows 'out <= bb')."""
+            flip=True:  out/bb (rows 'out <= bb').
+            Returns (fn, fn_value): the full value+gradient callback and the
+            values-only one -- line searches and violation checks go through
+            fn_value, so the box is never asked for derivatives it does not
+            need (on an FD box that is the whole central-difference sweep)."""
+            def fn_value(x):
+                x = np.asarray(x, dtype=float)
+                _prefetch(x)
+                bb.set_input_values(x[in_idx])
+                vals = np.atleast_1d(np.asarray(bb.evaluate_outputs(),
+                                                dtype=float))
+                return (x[iout] / vals[k]) if flip else (vals[k] / x[iout])
+
             def fn(x):
                 x = np.asarray(x, dtype=float)
                 _prefetch(x)
@@ -133,7 +145,7 @@ def _greybox_rows(blocks, structures, n):
                         g[iin] += jac[k, pos] / x[iout]
                     g[iout] += -vals[k] / x[iout] ** 2
                 return val, g
-            return fn
+            return fn, fn_value
 
         # Directional rows per the declared operator (_lc_operators; absent
         # = all '==', the historical form). 'out >= bb' -> bb/out <= 1,
@@ -143,18 +155,11 @@ def _greybox_rows(blocks, structures, n):
         if not ops or len(ops) != len(out_idx):
             ops = ['=='] * len(out_idx)
         for k, iout in enumerate(out_idx):
-            if ops[k] == '>=':
-                rows.append(Constraint(
-                    GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
-                    '<='))
-            elif ops[k] == '<=':
-                rows.append(Constraint(
-                    GreyboxSignomial(make_fn(bb, in_idx, k, iout, flip=True),
-                                     n, iout), '<='))
-            else:
-                rows.append(Constraint(
-                    GreyboxSignomial(make_fn(bb, in_idx, k, iout), n, iout),
-                    '=='))
+            flip = ops[k] == '<='
+            fn, fv = make_fn(bb, in_idx, k, iout, flip=flip)
+            rows.append(Constraint(
+                GreyboxSignomial(fn, n, iout, fn_value=fv),
+                '<=' if ops[k] in ('>=', '<=') else '=='))
     return rows
 
 
