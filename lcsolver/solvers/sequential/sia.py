@@ -2705,7 +2705,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                     continue
             # An INFEASIBLE sub-problem means the trust region is too tight
             # for the relaxed set to be reachable -- widen, don't shrink
-            if (has_blackbox and "infeasible" in str(exc).lower()
+            if ((has_blackbox or has_tangent_equalities)
+                    and "infeasible" in str(exc).lower()
                     and state.radius < options.trust_max):
                 grown = min(options.trust_max,
                             state.radius * options.trust_expand)
@@ -2737,7 +2738,8 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
                 continue
             # Any OTHER failure is numerical (badly-scaled iterate): shrink
             # and re-form the model; only give up once the radius collapses
-            if has_blackbox and state.radius > options.trust_min:
+            if ((has_blackbox or has_tangent_equalities)
+                    and state.radius > options.trust_min):
                 state.shrink(options)
                 if options.verbose:
                     print(f"  itr {k + 1:3d}  sub-problem failed ({type(exc).__name__}), "
