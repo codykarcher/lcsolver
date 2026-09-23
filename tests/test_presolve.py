@@ -623,8 +623,10 @@ def test_cache_builds_one_model_per_phase():
     assert cache.builds == 2
 
 
-def test_a_black_box_body_is_not_cacheable():
-    """No conservative model exists for it, so it must be re-linearized."""
+def test_a_black_box_body_is_cached_as_a_relinearized_row():
+    """No conservative model exists for it, so it is re-linearized -- in
+    place, inside the cached model, rather than by rebuilding everything
+    (one grey-box row used to cost a full dense rebuild per sub-problem)."""
     from lcsolver.solvers.sequential.sia import SIAOptions, SubproblemCache
     from lcsolver.solvers.sequential.slcp import Constraint, Posynomial, Signomial
 
@@ -633,7 +635,12 @@ def test_a_black_box_body_is_not_cacheable():
     box = Signomial(lambda x: (float(x[0]), np.array([1.0, 0.0])), n)
     problem = build_problem(_detect(_singleton_row_model()))
     problem.constraints.append(Constraint(box, '<='))
-    assert not SubproblemCache(problem, SIAOptions()).usable
+    cache = SubproblemCache(problem, SIAOptions())
+    assert cache.usable
+    assert cache.bb_idx == [len(problem.constraints) - 1]
+    phase = cache.get(False, True)
+    assert set(phase.bb_rows) == {cache.bb_idx[0]}
+    assert cache.builds == 1
 
 
 # ---------------------------------------------------------------------------

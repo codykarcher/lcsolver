@@ -226,6 +226,18 @@ class SIAOptions:
         # the trigger that matters (3t+3c: held viol 2.69e-01 for 1500
         # iterations with a healthy region).
         self.restoration_patience = 5
+        # LOCAL restoration first: re-enter the COMPOSITE Phase I anchored at
+        # the current point, radius capped at restoration_local_radius and
+        # the seed-proximity weight raised to restoration_local_proximity,
+        # so a 1e-4 violation is repaired nearby. The min-max Phase I it used
+        # to call hops to the feasible interior: on a 14k-row aircraft deck
+        # it returned a point at 2x the objective from a 2e-4 violation and
+        # the run cycled between that anchor and the descent (2026-09-22).
+        # Falls back to the min-max re-entry when the local one does not
+        # reach tolerance. restoration_local=False restores the old path.
+        self.restoration_local = True
+        self.restoration_local_radius = 0.05
+        self.restoration_local_proximity = 1e-2
         # --- min-norm-dual KKT termination (EXPERIMENTAL, off by default) --
         # Split equalities make the dual set unbounded, so returned
         # multipliers can read garbage at an optimal point (coupled aircraft:
@@ -234,7 +246,13 @@ class SIAOptions:
         # always on the final one.
         self.kkt_min_norm = False
         self.kkt_min_norm_every = 25
-        self.kkt_min_norm_act_tol = 1e-6
+        # 1e-5, not 1e-6: an SP iterate satisfies its conservative rows
+        # strictly by 1e-6..1e-5 at convergence, so a 1e-6 band drops
+        # genuinely active rows and the certificate reports a residual that
+        # is not there (737 mission: 5e-3 reported, 9e-6 with the rows
+        # counted; 2026-09-23). Keep the band an order above the
+        # feasibility tolerance.
+        self.kkt_min_norm_act_tol = 1e-5
         # --- Ipopt polish of the TRUE problem (EXPERIMENTAL, off) --------
         # Conservative first-order steps crawl in shallow valleys; from a
         # settled feasible point, hand the exact log-space problem to Ipopt
@@ -619,6 +637,30 @@ def restore_feasibility(problem, x, options, has_blackbox, cache, done, k, why,
                 return np.asarray(x_ip, dtype=float), done, True
         except Exception:
             pass                        # fall through to Phase I
+    if getattr(options, 'restoration_local', False):
+        saved = (options.phase1_trust_max, options.phase1_proximity,
+                 options.phase1_anchor_logx)
+        try:
+            options.phase1_trust_max = float(options.restoration_local_radius)
+            options.phase1_proximity = float(options.restoration_local_proximity)
+            x_l, _it, ok_l, _s, _m = phase1_composite(
+                problem, x.copy(), options, has_blackbox, cache=cache)
+        except Exception as exc:                              # noqa: BLE001
+            x_l, ok_l = x, False
+            if options.verbose:
+                print(f"       local restoration failed: {type(exc).__name__}: {exc}")
+        finally:
+            (options.phase1_trust_max, options.phase1_proximity,
+             options.phase1_anchor_logx) = saved
+        x_l = np.asarray(x_l, dtype=float)
+        v_l = worst_violation(problem, x_l) if ok_l else np.inf
+        if (ok_l and np.all(np.isfinite(x_l)) and np.all(x_l > 0)
+                and v_l <= options.feasibility_tolerance):
+            if options.verbose:
+                dl = float(np.abs(np.log(x_l) - np.log(x)).max())
+                print(f"  itr {k + 1:3d}  RESTORATION ({why}) local composite: "
+                      f"viol {v_before:.3e} -> {v_l:.3e}, max |dlog x| {dl:.3g}")
+            return x_l, done, True
     if options.verbose:
         print(f"  itr {k + 1:3d}  RESTORATION ({why}, viol {v_before:.3e}) "
               f"-> re-entering Phase I")
@@ -851,11 +893,16 @@ class SubproblemCache:
         self.builds = 0          # for tests and instrumentation
 
     def is_cacheable(self):
-        """Only the shapes the bridge produces; a black box needs a rebuild."""
-        for con in self.problem.constraints:
-            if not isinstance(con.body, (Posynomial, PosynomialRatio,
-                                        CondensedEquality)):
-                return False
+        """Algebraic rows (the shapes the bridge produces) are built once.
+        Any other body -- a black box, or a plain Signomial from
+        sp_form=False -- is a LINEARIZED row: it gets a placeholder at build
+        time and is re-linearized in place by ``relinearize`` every update,
+        touching only its own support. Before this, one grey-box row made
+        the whole model uncacheable: on a 14,000-row aircraft deck with 8
+        box rows that was a 20-minute dense rebuild per sub-problem."""
+        self.bb_idx = [i for i, con in enumerate(self.problem.constraints)
+                       if not isinstance(con.body, (Posynomial, PosynomialRatio,
+                                                    CondensedEquality))]
         return isinstance(self.problem.objective, Posynomial)
 
     def get(self, minimize_violation, use_slacks):
@@ -946,7 +993,11 @@ class SubproblemCache:
             if w:
                 m.prox_c = pyo.Param(range(n), mutable=True, initialize=0.0,
                                      within=pyo.Reals)
-                prox = w * sum((m.d[j] + m.prox_c[j]) ** 2 for j in range(0, n))
+                # mutable weight, so a local restoration can raise it on
+                # the built model instead of rebuilding
+                m.prox_w = pyo.Param(mutable=True, initialize=float(w),
+                                     within=pyo.NonNegativeReals)
+                prox = m.prox_w * sum((m.d[j] + m.prox_c[j]) ** 2 for j in range(0, n))
             else:
                 prox = 0.0
             m.obj = pyo.Objective(expr=sum(m.s[i] for i in m.I) + prox,
@@ -970,9 +1021,33 @@ class SubproblemCache:
         # --- constraints ---------------------------------------------------
         m.cons = pyo.ConstraintList()
         b_params, q_weights, q_consts, p_consts = [], [], [], []
+        bb_rows = {}
+        bb_set = set(self.bb_idx)
+        if bb_set:
+            # A pinned zero that stands in for each linearized row until the
+            # first update() writes the real expression with set_value(), so
+            # m.cons keeps the one-row-per-constraint order extract_step's
+            # dual lookup relies on.
+            m.bbz = pyo.Var(initialize=0.0, bounds=(0.0, 0.0))
         condense_num = self.options.condense_numerator
         for i, con in enumerate(cons):
             body, op = con.body, con.operator
+            if i in bb_set:
+                b_params.append(None)
+                q_weights.append(None)
+                q_consts.append(None)
+                p_consts.append('bb')
+                if op == '==' and hard_eq:
+                    slots = [m.cons.add(m.bbz == 0.0)]
+                elif op == '==' and minimize_violation:
+                    slots = [m.cons.add(m.bbz <= rhs[i]),
+                             m.cons.add(m.bbz <= rhs[i])]
+                elif op == '==':
+                    slots = [m.cons.add(m.bbz == rhs[i])]
+                else:
+                    slots = [m.cons.add(m.bbz <= rhs[i])]
+                bb_rows[i] = (slots, rhs[i])
+                continue
             if isinstance(body, Posynomial):
                 ps = [self.new_param(m) for _ in body.terms]
                 b_params.append(ps)
@@ -1049,10 +1124,43 @@ class SubproblemCache:
                             b_params=b_params, q_weights=q_weights,
                             q_consts=q_consts, p_consts=p_consts,
                             slacked=slacked,
-                            minimize_violation=minimize_violation)
+                            minimize_violation=minimize_violation,
+                            bb_rows=bb_rows)
+
+    def relinearize(self, phase, x_k, curvature=None):
+        """Rewrite every linearized (black-box) row at x_k, in place.
+
+        Same expression as the rebuild path: log g(x_k) + grad_log g . d,
+        plus the BFGS quadratic when curvature is on; only the row's own
+        support is touched, so this costs a box evaluation per row, not a
+        model build.
+        """
+        m = phase.model
+        mv = phase.minimize_violation
+        hard_eq = (mv == 'l1_hard')
+        for i, (slots, rhs) in phase.bb_rows.items():
+            con = self.problem.constraints[i]
+            body, op = con.body, con.operator
+            v = body(x_k)
+            gl = body.log_grad(x_k)
+            e = math.log(max(v, 1e-300))
+            for j in np.nonzero(gl)[0]:
+                e = e + float(gl[j]) * m.d[int(j)]
+            if curvature is not None and i in curvature:
+                curvature[i].observe(gl)
+                e = e + curvature[i].quad(m.d)
+            if op == '==' and hard_eq:
+                slots[0].set_value(e == 0.0)
+            elif op == '==' and mv:
+                slots[0].set_value(e <= rhs)
+                slots[1].set_value(-e <= rhs)
+            elif op == '==':
+                slots[0].set_value(e == rhs)
+            else:
+                slots[0].set_value(e <= rhs)
 
     # -- per-iteration update ----------------------------------------------
-    def update(self, phase, x_k, tau, radius=None):
+    def update(self, phase, x_k, tau, radius=None, curvature=None):
         """Re-point a built phase at a new iterate. No symbolic work.
 
         ``radius`` bounds |d_j| when the caller wants a trust region with
@@ -1074,6 +1182,7 @@ class SubproblemCache:
         # tie-break measures distance from the phase's ENTRY point
         prox_c = getattr(m, 'prox_c', None)
         if prox_c is not None:
+            m.prox_w.value = float(self.options.phase1_proximity)
             anchor = self.options.phase1_anchor_logx
             if anchor is not None:
                 c_off = log_xk - np.asarray(anchor, dtype=float)
@@ -1082,8 +1191,12 @@ class SubproblemCache:
             for j in range(self.n):
                 prox_c[j].value = float(c_off[j])
 
+        if phase.bb_rows:
+            self.relinearize(phase, x_k, curvature)
         for i, con in enumerate(self.problem.constraints):
             body = con.body
+            if phase.p_consts[i] == 'bb':
+                continue
             if phase.p_consts[i] == 'eq':
                 cp, ap = agm_condense(body.p, x_k, phase.b_params[i], n)
                 cq, aq = agm_condense(body.q, x_k, phase.q_weights[i], n)
@@ -1158,7 +1271,8 @@ class CachedPhase:
     """Handles into one built phase model."""
 
     __slots__ = ('model', 'obj_expr', 'obj_b', 'b_params', 'q_weights',
-                 'q_consts', 'p_consts', 'slacked', 'minimize_violation')
+                 'q_consts', 'p_consts', 'slacked', 'minimize_violation',
+                 'bb_rows')
 
     def __init__(self, **kw):
         for k, v in kw.items():
@@ -1182,10 +1296,14 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
 
     if cache is not None and cache.usable:
         # The cache does the symbolic construction once and only moves the
-        # numbers; bounds are re-pointed in update(). A cacheable problem
-        # has no black box, so a trust region applies only when forced.
+        # numbers; bounds are re-pointed in update(), and any linearized
+        # (black-box) rows are rewritten in place there. The trust region
+        # applies exactly as on the rebuild path below.
         phase = cache.update(cache.get(minimize_violation, use_slacks),
-                             x_k, tau, radius=radius if force_trust else None)
+                             x_k, tau,
+                             radius=(radius if (force_trust or has_blackbox)
+                                     else None),
+                             curvature=curvature)
         try:
             return extract_step(phase.model, problem, options,
                                       minimize_violation, use_slacks,
