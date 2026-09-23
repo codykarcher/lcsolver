@@ -43,13 +43,6 @@ one, so they cannot drift from the package.
    * - ``aircraft_gp.py``
      - A simple aircraft sizing problem as a geometric program, with full
        units, Constants, and the sensitivity accessors.
-   * - ``aircraft_gp_openmdao.py``
-     - The same problem as an OpenMDAO model, twice: the MDO reduction (three
-       design variables, an explicit chain, one constraint) and the literal
-       port (all 15 variables, all 13 rows), both under SLSQP and solved
-       beside the GP. Same optimum from both, provided the literal port is
-       scaled; the sensitivities lcsolver reads off the KKT system take 26
-       re-optimizations there. Needs ``openmdao``.
    * - ``floudas.py``
      - The Floudas heat exchanger design, SLCP paper Equation 17: eight
        variables, six constraints, five of them genuine **signomials**
