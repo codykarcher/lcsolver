@@ -94,6 +94,28 @@ class SIAOptions:
         # When Phase I falls short, continue with penalty CCP (which
         # tolerates an infeasible start) instead of abandoning the solve.
         self.phase1_penalty_fallback = True
+        # Skip Phase I altogether when the seed's worst violation is below
+        # this (log-space) level and go straight to Phase II, whose
+        # equality restoration closes it. 0.0 = never skip beyond the
+        # feasibility tolerance. Motivation: a seed at 1e-6 handed to the
+        # composite Phase I on the spcomparisons 737 came back at 0.33
+        # (the elastic/min-max repair walks off the manifold and the L1
+        # rescue stalls at 2e-3), then sat hours in the explainer -- for a
+        # start that Phase II would have accepted after one restore.
+        self.phase1_skip_below = 0.0
+        # Run explain_infeasibility (elastic L1 rescue + blocking-row
+        # report) when Phase I falls short. It is a diagnostic that can cost
+        # hours on a large grey-box problem (the pyomo expression build of
+        # the elastic subproblem); False goes straight to the penalty
+        # fallback / termination with no report.
+        self.phase1_explain = True
+        # When the CACHED sub-problem raises (IPOPT failure on the Param
+        # model), rebuild it inline and retry (True, the old behaviour) or
+        # let the failure propagate to the iteration's restoration logic
+        # (False). The inline rebuild is the dense pyomo path: on a
+        # 7,000-variable multi-mission deck it took hours and 20+ GB and
+        # then failed the same way; the restoration path costs one step.
+        self.cache_fallback_rebuild = True
         self.phase1_margin = 1e-8      # target interiority for the Phase I
                                        # sub-problem; NOT an acceptance test
                                        # (an active equality can never be
@@ -417,11 +439,18 @@ def min_norm_multipliers(problem, x, act_tol=1e-6):
     """Minimum-norm multipliers over the ACTIVE rows at ``x``.
 
     ``min ||g0 + A lam||, lam >= 0`` over rows within ``act_tol`` of active
-    (split equalities span the free-sign dual). Column scaling is what
-    makes this work at aircraft size -- gradient columns span ~8 decades.
+    (equality rows span the free-sign dual). Column scaling is what makes
+    this work at aircraft size -- gradient columns span ~8 decades.
     Returns a full-length vector with zeros on inactive rows, for ``_kkt``.
+
+    The solve is ``_min_norm_lsq``: the free-sign equality block is
+    eliminated exactly through an orthogonal projector, and only the
+    inequality block is sign-constrained. ``lsq_linear`` on the whole
+    active Jacobian ran 25 min .. 5 h on the 737 mission deck (2.7k
+    variables, 2.3k equalities, ~300 active inequalities): LSMR inside
+    'trf' crawls on the rank-deficient equality block, whose duals do not
+    need a bound at all (2026-09-23).
     """
-    from scipy.optimize import lsq_linear
     g0 = np.asarray(problem.objective.log_grad(x), dtype=float)
     idx, cols, free_sign = [], [], []
     for i, con in enumerate(problem.constraints):
@@ -437,15 +466,222 @@ def min_norm_multipliers(problem, x, act_tol=1e-6):
     if not cols:
         return mults
     A = np.column_stack(cols)
-    scale = np.maximum(np.linalg.norm(A, axis=0), 1e-12)
-    lo = np.array([-np.inf if fs else 0.0 for fs in free_sign])
-    r = lsq_linear(A / scale, -g0, bounds=(lo, np.inf),
-                   tol=1e-12, max_iter=3000, lsq_solver="lsmr",
-                   lsmr_tol=1e-12)
-    lam = r.x / scale
-    for j, i in enumerate(idx):
-        mults[i] = lam[j]
+    lam = _min_norm_lsq(A, g0, np.asarray(free_sign, dtype=bool))
+    mults[idx] = lam
     return mults
+
+
+def _min_norm_lsq(A, g0, free, rcond=None):
+    """``argmin ||g0 + A lam||_2`` with ``lam[~free] >= 0``, ``lam[free]`` free.
+
+    Dense ``A`` (n x m). Columns are scaled to unit norm first. The free
+    block ``E`` is eliminated exactly: with ``Q`` an orthonormal basis of
+    range(E), the optimal free multipliers for any sign-constrained ``mu``
+    leave the residual ``P (g0 + B mu)``, ``P = I - Q Q^T``. That is a
+    plain NNLS in ``mu`` on ``P B`` (a few hundred columns on aircraft
+    decks), and the free block then follows from ``E lam_f = -(g0 + B mu)``.
+    Every piece is a finite direct factorisation, so the result is the
+    exact minimiser to working precision instead of an LSMR iterate.
+
+    ``Q`` comes from a Householder QR; when LAPACK's condition estimate of
+    ``R`` says the block is (near) rank-deficient the SVD path takes over,
+    truncated at ``rcond`` (numpy's lstsq default) so the free multipliers
+    stay the minimum-norm ones instead of blowing up along a null vector.
+    """
+    A = np.asarray(A, dtype=float)
+    g0 = np.asarray(g0, dtype=float)
+    free = np.asarray(free, dtype=bool)
+    n, m = A.shape
+    lam = np.zeros(m)
+    if m == 0:
+        return lam
+    scale = np.maximum(np.linalg.norm(A, axis=0), 1e-12)
+    As = A / scale
+    E = As[:, free]
+    B = As[:, ~free]
+    me, mi = E.shape[1], B.shape[1]
+    if rcond is None:
+        rcond = np.finfo(float).eps * max(n, max(me, 1))
+
+    if me:
+        Q, free_solve = _range_basis(E, rcond)
+
+        def project(M):
+            return M - Q @ (Q.T @ M)
+    else:
+        def free_solve(rhs):
+            return np.zeros(0)
+
+        def project(M):
+            return M
+
+    if mi:
+        Pg = project(g0)
+        PB = project(B)
+        # Columns of B that lie (numerically) in range(E) contribute
+        # nothing: NNLS is indifferent to them, and their multiplier is
+        # best left at zero (minimum norm). Rescale the rest to unit norm
+        # so the pivoting is not skewed by the projection.
+        cn = np.linalg.norm(PB, axis=0)
+        keep = cn > rcond * max(cn.max(), 1e-300)
+        mu = np.zeros(mi)
+        if keep.any():
+            mu_k = _nnls(PB[:, keep] / cn[keep], -Pg)
+            mu[keep] = mu_k / cn[keep]
+        rhs = -(g0 + B @ mu)
+    else:
+        mu = np.zeros(0)
+        rhs = -g0
+    lam[~free] = mu
+    if me:
+        lam[free] = free_solve(rhs)
+    return lam / scale
+
+
+def _range_basis(E, rcond, kappa_max=1e8):
+    """``(Q, solve)``: orthonormal basis of range(E) and a least-squares
+    solver ``solve(rhs) -> lam`` with ``E lam ~ rhs``.
+
+    Householder QR when ``R`` is comfortably nonsingular (1-norm condition
+    estimate below ``kappa_max``); otherwise a thin SVD truncated at
+    ``rcond * sigma_max``, whose ``solve`` is the minimum-norm one.
+    """
+    import scipy.linalg as sla
+    n, me = E.shape
+    if n >= me:
+        Q, R = np.linalg.qr(E, mode='reduced')
+        d = np.abs(np.diag(R))
+        rc = 0.0
+        if d.size and d.min() > 0.0:
+            trcon = sla.get_lapack_funcs('trcon', (R,))
+            rc, info = trcon(R, norm='1', uplo='U', diag='N')
+            if info != 0:
+                rc = 0.0
+        if rc > 1.0 / kappa_max:
+            def solve(rhs):
+                return sla.solve_triangular(R, Q.T @ rhs, lower=False,
+                                            check_finite=False)
+            return Q, solve
+    U, S, Vt = np.linalg.svd(E, full_matrices=False)
+    r = int(np.count_nonzero(S > rcond * S[0])) if S.size else 0
+    U, S, Vt = U[:, :r], S[:r], Vt[:r]
+
+    def solve(rhs):
+        return Vt.T @ ((U.T @ rhs) / S)
+    return U, solve
+
+
+def _nnls(M, b, rcond=None, max_iter=None, tol=1e-11):
+    """``argmin ||M x - b||_2, x >= 0`` for a dense, column-scaled ``M``.
+
+    The problem is first reduced to its row rank: a pivoted QR ``M P = Q R``
+    with rank ``r`` turns it into ``min ||R_r P^T x - Q_r^T b||`` (identical
+    minimisers, a constant less in the objective), ``r x k`` instead of
+    ``n x k`` -- on the aircraft decks ``r`` is bounded by the co-rank of
+    the equality block, a few hundred at most, so every passive-set solve
+    below costs milliseconds. Lawson-Hanson then runs WARM: the passive set
+    starts full -- on an active-set certificate nearly every active row
+    carries a positive multiplier -- so the inner loop only has to drop
+    the few negatives and the outer loop re-admits a handful, tens of
+    solves instead of one per positive multiplier. Passive solves are
+    minimum-norm (SVD), well defined on the dependent column groups these
+    Jacobians carry (the same row hit at two mission points), where block
+    principal pivoting cycles. Sign tests are relative to the current
+    residual and multiplier scale. scipy's ``nnls`` on the reduced system
+    is the fallback should the loop not settle.
+    """
+    import scipy.linalg as sla
+    from scipy.optimize import nnls as _sp_nnls
+    n, k = M.shape
+    if k == 0:
+        return np.zeros(k)
+    if rcond is None:
+        rcond = np.finfo(float).eps * max(n, k)
+    Qm, Rm, perm = sla.qr(M, mode='economic', pivoting=True,
+                          check_finite=False)
+    d = np.abs(np.diag(Rm))
+    r = int(np.count_nonzero(d > rcond * d[0])) if d.size and d[0] > 0 else 0
+    if r == 0:
+        return np.zeros(k)
+    Mr = np.zeros((r, k))
+    Mr[:, perm] = Rm[:r, :]
+    br = Qm[:, :r].T @ b
+    if max_iter is None:
+        max_iter = 3 * k + 30
+
+    def solve(F, cond=rcond):
+        idx = np.where(F)[0]
+        z = np.zeros(k)
+        if idx.size:
+            z[idx] = sla.lstsq(Mr[:, idx], br, cond=cond,
+                               lapack_driver='gelsd', check_finite=False)[0]
+        return z
+
+    def nonpos(F, z):
+        return F & (z <= tol * max(float(np.abs(z).max()), 1e-300))
+
+    # warm start: prune the nonpositive entries of the full-set least
+    # squares until the passive solution is positive -- a feasible x whose
+    # passive set is already close to the answer. The first pass truncates
+    # at 1e-8: near-dependent column pairs (R_ii ~ 1e-11) carry +-1e4 in
+    # the exact solution and pruning one member of such a pair upends the
+    # rest (206 of 355 went negative on the next pass, and the loop then
+    # re-admitted them one by one); the truncated solution has the
+    # sign pattern of the answer. The exact pass follows, so the invariant
+    # x = LS(F) > 0 holds when Lawson-Hanson proper starts.
+    F = np.ones(k, dtype=bool)
+    nsolve = 0
+    for cond in (max(1e-8, rcond), rcond):
+        z = solve(F, cond)
+        nsolve += 1
+        while nsolve < max_iter:
+            neg = nonpos(F, z)
+            if not neg.any():
+                break
+            F[neg] = False
+            z = solve(F, cond)
+            nsolve += 1
+    x = np.where(F, z, 0.0)
+    blocked = np.zeros(k, dtype=bool)    # entered and came straight back
+    ok = False
+    while nsolve < max_iter:
+        res = Mr @ x - br
+        y = Mr.T @ res
+        cand = ~F & ~blocked
+        if not cand.any():
+            ok = True
+            break
+        j = int(np.argmin(np.where(cand, y, np.inf)))
+        if y[j] >= -tol * max(float(np.linalg.norm(res)), 1e-300):
+            ok = True
+            break
+        F[j] = True
+        z = solve(F)
+        nsolve += 1
+        # inner loop: back off along x -> z to the boundary, drop what hit it
+        while nsolve < max_iter:
+            neg = nonpos(F, z)
+            if not neg.any():
+                break
+            if neg[j]:
+                blocked[j] = True        # rounding-level entry: bar it
+            a = np.where(neg)[0]
+            den = x[a] - z[a]
+            ratio = np.where(den > 0.0, x[a] / np.where(den > 0.0, den, 1.0),
+                             0.0)
+            alpha = min(1.0, max(0.0, float(ratio.min())))
+            x = x + alpha * (z - x)
+            drop = neg & (x <= tol * max(float(np.abs(x).max()), 1e-300))
+            if not drop.any():
+                drop = neg
+            x[drop] = 0.0
+            F[drop] = False
+            z = solve(F)
+            nsolve += 1
+        x = np.where(F, z, 0.0)
+    if not ok:
+        x, _ = _sp_nnls(Mr, br, maxiter=max(30 * k, 1000))
+    return np.maximum(x, 0.0)
 
 
 def polish_with_ipopt(problem, x, options):
@@ -1312,8 +1548,10 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
             # A cache must never change WHETHER something solves. The Param
             # model is not identical to IPOPT at tol = 1e-12 (hydrogen
             # aircraft: cached Phase I burned its whole budget where the
-            # inlined build solves in a handful). Rebuild this one fresh.
-            pass
+            # inlined build solves in a handful). Rebuild this one fresh --
+            # unless the caller has opted out of the dense rebuild.
+            if not getattr(options, 'cache_fallback_rebuild', True):
+                raise
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
@@ -2625,7 +2863,9 @@ def run_phase1(problem, x, options, has_blackbox, cache, res, mults):
         print(f"  phase 1: {res.phase1_iterations} iterations, "
               f"{'FEASIBLE' if feasible else 'still infeasible'}, "
               f"max log g = {worst_violation(problem, x):+.3e}")
-    if not feasible:
+    if not feasible and not getattr(options, 'phase1_explain', True):
+        res.blocking = blocking_constraints(problem, x, p1_mults)
+    elif not feasible:
         # Try the ELASTIC form before reporting: it often succeeds where
         # min-max cannot (one stubborn row holds the whole vector up), and
         # when it fails it names the rows whose slack cannot close
@@ -2746,7 +2986,9 @@ def solve_sia(problem: Problem, x0, options: SIAOptions = None) -> SIAResult:
     recovery_budget = 0
     recovery_best = np.inf
     initial_violation = worst_violation(problem, x)
-    if options.phase1 and initial_violation > options.feasibility_tolerance:
+    _p1_gate = max(options.feasibility_tolerance,
+                   float(getattr(options, 'phase1_skip_below', 0.0) or 0.0))
+    if options.phase1 and initial_violation > _p1_gate:
         if options.verbose:
             print(f"  phase 1: initial point infeasible "
                   f"(max log g = {initial_violation:+.3e}); searching")
