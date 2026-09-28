@@ -20,8 +20,9 @@ Every partial is taken symbolically (Pyomo reverse mode), so no truncation
 error and no re-solves. Duals come from a populated ``dual`` Suffix (the
 IPOPT route) or, for the cvxopt backends, are recovered from the primal
 solution by least-squares KKT stationarity over the active set. For an SP
-the duals describe the final convex subproblem, so the sensitivities are
-local to the returned point; ``result['approximate']`` flags it.
+the sensitivities are local to the returned point -- exact derivatives at a
+local optimum, valid only until the active set changes -- and
+``result['approximate']`` flags it.
 """
 
 import collections
@@ -696,8 +697,8 @@ def format_sensitivities(result, tol=1e-8, width=72):
     lines.append(f"objective = {result['objective']:.6g}"
                  + (f"    duals: {result['method']}" if result.get('method') else ''))
     if result.get('approximate'):
-        lines.append("NOTE: signomial program -- these are a local approximation "
-                     "from the\n      final convex subproblem.")
+        lines.append("NOTE: signomial program -- local sensitivities at this solution,\n"
+                     "      valid for small changes until the active set changes.")
     lines.append('=' * width)
 
     ordered = sorted(sens.items(), key=lambda kv: -abs(kv[1])

@@ -592,6 +592,8 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
 
     ``quiet`` (default True) captures the solve's warnings into
     ``result['messages']`` instead of printing them; errors still raise.
+    The warnings that mean the numbers are not trustworthy (``_QUIET_REWARN``:
+    not converged, false optimum, bad duals, ...) are re-raised regardless.
     """
     if not quiet:
         return run_solve(m, solver=solver, convex_backend=convex_backend,
@@ -617,7 +619,20 @@ def solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
         m._solve_messages = msgs
     except Exception:
         pass
+    # Quiet keeps the chatter out, never the verdict. A result that is not an optimum, or whose
+    # sensitivities fail stationarity, is re-warned here even under quiet=True: an SIA solve that
+    # hit its iteration cap once had its duals published because LC-W203 and LC-W302 sat unread in
+    # result['messages'] (lcsailboat IACC prototype, 2026-09-27).
+    for w in caught:
+        text = str(w.message)
+        if text.startswith(_QUIET_REWARN):
+            warnings.warn(text, w.category, stacklevel=2)
     return res
+
+
+# Codes that quiet=True still lets through: each says the returned numbers are not what they look
+# like (not converged, false optimum, non-optimal backend status, lost write-back, bad duals).
+_QUIET_REWARN = ('[LC-W203]', '[LC-W204]', '[LC-W205]', '[LC-W206]', '[LC-W302]')
 
 
 def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
@@ -801,6 +816,14 @@ def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # post-solve report attached
     def finish(res):
         res = restore_peeled_columns(res, peeled, full_structures, m)
+        # record the solved structure on EVERY route: `sensitivities` reads it to label SP duals as
+        # local. Only the cvxopt and IPOPT-GP routes used to set it, so on the default SIA route the
+        # 'approximate' flag could never fire (found on the lcsailboat IACC deck, 2026-09-27).
+        try:
+            if isinstance(res, dict) and res.get('problem_structure'):
+                m._edi_last_problem_structure = res['problem_structure']
+        except Exception:
+            pass
         return attach_sensitivities(m, res, sensitivities, skip_degeneracy_check, structures_for_checks)
 
     if solver == 'cvxopt':
