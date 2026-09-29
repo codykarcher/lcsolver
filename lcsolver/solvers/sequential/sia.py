@@ -1411,7 +1411,7 @@ class SubproblemCache:
 
         if not phase.minimize_violation:
             for k, (c, a) in enumerate(self.problem.objective.terms):
-                phase.obj_b[k].value = float(math.log(c) + a @ log_xk)
+                phase.obj_b[k].value = float(math.log(c) + seq_dot(a, log_xk))
         if phase.slacked:
             m.tau.value = float(tau)
         # seed-referenced Phase-I proximity: re-point the offsets so the
@@ -1437,7 +1437,7 @@ class SubproblemCache:
                 cp, ap = agm_condense(body.p, x_k, phase.b_params[i], n)
                 cq, aq = agm_condense(body.q, x_k, phase.q_weights[i], n)
                 phase.q_consts[i].value = float(
-                    math.log(cp) - math.log(cq) + (ap - aq) @ log_xk)
+                    math.log(cp) - math.log(cq) + seq_dot(ap - aq, log_xk))
                 continue
             terms = (body.terms if isinstance(body, Posynomial)
                      else body.p.terms)
@@ -1452,11 +1452,11 @@ class SubproblemCache:
                     if w > 0:
                         const += w * math.log(c / w)
                         ap = ap + w * a
-                phase.p_consts[i].value = float(const + ap @ log_xk)
+                phase.p_consts[i].value = float(const + seq_dot(ap, log_xk))
             else:
                 for k, (c, a) in enumerate(terms):
                     phase.b_params[i][k].value = float(
-                        math.log(c) + a @ log_xk)
+                        math.log(c) + seq_dot(a, log_xk))
             if phase.q_weights[i] is None:
                 continue
             # AGM weights, and the constant part of the condensed monomial.
@@ -1468,7 +1468,7 @@ class SubproblemCache:
                 if w > 0:
                     const += w * math.log(c / w)
                     aq = aq + w * a
-            phase.q_consts[i].value = float(const + aq @ log_xk)
+            phase.q_consts[i].value = float(const + seq_dot(aq, log_xk))
 
         # The positivity floor and any model bounds move with the iterate, but
         # they are bounds, so re-pointing them is free.
@@ -1549,7 +1549,31 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
             return extract_step(phase.model, problem, options,
                                       minimize_violation, use_slacks,
                                       phase.obj_expr)
-        except RuntimeError:
+        except RuntimeError as _cache_exc:
+            # RETRY THE SAME CACHED MODEL ONCE, re-seated, before paying for a
+            # rebuild. It costs one solve; the rebuild it can avoid costs
+            # MINUTES on a large model. It does not always help -- on the
+            # aircraft deck that motivated this, IPOPT reported local
+            # infeasibility for the sub-problem from either starting point --
+            # but when it does help it saves the whole rebuild.
+            try:
+                seat_step_in_bounds(phase.model)
+                _out = extract_step(phase.model, problem, options,
+                                    minimize_violation, use_slacks,
+                                    phase.obj_expr)
+            except RuntimeError:
+                _out = None
+            if _out is not None:
+                cache.retries = getattr(cache, 'retries', 0) + 1
+                if cache.retries in (1, 10, 100, 1000):
+                    import warnings as _w0
+                    _w0.warn(
+                        '[LC-W314] the cached sub-problem failed and then '
+                        'solved on a re-seated retry (%d time(s)). The model '
+                        'was fine; the starting point was not, and this avoided '
+                        'a dense rebuild.' % cache.retries,
+                        RuntimeWarning, stacklevel=2)
+                return _out
             # A cache must never change WHETHER something solves. The Param
             # model is not identical to IPOPT at tol = 1e-12 (hydrogen
             # aircraft: cached Phase I burned its whole budget where the
@@ -1570,16 +1594,18 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                     'rebuilt densely (%d time(s) so far). Each rebuild is a '
                     'full symbolic build of every row; if this repeats every '
                     'iteration the solve is running orders of magnitude '
-                    'slower than the cache path.' % cache.fallbacks,
+                    'slower than the cache path. The cached solve said: %s'
+                    % (cache.fallbacks, _cache_exc),
                     RuntimeWarning, stacklevel=2)
-
     # The dense path: every row is built symbolically, every iteration. On an
     # aircraft deck that is seconds to minutes per iteration against ~1 s on the
     # cache path, and until now NOTHING said when it was being taken -- the
     # LC-W310 warning below only covers a cache that was usable and then failed.
     # A model that is simply not cacheable took this path in silence.
     global _WARNED_UNCACHEABLE
-    if not _WARNED_UNCACHEABLE:
+    # Only for models where it MATTERS. On a ten-row test problem a dense
+    # rebuild is free, and warning there teaches people to ignore the warning.
+    if not _WARNED_UNCACHEABLE and len(cons) >= 500:
         _WARNED_UNCACHEABLE = True
         why = ('the cached sub-problem did not solve, so this is the '
                'fallback rebuild -- see LC-W310' if fell_through else
@@ -1756,8 +1782,41 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                               use_slacks, obj)
 
 
+def seq_dot(a, log_xk):
+    """sum_j a_j * log_xk_j accumulated IN ORDER.
+
+    Not `a @ log_xk`: numpy's dot uses pairwise summation, which differs from a
+    sequential sum in the last bit, and the rebuild path accumulates its
+    constants sequentially. Those 1-ulp differences are not cosmetic here --
+    with the two paths disagreeing on ~3,000 coefficients at 1e-16, IPOPT
+    returned `infeasible` for the cached sub-problem and solved the rebuilt one,
+    which is how a cache came to change WHETHER something solves.
+    """
+    total = 0.0
+    for j in range(len(a)):
+        total = total + float(a[j]) * float(log_xk[j])
+    return total
+
+
 def log_sum_exp_at(d, log_xk, terms, n):
-    """log sum_k c_k exp(a_k . (d + log x_k)) -- exact, convex."""
+    """log sum_k c_k exp(a_k . (d + log x_k)) -- exact, convex.
+
+    A ONE-TERM sum is written affinely, log(exp(x)) -> x, to match what
+    SubproblemCache.log_sum_exp does. The two are the same number but not the
+    same row to IPOPT, and the mismatch made the cached and rebuilt
+    sub-problems structurally different problems: on a 1,472-variable aircraft
+    deck 33 rows plus the objective came out degree 1 in the cache and
+    nonlinear here, the .nl files differed, IPOPT returned `infeasible` for the
+    cached one and solved the rebuilt one, and every iteration therefore paid a
+    dense rebuild costing minutes instead of seconds. "A cache must never
+    change WHETHER something solves" -- so the two forms have to agree.
+    """
+    if len(terms) == 1:
+        c, a = terms[0]
+        affine = 0.0
+        for j in range(0, n):
+            affine = affine + a[j] * (d[j] + log_xk[j])
+        return math.log(c) + affine
     total = 0.0
     for c, a in terms:
         # the term sum is formed first, then the constant added: the same
