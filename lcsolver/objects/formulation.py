@@ -398,6 +398,7 @@ class Formulation(ConcreteModel):
         self._runtimeObjective_keys = []
         self._objective_keys = []
         self._runtimeConstraint_keys = []
+        self._runtimeConstraint_boxes = {}
         self._constraint_keys = []
         self._allConstraint_keys = []
 
@@ -796,6 +797,27 @@ class Formulation(ConcreteModel):
         '>='/'<=' validate but the cyipopt route still imposes equalities.
         Usually written inside ConstraintList: [z, '==', [x, y], UnitCircle()].
         """
+        # One block per box OBJECT. setOptimizationVariables and
+        # set_external_model below both write onto the object handed in, so a
+        # box reused across rows keeps only the LAST row's wiring and every
+        # block that shares it silently reads and writes that row's columns.
+        # The solver still reports the right number of grey-box rows and still
+        # converges, to an answer in which the other rows constrain nothing --
+        # so this has to raise, not warn.
+        _seen = getattr(self, '_runtimeConstraint_boxes', None)
+        if _seen is None:
+            _seen = self._runtimeConstraint_boxes = {}
+        if id(black_box) in _seen:
+            raise ValueError(
+                'the black box %s is already wired into %s; each '
+                'RuntimeConstraint needs its OWN box instance, because the '
+                'input/output wiring is stored on the box object and the last '
+                'row would win. Build one per row (box=%s() inside the loop), '
+                'or pass the whole indexed Variables in a single row so one '
+                'block carries every output.'
+                % (type(black_box).__name__, _seen[id(black_box)],
+                   type(black_box).__name__))
+
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
         self._runtimeConstraint_keys.append(conName)
@@ -912,6 +934,7 @@ class Formulation(ConcreteModel):
         # the inequality binds at the optimum without a black-box equality
         # manifold for the solver to fall off. The cyipopt route still
         # imposes equalities and ignores this record (its TODO stands).
+        self._runtimeConstraint_boxes[id(black_box)] = conName
         ops = (operators_raw * len(outputs_unwrapped)
                if len(operators_raw) == 1 else list(operators_raw))
         if len(ops) != len(outputs_unwrapped):
