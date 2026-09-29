@@ -1552,6 +1552,20 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
             # unless the caller has opted out of the dense rebuild.
             if not getattr(options, 'cache_fallback_rebuild', True):
                 raise
+            # The rebuild is a DENSE symbolic build of every row, minutes on an
+            # aircraft deck, so a fallback on every iteration turns a one-second
+            # iteration into a several-minute one and looks like a hang. Count
+            # them and say so once: silence here has cost hours.
+            cache.fallbacks = getattr(cache, 'fallbacks', 0) + 1
+            if cache.fallbacks in (1, 10, 100, 1000):
+                import warnings as _w
+                _w.warn(
+                    '[LC-W310] the cached sub-problem did not solve and was '
+                    'rebuilt densely (%d time(s) so far). Each rebuild is a '
+                    'full symbolic build of every row; if this repeats every '
+                    'iteration the solve is running orders of magnitude '
+                    'slower than the cache path.' % cache.fallbacks,
+                    RuntimeWarning, stacklevel=2)
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
