@@ -1515,6 +1515,10 @@ class CachedPhase:
             setattr(self, k, v)
 
 
+#: LC-W311 is emitted once per process (see solve_subproblem)
+_WARNED_UNCACHEABLE = False
+
+
 def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 curvature=None,
                 minimize_violation=False, use_slacks=True, cache=None,
@@ -1529,6 +1533,7 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
     n = problem.n
     cons = problem.constraints
     log_xk = np.log(x_k)
+    fell_through = False
 
     if cache is not None and cache.usable:
         # The cache does the symbolic construction once and only moves the
@@ -1557,6 +1562,7 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
             # iteration into a several-minute one and looks like a hang. Count
             # them and say so once: silence here has cost hours.
             cache.fallbacks = getattr(cache, 'fallbacks', 0) + 1
+            fell_through = True
             if cache.fallbacks in (1, 10, 100, 1000):
                 import warnings as _w
                 _w.warn(
@@ -1566,6 +1572,29 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                     'iteration the solve is running orders of magnitude '
                     'slower than the cache path.' % cache.fallbacks,
                     RuntimeWarning, stacklevel=2)
+
+    # The dense path: every row is built symbolically, every iteration. On an
+    # aircraft deck that is seconds to minutes per iteration against ~1 s on the
+    # cache path, and until now NOTHING said when it was being taken -- the
+    # LC-W310 warning below only covers a cache that was usable and then failed.
+    # A model that is simply not cacheable took this path in silence.
+    global _WARNED_UNCACHEABLE
+    if not _WARNED_UNCACHEABLE:
+        _WARNED_UNCACHEABLE = True
+        why = ('the cached sub-problem did not solve, so this is the '
+               'fallback rebuild -- see LC-W310' if fell_through else
+               'no cache was passed in; either cache_subproblem is off or '
+               'SubproblemCache.is_cacheable rejected this model'
+               if cache is None else
+               'the objective is not a Posynomial'
+               if not isinstance(problem.objective, Posynomial) else
+               'the cache reports itself unusable')
+        import warnings as _w
+        _w.warn(
+            '[LC-W311] building the sub-problem densely on every iteration '
+            '(%s). Every row is constructed symbolically each time; on a large '
+            'model that is the difference between about a second and several '
+            'minutes per iteration.' % why, RuntimeWarning, stacklevel=2)
 
     m = pyo.ConcreteModel()
     m.J = pyo.RangeSet(0, n - 1)
