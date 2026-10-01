@@ -1515,6 +1515,8 @@ class CachedPhase:
             setattr(self, k, v)
 
 
+import os as _os_env
+
 #: LC-W311 is emitted once per process (see solve_subproblem)
 _WARNED_UNCACHEABLE = False
 
@@ -1769,6 +1771,27 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
     for j in range(0, n):
         tighten_step_bounds(m.d[j], lo=floor - log_xk[j])
 
+    # THE MODEL'S OWN DECLARED BOUNDS. The cached path has always applied these
+    # (see SubproblemCache.update) and this path did not, so on any model whose
+    # bounds fold -- which is every model without a grey-box block -- the two
+    # formulations of the SAME sub-problem were different problems, the cached
+    # one strictly tighter. IPOPT then reported the cached model `infeasible`
+    # while the rebuild solved, and the failure was self-sustaining: the
+    # rebuild's step ignored the bounds, so the iterate drifted outside them and
+    # the cached model was infeasible again next iteration.
+    #
+    # Measured on the 7-segment D8 (974 variables, NO black box, all 974 columns
+    # bounded): the cached sub-problem failed 100+ times, every time
+    # "infeasible", and the solve spent an hour paying dense rebuilds without
+    # converging. This also explains why declared bounds appeared not to bind on
+    # the aircraft decks -- on iterations that fell back, they genuinely did not.
+    if problem.bounds is not None:
+        for j, (blo, bhi) in enumerate(problem.bounds[:n]):
+            if blo is not None and blo > 0:
+                tighten_step_bounds(m.d[j], lo=math.log(blo) - log_xk[j])
+            if bhi is not None and bhi > 0:
+                tighten_step_bounds(m.d[j], hi=math.log(bhi) - log_xk[j])
+
     # Trust region only when something was linearized; radius None means
     # the caller has RELEASED the box (see trust_iterations).
     if (has_blackbox or force_trust) and radius is not None:
@@ -1777,6 +1800,44 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
 
     # Bounds are tightened in several passes above; only now is the box final.
     seat_step_in_bounds(m)
+
+    if fell_through and _os_env.environ.get('LC_PROBE_D0') == '1' and getattr(
+            cache, 'fallbacks', 0) == 1:
+        # WHICH ROW CLASS is violated at d = 0? Every row in this sub-problem
+        # is exact or tangent AT the expansion point -- monomials and
+        # log-sum-exp exactly, AGM condensations and black-box linearisations by
+        # construction -- so d = 0 should satisfy all of them, and IPOPT's
+        # iteration-0 primal infeasibility of 2.19 on the dumped file should be
+        # impossible. This names the offenders by body type.
+        import warnings as _wp
+        try:
+            _saved = [m.d[j].value for j in range(n)]
+            for j in range(n):
+                m.d[j].set_value(0.0, skip_validation=True)
+            from collections import Counter as _Ctr
+            _tally, _worst, _wrow = _Ctr(), 0.0, None
+            for _i, _c in enumerate(m.cons.values()):
+                _v = pyo.value(_c.body)
+                _ex = 0.0
+                if _c.lower is not None:
+                    _ex = max(_ex, pyo.value(_c.lower) - _v)
+                if _c.upper is not None:
+                    _ex = max(_ex, _v - pyo.value(_c.upper))
+                if _ex > 1e-07:
+                    _bi = min(_i, len(cons) - 1)
+                    _bt = type(cons[_bi].body).__name__
+                    _tally['%s/%s' % (_bt, cons[_bi].operator)] += 1
+                    if _ex > _worst:
+                        _worst, _wrow = _ex, (_i, _bt, cons[_bi].operator)
+            for j in range(n):
+                m.d[j].set_value(_saved[j], skip_validation=True)
+            _wp.warn('[LC-W318] at d = 0, %d rows violated; by body type/op: %s;'
+                     ' worst row %s by %.4g'
+                     % (sum(_tally.values()), dict(_tally), _wrow, _worst),
+                     RuntimeWarning, stacklevel=2)
+        except Exception as _ep:
+            _wp.warn('[LC-W318] probe failed: %s' % _ep, RuntimeWarning,
+                     stacklevel=2)
 
     return extract_step(m, problem, options, minimize_violation,
                               use_slacks, obj)
