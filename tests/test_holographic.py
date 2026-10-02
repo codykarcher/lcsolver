@@ -223,7 +223,7 @@ def test_a_bound_in_other_units_is_converted_before_it_is_compared():
     assert act[0]['operator'] == '<='
     assert abs(act[0]['bound'] - 27 * 0.0254 / 2) < 1e-9     # reported in metres
     assert abs(act[0]['value'] - 27 * 0.0254 / 2) < 1e-5
-    assert abs(act[0]['margin']) < 1e-5
+    assert abs(act[0]['margin']) < 1e-5 and not act[0]['violated']
 
 
 def _two_sided(k):
@@ -252,6 +252,19 @@ def test_a_row_with_variables_on_both_sides_has_a_meaningful_margin():
     g = _two_sided(0.5)
     solve(g, sensitivities=False)
     assert g.solution.holographic == []                    # 0.5 against 2: inactive
+
+
+def test_a_violated_row_is_called_violated_not_active():
+    """At the starting point of _model(1.0), x = y = 2 against a cap of 1: the
+    limit is broken, which is not the same finding as sitting on it."""
+    f = _model(1.0)
+    act = holographic_report(f)
+    assert len(act) == 2 and all(d['violated'] for d in act)
+    assert 'VIOLATED' in format_holographic(act)
+    f5 = _model(5.0)
+    solve(f5, sensitivities=False)
+    assert not any(d['violated'] for d in f5.solution.holographic)
+    assert 'VIOLATED' not in format_holographic(f5.solution.holographic)
 
 
 # (variable units, bound units, bound value, the bound in the variable's units)
@@ -299,7 +312,7 @@ def test_the_binding_edge_is_named_whatever_units_it_was_written_in(
     assert d['operator'] == ('<=' if toward == 'up' else '>=')
     assert abs(d['bound'] - in_var_units) <= 1e-9 * in_var_units
     assert abs(d['value'] - in_var_units) <= 1e-5 * in_var_units
-    assert abs(d['margin']) < 1e-5
+    assert abs(d['margin']) < 1e-5 and not d['violated']
 
 
 def test_a_constant_in_other_units_is_converted_too():
@@ -330,4 +343,5 @@ def test_the_warning_names_the_row_that_binds_and_no_margin_is_wild():
     assert len(msgs) == 1, msgs
     assert '1 of 2' in msgs[0]
     assert 'x  <=  13.5*inch' in msgs[0] or 'x <= 13.5*in' in msgs[0].replace('  ', ' '), msgs[0]
+    assert 'VIOLATED' not in msgs[0]
     assert all(abs(d['margin']) < 1e-4 for d in f.solution.holographic)

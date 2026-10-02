@@ -103,11 +103,13 @@ def _check(lesser, greater):
     return side, bound, value, slack / max(abs(bound), abs(value), 1e-300)
 
 
-def holographic_report(model, rtol=1e-6):
+def holographic_report(model, rtol=1e-6, vtol=1e-4):
     """Which holographic constraints are active at the model's current point.
 
-    Returns [{name, operator, bound, value, margin}] for the binding ones,
-    worst first; value and bound are in the units of the variable side.
+    Returns [{name, operator, bound, value, margin, violated}] for the
+    binding ones, worst first; value and bound are in the units of the
+    variable side. A margin below -vtol is not "active" but VIOLATED: the
+    point breaks a limit that was declared to hold, and is reported as such.
     Reads values off the model, so only meaningful after a solve writes
     back; solve is what calls it.
     """
@@ -142,7 +144,8 @@ def holographic_report(model, rtol=1e-6):
                         # a holographic equality always binds; say so rather than report it as news
                         found.append({'name': getattr(cd, 'name', nm),
                                       'operator': '==', 'bound': hi, 'value': body,
-                                      'margin': 0.0, 'equality': True, 'expr': expr})
+                                      'margin': 0.0, 'equality': True,
+                                      'violated': False, 'expr': expr})
                         continue
                     checks = [(side, bound, body, margin)
                               for side, bound, margin in _margin(body, lo, hi)]
@@ -153,7 +156,8 @@ def holographic_report(model, rtol=1e-6):
                     found.append({'name': getattr(cd, 'name', nm),
                                   'operator': side, 'bound': bound,
                                   'value': value, 'margin': margin,
-                                  'equality': False, 'expr': expr})
+                                  'equality': False,
+                                  'violated': margin < -vtol, 'expr': expr})
     found.sort(key=lambda d: d['margin'])
     return found
 
@@ -192,7 +196,8 @@ def format_holographic(active, total=None, k=8):
                 L.append(f"        {d['expr']}")
             continue
         L.append(f"    {d['name']}: {d['value']:.6g} {d['operator']} "
-                 f"{d['bound']:.6g}   (margin {d['margin']:+.2e})")
+                 f"{d['bound']:.6g}   (margin {d['margin']:+.2e})"
+                 + ("   VIOLATED, not merely active" if d.get('violated') else ""))
         if d.get('expr'):
             L.append(f"        {d['expr']}")
     if n > k:

@@ -487,7 +487,8 @@ def attach_sensitivities(m, res, wanted, skip_degeneracy_check=False,
         if active:
             binds = "; ".join(
                 (f"{d['name']}: {d['expr']}" if d.get('expr') else d['name'])
-                + f" (at {d['value']:.6g}, margin {d['margin']:+.2e})"
+                + f" (at {d['value']:.6g}, margin {d['margin']:+.2e}"
+                + (", VIOLATED)" if d.get('violated') else ")")
                 for d in active[:3])
             warnings.warn(
                 f"[LC-W301] {len(active)} of {n_tot} holographic constraints are ACTIVE "
