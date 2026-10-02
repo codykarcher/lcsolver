@@ -1292,7 +1292,15 @@ class SubproblemCache:
                 p_consts.append(None)
                 e = self.log_sum_exp(m, body.terms, ps)
                 if body.is_monomial and op == '==':
-                    m.cons.add(e == rhs[i])
+                    if minimize_violation or use_slacks:
+                        # two-sided whenever a slack carries the row: `e == s`
+                        # with s >= 0 forces the residual non-negative, so an
+                        # equality needing a negative residual would make the
+                        # sub-problem infeasible. Mirrors the rebuild path.
+                        m.cons.add(e <= rhs[i])
+                        m.cons.add(-e <= rhs[i])
+                    else:
+                        m.cons.add(e == rhs[i])
                 else:
                     m.cons.add(e <= rhs[i])
             elif isinstance(body, CondensedEquality):
@@ -1705,7 +1713,16 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                                       for j in range(0, n))
                 if op == "==" and hard_eq:
                     m.cons.add(e == 0.0)
-                elif op == "==" and minimize_violation:
+                elif op == "==" and (minimize_violation or use_slacks):
+                    # TWO-SIDED, always, when a slack is carrying the row.
+                    # `e == s` with s >= 0 forces the equality residual to be
+                    # NON-NEGATIVE, so any equality that needs a negative
+                    # residual makes the sub-problem infeasible -- which is the
+                    # opposite of what a slacked Phase I is for ("feasible by
+                    # construction"). Measured on the 7-segment D8: 542 equality
+                    # rows each pinned to a non-negative slack, the sub-problem
+                    # reported `infeasible`, and the solve spent an hour on
+                    # dense rebuilds without one accepted iterate.
                     m.cons.add(e <= rhs[i])
                     m.cons.add(-e <= rhs[i])
                 elif op == "==":
@@ -1756,7 +1773,8 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                 e = e + curvature[i].quad(m.d)
             if op == "==" and hard_eq:
                 m.cons.add(e == 0.0)
-            elif op == "==" and minimize_violation:
+            elif op == "==" and (minimize_violation or use_slacks):
+                # two-sided whenever a slack carries the row (see above)
                 m.cons.add(e <= rhs[i])
                 m.cons.add(-e <= rhs[i])
             elif op == "==":
@@ -1837,6 +1855,26 @@ def solve_subproblem(problem, x_k, tau, radius, options, has_blackbox,
                      RuntimeWarning, stacklevel=2)
         except Exception as _ep:
             _wp.warn('[LC-W318] probe failed: %s' % _ep, RuntimeWarning,
+                     stacklevel=2)
+
+    if fell_through and _os_env.environ.get('LC_NL_DUMP') and getattr(
+            cache, 'fallbacks', 0) == 1:
+        # Dump BOTH formulations of this sub-problem, as the solver sees them,
+        # so they can be diffed outside. Opt-in via LC_NL_DUMP.
+        import warnings as _wd
+        try:
+            _ph = cache.get(minimize_violation, use_slacks)
+            _d = _os_env.environ['LC_NL_DUMP']
+            _os_env.makedirs(_d, exist_ok=True)
+            _out = []
+            for _tag, _mm in (('cached', _ph.model), ('rebuilt', m)):
+                _fn = _os_env.path.join(_d, 'sp_%s.nl' % _tag)
+                _mm.write(_fn, format='nl')
+                _out.append('%s %d bytes' % (_tag, _os_env.path.getsize(_fn)))
+            _wd.warn('[LC-W319] dumped both sub-problem formulations to %s: %s'
+                     % (_d, '; '.join(_out)), RuntimeWarning, stacklevel=2)
+        except Exception as _e:
+            _wd.warn('[LC-W319] dump failed: %s' % _e, RuntimeWarning,
                      stacklevel=2)
 
     return extract_step(m, problem, options, minimize_violation,
