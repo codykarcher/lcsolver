@@ -205,3 +205,129 @@ def test_submodels_forward_the_declaration():
     assert len(f.guarded.rows) == 3             # and the block counts all three
     solve(f, sensitivities=False)
     assert holographic_report(f) == []          # x drives to 1, well inside
+
+
+def test_a_bound_in_other_units_is_converted_before_it_is_compared():
+    """pyo.value drops units, so a ceiling of 27 in / 2 read as 13.5 against
+    a radius in metres hid the ceiling the answer sat on, and the floor of
+    4.1 in / 2 read as 2.05 was reported ACTIVE with a margin of -0.83."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=0.3, units='m', description='x')
+    f.Objective(1 / x)                                  # x wants to grow: onto the ceiling
+    f.ConstraintList([x >= 0.01 * pyo.units.m])
+    f.HolographicConstraintList([x <= 27 * pyo.units.inch / 2,
+                                 x >= 4.1 * pyo.units.inch / 2])
+    solve(f, sensitivities=False)
+    act = f.solution.holographic
+    assert len(act) == 1, act
+    assert act[0]['operator'] == '<='
+    assert abs(act[0]['bound'] - 27 * 0.0254 / 2) < 1e-9     # reported in metres
+    assert abs(act[0]['value'] - 27 * 0.0254 / 2) < 1e-5
+    assert abs(act[0]['margin']) < 1e-5
+
+
+def _two_sided(k):
+    """min y s.t. x >= 1, y >= 2, holographic y >= k x: at the optimum x = 1,
+    y = max(2, k), so k = 3 binds and k = 0.5 leaves a margin of 0.75."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.5, units='m', description='x')
+    y = f.Variable(name='y', guess=4.0, units='m', description='y')
+    f.Objective(x * y)
+    f.ConstraintList([x >= 1.0 * pyo.units.m, y >= 2.0 * pyo.units.m])
+    f.HolographicConstraint(y >= k * x)
+    return f
+
+
+def test_a_row_with_variables_on_both_sides_has_a_meaningful_margin():
+    """pyomo stores such a row as "lhs - rhs" against 0. Normalising by
+    max(|0|, |residual|) gave a margin of +-1 by roundoff sign: an active
+    row was flagged only when the residual happened to be negative."""
+    f = _two_sided(3.0)
+    solve(f, sensitivities=False)
+    act = f.solution.holographic
+    assert len(act) == 1, act
+    assert abs(act[0]['margin']) < 1e-5, act               # ~0, not -1 or +1
+    assert abs(act[0]['value'] - 3.0) < 1e-4
+
+    g = _two_sided(0.5)
+    solve(g, sensitivities=False)
+    assert g.solution.holographic == []                    # 0.5 against 2: inactive
+
+
+# (variable units, bound units, bound value, the bound in the variable's units)
+_UNIT_PAIRS = [
+    ('m',   'inch', 13.5,  13.5 * 0.0254),
+    ('m',   'ft',   2.0,   2.0 * 0.3048),
+    ('m',   'mm',   750.0, 0.75),
+    ('ft',  'm',    0.5,   0.5 / 0.3048),
+    ('lbf', 'N',    100.0, 100.0 / 4.4482216152605),
+    ('N',   'lbf',  20.0,  20.0 * 4.4482216152605),
+    ('m',   'm',    0.4,   0.4),
+]
+
+
+def _boxed(var_units, bound_units, value, toward):
+    """One variable driven onto a ceiling (toward='up') or a floor ('down')
+    written in `bound_units`; the opposite edge is a decade away, in the same
+    units, and must stay silent."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units=var_units, description='x')
+    u_var, u_bnd = getattr(pyo.units, var_units), getattr(pyo.units, bound_units)
+    if toward == 'up':
+        f.Objective(1 * u_var / x)
+        f.ConstraintList([x >= 1e-6 * u_var])
+        f.HolographicConstraintList([x <= value * u_bnd, x >= 0.1 * value * u_bnd])
+    else:
+        f.Objective(x / (1 * u_var))
+        f.ConstraintList([x <= 1e6 * u_var])
+        f.HolographicConstraintList([x >= value * u_bnd, x <= 10. * value * u_bnd])
+    return f
+
+
+@pytest.mark.parametrize('var_units, bound_units, value, in_var_units', _UNIT_PAIRS)
+@pytest.mark.parametrize('toward', ['up', 'down'])
+def test_the_binding_edge_is_named_whatever_units_it_was_written_in(
+        var_units, bound_units, value, in_var_units, toward):
+    """The edge the answer sits on is reported, with a margin of ~0 and its
+    bound in the variable's units; the far edge is not. Comparing bare
+    numbers gets this wrong for every pair except the last."""
+    f = _boxed(var_units, bound_units, value, toward)
+    solve(f, sensitivities=False)
+    act = f.solution.holographic
+    assert len(act) == 1, act
+    d = act[0]
+    assert d['operator'] == ('<=' if toward == 'up' else '>=')
+    assert abs(d['bound'] - in_var_units) <= 1e-9 * in_var_units
+    assert abs(d['value'] - in_var_units) <= 1e-5 * in_var_units
+    assert abs(d['margin']) < 1e-5
+
+
+def test_a_constant_in_other_units_is_converted_too():
+    """The bound need not be a literal: a Constant declared in inches bounds a
+    variable in metres through the same conversion."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=0.3, units='m', description='x')
+    D = f.Constant(name='D', value=27.0, units='inch', description='ceiling')
+    f.Objective(1 / x)
+    f.ConstraintList([x >= 0.01 * pyo.units.m])
+    f.HolographicConstraint(2 * x <= D)
+    solve(f, sensitivities=False)
+    act = f.solution.holographic
+    assert len(act) == 1, act
+    assert abs(act[0]['margin']) < 1e-5
+    assert abs(float(f.solution['x']) - 27 * 0.0254 / 2) < 1e-6
+
+
+def test_the_warning_names_the_row_that_binds_and_no_margin_is_wild():
+    """End to end, on the text a user reads: the ceiling is named, the floor is
+    not, and no reported margin is far from zero. A margin like -0.83 at a
+    converged optimum is the signature of comparing numbers in two units."""
+    f = _boxed('m', 'inch', 13.5, 'up')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        solve(f, sensitivities=False, quiet=False)
+    msgs = [str(w.message) for w in caught if 'LC-W301' in str(w.message)]
+    assert len(msgs) == 1, msgs
+    assert '1 of 2' in msgs[0]
+    assert 'x  <=  13.5*inch' in msgs[0] or 'x <= 13.5*in' in msgs[0].replace('  ', ' '), msgs[0]
+    assert all(abs(d['margin']) < 1e-4 for d in f.solution.holographic)
