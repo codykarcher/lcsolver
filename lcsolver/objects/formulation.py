@@ -303,18 +303,37 @@ class Group:
         return self._formulation.Constant(f'{self._prefix}{name}', value,
                                           units, description, **kw)
 
-    def Constraint(self, expr, holographic=False):
-        return self._formulation.Constraint(expr, holographic=holographic)
+    def Constraint(self, expr, assignedName=None, holographic=False):
+        return self._formulation.Constraint(expr, self._named(assignedName),
+                                            holographic=holographic)
 
     def ConstraintList(self, conList, holographic=False):
         return self._formulation.ConstraintList(conList,
                                                 holographic=holographic)
 
-    def HolographicConstraint(self, expr):
-        return self._formulation.HolographicConstraint(expr)
+    def ConstraintDict(self, conDict, holographic=False):
+        prefixed = {self._named(name): con for name, con in conDict.items()}
+        return self._formulation.ConstraintDict(prefixed,
+                                                holographic=holographic)
+
+    def HolographicConstraint(self, expr, assignedName=None):
+        return self.Constraint(expr, assignedName, holographic=True)
 
     def HolographicConstraintList(self, conList):
         return self._formulation.HolographicConstraintList(conList)
+
+    def HolographicConstraintDict(self, conDict):
+        return self.ConstraintDict(conDict, holographic=True)
+
+    def RuntimeConstraint(self, outputs, operators, inputs, black_box,
+                          constants=None, assignedName=None):
+        return self._formulation.RuntimeConstraint(
+            outputs, operators, inputs, black_box, constants=constants,
+            assignedName=self._named(assignedName))
+
+    def _named(self, assignedName):
+        """A user constraint name carries the group prefix, like a Variable."""
+        return None if assignedName is None else f'{self._prefix}{assignedName}'
 
     def sum(self, vector, axis=None):
         return self._formulation.sum(vector, axis=axis)
@@ -401,6 +420,7 @@ class Formulation(ConcreteModel):
         self._runtimeConstraint_boxes = {}
         self._constraint_keys = []
         self._allConstraint_keys = []
+        self._constraintName_map = {}
 
     # Reserved names: a component so named would shadow the attribute and
     # make it unreachable
@@ -455,6 +475,16 @@ class Formulation(ConcreteModel):
                 f"{name!r} is reserved: a {what} of that name would shadow "
                 f"`f.{name}`, which is how the {name} is reached. Choose "
                 "another name.")
+
+    def _register_name(self, assignedName, conNames):
+        """Map a user name to the generated constraint_N name(s)."""
+        if assignedName is None:
+            return
+        if assignedName in self._constraintName_map:
+            raise ValueError(
+                "constraint name %r is already used; names must be unique"
+                % assignedName)
+        self._constraintName_map[assignedName] = conNames
 
     # -- grouping -----------------------------------------------------------
     def group(self, name, prefix=None):
@@ -759,13 +789,14 @@ class Formulation(ConcreteModel):
     # def RuntimeObjective(self):
     #     pass
 
-    def Constraint(self, expr, holographic=False):
+    def Constraint(self, expr, assignedName = None, holographic=False):
         """Declare one constraint; returns the name it was given
         ('constraint_4'), the counter shared with RuntimeConstraint so
         numbering follows the model as written. Most models should use
         ConstraintList instead. holographic=True: see HolographicConstraint."""
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
+        self._register_name(assignedName, conName)
         self.add_component(conName, pyo.Constraint(expr=expr))
         self._constraint_keys.append(conName)
         self._allConstraint_keys.append(conName)
@@ -774,20 +805,24 @@ class Formulation(ConcreteModel):
             self._holographic.add(conName)
         return conName
 
-    def HolographicConstraint(self, expr):
+    def HolographicConstraint(self, expr, assignedName=None):
         """A constraint that must hold but must not bind: a well-posedness box,
         the edge of a fit's data. An optimum sitting on one is the solver
         extrapolating, and the solve still converges -- so these are declared,
         and every solve checks whether any of them bound. The constraint
         itself is imposed exactly as an ordinary one."""
-        return self.Constraint(expr, holographic=True)
+        return self.Constraint(expr, assignedName, holographic=True)
 
     def HolographicConstraintList(self, conList):
         """`ConstraintList`, with every entry declared holographic."""
         return self.ConstraintList(conList, holographic=True)
 
-    def RuntimeConstraint(self, outputs, operators, inputs, black_box,
-                          constants=None):
+    def HolographicConstraintDict(self, conDict):
+        """`ConstraintDict`, with every entry declared holographic."""
+        return self.ConstraintDict(conDict, holographic=True)
+
+    def RuntimeConstraint(self, outputs, operators, inputs, black_box, 
+                          constants=None, assignedName=None):
         """Declare outputs == black_box(inputs) as a constraint, via an
         ExternalGreyBoxBlock (so solve takes the cyipopt route). Inputs and
         outputs must be Variables, not expressions; indexed ones are unwrapped
@@ -820,6 +855,7 @@ class Formulation(ConcreteModel):
 
         self._constraint_counter += 1
         conName = 'constraint_' + str(self._constraint_counter)
+        self._register_name(assignedName, conName)
         self._runtimeConstraint_keys.append(conName)
         self._allConstraint_keys.append(conName)
 
@@ -1009,6 +1045,21 @@ class Formulation(ConcreteModel):
             else:
                 self.Constraint(con, holographic=holographic)
 
+    def ConstraintDict(self, conDict, holographic=False):
+        """`ConstraintList` with a user name per entry. A vector comparison
+        maps its name to the list of generated names, one per element."""
+        for name, con in conDict.items():
+            if isinstance(con, dict):
+                self.RuntimeConstraint(**con, assignedName=name)
+            elif isinstance(con, (tuple, list)):
+                self.RuntimeConstraint(*con, assignedName=name)
+            elif isinstance(con, _np.ndarray):
+                rows = [self.Constraint(c, holographic=holographic)
+                        for c in con.ravel().tolist()]
+                self._register_name(name, rows)
+            else:
+                self.Constraint(con, assignedName=name, holographic=holographic)
+
     def get_variables(self):
         """The variables declared through Variable, in declaration order.
         A Var added by hand via add_component is not here -- these lists are
@@ -1074,6 +1125,22 @@ class Formulation(ConcreteModel):
             for nm in self.__dict__.keys()
             if nm in self._objective_keys
         ]
+
+    def constraint(self, assignedName):
+        """The constraint declared under a user name: the component, or the
+        list of components for a vector row. Unknown names raise KeyError
+        with the known names, so a typo does not read as a missing row."""
+        if assignedName not in self._constraintName_map:
+            raise KeyError('no constraint named %r; named constraints: %s'
+                           % (assignedName, sorted(self._constraintName_map)))
+        found = self._constraintName_map[assignedName]
+        if isinstance(found, list):
+            return [self.__dict__[nm] for nm in found]
+        return self.__dict__[found]
+
+    def constraint_names(self):
+        """User name -> generated name(s), in declaration order."""
+        return dict(self._constraintName_map)
 
     def get_constraints(self):
         """Every declared constraint, algebraic and runtime alike, in order.

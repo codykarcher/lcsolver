@@ -39,10 +39,39 @@ However, the expected use case is the ``f.ConstraintList()`` function:
    :rtype: None
 
 
+.. py:function:: f.ConstraintDict(conDict)
+
+    Declares new constraints from a dict of ``name: constraint`` pairs, so each row can be found by name afterwards
+
+   :param conDict: The constraints to be generated, keyed by a user name.  Values are what ``ConstraintList`` accepts: a pyomo expression, a vector comparison (one constraint per element, the name mapping to all of them), or a list/dict that creates a RuntimeConstraint (see :doc:`here <./blackboxconstraints>`)
+   :type  conDict: dict
+
+   :return: None
+   :rtype: None
+
+
 Relation to Pyomo Constraint
 ----------------------------
 
 The LCsolver constraint constructor is essentially a direct pass through to base pyomo.  Constraints will be added to the ``pyomo.ConcreteModel`` in increasing order with key ``constraint_###`` where the the index of the objective appears after the underscore.  First constraint is labeled as ``constraint_1``, and constraint names are never padded with zeros.  RuntimeConstraints also contribute to this counter.
+
+
+Naming constraints
+------------------
+
+A constraint can carry a user name as well as its ``constraint_###`` key, through ``assignedName`` on ``Constraint``, ``HolographicConstraint`` and ``RuntimeConstraint``, or by declaring with ``ConstraintDict`` (``HolographicConstraintDict``) instead of a list::
+
+    f.ConstraintDict({
+        "lift": W == 0.5 * rho * S * C_L * V**2,
+        "drag": D >= 0.5 * rho * S * C_D * V**2,
+        "cap":  x <= x_max,                        # a vector row: one constraint per element
+    })
+
+    f.constraint("lift")          # the pyomo Constraint
+    f.constraint("cap")           # the list of per-element Constraints
+    f.constraint_names()          # {"lift": "constraint_1", "drag": "constraint_2", "cap": ["constraint_3", ...]}
+
+The pyomo component keeps its ``constraint_###`` key; the user name is a map on the side.  That is deliberate: everything that walks the model (unit correction, structure detection, the solvers) is unchanged, and unnamed rows keep the same numbers they always had.  Names must be unique within a formulation, and a name declared through a group carries the group prefix, the way a group's Variable does (``wing.ConstraintDict({"lift": ...})`` registers ``wing_lift``).  A lookup of an unknown name raises ``KeyError`` listing the names that exist.
 
 
 Examples
