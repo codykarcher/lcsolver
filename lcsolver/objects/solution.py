@@ -337,9 +337,13 @@ class Solution:
         if self.report:
             L += ['Report', '------'] + self.report_lines() + ['']
         if self.objective is not None:
+            obj_units = units_label(self.objective_units).strip('[]')
+            if obj_units == '-':
+                # a bare '-' after the number reads as a minus sign
+                obj_units = 'dimensionless'
             L += ['Objective', '---------',
                   '   ' + format_number(self.objective, ndecimal) + ' '
-                  + units_label(self.objective_units).strip('[]'), '']
+                  + obj_units, '']
         if self.variables:
             L += ['Variables', '---------'] + self.table_lines(self.variables,
                                                           ndecimal) + ['']

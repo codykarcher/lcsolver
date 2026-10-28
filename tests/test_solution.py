@@ -133,6 +133,13 @@ class TestSolution(unittest.TestCase):
         with self.assertRaises(ValueError):
             f.group('solution')
 
+    def test_dimensionless_objective_is_spelled_out(self):
+        """A bare '-' after the objective value reads as a minus sign."""
+        sol = Solution(objective=2.5, objective_units=None)
+        obj_block = str(sol).split('Objective')[1].split('Sensitivities')[0]
+        self.assertIn('2.5000 dimensionless', obj_block)
+        self.assertNotIn('2.5000 -', obj_block)
+
     def test_solution_stands_alone(self):
         """It is an ordinary object: constructible and printable without a model."""
         sol = Solution(objective=2.0, objective_units=None,
