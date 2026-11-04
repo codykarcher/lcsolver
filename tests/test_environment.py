@@ -338,6 +338,8 @@ def test_prebuilt_uses_conda_and_names_the_environment_it_would_change():
     assert source_root is None
 
 
+@pytest.mark.skipif(sys.platform.startswith('win'),
+                    reason='the MA27 build is not supported on Windows')
 def test_add_ma27_targets_the_root_the_executable_came_from(tmp_path):
     root = tmp_path / 'somewhere'
     build = root / 'ipopt' / 'build'

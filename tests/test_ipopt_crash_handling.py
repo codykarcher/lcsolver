@@ -10,6 +10,7 @@ RuntimeError the sequential loops already treat as a failed sub-problem,
 which they now retry under MA27 first.
 """
 import logging
+import sys
 import warnings
 
 import pytest
@@ -38,6 +39,9 @@ def _pyomo_style_crash(rc):
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
 class TestIpoptLaunch:
 
+    @pytest.mark.skipif(sys.platform.startswith('win'),
+                        reason='Windows has no SIGBUS; the handler falls back '
+                               'to the bare number there')
     def test_signal_is_named_and_the_log_is_not_printed(self, caplog):
         with caplog.at_level(logging.ERROR, logger='pyomo.opt'):
             with pytest.raises(IpoptCrashed) as ctx:
