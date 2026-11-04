@@ -680,13 +680,15 @@ def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
     # cvxopt has no such option, so pairing them is a mistake in the call
     linear_solver = kwargs.get('linear_solver')
     if linear_solver is not None:
-        from lcsolver.environment import KNOWN_IPOPT_LINEAR_SOLVERS
+        from lcsolver.environment import (
+            KNOWN_IPOPT_LINEAR_SOLVERS, canonical_linear_solver)
         linear_solver = str(linear_solver).strip().lower()
         if linear_solver not in KNOWN_IPOPT_LINEAR_SOLVERS:
             raise ValueError(
                 'unknown linear_solver %r. IPOPT linear solvers are: %s'
                 % (kwargs['linear_solver'],
                    ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
+        linear_solver = canonical_linear_solver(linear_solver)
         kwargs['linear_solver'] = linear_solver
         if solver == 'cvxopt' or convex_backend == 'cvxopt':
             raise ValueError(

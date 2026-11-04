@@ -127,8 +127,9 @@ D8 sub-problem infeasible and the whole run stops 17 % above the answer
 (``examples/data/d8_sia_subproblem.nl``). **SPRAL** -- BSD-licensed,
 MA97-class, the open-source solver LCsolver builds by default -- certifies
 the same optima MA27 does, which is why it is the default when MA27 is
-absent. Told nothing, ``solve()`` picks MA27, else SPRAL, else MKL Pardiso
-(``pardisomkl``), else MUMPS.
+absent. Told nothing, ``solve()`` picks MA27, else SPRAL, else Pardiso,
+else MUMPS. Pardiso is requested as ``linear_solver='pardiso'``; IPOPT's
+own name for it is ``pardisomkl``, which is what the solve records.
 
 
 Use MA27 (when you can)

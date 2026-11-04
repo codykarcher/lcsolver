@@ -259,11 +259,20 @@ def _quiet():
 
 
 # Every linear solver an upstream IPOPT can be built against.  The headline
-# three (mumps, ma27, pardisomkl) compose the availability message
+# three (mumps, ma27, pardiso) compose the availability message. 'pardiso'
+# is the name users say; IPOPT's option value for the MKL build is
+# pardisomkl, and the alias is resolved before anything reaches IPOPT
 KNOWN_IPOPT_LINEAR_SOLVERS = (
     'mumps', 'ma27', 'ma57', 'ma77', 'ma86', 'ma97',
-    'pardisomkl', 'spral', 'wsmp',
+    'pardiso', 'pardisomkl', 'spral', 'wsmp',
 )
+LINEAR_SOLVER_ALIASES = {'pardiso': 'pardisomkl'}
+
+
+def canonical_linear_solver(name):
+    """The IPOPT option value for a user-facing solver name"""
+    key = str(name).strip().lower()
+    return LINEAR_SOLVER_ALIASES.get(key, key)
 
 # Solvers IPOPT dlopens at runtime, and the option naming their library.
 # No rebuild needed: hand hsllib a full CoinHSL (ma57/77/86/97) and the
@@ -299,11 +308,12 @@ def require_linear_solver(name, route='pyomo', executable=None,
     """
     from lcsolver.core.errors import SolverUnavailable
 
-    key = str(name).strip().lower()
-    if key not in KNOWN_IPOPT_LINEAR_SOLVERS:
+    asked = str(name).strip().lower()
+    if asked not in KNOWN_IPOPT_LINEAR_SOLVERS:
         raise ValueError(
             'unknown linear_solver %r. IPOPT linear solvers are: %s'
             % (name, ', '.join(KNOWN_IPOPT_LINEAR_SOLVERS)))
+    key = canonical_linear_solver(asked)
 
     libopt = linear_solver_library_option(key)
     if library is not None:
@@ -331,10 +341,10 @@ def require_linear_solver(name, route='pyomo', executable=None,
             return key
     if not ok:
         if route == 'pyomo':
-            present = [s for s in ('ma27', 'mumps', 'pardisomkl')
+            present = [s for s in ('ma27', 'mumps', 'pardiso')
                        if linear_solver_available(s, executable)]
         else:
-            present = [s for s in ('ma27', 'mumps', 'pardisomkl')
+            present = [s for s in ('ma27', 'mumps', 'pardiso')
                        if cyipopt_linear_solver_available(s)]
         library_note = ''
         if libopt is not None and library is None:
@@ -346,9 +356,9 @@ def require_linear_solver(name, route='pyomo', executable=None,
             "(route: %s%s). Probed as available here: %s.%s See "
             "docs/linear_solvers.rst for building IPOPT with additional "
             "linear solvers."
-            % (key, route,
+            % (asked, route,
                f', executable {executable}' if executable else '',
-               ', '.join(present) if present else 'none of ma27/mumps/pardisomkl',
+               ', '.join(present) if present else 'none of ma27/mumps/pardiso',
                library_note))
     return key
 
@@ -470,7 +480,7 @@ def crash_fallback_solver(linear_solver, executable=None):
 # What solve() picks when told nothing: MA27 when the build has it (fastest
 # and most robust measured -- 3x SPRAL on the D8 sub-problems), else SPRAL
 # (the open-source solver that certifies everything MA27 does), else MUMPS.
-# pardisomkl is MKL's Pardiso, linked in at build time
+# pardisomkl is Pardiso (IPOPT's name for the MKL build, linked in)
 DEFAULT_LINEAR_SOLVER_ORDER = ('ma27', 'spral', 'pardisomkl', 'mumps')
 
 
@@ -526,6 +536,7 @@ def linear_solver_available(name, executable=None, library=None):
     there is no reliable way to ask the binary directly. ``library`` rides
     along as hsllib for a runtime-loaded solver.
     """
+    name = canonical_linear_solver(name)
     executable = executable or ipopt_executable()
     key = (os.path.realpath(executable) if executable else None, name,
            os.path.realpath(library) if library else None)
@@ -629,7 +640,7 @@ def cyipopt_linear_solver_available(name):
     probe = cyipopt_probe()
     if not probe.get('baseline'):
         return None
-    return probe.get(name)
+    return probe.get(canonical_linear_solver(name))
 
 
 def pynumero_asl_available():

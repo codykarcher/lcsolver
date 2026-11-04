@@ -78,14 +78,25 @@ class TestNameValidation:
             env, 'linear_solver_available',
             lambda name, executable=None, library=None: name == 'ma27')
         with pytest.raises(SolverUnavailable) as ctx:
-            require_linear_solver('pardisomkl')
+            require_linear_solver('pardiso')
         msg = str(ctx.value)
-        assert "'pardisomkl'" in msg
+        assert "'pardiso'" in msg
         assert 'ma27' in msg                     # says what IS there
 
     def test_known_list_covers_the_headline_three(self):
-        for name in ('mumps', 'ma27', 'pardisomkl'):
+        for name in ('mumps', 'ma27', 'pardiso'):
             assert name in KNOWN_IPOPT_LINEAR_SOLVERS
+
+    def test_pardiso_is_the_name_for_ipopts_pardisomkl(self, monkeypatch):
+        seen = []
+
+        def probe(name, executable=None, library=None):
+            seen.append(name)
+            return name == 'pardisomkl'
+        monkeypatch.setattr(env, 'linear_solver_available', probe)
+        assert require_linear_solver('pardiso') == 'pardisomkl'
+        assert require_linear_solver('pardisomkl') == 'pardisomkl'
+        assert seen == ['pardisomkl', 'pardisomkl']
 
 
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
@@ -115,7 +126,7 @@ class TestRealSolves:
 
     def test_missing_solver_raises_solverunavailable(self):
         exe = env.ipopt_executable()
-        missing = next((s for s in ('mumps', 'ma27', 'pardisomkl')
+        missing = next((s for s in ('mumps', 'ma27', 'pardiso')
                         if not env.linear_solver_available(s, exe)), None)
         if missing is None:
             pytest.skip('every headline solver is available in this build')
