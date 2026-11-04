@@ -695,21 +695,21 @@ def run_solve(m, solver='auto', convex_backend='ipopt', diagnostics='error',
                 "IPOPT backend." % linear_solver)
 
     # linear_solver_library supplies the dlopened library (hsllib for
-    # ma57/77/86/97, pardisolib for pardiso); meaningless alone or with a
-    # compiled-in solver, so refuse both here in the caller's own frame
+    # ma57/77/86/97); meaningless alone or with a compiled-in solver, so
+    # refuse both here in the caller's own frame
     library = kwargs.get('linear_solver_library')
     if library is not None:
         if linear_solver is None:
             raise ValueError(
                 'linear_solver_library was given without linear_solver; '
                 'name the solver the library provides (ma57/ma77/ma86/ma97 '
-                'for a CoinHSL library, pardiso for Panua Pardiso)')
+                'for a CoinHSL library)')
         from lcsolver.environment import linear_solver_library_option
         if linear_solver_library_option(linear_solver) is None:
             raise ValueError(
                 '%r is compiled into IPOPT, not loaded from a library; '
-                'linear_solver_library applies only to ma57/ma77/ma86/ma97 '
-                'and pardiso' % linear_solver)
+                'linear_solver_library applies only to ma57/ma77/ma86/ma97'
+                % linear_solver)
 
     # stamp finite-difference permission onto every grey-box model NOW,
     # before detection clones the formulation, so the clones carry it

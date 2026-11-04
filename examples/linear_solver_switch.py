@@ -8,7 +8,7 @@
 # is invisible until it isn't: on a hard model the pivoting strategy decides
 # whether IPOPT gets a usable step at all. LCsolver exposes the choice as
 #
-#     lcsolver.solve(f, linear_solver='ma27')      # or 'mumps', 'pardiso', ...
+#     lcsolver.solve(f, linear_solver='ma27')      # or 'mumps', 'pardisomkl', ...
 #
 # validated by name before any backend runs and probed against the IPOPT
 # build actually in use, on every route (raw NLP, log-space GP, SIA and PCCP

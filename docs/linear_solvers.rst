@@ -34,8 +34,7 @@ MA57/77/86/  HSL (free academic /       loadable at runtime from a user
 MA97         commercial)                library, no rebuild needed
 MUMPS        CeCILL-C (free)            the solver most binary distributions
                                         historically shipped
-Pardiso      Panua (commercial) or      loadable at runtime
-             MKL (free, x86 only)
+Pardiso      MKL (free, x86 only)       compiled in as ``pardisomkl``
 SPRAL        BSD (open source)          MA97-class, GPU-capable; the modern
                                         no-license-friction option
 WSMP         IBM (commercial)           rarely relevant here
@@ -236,9 +235,9 @@ Remaining avenues
    ``solve(f, linear_solver='ma97', linear_solver_library='/path/to/
    libcoinhsl.dylib')`` -- but the coinhsl here is the MA27-only archive,
    so benchmarking MA97 waits on a full CoinHSL tarball.
-2. **Pardiso**: same machinery (``linear_solver_library`` maps to
-   ``pardisolib``), untestable on this machine (Panua is commercial,
-   MKL is x86-only) -- ready for a licensed box.
+2. **MKL Pardiso** (``pardisomkl``): compiled in on an MKL-linked
+   build and third in the default order, untestable on this machine
+   (MKL is x86-only).
 3. **UMFPACK/PETSc fork**: moot unless SPRAL disappoints at scale;
    budget ~1-2k lines of C++ against ``SparseSymLinearSolverInterface``
    plus permanent rebase cost.

@@ -1,7 +1,6 @@
 """Runtime-loaded linear solvers: the linear_solver_library plumbing.
 
-MA57/77/86/97 and Pardiso are dlopened via the ``hsllib``/``pardisolib``
-option, exposed as ``solve(f, linear_solver=..., linear_solver_library=...)``
+MA57/77/86/97 are dlopened via the ``hsllib`` option, exposed as ``solve(f, linear_solver=..., linear_solver_library=...)``
 -- validated in the caller's frame, probed with the library in place, and
 threaded to every route including SIA's sub-problems. Covered here without
 any licensed library, so the machinery is ready on a machine that has one.
@@ -40,9 +39,6 @@ class TestOptionMapping:
     def test_hsl_solvers_map_to_hsllib(self):
         for name in ('ma57', 'ma77', 'ma86', 'ma97'):
             assert linear_solver_library_option(name) == 'hsllib'
-
-    def test_pardiso_maps_to_pardisolib(self):
-        assert linear_solver_library_option('pardiso') == 'pardisolib'
 
     def test_compiled_in_solvers_have_no_library_option(self):
         for name in ('ma27', 'mumps', 'spral', 'pardisomkl', 'wsmp'):

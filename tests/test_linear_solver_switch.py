@@ -78,13 +78,13 @@ class TestNameValidation:
             env, 'linear_solver_available',
             lambda name, executable=None, library=None: name == 'ma27')
         with pytest.raises(SolverUnavailable) as ctx:
-            require_linear_solver('pardiso')
+            require_linear_solver('pardisomkl')
         msg = str(ctx.value)
-        assert "'pardiso'" in msg
+        assert "'pardisomkl'" in msg
         assert 'ma27' in msg                     # says what IS there
 
     def test_known_list_covers_the_headline_three(self):
-        for name in ('mumps', 'ma27', 'pardiso'):
+        for name in ('mumps', 'ma27', 'pardisomkl'):
             assert name in KNOWN_IPOPT_LINEAR_SOLVERS
 
 
@@ -115,7 +115,7 @@ class TestRealSolves:
 
     def test_missing_solver_raises_solverunavailable(self):
         exe = env.ipopt_executable()
-        missing = next((s for s in ('mumps', 'ma27', 'pardiso')
+        missing = next((s for s in ('mumps', 'ma27', 'pardisomkl')
                         if not env.linear_solver_available(s, exe)), None)
         if missing is None:
             pytest.skip('every headline solver is available in this build')

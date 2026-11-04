@@ -225,8 +225,8 @@ def main(argv=None):
                     help='hard per-cell timeout in seconds')
     ap.add_argument('--linear-solver-library', default=None,
                     help='shared library for runtime-loaded solvers '
-                         '(hsllib for ma57/77/86/97, pardisolib for '
-                         'pardiso); ignored for compiled-in solvers')
+                         '(hsllib for ma57/77/86/97); ignored for '
+                         'compiled-in solvers')
     ap.add_argument('--_child', nargs=2, metavar=('MODEL', 'SOLVER'),
                     help=argparse.SUPPRESS)
     args = ap.parse_args(argv)

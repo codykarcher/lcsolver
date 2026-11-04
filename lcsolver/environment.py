@@ -259,23 +259,22 @@ def _quiet():
 
 
 # Every linear solver an upstream IPOPT can be built against.  The headline
-# three (mumps, ma27, pardiso) compose the availability message
+# three (mumps, ma27, pardisomkl) compose the availability message
 KNOWN_IPOPT_LINEAR_SOLVERS = (
     'mumps', 'ma27', 'ma57', 'ma77', 'ma86', 'ma97',
-    'pardiso', 'pardisomkl', 'spral', 'wsmp',
+    'pardisomkl', 'spral', 'wsmp',
 )
 
 # Solvers IPOPT dlopens at runtime, and the option naming their library.
-# No rebuild needed: hand hsllib a full CoinHSL (ma57/77/86/97) or
-# pardisolib a Panua Pardiso and the stock build runs them
+# No rebuild needed: hand hsllib a full CoinHSL (ma57/77/86/97) and the
+# stock build runs them
 RUNTIME_LOADED_LINEAR_SOLVERS = {
     'ma57': 'hsllib', 'ma77': 'hsllib', 'ma86': 'hsllib', 'ma97': 'hsllib',
-    'pardiso': 'pardisolib',
 }
 
 
 def linear_solver_library_option(name):
-    """'hsllib' or 'pardisolib' for a runtime-loaded solver, else None"""
+    """'hsllib' for a runtime-loaded solver, else None"""
     return RUNTIME_LOADED_LINEAR_SOLVERS.get(str(name).strip().lower())
 
 
@@ -295,8 +294,8 @@ def require_linear_solver(name, route='pyomo', executable=None,
     available) when the build lacks it, so it reads as an install gap rather
     than IPOPT dying mid-solve. An inconclusive cyipopt probe passes the name
     through untested -- guessing False would refuse working builds.
-    ``library`` is the shared lib for a runtime-loaded solver (hsllib/
-    pardisolib); refused for a compiled-in one.
+    ``library`` is the shared lib for a runtime-loaded solver (hsllib);
+    refused for a compiled-in one.
     """
     from lcsolver.core.errors import SolverUnavailable
 
@@ -332,18 +331,16 @@ def require_linear_solver(name, route='pyomo', executable=None,
             return key
     if not ok:
         if route == 'pyomo':
-            present = [s for s in ('ma27', 'mumps', 'pardiso')
+            present = [s for s in ('ma27', 'mumps', 'pardisomkl')
                        if linear_solver_available(s, executable)]
         else:
-            present = [s for s in ('ma27', 'mumps', 'pardiso')
+            present = [s for s in ('ma27', 'mumps', 'pardisomkl')
                        if cyipopt_linear_solver_available(s)]
         library_note = ''
         if libopt is not None and library is None:
             library_note = (' %r is a runtime-loaded solver: pass '
-                         'linear_solver_library=<path to the %s library> '
-                         'if you have one.' % (key,
-                                               'CoinHSL' if libopt == 'hsllib'
-                                               else 'Pardiso'))
+                         'linear_solver_library=<path to the CoinHSL '
+                         'library> if you have one.' % key)
         raise SolverUnavailable(
             "the linear solver %r is not available in this IPOPT build "
             "(route: %s%s). Probed as available here: %s.%s See "
@@ -351,7 +348,7 @@ def require_linear_solver(name, route='pyomo', executable=None,
             "linear solvers."
             % (key, route,
                f', executable {executable}' if executable else '',
-               ', '.join(present) if present else 'none of ma27/mumps/pardiso',
+               ', '.join(present) if present else 'none of ma27/mumps/pardisomkl',
                library_note))
     return key
 
@@ -473,7 +470,8 @@ def crash_fallback_solver(linear_solver, executable=None):
 # What solve() picks when told nothing: MA27 when the build has it (fastest
 # and most robust measured -- 3x SPRAL on the D8 sub-problems), else SPRAL
 # (the open-source solver that certifies everything MA27 does), else MUMPS.
-DEFAULT_LINEAR_SOLVER_ORDER = ('ma27', 'spral', 'mumps')
+# pardisomkl is MKL's Pardiso, linked in at build time
+DEFAULT_LINEAR_SOLVER_ORDER = ('ma27', 'spral', 'pardisomkl', 'mumps')
 
 
 def default_linear_solver(route='pyomo', executable=None):
@@ -526,7 +524,7 @@ def linear_solver_available(name, executable=None, library=None):
 
     Probed by solving a one-variable problem with ``linear_solver <name>`` --
     there is no reliable way to ask the binary directly. ``library`` rides
-    along as hsllib/pardisolib for a runtime-loaded solver.
+    along as hsllib for a runtime-loaded solver.
     """
     executable = executable or ipopt_executable()
     key = (os.path.realpath(executable) if executable else None, name,
@@ -587,7 +585,7 @@ try:
 
     out["baseline"] = attempt({}) is True
     if out["baseline"]:
-        for name in ("ma27", "mumps"):
+        for name in ("ma27", "pardisomkl", "mumps"):
             try:
                 out[name] = attempt({"linear_solver": name}) is True
             except Exception:
@@ -604,7 +602,7 @@ def cyipopt_probe():
     if key in _PROBE_CACHE:
         return _PROBE_CACHE[key]
 
-    result = {'baseline': False, 'ma27': None, 'mumps': None}
+    result = {'baseline': False, 'ma27': None, 'pardisomkl': None, 'mumps': None}
     try:
         import subprocess
 

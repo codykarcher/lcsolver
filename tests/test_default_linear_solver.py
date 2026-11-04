@@ -32,8 +32,8 @@ def _have(*names):
 @pytest.mark.skipif(not available, reason='LCsolver import failed')
 class TestDefault:
 
-    def test_order_is_ma27_spral_mumps(self):
-        assert env.DEFAULT_LINEAR_SOLVER_ORDER == ('ma27', 'spral', 'mumps')
+    def test_order_is_ma27_spral_pardisomkl_mumps(self):
+        assert env.DEFAULT_LINEAR_SOLVER_ORDER == ('ma27', 'spral', 'pardisomkl', 'mumps')
 
     def test_ma27_wins_when_present(self, monkeypatch):
         exe_probe, _ = _have('ma27', 'mumps', 'spral')
@@ -44,6 +44,11 @@ class TestDefault:
         exe_probe, _ = _have('mumps', 'spral')
         monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
         assert env.default_linear_solver('pyomo') == 'spral'
+
+    def test_mkl_pardiso_beats_mumps_when_spral_is_absent(self, monkeypatch):
+        exe_probe, _ = _have('mumps', 'pardisomkl')
+        monkeypatch.setattr(env, 'linear_solver_available', exe_probe)
+        assert env.default_linear_solver('pyomo') == 'pardisomkl'
 
     def test_mumps_only_build_defaults_to_mumps(self, monkeypatch):
         exe_probe, _ = _have('mumps')
