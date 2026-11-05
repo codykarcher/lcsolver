@@ -75,3 +75,53 @@ def pytest_runtest_setup(item):
         return (yield)
     except SolverUnavailable as exc:
         _convert(exc)
+
+
+# ---------------------------------------------------------------------------
+# --no-skip: an environment audit. Every skip in this suite is an
+# environment gap (no IPOPT, no cyipopt, no ASL library, no pint), and a
+# broken install skips the same way a missing one does. Under --no-skip a
+# skip is a failure that names the gap, so a machine that claims to have
+# everything has to prove it.
+# ---------------------------------------------------------------------------
+def pytest_addoption(parser):
+    parser.addoption(
+        '--no-skip', action='store_true', default=False,
+        help='fail every skipped test, naming the skip reason; use to audit '
+             'an install that is supposed to have IPOPT, cyipopt and the '
+             'PyNumero ASL library')
+
+
+def _fail_skipped(report, config):
+    # an xfail also reports as skipped; it is a known defect, not a gap
+    if (report.skipped and not hasattr(report, 'wasxfail')
+            and config.getoption('--no-skip')):
+        reason = report.longrepr
+        if isinstance(reason, tuple):           # (path, lineno, message)
+            reason = reason[2]
+        report.outcome = 'failed'
+        report.longrepr = f'skipped, refused under --no-skip: {reason}'
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    _fail_skipped(report, item.config)
+    return report
+
+
+_CONFIG = None
+
+
+def pytest_configure(config):
+    global _CONFIG
+    _CONFIG = config
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collectreport(report):
+    # a module-level importorskip skips at collection, before any item exists
+    result = yield
+    if _CONFIG is not None:
+        _fail_skipped(report, _CONFIG)
+    return result
