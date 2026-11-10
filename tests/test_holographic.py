@@ -185,7 +185,7 @@ def test_submodels_forward_the_declaration():
     from lcsolver import SubModel
 
     class Guarded(SubModel):
-        input_variables = ('x',)
+        model_inputs = ('x',)
 
         def build(self):
             m = self.bind_inputs()

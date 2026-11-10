@@ -1644,8 +1644,7 @@ class TestEDISnippets(unittest.TestCase):
         from lcsolver import Formulation, SubModel, units
 
         class TankModel(SubModel):
-            input_variables = ('weight_gross',)
-            input_constants = ('density_fuel',)
+            model_inputs = ('weight_gross', 'density_fuel')
 
             def build(self):
                 f = self.formulation
@@ -1682,8 +1681,7 @@ class TestEDISnippets(unittest.TestCase):
         from lcsolver import Formulation, SubModel, units
 
         class TankModel(SubModel):
-            input_variables = ('weight_gross',)
-            input_constants = ('density_fuel',)
+            model_inputs = ('weight_gross', 'density_fuel')
 
             def build(self):
                 f = self.formulation
@@ -1709,7 +1707,7 @@ class TestEDISnippets(unittest.TestCase):
 
         text = f.tank_model.status_text()
         self.assertIn('NOT BUILT', text)
-        self.assertIn('Input variables (1 of 1 connected)', text)
+        self.assertIn('Model inputs (1 of 2 connected)', text)
         self.assertIn('density_fuel', text)
         self.assertIn('NOT CONNECTED', text)
 
@@ -1719,7 +1717,7 @@ class TestEDISnippets(unittest.TestCase):
         from lcsolver import Formulation, SubModel, units
 
         class GroupWeightsModel(SubModel):
-            input_variables = ('weight_gross',)
+            model_inputs = ('weight_gross',)
 
             provides = {
                 'component_weights':

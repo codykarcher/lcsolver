@@ -88,13 +88,15 @@ class SubModel:
     get_status() shows what a block needs, what is wired in, what it owns.
     """
 
-    # input DESIGN VARIABLES that must be assigned before building
+    # names the assembly must assign before this block builds -- design
+    # variables and constants alike, the block does not care which
+    model_inputs = ()
+
+    # the names this went by before; still read, so a block written against
+    # them builds, and a class that declares one warns
+    _old_input_lists = ('input_variables', 'input_constants', 'inputs')
     input_variables = ()
-
-    # input CONSTANTS that must be assigned before building
     input_constants = ()
-
-    # inputs whose kind is not declared; kept so older blocks keep working
     inputs = ()
 
     # {name: what a caller does with it} for things handed back beyond the
@@ -112,6 +114,13 @@ class SubModel:
         since a subclass may inherit its tuples from the parent whose build()
         uses them."""
         super().__init_subclass__(**kwargs)
+        old = [n for n in cls._old_input_lists if vars(cls).get(n)]
+        if old:
+            import warnings
+            warnings.warn(
+                f"{cls.__name__} declares {', '.join(old)}; list every input "
+                f"in model_inputs instead. The old names still work for now.",
+                DeprecationWarning, stacklevel=2)
         used = set()
         for klass in cls.__mro__:
             fn = vars(klass).get('build')
@@ -122,15 +131,15 @@ class SubModel:
         if stale:
             raise TypeError(
                 f'{cls.__name__} declares inputs no build() uses: {stale}.  '
-                f'Drop them from input_variables/input_constants, use them, '
-                f'or list them in _allow_unused_inputs.')
+                f'Drop them from model_inputs, use them, or list them in '
+                f'_allow_unused_inputs.')
 
     @classmethod
     def required_inputs(cls):
-        """Every input name this block waits for, variables then constants."""
+        """Every input name this block waits for, in declared order."""
         seen, out = set(), []
-        for name in (tuple(cls.input_variables) + tuple(cls.input_constants)
-                     + tuple(cls.inputs)):
+        for name in (tuple(cls.model_inputs) + tuple(cls.input_variables)
+                     + tuple(cls.input_constants) + tuple(cls.inputs)):
             if name not in seen:
                 seen.add(name)
                 out.append(name)
@@ -201,20 +210,13 @@ class SubModel:
             '',
             f'  {len(missing)} input(s) are missing:',
             ]
-        for title, names in (('input variables', cls.input_variables),
-                             ('input constants', cls.input_constants),
-                             ('inputs', cls.inputs)):
-            absent = [n for n in names if n in missing]
-            if not absent:
-                continue
-            lines.append(f'    {title}:')
-            row = '     '
-            for item in absent:
-                if len(row) + len(item) + 2 > 74:
-                    lines.append(row.rstrip(','))
-                    row = '     '
-                row += f' {item},'
-            lines.append(row.rstrip(','))
+        row = '   '
+        for item in missing:
+            if len(row) + len(item) + 2 > 74:
+                lines.append(row.rstrip(','))
+                row = '   '
+            row += f' {item},'
+        lines.append(row.rstrip(','))
         lines += [
             '',
             '  Either add the missing ones to the call, or drop the '
@@ -337,13 +339,7 @@ class SubModel:
             for key in sorted(self.settings):
                 lines.append(f'   {key:<28} = {self.settings[key]!r}')
 
-        lines += self._input_section('Input variables', self.input_variables)
-        lines += self._input_section('Input constants', self.input_constants)
-        unclassified = [n for n in self.inputs
-                        if n not in self.input_variables
-                        and n not in self.input_constants]
-        lines += self._input_section('Inputs (kind not declared)',
-                                     unclassified)
+        lines += self._input_section('Model inputs', self.required_inputs())
 
         lines += self._declared_section('Variables declared here',
                                         self.variables)

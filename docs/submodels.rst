@@ -52,26 +52,18 @@ Each line names the input on the left and the assembly's quantity on the right,
 so a mismatch is visible where it happens rather than as a position in an
 argument list.
 
-What a block needs is declared in two lists:
+What a block needs is declared in one list:
 
-.. py:attribute:: SubModel.input_variables
+.. py:attribute:: SubModel.model_inputs
 
-    Names of input **design variables** -- quantities the optimizer moves. The
-    block writes rows that shape them and reads solved values back.
+    Names of everything the assembly must assign before the block builds.
+    Design variables and constants go in the same list: the block reads each
+    one the same way, and which kind arrived is the assembly's decision, not
+    the block's. ``get_status()`` shows what each name is wired to.
 
-.. py:attribute:: SubModel.input_constants
-
-    Names of input **constants** -- quantities the assembly fixed. Each appears
-    in a deck, earns a sensitivity, and nothing the block does can change it.
-
-The two are kept apart because they are different promises to the assembly. A
-quantity handed in under the wrong heading still solves, which is exactly why
-it is worth stating and printing separately.
-
-.. py:attribute:: SubModel.inputs
-
-    Inputs whose kind is not being declared. Prefer the two lists above; this
-    exists so a block written before they did keeps working.
+A block written with the earlier ``input_variables``, ``input_constants`` or
+``inputs`` lists still builds: those names are read as more ``model_inputs``,
+and the class raises a ``DeprecationWarning`` saying so.
 
 
 All of the inputs, or none of them
@@ -91,8 +83,7 @@ raises a ``TypeError`` naming every missing one::
     and posts no rows.
 
       1 input(s) are missing:
-        input constants:
-          density_fuel
+        density_fuel
 
       Either add the missing ones to the call, or drop the 1 that
       are there and assign every input after attaching the block:
@@ -159,10 +150,8 @@ those, what it declares, and what it hands back:
     Settings
        n_tanks                      = 2
 
-    Input variables (1 of 1 connected)
+    Model inputs (1 of 2 connected)
        weight_gross                 <- W [N]
-
-    Input constants (0 of 1 connected)
        density_fuel                 <- NOT CONNECTED
 
     Variables declared here: none yet, the block has not built
@@ -178,10 +167,8 @@ it declared, with sizes, units, and descriptions::
     Settings
        n_tanks                      = 2
 
-    Input variables (1 of 1 connected)
+    Model inputs (2 of 2 connected)
        weight_gross                 <- W [N]
-
-    Input constants (1 of 1 connected)
        density_fuel                 <- rho_fuel [N/m**3]
 
     Variables declared here (2)

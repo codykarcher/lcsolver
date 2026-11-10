@@ -20,10 +20,9 @@ from lcsolver.solvers.solver import PresolveError, solve
 
 
 class Widget(SubModel):
-    """A block with one setting, an input variable, and an input constant."""
+    """A block with one setting and two inputs: a variable and a constant."""
 
-    input_variables = ('weight_in',)
-    input_constants = ('floor',)
+    model_inputs = ('weight_in', 'floor')
     provides = {'headroom': 'what is left under the cap, as an expression'}
 
     def build(self):
@@ -188,10 +187,9 @@ def _connected(n_parts=2):
     return f
 
 
-def test_status_separates_input_variables_from_input_constants():
+def test_status_lists_the_model_inputs_in_one_section():
     text = _connected().widget.status_text()
-    assert 'Input variables (1 of 1 connected)' in text
-    assert 'Input constants (1 of 1 connected)' in text
+    assert 'Model inputs (2 of 2 connected)' in text
     # each says what it is actually wired to, by the assembly's name for it
     assert 'weight_in' in text and 'W' in text
     assert 'floor' in text
@@ -203,8 +201,7 @@ def test_status_calls_out_an_input_that_is_not_connected():
     text = f.widget.status_text()
     assert 'NOT BUILT' in text and 'It has posted nothing.' in text
     assert 'weight_in' in text and 'NOT CONNECTED' in text
-    assert 'Input variables (0 of 1 connected)' in text
-    assert 'Input constants (1 of 1 connected)' in text
+    assert 'Model inputs (1 of 2 connected)' in text
 
 
 def test_status_lists_what_the_block_declares():
@@ -244,26 +241,45 @@ def test_get_status_prints_the_same_report(capsys):
     assert capsys.readouterr().out.strip() == f.widget.status_text().strip()
 
 
-def test_required_inputs_spans_both_lists_in_order():
+def test_required_inputs_is_model_inputs_in_order():
     assert Widget.required_inputs() == ['weight_in', 'floor']
 
 
-def test_a_bare_inputs_list_still_works():
-    class Old(SubModel):
-        inputs = ('a',)
-        # this fixture exercises the GATING, not a real model, so its build()
-        # deliberately ignores the input the staleness check wants used
-        _allow_unused_inputs = ('a',)
+def test_the_old_input_lists_still_build_a_block_and_warn():
+    with pytest.warns(DeprecationWarning, match='model_inputs'):
+        class Old(SubModel):
+            input_variables = ('a',)
+            input_constants = ('b',)
+            inputs = ('c',)
+            # this fixture exercises the GATING, not a real model, so its
+            # build() deliberately ignores the inputs the staleness check
+            # wants used
+            _allow_unused_inputs = ('a', 'b', 'c')
 
-        def build(self):
-            self.Variable('x', 1.0, 'kg', 'x')
+            def build(self):
+                self.Variable('x', 1.0, 'kg', 'x')
 
+    assert Old.required_inputs() == ['a', 'b', 'c']
     f = Formulation()
     f.old = Old()
+    assert 'Model inputs (0 of 3 connected)' in f.old.status_text()
+    f.old.a, f.old.b = 1.0, 2.0
     assert not f.old.is_built()
-    assert 'Inputs (kind not declared)' in f.old.status_text()
-    f.old.a = 1.0
+    f.old.c = 3.0
     assert f.old.is_built()
+
+
+def test_model_inputs_alone_does_not_warn():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+
+        class New(SubModel):
+            model_inputs = ('a',)
+            _allow_unused_inputs = ('a',)
+
+            def build(self):
+                pass
 
 
 # ------------------------------------------------- all the inputs, or none
@@ -283,13 +299,11 @@ def test_a_partial_constructor_call_is_refused():
     text = str(e.value)
     assert 'was given 1 of its 2 inputs' in text
     assert 'floor' in text                   # the missing one is named
-    assert 'input constants' in text         # under its kind
 
 
 def test_a_partial_call_names_every_missing_input():
     class Big(SubModel):
-        input_variables = ('a', 'b', 'c')
-        input_constants = ('d', 'e')
+        model_inputs = ('a', 'b', 'c', 'd', 'e')
         # the point of this fixture is the constructor's error message; it
         # never gets far enough to build, so nothing uses the inputs
         _allow_unused_inputs = ('a', 'b', 'c', 'd', 'e')
@@ -319,3 +333,154 @@ def test_the_constructor_form_solves_to_the_same_answer():
     f.Objective(f.widget.total)
     solve(f, sensitivities=False)
     assert f.solution.objective == pytest.approx(8.0)
+
+
+# ------------------------------------------- model_inputs: one list for all
+class Product(SubModel):
+    """y >= a * b, where a and b are whatever the assembly hands in."""
+
+    model_inputs = ('a', 'b')
+
+    def build(self):
+        m = self.bind_inputs()
+        self.y = self.Variable('y', 1.0, 'm^2', 'bound on the product')
+        self.Constraint(self.y >= m.a * m.b)
+
+
+def _product(variable_slot):
+    """x (a variable, held at 2 m by a row) and c (a constant, 3 m) wired
+    into Product with the variable in ``variable_slot``."""
+    f = Formulation()
+    x = f.Variable(name='x', guess=1.0, units='m', description='x')
+    c = f.Constant(name='c', value=3.0, units='m', description='c')
+    f.product = Product()
+    constant_slot = 'b' if variable_slot == 'a' else 'a'
+    setattr(f.product, variable_slot, x)
+    setattr(f.product, constant_slot, c)
+    f.ConstraintList([x >= 2.0 * units.m])
+    f.Objective(f.product.y)
+    return f
+
+
+@pytest.mark.parametrize('variable_slot', ['a', 'b'])
+def test_a_model_input_takes_a_variable_or_a_constant(variable_slot):
+    """The block declares names, not kinds: either slot takes either."""
+    f = _product(variable_slot)
+    assert f.product.is_built()
+    solve(f, sensitivities=False)
+    assert f.solution.objective == pytest.approx(6.0, rel=1e-6)
+
+
+def test_status_lists_model_inputs_in_declared_order_by_what_is_wired():
+    text = _product('b').product.status_text()          # a <- c, b <- x
+    assert 'Model inputs (2 of 2 connected)' in text
+    lines = text.splitlines()
+    row_a = next(i for i, line in enumerate(lines) if line.startswith('   a '))
+    row_b = next(i for i, line in enumerate(lines) if line.startswith('   b '))
+    assert row_b == row_a + 1, 'one section, declared order'
+    assert '<- c [m]' in lines[row_a]                    # the constant
+    assert '<- x [m]' in lines[row_b]                    # the variable
+    # the headings the split used to print are gone
+    for heading in ('Input variables', 'Input constants', 'kind not declared'):
+        assert heading not in text
+
+
+def test_bind_inputs_hands_back_every_model_input_read_only():
+    f = _product('a')
+    m = f.product.bind_inputs()
+    assert m.a is f.x and m.b is f.c
+    assert dir(m) == ['a', 'b']
+    with pytest.raises(AttributeError, match='read-only'):
+        m.a = f.c
+    with pytest.raises(AttributeError, match="'z' is not a declared input"):
+        m.z
+
+
+def test_a_model_input_no_build_uses_is_refused_when_the_class_is_defined():
+    with pytest.raises(TypeError) as e:
+        class Stale(SubModel):
+            model_inputs = ('a', 'never_read')
+
+            def build(self):
+                self.Constraint(self.a >= 1.0)
+    text = str(e.value)
+    assert "['never_read']" in text
+    assert 'model_inputs' in text                        # says where to fix it
+
+
+def test_a_subclass_inherits_and_may_extend_model_inputs():
+    class Inherits(Product):
+        pass
+
+    class Extends(Product):
+        model_inputs = Product.model_inputs + ('cap',)
+
+        def build(self):
+            super().build()
+            self.Constraint(self.y <= self.cap)
+
+    assert Inherits.required_inputs() == ['a', 'b']
+    assert Extends.required_inputs() == ['a', 'b', 'cap']
+
+    f = Formulation()
+    f.extends = Extends()
+    f.extends.a = 2.0 * units.m
+    f.extends.b = 3.0 * units.m
+    assert not f.extends.is_built(), 'still waiting on the input it added'
+    assert f.extends.pending_inputs() == ['cap']
+    f.extends.cap = 10.0 * units.m ** 2
+    assert f.extends.is_built() and len(f.extends.rows) == 2
+
+
+def test_model_inputs_and_an_old_list_merge_without_repeating_a_name():
+    with pytest.warns(DeprecationWarning, match='input_constants'):
+        class Mixed(SubModel):
+            model_inputs = ('a', 'b')
+            input_constants = ('b', 'c')         # b is named in both
+            _allow_unused_inputs = ('a', 'b', 'c')
+
+            def build(self):
+                pass
+
+    assert Mixed.required_inputs() == ['a', 'b', 'c']    # model_inputs first
+    f = Formulation()
+    f.mixed = Mixed()
+    assert 'Model inputs (0 of 3 connected)' in f.mixed.status_text()
+
+
+def test_inheriting_an_old_list_does_not_warn_a_second_time():
+    import warnings
+
+    with pytest.warns(DeprecationWarning, match='model_inputs'):
+        class OldParent(SubModel):
+            input_variables = ('a',)
+            _allow_unused_inputs = ('a',)
+
+            def build(self):
+                pass
+
+    # the child declares nothing of its own, so it has nothing to migrate
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+
+        class Child(OldParent):
+            pass
+
+    assert Child.required_inputs() == ['a']
+
+
+def test_the_old_list_warning_names_the_class_and_every_old_list():
+    with pytest.warns(DeprecationWarning) as caught:
+        class Legacy(SubModel):
+            input_variables = ('a',)
+            inputs = ('b',)
+            _allow_unused_inputs = ('a', 'b')
+
+            def build(self):
+                pass
+
+    text = str(caught[0].message)
+    assert 'Legacy' in text
+    assert 'input_variables' in text and 'inputs' in text
+    assert 'input_constants' not in text             # not declared, not named
+    assert caught[0].filename == __file__, 'points at the class, not lcsolver'
