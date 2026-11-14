@@ -91,6 +91,8 @@ pipeline stage (0xx and 1xx pre-solve, 2xx solve-time, 3xx post-solve):
      - cvxopt returned a non-optimal status without raising
    * - ``LC-W206``
      - The solve succeeded but write-back onto the model failed
+   * - ``LC-W208``
+     - Unit correction could not run, so raw IPOPT solved the model as written
    * - ``LC-W301``
      - Holographic constraints are active at the solution (:doc:`holographic`)
    * - ``LC-W302``

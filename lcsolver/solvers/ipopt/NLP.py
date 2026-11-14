@@ -11,8 +11,12 @@ default for unstructured formulations and the only option for grey-box ones.
 Two routes: 'pyomo' (AMPL interface driving the ipopt executable; preferred)
 and 'cyipopt' (in-process via pynumero; used when the executable is missing,
 and required for ExternalGreyBoxBlock models -- the AMPL route can't evaluate
-a Python black box). Either way the solution is written back onto the model.
+a Python black box). Either way IPOPT sees the model in consistent base units
+(unit_corrector) and the solution is written back onto the caller's model, in
+each variable's declared units.
 """
+
+import warnings
 
 import pyomo.environ as pyo
 from pyomo.opt import SolverStatus, TerminationCondition
@@ -64,6 +68,56 @@ def executable_available(name='ipopt'):
         return False
 
 
+def unit_corrected_for_ipopt(m):
+    """The model IPOPT should see: every row in consistent base units.
+
+    The AMPL writer drops units, so a row mixing ft and m reaches IPOPT as
+    bare numbers and it solves a different problem without complaint. A
+    dimensional error raises. A model the corrector can't walk for any other
+    reason (a Constraint indexed over several members) keeps the old
+    behaviour, solved as written, but says so.
+    """
+    from lcsolver.presolve.unitCorrector import UnitMismatch, unit_corrector
+
+    if getattr(m, '_lc_unit_corrected', False):
+        return m
+    try:
+        return unit_corrector(m)
+    except UnitMismatch:
+        raise
+    except Exception as exc:
+        warnings.warn(
+            f"[LC-W208] unit correction failed ({type(exc).__name__}: {exc}); "
+            "solving the model as written, so any row mixing units is NOT "
+            "converted.", RuntimeWarning, stacklevel=3)
+        return m
+
+
+def write_back_to_caller(solved, m):
+    """Copy primal values and duals from the corrected clone onto ``m``.
+
+    Variables keep their declared units through unit_corrector, so values
+    copy over unchanged. Duals are those of the base-unit rows.
+    """
+    from lcsolver.postsolve.writeback import resolve_on_model
+
+    for v in solved.component_data_objects(pyo.Var, descend_into=True, active=True):
+        target = resolve_on_model(m, v)
+        if target is not None and v.value is not None:
+            target.set_value(v.value, skip_validation=True)
+
+    source = getattr(solved, 'dual', None)
+    if source is None:
+        return
+    if not hasattr(m, 'dual'):
+        m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+    m.dual.clear()
+    for con in solved.component_data_objects(pyo.Constraint, descend_into=True, active=True):
+        target = resolve_on_model(m, con)
+        if target is not None and con in source:
+            m.dual[target] = source[con]
+
+
 def summarize_results(results):
     """Condense a Pyomo results object into a plain dict."""
     out = {'solver': None, 'status': None, 'termination_condition': None,
@@ -91,7 +145,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
     absent solver raises SolverUnavailable naming what IS available, and
     overrides options['linear_solver']. Returns a summary dict (route,
     status, termination condition, objective, {name: value} solution);
-    raises RuntimeError when no IPOPT is usable or the solve fails.
+    raises RuntimeError when no IPOPT is usable or the solve fails, and
+    UnitMismatch when the model's units don't balance. The reported objective
+    is in base units, like 'primal objective' on the structured backends.
     """
     options = dict(options or {})
     greybox = has_greybox(m)
@@ -136,6 +192,9 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
                 options['linear_solver'])] = str(linear_solver_library)
         from lcsolver.environment import apply_linear_solver_defaults
         apply_linear_solver_defaults(options, options['linear_solver'])
+
+    # IPOPT solves the corrected model; the caller's gets the answer at the end
+    caller, m = m, unit_corrected_for_ipopt(m)
 
     # Ask for constraint duals: free, and what postsolve.sensitivity uses;
     # without the Suffix they'd have to be reconstructed from the primal.
@@ -213,6 +272,8 @@ def ipopt_solve(m, method='auto', tee=False, executable=None, options=None,
 
     if route == 'pyomo' and load_solutions:
         m.solutions.load_from(results)
+    if m is not caller and (route == 'cyipopt' or load_solutions):
+        write_back_to_caller(m, caller)
 
     # Pyomo has already written the solution onto the model; report it in the
     # same {name: value} form the other LCsolver backends use.

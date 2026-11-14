@@ -399,8 +399,8 @@ def solve_gp_ipopt(structures, model=None, tee=False, options=None,
 
 # ---------------------------------------------------------------------------
 def solve_lp_qp_ipopt(m, structure='linear_program', **kwargs):
-    """LP/QP with IPOPT. Already convex in the natural variables, so the
-    model goes in unchanged. structure (what the detector found) is stamped
+    """LP/QP with IPOPT. Already convex in the natural variables, so no
+    transform is needed (ipopt_solve converts the units). structure (what the detector found) is stamped
     onto the result -- ipopt_solve labels everything nonlinear_program,
     which contradicted structure_report() on a detected LP."""
     from lcsolver.solvers.ipopt import ipopt_solve

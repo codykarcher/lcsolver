@@ -958,8 +958,9 @@ solve.__doc__ = (solve.__doc__ or '') + '\n' + (run_solve.__doc__ or '')
 
 
 def raw_ipopt(m, kwargs):
-    """The raw NLP route: IPOPT on the model as written, with the linear
-    solver threaded through and the structured-route kwargs dropped."""
+    """The raw NLP route: IPOPT on the natural variables (no log transform),
+    with the linear solver threaded through and the structured-route kwargs
+    dropped. ipopt_solve converts the units."""
     from lcsolver.solvers.ipopt import ipopt_solve
     return ipopt_solve(m, linear_solver=kwargs.get('linear_solver'),
                        linear_solver_library=kwargs.get('linear_solver_library'),

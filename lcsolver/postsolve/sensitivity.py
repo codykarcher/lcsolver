@@ -245,6 +245,29 @@ def duals_from_suffix(model):
     return duals if len(duals) else None
 
 
+def corrected_with_suffix(model):
+    """The unit-corrected twin, carrying ``model``'s suffix duals on its rows.
+
+    Correction rebuilds the rows, so the cloned Suffix points at deleted
+    constraints and has to be re-keyed. A model the corrector can't walk was
+    solved as written (LC-W208), so it and its duals stay as they are.
+    """
+    from lcsolver.postsolve.writeback import resolve_on_model
+    from lcsolver.presolve.unitCorrector import unit_corrector
+
+    try:
+        corrected = unit_corrector(model)
+    except Exception:
+        return model
+    corrected.dual.clear()
+    for con in corrected.component_data_objects(pyo.Constraint, active=True,
+                                                descend_into=True):
+        original = resolve_on_model(model, con)
+        if original is not None and original in model.dual:
+            corrected.dual[con] = model.dual[original]
+    return corrected
+
+
 def greybox_blocks(model):
     """Every active ExternalGreyBoxBlock on the model; empty without pynumero."""
     try:
@@ -537,15 +560,16 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
     'objective', 'normalized', 'method', 'stationarity_residual', 'ambiguity',
     'ambiguous', and 'approximate'.
     """
-    # Frame selection. Suffix duals (IPOPT) belong to the original model's
-    # constraint objects, so that path stays there. KKT recovery must run on
-    # the UNIT-CORRECTED twin: raw expressions mix declared units, so tight
-    # constraints look slack and the stationarity system goes inconsistent
-    # (residual 0.19 on the first non-SI model). unit_corrector folds the
-    # conversions in as literals; names, magnitudes, and the normalized
-    # sensitivities are unchanged. Only KKT recovery produces grey-box row
-    # duals, which a box that declares Constants needs: such a model goes
-    # KKT on 'auto', and an explicit 'suffix' is honoured but warned.
+    # Frame selection. Everything runs on the UNIT-CORRECTED twin: raw
+    # expressions mix declared units, so tight constraints look slack and the
+    # stationarity system goes inconsistent (residual 0.19 on the first
+    # non-SI model), and ipopt_solve's suffix duals are those of the
+    # base-unit rows, so a raw objective would misnormalize them.
+    # unit_corrector folds the conversions in as literals; names, magnitudes,
+    # and the normalized sensitivities are unchanged. Only KKT recovery
+    # produces grey-box row duals, which a box that declares Constants needs:
+    # such a model goes KKT on 'auto', and an explicit 'suffix' is honoured
+    # but warned.
     box_declares_constants = any(
         getattr(blk.get_external_model(), 'constantParams_optimization', None)
         for blk in greybox_blocks(model))
@@ -560,7 +584,9 @@ def sensitivities(model, normalized=True, method='auto', rtol=ACTIVE_RTOL,
                 "grey-box duals; method='suffix' cannot include it, so "
                 "those sensitivities are missing the path through the box. "
                 "Use method='auto' or 'kkt'.", RuntimeWarning, stacklevel=2)
-        if not use_suffix:
+        if use_suffix:
+            model = corrected_with_suffix(model)
+        else:
             from lcsolver.presolve.unitCorrector import unit_corrector
             model = unit_corrector(model)
 

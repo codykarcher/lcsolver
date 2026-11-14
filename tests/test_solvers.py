@@ -335,6 +335,112 @@ def _indexed_gp(n=4):
 
 @unittest.skipIf(not formulation_available, 'Formulation import failed')
 @unittest.skipIf(not pint_available, 'Testing units requires pint')
+def _ft_below_a_meter():
+    """max x [ft] s.t. x <= 1 m: an LP whose answer is 3.2808 ft."""
+    from lcsolver import Formulation
+    f = Formulation()
+    x = f.Variable(name='x', guess=1., units='ft')
+    L = f.Constant(name='L', value=1., units='m')
+    f.Constraint(x <= L)
+    f.Objective(-x)
+    return f
+
+
+def _mixed_unit_gp():
+    """min x [ft] + y [m] s.t. xy >= S: x = y = 2 m, d log f / d log S = 1/2.
+    The floor rows keep the raw NLP bounded in the natural variables."""
+    from lcsolver import Formulation
+    f = Formulation()
+    x = f.Variable(name='x', guess=1., units='ft')
+    y = f.Variable(name='y', guess=1., units='m')
+    S = f.Constant(name='S', value=4., units='m^2')
+    lo = f.Constant(name='lo', value=0.01, units='ft')
+    f.ConstraintList([x * y >= S, x >= lo, y >= lo])
+    f.Objective(x + y)
+    return f
+
+
+@unittest.skipIf(not any_ipopt_available(), 'no usable IPOPT')
+class TestIpoptConvertsUnits(unittest.TestCase):
+    """The AMPL writer drops units, so raw IPOPT must get the corrected model
+    and hand the answer back in each variable's declared units."""
+
+    FT_PER_M = 1. / 0.3048
+
+    def test_forced_raw_route(self):
+        from lcsolver import solve
+        f = _ft_below_a_meter()
+        solve(f, solver='ipopt')
+        self.assertAlmostEqual(pyo.value(f.x), self.FT_PER_M, places=5)
+
+    def test_auto_lp_route(self):
+        from lcsolver import solve
+        f = _ft_below_a_meter()
+        r = solve(f)
+        self.assertEqual(r['problem_structure'], 'linear_program')
+        self.assertAlmostEqual(pyo.value(f.x), self.FT_PER_M, places=5)
+
+    def test_direct_call_reports_declared_units(self):
+        from lcsolver.solvers.ipopt import ipopt_solve
+        f = _ft_below_a_meter()
+        r = ipopt_solve(f)
+        self.assertAlmostEqual(r['solution']['x'], self.FT_PER_M, places=5)
+        self.assertAlmostEqual(pyo.value(f.x), self.FT_PER_M, places=5)
+        self.assertAlmostEqual(r['objective'], -1.0, places=5)   # base units
+
+    def test_diagnostics_off_still_converts(self):
+        from lcsolver import solve
+        f = _ft_below_a_meter()
+        solve(f, solver='ipopt', diagnostics='off', sensitivities=False)
+        self.assertAlmostEqual(pyo.value(f.x), self.FT_PER_M, places=5)
+
+    def test_repeat_solve(self):
+        from lcsolver import solve
+        f = _mixed_unit_gp()
+        solve(f, solver='ipopt')
+        solve(f, solver='ipopt')
+        self.assertAlmostEqual(pyo.value(f.x), 2. * self.FT_PER_M, places=4)
+        self.assertAlmostEqual(pyo.value(f.y), 2., places=4)
+
+    def test_sensitivities_match_the_gp_route(self):
+        from lcsolver import solve
+        from lcsolver.postsolve.sensitivity import sensitivities
+        f = _mixed_unit_gp()
+        solve(f, solver='ipopt')
+        res = sensitivities(f, method='suffix')
+        self.assertEqual(res['method'], 'suffix')
+        self.assertAlmostEqual(res['sensitivities']['S'], 0.5, places=5)
+
+    def test_already_corrected_model_solves_in_place(self):
+        from lcsolver.presolve.unitCorrector import unit_corrector
+        from lcsolver.solvers.ipopt import ipopt_solve
+        c = unit_corrector(_ft_below_a_meter())
+        ipopt_solve(c)
+        self.assertAlmostEqual(pyo.value(c.x), self.FT_PER_M, places=5)
+
+    def test_dimensional_error_raises(self):
+        from lcsolver import Formulation
+        from lcsolver.presolve.unitCorrector import UnitMismatch
+        from lcsolver.solvers.ipopt import ipopt_solve
+        f = Formulation()
+        x = f.Variable(name='x', guess=1., units='ft')
+        K = f.Constant(name='K', value=1., units='kg')
+        f.Constraint(x >= K)
+        f.Objective(x)
+        self.assertRaises(UnitMismatch, ipopt_solve, f)
+
+    def test_uncorrectable_model_warns_and_solves_as_written(self):
+        from lcsolver import Formulation
+        from lcsolver.solvers.ipopt import ipopt_solve
+        f = Formulation()
+        x = f.Variable(name='x', guess=2., units='-')
+        f.indexed = pyo.Constraint([0, 1], rule=lambda m, i: x >= 1. + i)
+        f.Objective(x)
+        with pytest.warns(RuntimeWarning, match='LC-W208'):
+            ipopt_solve(f)
+        self.assertAlmostEqual(pyo.value(f.x), 2.0, places=5)
+
+
 class TestIndexedVariableWriteBack(unittest.TestCase):
     """Write-back must work for INDEXED variables. Two coupled bugs: the
     collected unit-corrector clone stranded indexed VarData ('[Unattached
